@@ -37,6 +37,7 @@ pub struct LootTables {
     data: Option<Arc<VanillaData>>,
     cache: RwLock<HashMap<String, Option<Arc<Value>>>>,
     predicates: RwLock<HashMap<String, Option<Arc<Value>>>>,
+    enchantments: std::sync::OnceLock<Option<Arc<super::enchanting::Enchantments>>>,
 }
 
 /// Conditions and modifiers can be one value or a list (26.x), or a legacy list.
@@ -58,7 +59,7 @@ fn kind(v: &Value) -> &str {
 
 impl LootTables {
     pub fn new(data: Option<Arc<VanillaData>>) -> Self {
-        Self { data, cache: RwLock::new(HashMap::new()), predicates: RwLock::new(HashMap::new()) }
+        Self { data, cache: RwLock::new(HashMap::new()), predicates: RwLock::new(HashMap::new()), enchantments: std::sync::OnceLock::new() }
     }
 
     /// A condition, resolving references to predicate files (`minecraft:tool/can_silk_touch`).
@@ -89,10 +90,15 @@ impl LootTables {
         }
     }
 
+    /// The enchantment definitions of the vanilla data (read on first use).
+    pub fn enchantments(&self) -> Option<Arc<super::enchanting::Enchantments>> {
+        self.enchantments.get_or_init(|| self.data.as_ref().map(|d| Arc::new(super::enchanting::Enchantments::load(d)))).clone()
+    }
+
     fn modify(&self, owner: &Value, ctx: &LootContext, rng: &mut impl Rng, stacks: &mut [Slot]) {
         for f in one_or_many(&owner["modifier"], &owner["functions"]) {
             if self.holds(f, ctx, rng) {
-                apply_function(f, ctx, rng, stacks);
+                self.apply(f, ctx, rng, stacks);
             }
         }
         for slot in stacks.iter_mut() {
@@ -118,10 +124,14 @@ impl LootTables {
 
     /// Rolls a table. Unknown tables drop nothing.
     pub fn roll(&self, id: &str, ctx: &LootContext) -> Vec<Slot> {
+        self.roll_with(id, ctx, &mut rand::thread_rng())
+    }
+
+    /// Rolls a table with the given random source (seeded for container loot).
+    pub fn roll_with(&self, id: &str, ctx: &LootContext, rng: &mut impl Rng) -> Vec<Slot> {
         let Some(table) = self.table(id) else { return Vec::new() };
-        let mut rng = rand::thread_rng();
         let mut out = Vec::new();
-        self.roll_table(&table, ctx, &mut rng, &mut out, 0);
+        self.roll_table(&table, ctx, rng, &mut out, 0);
         // Split stacks above the maximum stack size.
         let mut split = Vec::new();
         for slot in out {
@@ -243,6 +253,57 @@ impl LootTables {
         }
         self.modify(entry, ctx, rng, &mut out[start..]);
     }
+}
+
+impl LootTables {
+    /// One item modifier on the stacks it applies to.
+    fn apply(&self, f: &Value, ctx: &LootContext, rng: &mut impl Rng, stacks: &mut [Slot]) {
+        match kind(f) {
+            "minecraft:enchant_randomly" => {
+                if let Some(enchantments) = self.enchantments() {
+                    for slot in stacks.iter_mut() {
+                        enchantments.enchant_randomly(slot, &f["options"], f["only_compatible"].as_bool().unwrap_or(true), rng);
+                    }
+                }
+            }
+            "minecraft:enchant_with_levels" => {
+                if let Some(enchantments) = self.enchantments() {
+                    for slot in stacks.iter_mut() {
+                        let levels = number(&f["levels"], rng).floor() as i32;
+                        enchantments.enchant_with_levels(slot, levels, &f["options"], rng);
+                    }
+                }
+            }
+            "minecraft:set_damage" => {
+                for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
+                    let Some(max) = paper_data::item_data::by_id(stack.item as u32).max_damage.filter(|m| *m > 0) else { continue };
+                    let current = if f["add"].as_bool().unwrap_or(false) { 1.0 - damage_of(stack) as f64 / max as f64 } else { 0.0 };
+                    let fraction = (number(&f["damage"], rng) + current).clamp(0.0, 1.0);
+                    let damage = ((1.0 - fraction) * max as f64).floor() as i32;
+                    let mut data = Vec::new();
+                    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(damage), &mut data);
+                    super::enchanting::set_component(stack, "minecraft:damage", data);
+                }
+            }
+            "minecraft:set_potion" => {
+                let Some(potion) = f["id"].as_str().and_then(|p| paper_data::registries::id("minecraft:potion", p)) else { return };
+                for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
+                    // Potion, no custom colour, no custom effects, no custom name.
+                    let mut data = vec![1u8];
+                    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(potion as i32), &mut data);
+                    data.extend_from_slice(&[0, 0, 0]);
+                    super::enchanting::set_component(stack, "minecraft:potion_contents", data);
+                }
+            }
+            _ => apply_function(f, ctx, rng, stacks),
+        }
+    }
+}
+
+/// The `damage` component of a stack (0 when undamaged).
+fn damage_of(stack: &paper_protocol::types::ItemStack) -> i32 {
+    let Some(ty) = paper_data::registries::id("minecraft:data_component_type", "minecraft:damage") else { return 0 };
+    stack.added.iter().find(|(t, _)| *t as u32 == ty).and_then(|(_, d)| paper_protocol::codec::Reader::new(d).varint().ok()).unwrap_or(0)
 }
 
 /// Evaluates a number provider: a constant, `uniform`, `binomial` or `constant`.

@@ -80,6 +80,7 @@ What works:
   creepers explode; undead burn in daylight. Mobs use A* pathfinding and vanilla's walking
   physics, spawn naturally from the biomes' spawner lists (animals also when a chunk is
   generated), despawn far from players, and drop loot (vanilla loot tables) and experience.
+  Mob spawners (dungeons) spawn their mob near players; end crystals explode when hit.
 * **Survival**: damage from falls, the void, lava, fire, drowning, suffocation, cacti and
   magma, with armour, protection enchantments, difficulty scaling and invulnerability frames;
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
@@ -97,7 +98,9 @@ What works:
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
   that smelt over time, hoppers, droppers and dispensers; vanilla's click rules
-  (shift-clicks, drags, number keys).
+  (shift-clicks, drags, number keys). Containers with a loot table (dungeon chests) are
+  filled when first opened, reached by a hopper or broken, with vanilla's loot modifiers
+  (counts, random enchantments, enchanting with levels, damage, potions).
 * **Redstone with items and entities**: hoppers move items between containers (furnace
   sides included), pick up dropped items and lock when powered; droppers and dispensers
   fire on a rising signal (also from above), droppers into containers in front of them,
@@ -156,8 +159,7 @@ Not yet:
 * World generation: structures (villages, mineshafts, strongholds, fortresses, end cities,
   ...) and the template features (desert wells, fossils) are not generated, nor sculk
   patches; there is no dragon fight (the End's exit portal is open from the start).
-  Dungeon spawners and chests are generated, but spawners do not spawn mobs and chests stay
-  empty yet, end gateways do not teleport, and end crystals do not explode.
+  End gateways do not teleport yet.
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
   trading, breeding); enchanting, anvils and brewing are missing. Tripwires,
   crafters, observers of entities and brewing stands do not work yet, dispensers only know

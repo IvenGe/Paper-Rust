@@ -320,3 +320,58 @@ fn sleeping_skips_the_night_and_beds_are_respawn_points() {
     assert!((back.x - 11.0).abs() < 3.0 && (back.z - 8.5).abs() < 3.0, "respawned by the bed: {back:?}");
     server.stop();
 }
+
+#[test]
+fn spawners_spawn_their_mob_near_players() {
+    let server = survival_server();
+    let _alice = join(&server, "Alice");
+    let spawner = paper_protocol::codec::BlockPos::new(12, -60, 8);
+    server.handle.console_command("time set midnight");
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_and_update(0, spawner, paper_data::blocks::default_state("minecraft:spawner").unwrap());
+            let chunk = paper_server::world::chunk::ChunkPos::of_block(spawner.x, spawner.z);
+            let entity = paper_nbt::Compound::new().with("id", paper_nbt::Tag::String("minecraft:zombie".into()));
+            let nbt = paper_nbt::Compound::new()
+                .with("id", paper_nbt::Tag::String("minecraft:mob_spawner".into()))
+                .with("SpawnData", paper_nbt::Tag::Compound(paper_nbt::Compound::new().with("entity", paper_nbt::Tag::Compound(entity))))
+                .with("Delay", paper_nbt::Tag::Short(5));
+            s.worlds[0].chunks.get_mut(&chunk).unwrap().block_entities.insert((spawner.y, (spawner.z & 15) as u8, (spawner.x & 15) as u8), nbt);
+            // No other monsters come.
+            s.set_game_rule(0, "spawn_monsters", paper_data::game_rules::Value::Bool(false));
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let near = server
+            .handle
+            .run(move |s| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:zombie" && (e.pos.x - 12.5).abs() <= 5.0 && (e.pos.z - 8.5).abs() <= 5.0).count())
+            .unwrap();
+        if near > 0 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the spawner spawns zombies");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    server.stop();
+}
+
+#[test]
+fn end_crystals_explode_when_hit() {
+    let server = survival_server();
+    let mut alice = join(&server, "Alice");
+    let at = server.handle.run(|s| {
+        let p = s.players.values().next().unwrap();
+        paper_server::world::entity::Vec3::new(p.loc.x + 2.0, p.loc.y, p.loc.z)
+    }).unwrap();
+    let crystal = server.handle.run(move |s| s.spawn_mob(0, "minecraft:end_crystal", at, paper_server::server::mobs::SpawnReason::Command)).unwrap().expect("a crystal");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    alice.send(&play::Attack { entity_id: VarInt(crystal) });
+    let boom: play::Explode = alice.find(TIMEOUT, |_: &play::Explode| true).expect("the crystal explodes");
+    assert!((boom.center.0 - at.x).abs() < 0.01 && (boom.center.2 - at.z).abs() < 0.01);
+    let gone = server.handle.run(move |s| s.worlds[0].entities.get(&crystal).is_none_or(|e| e.removed)).unwrap();
+    assert!(gone);
+    server.stop();
+}

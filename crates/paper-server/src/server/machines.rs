@@ -112,6 +112,16 @@ impl Server {
         }
     }
 
+    /// The inventory at a block, with any loot table rolled into it first (hoppers and
+    /// droppers reaching into a loot chest fill it, as in vanilla).
+    fn loaded_inventory_at(&mut self, world: usize, pos: BlockPos) -> Option<Inventory> {
+        let inv = self.inventory_at(world, pos)?;
+        for p in &inv.positions {
+            self.unpack_loot(world, *p);
+        }
+        Some(inv)
+    }
+
     fn inventory_items(&self, world: usize, inv: &Inventory) -> Vec<Slot> {
         inv.positions.iter().flat_map(|p| self.container_items(world, *p)).collect()
     }
@@ -222,6 +232,7 @@ impl Server {
             return;
         }
         let me = Inventory { positions: vec![pos], furnace: false };
+        self.unpack_loot(world, pos);
         let items = self.container_items(world, pos);
         let mut moved = false;
         if items.iter().any(|s| !s.is_empty()) {
@@ -248,7 +259,7 @@ impl Server {
     fn hopper_eject(&mut self, world: usize, pos: BlockPos, state: u32, me: &Inventory) -> bool {
         let Some(facing) = blocks::property(state, "facing").and_then(Face::parse) else { return false };
         let target = at(pos, facing);
-        let Some(dest) = self.inventory_at(world, target) else { return false };
+        let Some(dest) = self.loaded_inventory_at(world, target) else { return false };
         let mut items = self.container_items(world, pos);
         for i in 0..items.len() {
             let Some(stack) = items[i].0.clone() else { continue };
@@ -265,7 +276,7 @@ impl Server {
     /// One item from the container above, or item entities lying on top.
     fn hopper_suck(&mut self, world: usize, pos: BlockPos, me: &Inventory) -> bool {
         let above = at(pos, Face::Up);
-        if let Some(source) = self.inventory_at(world, above) {
+        if let Some(source) = self.loaded_inventory_at(world, above) {
             let mut items = self.inventory_items(world, &source);
             for slot in Self::slots_for_face(&source, items.len(), Some(Face::Down)) {
                 let Some(stack) = items[slot].0.clone() else { continue };
@@ -321,6 +332,7 @@ impl Server {
             return;
         }
         let Some(facing) = blocks::property(state, "facing").and_then(Face::parse) else { return };
+        self.unpack_loot(world, pos);
         let mut items = self.container_items(world, pos);
         // A random non-empty slot (reservoir sampling, as vanilla).
         let mut rng = rand::thread_rng();
@@ -340,7 +352,7 @@ impl Server {
         let stack = items[slot].0.clone().unwrap();
         let front = at(pos, facing);
         let rest = if name == "minecraft:dropper" {
-            match self.inventory_at(world, front) {
+            match self.loaded_inventory_at(world, front) {
                 Some(dest) => {
                     let left = self.insert_into(world, &dest, stack.with_count(1), Some(facing.opposite()));
                     if left.count == 0 {

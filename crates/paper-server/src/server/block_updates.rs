@@ -203,7 +203,7 @@ impl Server {
     }
 
     /// Sends a packet to the players of a world within `range` blocks of a block.
-    fn send_near<P: Packet + paper_protocol::codec::Encode>(&self, world: usize, pos: BlockPos, range: f64, except: Option<i32>, packet: &P) {
+    pub(super) fn send_near<P: Packet + paper_protocol::codec::Encode>(&self, world: usize, pos: BlockPos, range: f64, except: Option<i32>, packet: &P) {
         let payload = Bytes::from(encode_packet(packet));
         let (x, y, z) = (pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
         for player in self.players.values() {

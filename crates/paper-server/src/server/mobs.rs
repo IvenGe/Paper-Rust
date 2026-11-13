@@ -75,6 +75,8 @@ pub enum SpawnReason {
     Command,
     Plugin,
     Egg,
+    /// A mob spawner block.
+    Spawner,
 }
 
 // --- light and sky ---------------------------------------------------------------------------

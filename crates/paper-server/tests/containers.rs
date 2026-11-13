@@ -283,3 +283,56 @@ fn furnaces_smelt_with_fuel_over_time() {
     assert_eq!(held, Some(1));
     server.stop();
 }
+
+/// Gives the chest at `pos` a loot table (as world generation does for dungeon chests).
+fn set_loot_table(s: &mut paper_server::server::Server, pos: BlockPos, table: &str, seed: i64) {
+    let chunk = paper_server::world::chunk::ChunkPos::of_block(pos.x, pos.z);
+    let nbt = paper_nbt::Compound::new()
+        .with("id", paper_nbt::Tag::String("minecraft:chest".into()))
+        .with("LootTable", paper_nbt::Tag::String(table.into()))
+        .with("LootTableSeed", paper_nbt::Tag::Long(seed));
+    s.worlds[0].chunks.get_mut(&chunk).unwrap().block_entities.insert((pos.y, (pos.z & 15) as u8, (pos.x & 15) as u8), nbt);
+}
+
+#[test]
+fn loot_chests_fill_when_opened_and_drop_their_loot_when_broken() {
+    if paper_server::vanilla::test_jar().is_none() {
+        eprintln!("skipping: no vanilla jar");
+        return;
+    }
+    let server = start_server(|c| c.properties.gamemode = paper_server::config::GameMode::Survival);
+    let mut alice = join(&server, "Alice");
+    let (opened, broken) = (BlockPos::new(10, -60, 8), BlockPos::new(10, -60, 5));
+    server
+        .handle
+        .run(move |s| {
+            let chest = blocks::default_state("minecraft:chest").unwrap();
+            for pos in [opened, broken] {
+                s.set_block_and_update(0, pos, chest);
+                set_loot_table(s, pos, "minecraft:chests/simple_dungeon", 12345);
+            }
+        })
+        .unwrap();
+
+    // Opening rolls the dungeon loot into the chest, once.
+    alice.send(&use_on(opened, 1, 1));
+    alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("the chest opens");
+    let (table_gone, filled) = server
+        .handle
+        .run(move |s| {
+            let table_gone = s.block_entity_data(0, opened).is_some_and(|n| n.get("LootTable").is_none());
+            (table_gone, s.container_items(0, opened).iter().filter(|i| !i.is_empty()).count())
+        })
+        .unwrap();
+    assert!(table_gone, "the loot table is used up");
+    assert!(filled >= 2, "the dungeon loot is in the chest: {filled} stacks");
+
+    // Breaking a chest nobody opened drops its loot.
+    server.handle.run(move |s| s.set_block_and_update(0, broken, blocks::AIR)).unwrap();
+    let dropped = server
+        .handle
+        .run(|s| s.worlds[0].entities.values().filter(|e| matches!(e.kind, paper_server::world::entity::EntityKind::Item { .. })).count())
+        .unwrap();
+    assert!(dropped >= 2, "loot dropped: {dropped}");
+    server.stop();
+}

@@ -419,6 +419,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             };
             let pos = BlockPos::new(args.i32("x").unwrap_or(0), args.i32("y").unwrap_or(0), args.i32("z").unwrap_or(0));
             let Some((kind, positions)) = server.container_positions(world, pos) else { return Ok(Value::Null) };
+            // Plugins see a loot chest filled, as in Paper.
+            for p in &positions {
+                server.unpack_loot(world, *p);
+            }
             use crate::server::containers::ContainerBlock;
             let block = server.worlds[world].block_at(pos.x, pos.y, pos.z).map(|s| paper_data::blocks::block_of_state(s).name).unwrap_or("");
             let (ty, size) = match kind {

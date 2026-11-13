@@ -39,6 +39,49 @@ pub enum MenuKind {
     Custom { id: u64 },
 }
 
+/// Vanilla's `LootTable.fill`: the loot goes into random empty slots, with stacks split up
+/// to spread over the free space. A non-zero `seed` makes the result repeatable.
+pub fn fill_with_loot(loot: &super::loot::LootTables, table: &str, seed: i64, items: &mut [Slot]) {
+    use rand::seq::SliceRandom;
+    use rand::{Rng, SeedableRng};
+    let mut rng = if seed == 0 { rand::rngs::StdRng::from_entropy() } else { rand::rngs::StdRng::seed_from_u64(seed as u64) };
+    let mut stacks: Vec<Slot> = loot.roll_with(table, &super::loot::LootContext::default(), &mut rng);
+    let mut free: Vec<usize> = (0..items.len()).filter(|i| items[*i].is_empty()).collect();
+    free.shuffle(&mut rng);
+    // `shuffleAndSplitItems`.
+    let mut splittable: Vec<Slot> = Vec::new();
+    stacks.retain(|s| match &s.0 {
+        None => false,
+        Some(st) if st.count > 1 => {
+            splittable.push(s.clone());
+            false
+        }
+        Some(_) => true,
+    });
+    while free.len() as i64 - stacks.len() as i64 - splittable.len() as i64 > 0 && !splittable.is_empty() {
+        let mut a = splittable.remove(rng.gen_range(0..splittable.len())).0.unwrap();
+        let n = rng.gen_range(1..=(a.count / 2).max(1));
+        let b = a.with_count(n);
+        a.count -= n;
+        for part in [a, b] {
+            if part.count > 1 && rng.gen::<bool>() {
+                splittable.push(Slot(Some(part)));
+            } else {
+                stacks.push(Slot(Some(part)));
+            }
+        }
+    }
+    stacks.extend(splittable);
+    stacks.shuffle(&mut rng);
+    for stack in stacks {
+        let Some(slot) = free.pop() else {
+            log::warn!("Loot table {table} has more items than the container has room for");
+            return;
+        };
+        items[slot] = stack;
+    }
+}
+
 /// Which container a block is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContainerBlock {
@@ -149,7 +192,21 @@ impl Server {
         self.publish_block_updates(world);
     }
 
-    fn block_entity_data(&self, world: usize, pos: BlockPos) -> Option<&Compound> {
+    /// Rolls a container's loot table (generated dungeon chests, ...) into its slots, as
+    /// vanilla does the first time it is opened, reached by a hopper or broken.
+    pub fn unpack_loot(&mut self, world: usize, pos: BlockPos) {
+        let (chunk, key) = Self::block_entity_key(pos);
+        let Some(nbt) = self.worlds[world].chunks.get_mut(&chunk).and_then(|c| c.block_entities.get_mut(&key)) else { return };
+        let Some(table) = nbt.string("LootTable").map(str::to_owned) else { return };
+        let seed = nbt.i64("LootTableSeed").unwrap_or(0);
+        nbt.remove("LootTable");
+        nbt.remove("LootTableSeed");
+        let mut items = self.container_items(world, pos);
+        fill_with_loot(&self.loot, &table, seed, &mut items);
+        self.set_container_items(world, pos, &items);
+    }
+
+    pub fn block_entity_data(&self, world: usize, pos: BlockPos) -> Option<&Compound> {
         let (chunk, key) = Self::block_entity_key(pos);
         self.worlds[world].chunks.get(&chunk)?.block_entities.get(&key)
     }
@@ -184,6 +241,14 @@ impl Server {
                 if !stack.is_empty() {
                     self.pop_resource(world, pos, stack);
                 }
+            }
+        }
+        // A loot chest broken before anyone opened it drops its loot.
+        if let Some(table) = nbt.string("LootTable") {
+            let mut items = vec![Slot::EMPTY; storage_size(old).max(1)];
+            fill_with_loot(&self.loot, table, nbt.i64("LootTableSeed").unwrap_or(0), &mut items);
+            for stack in items.into_iter().filter(|s| !s.is_empty()) {
+                self.pop_resource(world, pos, stack);
             }
         }
         // The other half of a double chest becomes a single chest.
@@ -308,6 +373,11 @@ impl Server {
             }
         };
         let title = custom_name.unwrap_or_else(|| Component::translatable(title, vec![]));
+        if let MenuKind::Container { positions, .. } = &menu_kind {
+            for p in positions.clone() {
+                self.unpack_loot(world, p);
+            }
+        }
         if !self.open_menu(id, menu_kind, menu_name, title) {
             return true;
         }

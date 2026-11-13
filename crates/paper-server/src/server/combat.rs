@@ -308,6 +308,19 @@ impl Server {
                     return false;
                 }
             }
+            // End crystals break at any hit, and blow up unless an explosion broke them
+            // (`EndCrystal.hurtServer`).
+            EntityKind::Other if e.info.name == "minecraft:end_crystal" => {
+                if e.removed {
+                    return false;
+                }
+                let pos = e.pos;
+                self.worlds[world].entities.get_mut(&id).unwrap().removed = true;
+                if !damage.is("is_explosion") {
+                    self.explode(world, pos, 6.0, true, None);
+                }
+                return true;
+            }
             _ => return false,
         }
         if damage.is("is_fire") && e.info.fire_immune && !damage.is("bypasses_invulnerability") {
