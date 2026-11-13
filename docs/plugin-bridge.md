@@ -126,7 +126,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.quit` | `uuid`, `reason`, `message` | `message` (`PlayerQuitEvent`) |
 | `event.inventory_open` | `uuid`, `inventory` (window) | `cancelled` (`InventoryOpenEvent`) |
 | `event.inventory_click` | `uuid`, `inventory` (window), `slot`, `button`, `mode`, `cursor`, `held_slot`; `craft` (the result) for a crafting result; `drag_slots`, `drag_kind` when a drag ends | `cancelled` (`InventoryClickEvent`, `CraftItemEvent`, `InventoryDragEvent`); the click then works on the slots as listeners left them |
-| `event.inventory_close` | `uuid`, `inventory` (window), `reason` (`PLAYER`, `OPEN_NEW`, `PLUGIN`, `DISCONNECT`, ...) | (`InventoryCloseEvent`) |
+| `event.inventory_close` | `uuid`, `inventory` (window), `reason` (`PLAYER`, `OPEN_NEW`, `PLUGIN`, `DISCONNECT`, ...) | (`InventoryCloseEvent`; a window a listener opens from it stays open, and the event does not fire again for that) |
 | `event.pickup_item` | `uuid`, `item_entity`, `item`, `remaining` | `cancelled` (`PlayerAttemptPickupItemEvent`, `PlayerPickupItemEvent`, `EntityPickupItemEvent`) |
 | `event.drop_item` | `uuid`, `item_entity` (already spawned), `item` | `cancelled` (`PlayerDropItemEvent`; the item goes back to the player) |
 | `event.entity_damage` | `target`, `cause` (damage type), `amount`, `attacker`, `direct` (the projectile), `source_position`; also `attacker_player` / `attacker_entity` | `cancelled`, `amount` (`EntityDamageEvent`, `EntityDamageByEntityEvent`, `EntityDamageByBlockEvent`) |

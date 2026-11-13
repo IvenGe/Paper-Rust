@@ -131,9 +131,10 @@ Not yet:
   potion effects and attributes, statistics, entity AI and passengers, the data component API
   for components without plain values, most special item metas (skulls, potions, books,
   banners, ...), inventories of other block types and anvils, enchanting or merchant views,
-  stat-based scoreboard criteria, and vanilla-format item serialization (`ItemStack.serialize`
-  uses Paper-RS's own form). Entities are not saved with chunks yet, so their persistent data
-  lives only in the plugin host.
+  stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the
+  `/scoreboard` and `/team` commands, and vanilla-format item serialization
+  (`ItemStack.serialize` uses Paper-RS's own form). Entities are not saved with chunks yet,
+  so their persistent data lives only in the plugin host.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them.
 
