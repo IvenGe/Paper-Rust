@@ -118,11 +118,11 @@ Not yet:
 
 * Vanilla world generation: the Nether and the End use simple stand-in terrain (a netherrack
   cavern over a lava sea; the main End island with an open exit portal, no dragon fight, no
-  outer islands or end cities). Mobs other than these basic kinds lack their special
-  behaviour,
-  status effects, breeding, villagers and trading, beds, enchanting and anvils are missing.
-  Pressure plates, tripwires, dispensers, droppers and hoppers do not react yet, and
-  pistons do not push entities.
+  outer islands or end cities).
+* Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
+  trading, breeding); status effects, beds, enchanting and anvils are missing. Pressure
+  plates, tripwires, dispensers, droppers and hoppers do not react yet, and pistons do not
+  push entities.
 * Plugin API: item stacks and inventories, offline players, entities other than players,
   block data, scoreboards, boss bars, creating worlds, registry and tag lifecycle events,
   `/reload`.
