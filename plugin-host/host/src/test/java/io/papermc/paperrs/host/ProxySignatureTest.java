@@ -106,6 +106,18 @@ class ProxySignatureTest {
     }
 
     @Test
+    void everyEntityInterfaceMakesAProxy() {
+        // Entities are proxies of their type's interface; that must work for every type.
+        for (org.bukkit.entity.EntityType type : org.bukkit.entity.EntityType.values()) {
+            final Class<?> iface = type.getEntityClass();
+            if (iface != null && iface.isInterface()) {
+                final Object proxy = Proxy.newProxyInstance(HostProxies.class.getClassLoader(), new Class<?>[] {iface}, (p, m, a) -> null);
+                assertTrue(iface.isInstance(proxy), iface.getName());
+            }
+        }
+    }
+
+    @Test
     void everyMetaKindMakesAProxy() {
         // Proxy creation fails if two interfaces declare a method with incompatible returns.
         for (Class<?> kind : MetaKinds.class.getDeclaredClasses()) {

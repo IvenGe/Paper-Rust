@@ -379,9 +379,17 @@ public final class HostItemStack extends ItemStack {
         return this.components.has(type.getKey().toString());
     }
 
+    /** The components this stack sets (its item's defaults are not known to the host yet). */
     @Override
     public Set<DataComponentType> getDataTypes() {
-        throw Unsupported.method("ItemStack#getDataTypes");
+        final Set<DataComponentType> out = new java.util.LinkedHashSet<>();
+        for (String type : this.components.addedTypes()) {
+            final DataComponentType component = Registry.DATA_COMPONENT_TYPE.get(NamespacedKey.fromString(type));
+            if (component != null) {
+                out.add(component);
+            }
+        }
+        return out;
     }
 
     @Override

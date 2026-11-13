@@ -350,9 +350,16 @@ pub fn on_inventory_close(server: &mut Server, id: i32, reason: &str) {
     if server.plugins.is_none() || !server.plugin_events.contains("InventoryCloseEvent") {
         return;
     }
-    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return };
-    let args = bmap! { "uuid" => uuid, "inventory" => super::inventory::window_value(server, id), "reason" => reason };
-    fire(server, "InventoryCloseEvent", "event.inventory_close", args);
+    // A listener that opens a window from the close event must not close it again (Bukkit
+    // would recurse here).
+    if !server.plugin_data.closing.insert(id) {
+        return;
+    }
+    if let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) {
+        let args = bmap! { "uuid" => uuid, "inventory" => super::inventory::window_value(server, id), "reason" => reason };
+        fire(server, "InventoryCloseEvent", "event.inventory_close", args);
+    }
+    server.plugin_data.closing.remove(&id);
 }
 
 /// InventoryClickEvent, InventoryDragEvent for drags, or CraftItemEvent when the click takes

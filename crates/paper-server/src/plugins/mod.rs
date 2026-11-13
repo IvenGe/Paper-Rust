@@ -57,6 +57,8 @@ pub struct PluginData {
     pub launcher: Option<Arc<Launcher>>,
     /// The current host was started by `/reload`: it loads with the players already online.
     pub reloading: bool,
+    /// Players whose `InventoryCloseEvent` is being fired.
+    pub closing: HashSet<i32>,
 }
 
 /// A loaded plugin, as reported by the host.

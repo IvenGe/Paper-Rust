@@ -36,6 +36,8 @@ struct Seen {
     inventory_events: Mutex<Vec<(String, Value)>>,
     /// Results of API calls made from `/api ...` commands.
     results: Mutex<HashMap<String, Value>>,
+    /// Open the custom menu again when it is closed (once).
+    reopen: std::sync::atomic::AtomicBool,
 }
 
 struct FakeHost {
@@ -156,6 +158,13 @@ impl FakeHost {
             "command.visible" => bmap! { "labels" => Value::List(vec!["hello".into(), "fakeplugin:hello".into(), "crash".into(), "api".into()]) },
             "event.inventory_open" | "event.inventory_close" => {
                 self.seen.inventory_events.lock().unwrap().push((method.to_owned(), args.clone()));
+                // A "you cannot close this" menu: opened again from its close event.
+                let top = args.get("inventory").get("top").clone();
+                if method == "event.inventory_close" && top.str("kind") == Some("custom") && self.seen.reopen.swap(false, Ordering::Relaxed) {
+                    let uuid = args.str("uuid").unwrap().to_owned();
+                    let reopened = self.call("player.open_inventory", bmap! { "uuid" => uuid, "inventory" => top });
+                    assert_eq!(reopened.bool("opened"), Some(true));
+                }
                 Value::Null
             }
             "event.inventory_click" => {
@@ -497,6 +506,23 @@ fn plugin_api_inventories_scoreboards_entities_offline_players_and_reload() {
         assert_eq!(click.get("inventory").get("top").str("kind"), Some("custom"));
         assert_eq!(events[2].1.str("reason"), Some("PLAYER"));
     }
+
+    // A plugin that opens the menu again from its close event keeps it open (no recursion,
+    // and the new window is not closed with the old one).
+    alice.clear_backlog();
+    alice.command("api menu");
+    let open: play::OpenScreen = alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("menu opened again");
+    alice.drain(QUIET);
+    seen.reopen.store(true, Ordering::Relaxed);
+    alice.clear_backlog();
+    alice.send(&play::ServerboundContainerClose { window_id: VarInt(open.window_id.0) });
+    let reopened: play::OpenScreen = alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("reopened from the close event");
+    assert_ne!(reopened.window_id.0, open.window_id.0);
+    alice.drain(QUIET);
+    let open_window = server.handle.run(|s| s.player_by_name("Alice").unwrap().open_menu.as_ref().map(|m| m.window_id)).unwrap();
+    assert_eq!(open_window, Some(reopened.window_id.0), "the reopened window stays open");
+    alice.send(&play::ServerboundContainerClose { window_id: VarInt(reopened.window_id.0) });
+    alice.drain(QUIET);
 
     // Taking a crafting result is a CraftItemEvent (when the game data has recipes); a drag is
     // one InventoryDragEvent when it ends.

@@ -617,3 +617,45 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         other => bail!("unknown plugin API method {other}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use paper_protocol::codec::WriteExt;
+    use paper_protocol::types::ItemStack;
+
+    fn component(name: &str) -> i32 {
+        paper_data::registries::id("minecraft:data_component_type", name).unwrap() as i32
+    }
+
+    fn sample() -> Slot {
+        let mut stack = ItemStack::new(items::id("minecraft:diamond_sword").unwrap() as i32, 1);
+        let mut name = Vec::new();
+        name.put_component(&Component::text("Excalibur").color("gold"));
+        stack.added.push((component("minecraft:custom_name"), name));
+        // A component the plugin host does not understand, kept as bytes.
+        stack.added.push((component("minecraft:food"), vec![4, 0, 0, 0, 0, 1]));
+        stack.added.sort_by_key(|(t, _)| *t);
+        stack.removed.push(component("minecraft:attribute_modifiers"));
+        Slot(Some(stack))
+    }
+
+    #[test]
+    fn items_round_trip_through_the_host_form() {
+        let slot = sample();
+        let value = item_value(&slot);
+        assert!(value.str("name").is_some_and(|n| n.contains("Excalibur")), "{value:?}");
+        assert_eq!(slot_from(&value).unwrap(), slot, "unchanged stacks keep their exact bytes");
+    }
+
+    #[test]
+    fn a_changed_name_replaces_the_bytes() {
+        let mut value = item_value(&sample());
+        value.set("name", Value::Str(Component::text("Durendal").to_json_string()));
+        let stack = slot_from(&value).unwrap().0.unwrap();
+        let (_, bytes) = stack.added.iter().find(|(t, _)| *t == component("minecraft:custom_name")).unwrap();
+        assert_eq!(paper_protocol::codec::Reader::new(bytes).component().unwrap().to_plain(), "Durendal");
+        assert!(stack.added.iter().any(|(t, _)| *t == component("minecraft:food")), "other components stay");
+        assert!(stack.added.windows(2).all(|w| w[0].0 < w[1].0), "components stay in type order");
+    }
+}

@@ -334,8 +334,14 @@ impl Server {
     /// Closes the open window, firing `InventoryCloseEvent` with a Bukkit close `reason`
     /// (`OPEN_NEW` only fires it if another window was open).
     pub fn close_menu_with_reason(&mut self, id: i32, notify: bool, reason: &str) {
-        if reason != "OPEN_NEW" || self.players.get(&id).is_some_and(|p| p.open_menu.is_some()) {
+        let window = |s: &Self| s.players.get(&id).and_then(|p| p.open_menu.as_ref()).map(|m| m.window_id);
+        let before = window(self);
+        if reason != "OPEN_NEW" || before.is_some() {
             crate::plugins::events::on_inventory_close(self, id, reason);
+            // A listener opened another window instead (the one closing is gone already).
+            if before.is_some() && window(self) != before {
+                return;
+            }
         }
         let Some(player) = self.players.get_mut(&id) else { return };
         let Some(menu) = player.open_menu.take() else {
