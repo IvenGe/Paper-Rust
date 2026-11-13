@@ -148,7 +148,7 @@ impl Server {
     }
 
     /// What a block does right after a player placed it (`setPlacedBy`): a powered
-    /// repeater or comparator schedules its first tick.
+    /// repeater or comparator schedules its first tick, a powered piston extends.
     pub fn block_placed(&mut self, world: usize, pos: BlockPos, state: u32) {
         let Some(w) = self.worlds.get_mut(world) else { return };
         support::placed(&mut Level::new(w), state, pos);
@@ -156,9 +156,11 @@ impl Server {
     }
 
     /// HOOK for item drops: a block destroyed by block physics (washed away by water, lost
-    /// its support, the other half of a broken door, ...) drops its items here.
-    /// `block_entity` is its block entity data if it had one. Nothing drops until item
-    /// entities exist.
+    /// its support, the other half of a broken door, broken by a piston, ...) drops its
+    /// items here, like vanilla's `Block.dropResources`; the block's loot table decides what
+    /// (e.g. only the lower half of a door drops the door). `block_entity` is its block
+    /// entity data if it had one. Blocks broken by players do not come here. Nothing drops
+    /// until item entities exist.
     pub fn drop_block_items(&mut self, world: usize, pos: BlockPos, state: u32, block_entity: Option<Compound>) {
         let _ = (world, pos, state, block_entity);
     }
