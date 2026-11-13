@@ -264,7 +264,11 @@ impl Component {
     }
 
     pub fn from_nbt(tag: &Tag) -> Self {
-        Component(nbt_to_json(tag, None))
+        match tag {
+            // Bare text travels as a string tag; restore the object form `text()` builds.
+            Tag::String(s) => Component::text(s.clone()),
+            other => Component(nbt_to_json(other, None)),
+        }
     }
 }
 
