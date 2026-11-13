@@ -12,6 +12,8 @@ use crate::density::{build_stack, prepare_all, SeededNoises, SeededStack};
 use crate::noise::DensityVolume;
 use crate::random::{LegacyRandom, PositionalRandom, Xoroshiro};
 use crate::router::{ChunkRouter, ClimateSampler, SurfaceEstimator};
+use crate::surface::terrain::{TerrainBuilder, TerrainNoises};
+use crate::surface::{RuleParser, SurfaceSystem};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
@@ -78,6 +80,7 @@ pub struct WorldGenerator {
     pub(crate) biome_source: BiomeSource,
     /// `BiomeManager`'s obfuscated seed for the fuzzy biome lookup.
     pub(crate) biome_zoom_seed: i64,
+    pub(crate) surface: SurfaceSystem,
 }
 
 impl WorldGenerator {
@@ -137,6 +140,47 @@ impl WorldGenerator {
         let biomes = Biomes::load(data)?;
         let biome_source = BiomeSource::from_json(generator.field("biome_source")?, data, &biomes)?;
 
+        let possible = biome_source.possible_biomes();
+        let mut rules = RuleParser::new(data, &biomes, base_random);
+        let rule_json = settings.get("material_rule").or_else(|| settings.get("surface_rule")).ok_or_else(|| anyhow!("noise settings without material_rule"))?;
+        let rule = rules.rule(rule_json)?;
+        let rule_noises = rules.noises.iter().map(|n| crate::density::stack::NoiseFactory::noise(&mut noises, n)).collect::<Result<Vec<_>>>()?;
+        let vein_stack = if rules.vein_functions.is_empty() { None } else { Some(build_stack(&rules.vein_functions, &mut noises)?) };
+        let eroded_badlands = biomes.id("minecraft:eroded_badlands").filter(|b| possible.contains(b));
+        let mut frozen_oceans = 0u128;
+        for name in ["minecraft:frozen_ocean", "minecraft:deep_frozen_ocean"] {
+            if let Some(b) = biomes.id(name).filter(|b| possible.contains(b)) {
+                frozen_oceans |= 1u128 << b;
+            }
+        }
+        let mut n = |id: &str| crate::density::stack::NoiseFactory::noise(&mut noises, id);
+        let terrain_builder = if eroded_badlands.is_some() || frozen_oceans != 0 || rules.uses_badlands {
+            Some(TerrainBuilder::new(
+                &base_random,
+                TerrainNoises {
+                    clay_bands_offset: n("minecraft:clay_bands_offset")?,
+                    badlands_pillar: n("minecraft:badlands_pillar")?,
+                    badlands_surface: n("minecraft:badlands_surface")?,
+                    badlands_pillar_roof: n("minecraft:badlands_pillar_roof")?,
+                    iceberg_pillar: n("minecraft:iceberg_pillar")?,
+                    iceberg_pillar_roof: n("minecraft:iceberg_pillar_roof")?,
+                    iceberg_surface: n("minecraft:iceberg_surface")?,
+                },
+            ))
+        } else {
+            None
+        };
+        let surface = SurfaceSystem {
+            rule,
+            noises: rule_noises,
+            surface_noise: n("minecraft:surface")?,
+            secondary_noise: n("minecraft:surface_secondary")?,
+            terrain: terrain_builder,
+            vein_stack,
+            eroded_badlands,
+            frozen_oceans,
+        };
+
         Ok(Self {
             dimension,
             seed,
@@ -162,6 +206,7 @@ impl WorldGenerator {
             biomes,
             biome_source,
             biome_zoom_seed: obfuscate_seed(seed),
+            surface,
         })
     }
 
@@ -203,6 +248,9 @@ impl WorldGenerator {
         self.generate_biomes(&mut chunk);
         if last >= Stage::Noise {
             self.generate_noise(&mut chunk, &mut estimator);
+        }
+        if last >= Stage::Surface {
+            crate::surface::build_surface(self, &self.surface, &mut chunk, &mut estimator);
         }
         chunk
     }

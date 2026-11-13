@@ -69,6 +69,35 @@ fn noise_end() {
     check(Dimension::End, 0, 7, 4, Stage::Noise, "noise_end_no_blend_no_beard_7_4", 0);
 }
 
+#[test]
+fn surface_overworld() {
+    check(Dimension::Overworld, 0, 0, 0, Stage::Surface, "no_blend_no_beard_surface_0_0", 0);
+    check(Dimension::Overworld, 0, -595, 544, Stage::Surface, "no_blend_no_beard_surface_badlands_-595_544", 0);
+    check(Dimension::Overworld, 0, -119, 183, Stage::Surface, "no_blend_no_beard_surface_frozen_ocean_-119_183", 0);
+    check(Dimension::Overworld, 13579, -2, 15, Stage::Surface, "no_blend_no_beard_surface_13579_-2_15", 0);
+}
+
+/// These reference dumps differ from vanilla's own stage hashes in a few blocks at chunk
+/// borders (biomes of neighbouring chunks); Pumpkin shows the same differences.
+#[test]
+fn surface_overworld_border_dumps() {
+    check(Dimension::Overworld, 0, 7, 4, Stage::Surface, "no_blend_no_beard_surface_7_4", 9);
+    check(Dimension::Overworld, 13579, -6, 11, Stage::Surface, "no_blend_no_beard_surface_13579_-6_11", 56);
+    check(Dimension::Overworld, 13579, -7, 9, Stage::Surface, "no_blend_no_beard_surface_13579_-7_9", 101);
+}
+
+#[test]
+fn surface_nether() {
+    check(Dimension::Nether, 0, 0, 0, Stage::Surface, "nether_surface_no_blend_no_beard_0_0", 0);
+    check(Dimension::Nether, 0, 7, 4, Stage::Surface, "nether_surface_no_blend_no_beard_7_4", 0);
+}
+
+#[test]
+fn surface_end() {
+    check(Dimension::End, 0, 0, 0, Stage::Surface, "end_surface_no_blend_no_beard_0_0", 0);
+    check(Dimension::End, 0, 7, 4, Stage::Surface, "end_surface_no_blend_no_beard_7_4", 0);
+}
+
 /// `[{x, z, data: [[quart x, quart y, quart z, biome network id], ...]}, ...]`
 fn biome_points(name: &str, dimension: Dimension, seed: i64) {
     let Some(g) = generator(dimension, seed) else { return };

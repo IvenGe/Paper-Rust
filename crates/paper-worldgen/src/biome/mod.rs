@@ -301,6 +301,20 @@ impl BiomeSource {
         })
     }
 
+    /// Every biome the source can produce.
+    pub fn possible_biomes(&self) -> Vec<u8> {
+        match self {
+            BiomeSource::MultiNoise(tree) => {
+                let mut v = tree.leaves.clone();
+                v.sort_unstable();
+                v.dedup();
+                v
+            }
+            BiomeSource::End { the_end, highlands, midlands, small_islands, barrens } => vec![*the_end, *highlands, *midlands, *small_islands, *barrens],
+            BiomeSource::Fixed(b) => vec![*b],
+        }
+    }
+
     /// The biome at a quart position.
     pub fn biome(&self, qx: i32, qy: i32, qz: i32, climate: &mut ClimateSampler) -> u8 {
         match self {

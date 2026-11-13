@@ -28,6 +28,7 @@ pub mod math;
 pub mod noise;
 pub mod random;
 pub mod router;
+pub mod surface;
 
 pub use chunk::{Heightmap, ProtoChunk};
 pub use data::DataSource;
