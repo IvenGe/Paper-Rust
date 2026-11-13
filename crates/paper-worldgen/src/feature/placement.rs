@@ -222,7 +222,7 @@ fn find_on_ground(w: &World, x: i32, top: i32, z: i32, target: i32) -> i32 {
     let mut found = 0;
     let mut current = w.get(Pos::new(x, top, z));
     let mut y = top;
-    while y >= w.min_y + 1 {
+    while y > w.min_y {
         let next = w.get(Pos::new(x, y - 1, z));
         if !empty(next) && empty(current) && !w.b.is_block(next, w.b.known.bedrock) {
             if found == target {

@@ -431,9 +431,7 @@ impl Place for BlockPile {
                     let p = Pos::new(x, y, z);
                     let dx = pos.x - x;
                     let dz = pos.z - z;
-                    if ((dx * dx + dz * dz) as f32) <= r.next_f32() * 10.0 - r.next_f32() * 6.0 {
-                        self.try_place(w, r, p);
-                    } else if (r.next_f32() as f64) < 0.031 {
+                    if ((dx * dx + dz * dz) as f32) <= r.next_f32() * 10.0 - r.next_f32() * 6.0 || (r.next_f32() as f64) < 0.031 {
                         self.try_place(w, r, p);
                     }
                 }

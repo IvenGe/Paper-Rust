@@ -1,4 +1,4 @@
-//! Times terrain generation (stages 1-4) and decoration.
+//! Times generator construction, terrain generation (stages 1-4) and decoration.
 //!
 //! `cargo run --release -p paper-worldgen --example bench [jar] [chunks per side]`
 
@@ -56,8 +56,23 @@ fn main() -> anyhow::Result<()> {
             }
         });
         let multi = t.elapsed();
+        // Decoration of the inner chunks of a grid (each with its neighbours), in order, as a
+        // world being generated would do it.
+        let mut grid = std::collections::HashMap::new();
+        for x in -1..=side {
+            for z in -1..=side {
+                grid.insert((x, z), g.generate_terrain(x, z));
+            }
+        }
+        let t = Instant::now();
+        for x in 0..side {
+            for z in 0..side {
+                g.decorate(x, z, &mut grid);
+            }
+        }
+        let decoration = t.elapsed() / (side * side) as u32;
         println!(
-            "{dim:?}: build {build:?}; terrain {single:?}/chunk single-threaded; {} chunks on {threads} threads in {multi:?} ({:?}/chunk)",
+            "{dim:?}: build {build:?}; terrain {single:?}/chunk single-threaded; {} chunks on {threads} threads in {multi:?} ({:?}/chunk); decoration {decoration:?}/chunk single-threaded",
             side * side,
             multi / (side * side) as u32
         );

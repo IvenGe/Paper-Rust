@@ -179,8 +179,8 @@ impl ProtoChunk {
             for lz in 0..16 {
                 let hm = (lx * 16 + lz) as usize;
                 let mut found = [false; 4];
-                for k in 0..4 {
-                    self.heights[k][hm] = empty;
+                for heights in self.heights.iter_mut().take(4) {
+                    heights[hm] = empty;
                 }
                 let mut y = self.min_y + self.height - 1;
                 while y >= self.min_y {
@@ -228,7 +228,7 @@ impl ProtoChunk {
 
     #[inline]
     fn biome_index(&self, qx: i32, qy: i32, qz: i32) -> usize {
-        ((((qy - (self.min_y >> 2)) as usize) << 4) | (((qz & 3) as usize) << 2) | (qx & 3) as usize) as usize
+        (((qy - (self.min_y >> 2)) as usize) << 4) | (((qz & 3) as usize) << 2) | (qx & 3) as usize
     }
 
     /// The biome at a quart (4x4x4 cell) position; y is clamped to the chunk.

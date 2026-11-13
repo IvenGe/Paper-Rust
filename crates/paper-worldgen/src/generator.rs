@@ -87,6 +87,12 @@ pub struct WorldGenerator {
     pub(crate) has_ceiling: bool,
 }
 
+// The generator is shared by worker threads.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<WorldGenerator>();
+};
+
 impl WorldGenerator {
     /// Builds the generator for `dimension` from the vanilla data in `data`.
     pub fn new(data: &dyn DataSource, dimension: Dimension, seed: i64) -> Result<Self> {

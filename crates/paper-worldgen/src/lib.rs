@@ -14,8 +14,14 @@
 //!   neighbouring chunks, so it works on a [`RegionAccess`] covering the 3x3 chunks around
 //!   the decorated one, all of which must have their terrain generated.
 //!
+//! [`WorldGenerator::find_spawn`] picks the initial world spawn the way vanilla does for a
+//! new world.
+//!
 //! The algorithms are ported from Pumpkin (https://github.com/Pumpkin-MC/Pumpkin, GPL-3.0),
 //! which reproduces vanilla's output; see the crate README. Structures are not generated.
+
+// File headers credit Pumpkin as "Pumpkin (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0".
+#![allow(rustdoc::bare_urls)]
 
 pub mod aquifer;
 pub mod biome;

@@ -94,9 +94,7 @@ impl Blocks {
         let mut thicknesses = Vec::new();
         if height >= 3 {
             thicknesses.push("base");
-            for _ in 0..height - 3 {
-                thicknesses.push("middle");
-            }
+            thicknesses.extend(std::iter::repeat_n("middle", (height - 3) as usize));
         }
         if height >= 2 {
             thicknesses.push("frustum");

@@ -221,7 +221,7 @@ impl RootSystem {
         for i in 1..=self.required_space {
             q = q.up();
             let s = w.get(q);
-            if !(w.b.is_air(s) || (i + 1 <= self.allowed_water && w.b.fluid(s).is_water())) {
+            if !(w.b.is_air(s) || (i < self.allowed_water && w.b.fluid(s).is_water())) {
                 return false;
             }
         }

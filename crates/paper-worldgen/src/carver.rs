@@ -328,6 +328,7 @@ fn canyon_tunnel(
 }
 
 impl Carver {
+    #[allow(clippy::too_many_arguments)]
     fn carve(&self, r: &mut LegacyRandom, cx: i32, cz: i32, origin_x: i32, origin_z: i32, mask: &mut Mask, ctx: &GenContext) {
         match &self.kind {
             CarverKind::Cave {

@@ -47,7 +47,8 @@ pub fn jar() -> Option<&'static JarSource> {
 
 /// A generator for the given dimension and seed, cached per test binary.
 pub fn generator(dimension: Dimension, seed: i64) -> Option<&'static WorldGenerator> {
-    static CACHE: OnceLock<Mutex<Vec<(Dimension, i64, &'static WorldGenerator)>>> = OnceLock::new();
+    type Cache = Mutex<Vec<(Dimension, i64, &'static WorldGenerator)>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
     let jar = jar()?;
     let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
     let mut cache = cache.lock().unwrap();
@@ -72,7 +73,7 @@ fn gunzip(name: &str) -> Vec<u8> {
 
 /// A block dump: states indexed `(x * height + y) * 16 + z`.
 pub fn chunk_dump(name: &str) -> Vec<u16> {
-    gunzip(&format!("{name}.u16.gz")).chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
+    gunzip(&format!("{name}.u16.gz")).as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect()
 }
 
 pub fn json_fixture(name: &str) -> serde_json::Value {

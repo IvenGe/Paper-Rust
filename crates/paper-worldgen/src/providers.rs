@@ -294,7 +294,7 @@ impl HeightProvider {
             }
             HeightProvider::BiasedToBottom(lo, hi, inner) => {
                 let (i, j) = (lo.resolve(ctx), hi.resolve(ctx));
-                if j - i - inner + 1 <= 0 {
+                if j - i - inner < 0 {
                     return i;
                 }
                 let k = r.next_bounded(j - i - inner + 1);
@@ -302,7 +302,7 @@ impl HeightProvider {
             }
             HeightProvider::VeryBiasedToBottom(lo, hi, inner) => {
                 let (i, j) = (lo.resolve(ctx), hi.resolve(ctx));
-                if j - i - inner + 1 <= 0 {
+                if j - i - inner < 0 {
                     return i;
                 }
                 let k = mth_next_int(r, i + inner, j);

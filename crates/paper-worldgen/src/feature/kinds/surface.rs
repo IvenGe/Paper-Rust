@@ -125,10 +125,9 @@ impl Place for BlueIce {
             let dz = r.next_bounded(xz) - r.next_bounded(xz);
             let p = origin.add(dx, y_off, dz);
             let s = w.get(p);
-            if w.b.is_air(s) || w.b.is_block(s, water) || w.b.is_block(s, packed_ice) || w.b.is_block(s, ice) {
-                if Dir::ALL.iter().any(|&d| w.b.is_block(w.get(p.rel(d)), blue_ice)) {
-                    w.set(p, blue_ice);
-                }
+            let open = w.b.is_air(s) || w.b.is_block(s, water) || w.b.is_block(s, packed_ice) || w.b.is_block(s, ice);
+            if open && Dir::ALL.iter().any(|&d| w.b.is_block(w.get(p.rel(d)), blue_ice)) {
+                w.set(p, blue_ice);
             }
         }
         true

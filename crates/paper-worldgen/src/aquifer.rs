@@ -187,6 +187,7 @@ impl Aquifer {
         1.0 - ((b - a).abs() as f32) / 25.0
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pressure(&self, barrier: &mut Option<f32>, router: &mut ChunkRouter, x: i32, y: i32, z: i32, l1: &FluidLevel, l2: &FluidLevel) -> f32 {
         let s1 = l1.at(y);
         let s2 = l2.at(y);

@@ -185,9 +185,7 @@ impl Place for EndGateway {
                         w.add_block_entity(p, BlockEntity::EndGateway { exit: self.exit, exact: self.exact });
                     } else if same_y {
                         w.set(p, air);
-                    } else if edge_y && same_x && same_z {
-                        w.set(p, bedrock);
-                    } else if (same_x || same_z) && !edge_y {
+                    } else if (edge_y && same_x && same_z) || ((same_x || same_z) && !edge_y) {
                         w.set(p, bedrock);
                     } else {
                         w.set(p, air);

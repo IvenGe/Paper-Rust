@@ -381,13 +381,16 @@ pub fn fuzzy_quart(seed: i64, x: i32, y: i32, z: i32, min_y: i32, height: i32) -
     FuzzyZoom::new(seed, min_y, height).quart(x, y, z)
 }
 
+/// A cell's quart position and the fiddled offsets of its eight corners.
+type CachedCorners = ((i32, i32, i32), [[f64; 3]; 8]);
+
 /// The fuzzy lookup with the corner offsets of the last cell kept (columns are scanned
 /// top-down, so consecutive blocks mostly share a cell or its upper neighbour).
 pub struct FuzzyZoom {
     seed: i64,
     min_y: i32,
     height: i32,
-    last: Option<((i32, i32, i32), [[f64; 3]; 8])>,
+    last: Option<CachedCorners>,
 }
 
 impl FuzzyZoom {
