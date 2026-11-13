@@ -1,0 +1,18 @@
+[package]
+name = "paper-worldgen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Vanilla Minecraft 26.3 world generation (terrain, biomes, surface, carvers, features) for paper-rs"
+
+[dependencies]
+paper-data.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+md-5.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+zip.workspace = true

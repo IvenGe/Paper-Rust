@@ -20,6 +20,8 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `entities.json` | entity types: size, eye height, category, attributes, health, experience, spawn rules, sounds |
 | `entity_data.json` | the entity metadata layout (field index and serializer) of each entity type |
 | `game_rules.json` | game rules with their defaults (and bounds for integer rules) |
+| `worldgen/multi_noise_biome_tree.json.gz` | the multi-noise biome parameter R-trees of the `overworld` and `nether` presets (embedded by `paper-worldgen`) |
+| `worldgen/block_physics.bin.gz` | per block state: physical flags and sturdy faces that world generation features test (embedded by `paper-worldgen`) |
 
 ## Provenance
 
@@ -48,6 +50,23 @@ exact inputs, the method and the full list of checks
   against the `minecraft:game_rule` registry. The same licence note applies.
 * Synchronised registry entries, tags and dimension types are read from the
   `data/minecraft/**` files inside the jar.
+* `worldgen/multi_noise_biome_tree.json.gz` is `assets/multi_noise_biome_tree.json` of
+  [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) at commit e9dc12e9, gzipped
+  (uncompressed SHA-256 `a2e45033…c8a595`). Vanilla builds these trees in code
+  (`OverworldBiomeBuilder`, the nether preset), not from data; Pumpkin extracted them from
+  26.3 in vanilla's own R-tree layout, so searching them visits leaves in vanilla's order.
+  Pumpkin's `assets/NOTICE.md` treats data extracted from Minecraft as Mojang's, not covered
+  by Pumpkin's licence.
+* `worldgen/block_physics.bin.gz` holds, for every block state id in order, the
+  `state_flags` (u16, little endian: air, burnable, tool required, sided transparency,
+  replaceable, liquid, legacy solid, full cube, solid block, random ticks, solid render, can
+  occlude, analog output) and `side_flags` (u8: sturdy down/up/north/south/west/east, center
+  sturdy down/up) of `assets/blocks.json` of
+  [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) at commit e9dc12e9, gzipped.
+  Vanilla computes these from block shapes in code. Rebuild it with
+  `python3 -I crates/paper-worldgen/scripts/block_physics.py <pumpkin>/assets/blocks.json
+  data/26.3/blocks.json data/26.3/worldgen/block_physics.bin.gz`, which also checks that every
+  state id belongs to the same block in both files.
 
 Every registry was checked for an identical name set against mcmeta, and every
 order that an independent source covers (packets, block states, 22 registries)
