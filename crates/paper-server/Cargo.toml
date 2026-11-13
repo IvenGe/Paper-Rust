@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "The paper-rs Minecraft server"
 
 [lib]
@@ -41,3 +42,4 @@ tokio.workspace = true
 toml.workspace = true
 ureq.workspace = true
 uuid.workspace = true
+zip.workspace = true

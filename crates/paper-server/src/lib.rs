@@ -9,6 +9,7 @@ pub mod logging;
 pub mod net;
 pub mod plugins;
 pub mod server;
+pub mod vanilla;
 pub mod world;
 
 use anyhow::{Context, Result};

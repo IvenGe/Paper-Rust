@@ -273,6 +273,19 @@ pub fn on_chat(server: &mut Server, id: i32, message: &str, default: Component) 
     true
 }
 
+/// A player is about to pick up an item entity. Returns whether the pickup may happen.
+pub fn on_pickup_item(server: &mut Server, player: i32, _world: usize, item: i32, stack: &paper_protocol::types::ItemStack) -> bool {
+    if !server.plugin_events.contains("EntityPickupItemEvent") && !server.plugin_events.contains("PlayerAttemptPickupItemEvent") {
+        return true;
+    }
+    let Some(uuid) = server.players.get(&player).map(|p| p.uuid().to_string()) else { return true };
+    let args = bmap! { "uuid" => uuid, "item_entity" => item, "item" => super::api::item_value(&paper_protocol::types::Slot(Some(stack.clone()))) };
+    match fire(server, "", "event.pickup_item", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
 /// Applies a plugin list / command list / event subscription update from the host.
 pub fn apply_plugin_list(server: &mut Server, value: &Value) {
     if let Some(plugins) = value.list("plugins") {

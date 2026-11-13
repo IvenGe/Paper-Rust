@@ -370,11 +370,16 @@ pub struct WorldConfig {
     pub generator: String,
     /// Ticks between automatic world saves (0 disables autosave).
     pub autosave_interval_ticks: u64,
+    /// Mojang's server jar, read for game data (loot tables, recipes, world generation).
+    /// Empty: use `cache/`, downloading it from Mojang if needed.
+    pub vanilla_jar: String,
+    /// Allow downloading the server jar from Mojang when it is not present.
+    pub download_vanilla_jar: bool,
 }
 
 impl Default for WorldConfig {
     fn default() -> Self {
-        Self { generator: "auto".into(), autosave_interval_ticks: 6000 }
+        Self { generator: "auto".into(), autosave_interval_ticks: 6000, vanilla_jar: String::new(), download_vanilla_jar: true }
     }
 }
 
@@ -483,6 +488,11 @@ impl Config {
         paper.plugins.enabled = false;
         paper.threads.io = 2;
         paper.threads.workers = 2;
+        // Tests never download: they use a local jar when one is available.
+        paper.world.download_vanilla_jar = false;
+        if let Some(jar) = crate::vanilla::test_jar() {
+            paper.world.vanilla_jar = jar.display().to_string();
+        }
         Self { root: root.to_path_buf(), properties: ServerProperties::from_map(raw), paper }
     }
 

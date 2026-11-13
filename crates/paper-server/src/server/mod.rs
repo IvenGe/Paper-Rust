@@ -15,6 +15,10 @@ mod chat;
 pub mod commands;
 mod handlers;
 mod join;
+mod combat;
+pub mod entities;
+pub mod loot;
+mod mobs;
 pub mod player;
 mod playerdata;
 mod view;
@@ -151,6 +155,9 @@ pub struct Server {
     workers: WorkerContext,
     /// Writes world data in the background; `None` when worlds are kept in memory only.
     io: Option<ChunkIo>,
+    /// Vanilla's data files (loot tables, recipes, ...), when the server jar is available.
+    pub vanilla: Option<Arc<crate::vanilla::VanillaData>>,
+    pub loot: loot::LootTables,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
 }
@@ -235,6 +242,17 @@ impl Server {
             compression_level: config.paper.network.compression_level,
         };
 
+        let vanilla = match crate::vanilla::VanillaData::locate(&config.paper.world.vanilla_jar, &config.root, config.paper.world.download_vanilla_jar) {
+            Ok(data) => {
+                log::info!("Using game data from {}", data.path().display());
+                Some(data)
+            }
+            Err(e) => {
+                log::warn!("Vanilla game data is unavailable ({e:#}): blocks drop themselves, and recipes and mob drops are missing");
+                None
+            }
+        };
+
         // Worlds are saved under the server directory; tests without one keep them in memory.
         let io = if config.root.as_os_str().is_empty() { None } else { Some(ChunkIo::start()) };
         let storage = match &io {
@@ -288,6 +306,8 @@ impl Server {
             plugin_state_cache: HashMap::new(),
             workers,
             io,
+            loot: loot::LootTables::new(vanilla.clone()),
+            vanilla,
             tasks,
             status_dirty: true,
         };
@@ -372,6 +392,8 @@ impl Server {
 
         self.tick_keep_alive();
         self.tick_chunk_views();
+        self.tick_players();
+        self.tick_entities();
         self.tick_tracker();
 
         if self.tick % 100 == 0 {

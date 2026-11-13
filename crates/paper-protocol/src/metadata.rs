@@ -102,6 +102,75 @@ impl Metadata {
         m
     }
 
+    pub fn long(self, index: u8, value: i64) -> Self {
+        let mut m = self.entry(index, "long");
+        m.0.put_varlong(value);
+        m
+    }
+
+    pub fn string(self, index: u8, value: &str) -> Self {
+        let mut m = self.entry(index, "string");
+        m.0.put_string(value);
+        m
+    }
+
+    pub fn component(self, index: u8, value: &Component) -> Self {
+        let mut m = self.entry(index, "component");
+        m.0.put_component(value);
+        m
+    }
+
+    pub fn item_stack(self, index: u8, value: &crate::types::Slot) -> Self {
+        let mut m = self.entry(index, "item_stack");
+        value.encode_trusted(&mut m.0);
+        m
+    }
+
+    pub fn block_state(self, index: u8, state: i32) -> Self {
+        let mut m = self.entry(index, "block_state");
+        m.0.put_varint(state);
+        m
+    }
+
+    pub fn optional_block_state(self, index: u8, state: Option<i32>) -> Self {
+        let mut m = self.entry(index, "optional_block_state");
+        m.0.put_varint(state.unwrap_or(0));
+        m
+    }
+
+    pub fn block_pos(self, index: u8, pos: crate::codec::BlockPos) -> Self {
+        let mut m = self.entry(index, "block_pos");
+        crate::codec::Encode::encode(&pos, &mut m.0);
+        m
+    }
+
+    pub fn optional_block_pos(self, index: u8, pos: Option<crate::codec::BlockPos>) -> Self {
+        let mut m = self.entry(index, "optional_block_pos");
+        m.0.put_option(pos.as_ref(), |w, p| crate::codec::Encode::encode(p, w));
+        m
+    }
+
+    /// 0 down, 1 up, 2 north, 3 south, 4 west, 5 east.
+    pub fn direction(self, index: u8, direction: i32) -> Self {
+        let mut m = self.entry(index, "direction");
+        m.0.put_varint(direction);
+        m
+    }
+
+    pub fn optional_unsigned_int(self, index: u8, value: Option<u32>) -> Self {
+        let mut m = self.entry(index, "optional_unsigned_int");
+        m.0.put_varint(value.map_or(0, |v| v as i32 + 1));
+        m
+    }
+
+    pub fn rotations(self, index: u8, x: f32, y: f32, z: f32) -> Self {
+        let mut m = self.entry(index, "rotations");
+        m.0.put_f32(x);
+        m.0.put_f32(y);
+        m.0.put_f32(z);
+        m
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

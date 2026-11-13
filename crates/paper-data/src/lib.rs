@@ -302,6 +302,9 @@ pub mod synced {
     }
 }
 
+mod extra;
+pub use extra::{entity_types, item_data, physics};
+
 #[cfg(test)]
 mod tests {
     use super::*;

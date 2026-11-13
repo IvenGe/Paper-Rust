@@ -1468,3 +1468,345 @@ packet! {
         steps: VarInt,
     }
 }
+
+// --- entities, combat, containers and scoreboards -----------------------------------------
+
+packet! {
+    /// An entity picks up an item entity (plays the pickup animation and sound).
+    TakeItemEntity = play::clientbound::TAKE_ITEM_ENTITY {
+        collected_id: VarInt,
+        collector_id: VarInt,
+        count: VarInt,
+    }
+}
+
+/// An entity was damaged: tilts the camera and plays the hurt effect.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DamageEvent {
+    pub entity_id: i32,
+    /// Id in the `minecraft:damage_type` registry.
+    pub source_type: i32,
+    /// Entity that caused the damage, if any.
+    pub cause_id: Option<i32>,
+    /// Entity that dealt it directly (an arrow), if any.
+    pub direct_id: Option<i32>,
+    pub source_position: Option<(f64, f64, f64)>,
+}
+
+packet_id!(DamageEvent = play::clientbound::DAMAGE_EVENT);
+
+impl Encode for DamageEvent {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.entity_id);
+        w.put_varint(self.source_type);
+        w.put_varint(self.cause_id.map_or(0, |id| id + 1));
+        w.put_varint(self.direct_id.map_or(0, |id| id + 1));
+        w.put_option(self.source_position.as_ref(), |w, (x, y, z)| {
+            w.put_f64(*x);
+            w.put_f64(*y);
+            w.put_f64(*z);
+        });
+    }
+}
+
+packet! {
+    /// Shows the death screen with a message.
+    PlayerCombatKill = play::clientbound::PLAYER_COMBAT_KILL {
+        player_id: VarInt,
+        message: Component,
+    }
+}
+
+/// A block action: chest lid, note block, piston, bell...
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockEvent {
+    pub pos: BlockPos,
+    pub action: u8,
+    pub param: u8,
+    /// Block registry id.
+    pub block: i32,
+}
+
+packet_id!(BlockEvent = play::clientbound::BLOCK_EVENT);
+
+impl Encode for BlockEvent {
+    fn encode(&self, w: &mut Vec<u8>) {
+        self.pos.encode(w);
+        w.put_u8(self.action);
+        w.put_u8(self.param);
+        w.put_varint(self.block);
+    }
+}
+
+/// A container property, such as a furnace's progress.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContainerSetData {
+    pub window_id: i32,
+    pub property: i16,
+    pub value: i16,
+}
+
+packet_id!(ContainerSetData = play::clientbound::CONTAINER_SET_DATA);
+
+impl Encode for ContainerSetData {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.window_id);
+        w.put_i16(self.property);
+        w.put_i16(self.value);
+    }
+}
+
+/// Attribute values of an entity (`minecraft:attribute` registry ids).
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpdateAttributes {
+    pub entity_id: i32,
+    /// (attribute id, base value, modifiers (id, amount, operation))
+    pub attributes: Vec<(i32, f64, Vec<(String, f64, i8)>)>,
+}
+
+packet_id!(UpdateAttributes = play::clientbound::UPDATE_ATTRIBUTES);
+
+impl Encode for UpdateAttributes {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.entity_id);
+        w.put_list(&self.attributes, |w, (id, base, modifiers)| {
+            w.put_varint(*id);
+            w.put_f64(*base);
+            w.put_list(modifiers, |w, (mid, amount, op)| {
+                w.put_string(mid);
+                w.put_f64(*amount);
+                w.put_i8(*op);
+            });
+        });
+    }
+}
+
+packet! {
+    UpdateMobEffect = play::clientbound::UPDATE_MOB_EFFECT {
+        entity_id: VarInt,
+        effect: VarInt,
+        amplifier: VarInt,
+        duration: VarInt,
+        /// 1 ambient, 2 particles visible, 4 icon shown, 8 blend
+        flags: i8,
+    }
+}
+
+packet! {
+    RemoveMobEffect = play::clientbound::REMOVE_MOB_EFFECT {
+        entity_id: VarInt,
+        effect: VarInt,
+    }
+}
+
+/// Teleports a (non-player-controlled) entity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TeleportEntity {
+    pub entity_id: i32,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub velocity: (f64, f64, f64),
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: bool,
+}
+
+packet_id!(TeleportEntity = play::clientbound::TELEPORT_ENTITY);
+
+impl Encode for TeleportEntity {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.entity_id);
+        for v in [self.x, self.y, self.z, self.velocity.0, self.velocity.1, self.velocity.2] {
+            w.put_f64(v);
+        }
+        w.put_f32(self.yaw);
+        w.put_f32(self.pitch);
+        w.put_i32(0);
+        w.put_bool(self.on_ground);
+    }
+}
+
+/// A sound attached to an entity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundEntity {
+    pub sound: SoundRef,
+    pub category: i32,
+    pub entity_id: i32,
+    pub volume: f32,
+    pub pitch: f32,
+    pub seed: i64,
+}
+
+packet_id!(SoundEntity = play::clientbound::SOUND_ENTITY);
+
+impl Encode for SoundEntity {
+    fn encode(&self, w: &mut Vec<u8>) {
+        self.sound.encode(w);
+        w.put_varint(self.category);
+        w.put_varint(self.entity_id);
+        w.put_f32(self.volume);
+        w.put_f32(self.pitch);
+        w.put_i64(self.seed);
+    }
+}
+
+/// An explosion: the client plays its effects and applies `knockback` to its player.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Explode {
+    pub center: (f64, f64, f64),
+    pub radius: f32,
+    pub block_count: i32,
+    pub knockback: Option<(f64, f64, f64)>,
+    /// Particle type id (one without options, e.g. `minecraft:explosion_emitter`).
+    pub particle: i32,
+    pub sound: SoundRef,
+}
+
+packet_id!(Explode = play::clientbound::EXPLODE);
+
+impl Encode for Explode {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_f64(self.center.0);
+        w.put_f64(self.center.1);
+        w.put_f64(self.center.2);
+        w.put_f32(self.radius);
+        w.put_i32(self.block_count);
+        w.put_option(self.knockback.as_ref(), |w, (x, y, z)| {
+            w.put_f64(*x);
+            w.put_f64(*y);
+            w.put_f64(*z);
+        });
+        w.put_varint(self.particle);
+        self.sound.encode(w);
+        // Block particles: none.
+        w.put_varint(0);
+        // Play the explosion sound.
+        w.put_bool(true);
+    }
+}
+
+/// Creates (0), removes (1) or updates (2) a scoreboard objective.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetObjective {
+    pub name: String,
+    pub mode: u8,
+    pub display_name: Component,
+    /// 0 integer, 1 hearts.
+    pub render_type: i32,
+}
+
+packet_id!(SetObjective = play::clientbound::SET_OBJECTIVE);
+
+impl Encode for SetObjective {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_string(&self.name);
+        w.put_u8(self.mode);
+        if self.mode != 1 {
+            w.put_component(&self.display_name);
+            w.put_varint(self.render_type);
+            // No number format.
+            w.put_bool(false);
+        }
+    }
+}
+
+packet! {
+    /// Shows an objective in a slot (0 list, 1 sidebar, 2 below name, 3-18 team sidebars).
+    SetDisplayObjective = play::clientbound::SET_DISPLAY_OBJECTIVE {
+        slot: VarInt,
+        objective: String,
+    }
+}
+
+/// Sets a score.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetScore {
+    pub owner: String,
+    pub objective: String,
+    pub value: i32,
+    pub display_name: Option<Component>,
+}
+
+packet_id!(SetScore = play::clientbound::SET_SCORE);
+
+impl Encode for SetScore {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_string(&self.owner);
+        w.put_string(&self.objective);
+        w.put_varint(self.value);
+        w.put_option(self.display_name.as_ref(), |w, c| w.put_component(c));
+        w.put_bool(false);
+    }
+}
+
+/// Removes a score (from one objective, or all when `objective` is `None`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResetScore {
+    pub owner: String,
+    pub objective: Option<String>,
+}
+
+packet_id!(ResetScore = play::clientbound::RESET_SCORE);
+
+impl Encode for ResetScore {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_string(&self.owner);
+        w.put_option(self.objective.as_ref(), |w, o| w.put_string(o));
+    }
+}
+
+/// Team display settings.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TeamParameters {
+    pub display_name: Component,
+    pub prefix: Component,
+    pub suffix: Component,
+    /// 0 always, 1 never, 2 hide for other teams, 3 hide for own team.
+    pub nametag_visibility: i32,
+    /// 0 always, 1 never, 2 push other teams, 3 push own team.
+    pub collision_rule: i32,
+    /// Chat formatting colour id (0-15), or `None`.
+    pub color: Option<i32>,
+    /// 1 friendly fire, 2 see friendly invisibles.
+    pub options: i8,
+}
+
+/// Creates (0), removes (1), updates (2) a team, or adds (3) / removes (4) members.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetPlayerTeam {
+    pub name: String,
+    pub method: i8,
+    pub parameters: Option<TeamParameters>,
+    pub members: Vec<String>,
+}
+
+packet_id!(SetPlayerTeam = play::clientbound::SET_PLAYER_TEAM);
+
+impl Encode for SetPlayerTeam {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_string(&self.name);
+        w.put_i8(self.method);
+        if self.method == 0 || self.method == 2 {
+            let p = self.parameters.clone().unwrap_or(TeamParameters {
+                display_name: Component::text(self.name.clone()),
+                prefix: Component::text(""),
+                suffix: Component::text(""),
+                nametag_visibility: 0,
+                collision_rule: 0,
+                color: None,
+                options: 0,
+            });
+            w.put_component(&p.display_name);
+            w.put_component(&p.prefix);
+            w.put_component(&p.suffix);
+            w.put_varint(p.nametag_visibility);
+            w.put_varint(p.collision_rule);
+            w.put_option(p.color.as_ref(), |w, c| w.put_varint(*c));
+            w.put_i8(p.options);
+        }
+        if self.method == 0 || self.method == 3 || self.method == 4 {
+            w.put_list(&self.members, |w, m| w.put_string(m));
+        }
+    }
+}

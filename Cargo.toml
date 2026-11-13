@@ -14,7 +14,6 @@ edition = "2021"
 rust-version = "1.89"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/IvenGe/Paper-Rust"
-description = "A Rust port of the Paper Minecraft server with a separate-process JVM host for Java plugins"
 
 [workspace.dependencies]
 paper-nbt = { path = "crates/paper-nbt" }
@@ -43,6 +42,7 @@ sha1 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal", "process"] }
 toml = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 uuid = { version = "1", features = ["v3", "v4", "serde"] }
 

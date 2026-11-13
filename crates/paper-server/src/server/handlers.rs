@@ -310,8 +310,12 @@ impl Server {
             }
             ABORT_DESTROY_BLOCK => self.send(id, &play::BlockChangedAck { sequence: action.sequence }),
             DROP_ITEM | DROP_ALL_ITEMS => {
-                // Item entities do not exist yet; keep the item rather than destroy it.
-                self.resync_inventory(id);
+                let slot = HOTBAR_START + player.held_slot as usize;
+                let Some(stack) = player.inventory[slot].0.clone() else { return };
+                let amount = if action.status.0 == DROP_ALL_ITEMS { stack.count } else { 1 };
+                let rest = if stack.count > amount { Slot(Some(stack.with_count(stack.count - amount))) } else { Slot::EMPTY };
+                self.set_inventory_slot(id, slot, rest);
+                self.player_drop(id, Slot(Some(stack.with_count(amount))), true);
             }
             SWAP_ITEM_WITH_OFFHAND => {
                 let held = HOTBAR_START + player.held_slot as usize;
@@ -338,6 +342,7 @@ impl Server {
         }
         let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, blocks::AIR) else { return false };
         self.publish_block_change(world, &change);
+        self.after_player_broke_block(id, world, pos, old);
         // Break particles and sound for everyone else; the breaker's client plays its own.
         let effect = play::LevelEvent { event: 2001, pos, data: old as i32, global: false };
         let chunk = crate::world::chunk::ChunkPos::of_block(pos.x, pos.z);
@@ -446,6 +451,9 @@ impl Server {
         }
         // Slot -1 means "dropped outside the window".
         if slot < 0 {
+            if !item.is_empty() {
+                self.player_drop(id, item, true);
+            }
             return;
         }
         let slot = slot as usize;

@@ -4,8 +4,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Generated Minecraft 26.3 data tables (packet ids, registries, block states, tags) for paper-rs"
 build = "build.rs"
+
+[dependencies]
+serde_json.workspace = true
 
 [build-dependencies]
 serde_json.workspace = true

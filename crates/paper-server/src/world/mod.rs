@@ -10,6 +10,7 @@
 //! ```
 
 pub mod chunk;
+pub mod entity;
 pub mod generator;
 pub mod light;
 pub mod storage;
@@ -84,6 +85,10 @@ pub struct World {
     pub biome_count: u32,
     /// Where the world is saved; `None` keeps it in memory only.
     pub storage: Option<Arc<WorldStorage>>,
+    /// Entities other than players, by entity id.
+    pub entities: HashMap<i32, entity::Entity>,
+    /// Entity ids per chunk, for area queries and saving.
+    pub entity_chunks: HashMap<ChunkPos, HashSet<i32>>,
     /// Players (or other holders) wanting each chunk loaded and lit.
     tickets: HashMap<ChunkPos, u32>,
     /// Ticketed chunks that are not lit yet, in request order.
@@ -128,6 +133,8 @@ impl World {
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
             storage: None,
+            entities: HashMap::new(),
+            entity_chunks: HashMap::new(),
             tickets: HashMap::new(),
             wanted: VecDeque::new(),
             generating: HashSet::new(),
@@ -390,6 +397,62 @@ impl World {
     pub fn top_y(&self, x: i32, z: i32) -> Option<i32> {
         let chunk = self.chunks.get(&ChunkPos::of_block(x, z))?;
         Some(chunk.top_y((x & 15) as usize, (z & 15) as usize))
+    }
+
+    // --- entities --------------------------------------------------------------------------
+
+    /// Adds an entity to the world and its chunk index.
+    pub fn add_entity(&mut self, e: entity::Entity) {
+        self.entity_chunks.entry(e.chunk).or_default().insert(e.id);
+        self.entities.insert(e.id, e);
+    }
+
+    /// Removes an entity; returns it.
+    pub fn remove_entity(&mut self, id: i32) -> Option<entity::Entity> {
+        let e = self.entities.remove(&id)?;
+        if let Some(set) = self.entity_chunks.get_mut(&e.chunk) {
+            set.remove(&id);
+            if set.is_empty() {
+                self.entity_chunks.remove(&e.chunk);
+            }
+        }
+        Some(e)
+    }
+
+    /// Re-files an entity under the chunk it is in now.
+    pub fn reindex_entity(&mut self, id: i32) {
+        let Some(e) = self.entities.get_mut(&id) else { return };
+        let now = e.pos.chunk();
+        if now == e.chunk {
+            return;
+        }
+        let old = std::mem::replace(&mut e.chunk, now);
+        if let Some(set) = self.entity_chunks.get_mut(&old) {
+            set.remove(&id);
+            if set.is_empty() {
+                self.entity_chunks.remove(&old);
+            }
+        }
+        self.entity_chunks.entry(now).or_default().insert(id);
+    }
+
+    /// Ids of entities whose box intersects `area`.
+    pub fn entities_in(&self, area: &entity::Aabb) -> Vec<i32> {
+        let (c0, c1) = (entity::Vec3::new(area.min.x - 2.0, 0.0, area.min.z - 2.0).chunk(), entity::Vec3::new(area.max.x + 2.0, 0.0, area.max.z + 2.0).chunk());
+        let mut out = Vec::new();
+        for cx in c0.x..=c1.x {
+            for cz in c0.z..=c1.z {
+                if let Some(ids) = self.entity_chunks.get(&ChunkPos::new(cx, cz)) {
+                    for id in ids {
+                        if self.entities.get(id).is_some_and(|e| !e.removed && e.bounding_box().intersects(area)) {
+                            out.push(*id);
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out
     }
 
     /// Queues every changed chunk for saving. Returns how many were queued.
