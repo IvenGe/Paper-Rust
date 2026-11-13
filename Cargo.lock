@@ -717,6 +717,7 @@ dependencies = [
  "paper-data",
  "paper-nbt",
  "paper-protocol",
+ "paper-worldgen",
  "parking_lot",
  "rand",
  "rayon",

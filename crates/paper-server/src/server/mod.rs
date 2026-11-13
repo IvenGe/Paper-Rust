@@ -43,7 +43,7 @@ use crate::net::{auth, ConfigPackets, PlayerConn, Shared, StatusSnapshot};
 use crate::world::generator::{FlatGenerator, Generator, NoiseGenerator};
 use crate::world::storage::{ChunkIo, WorldStorage};
 use crate::world::{WorkerContext, World, WorldEvent};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use paper_protocol::codec::Encode;
@@ -121,6 +121,11 @@ impl TickStats {
             return 0.0;
         }
         self.recent.iter().rev().take(n).sum::<f32>() / n as f32
+    }
+
+    /// The longest of the last `ticks` ticks, in milliseconds.
+    pub fn worst(&self, ticks: usize) -> f32 {
+        self.recent.iter().rev().take(ticks).copied().fold(0.0, f32::max)
     }
 
     /// Ticks per second achieved over the last `ticks` ticks, capped at 20.
@@ -289,19 +294,22 @@ impl Server {
         // An existing world keeps its seed and generator, whatever the configuration says now.
         let seed = level.as_ref().map_or_else(|| props.seed(), |l| l.seed);
         let overworld_min_y = paper_data::synced::dimension_type("minecraft:overworld").map_or(-64, |d| d.min_y);
-        let flat = match &level {
-            Some(level) => level.generator == "flat",
+        let kind = match &level {
+            Some(level) => level.generator.clone(),
             None => match config.paper.world.generator.as_str() {
-                "flat" => true,
-                "noise" => false,
-                _ => props.level_type.ends_with("flat"),
+                "flat" | "noise" | "vanilla" => config.paper.world.generator.clone(),
+                _ if props.level_type.ends_with("flat") => "flat".to_owned(),
+                _ => "vanilla".to_owned(),
             },
         };
-        let generator: Arc<dyn Generator> = if flat { Arc::new(FlatGenerator::new(overworld_min_y)) } else { Arc::new(NoiseGenerator::new(seed)) };
-        if !flat && level.is_none() && props.level_type != "minecraft:flat" {
-            log::warn!("Vanilla world generation is not ported; '{}' worlds use the built-in '{}' terrain generator.", props.level_type, generator.name());
+        let generator = Self::make_generator(vanilla.as_deref(), "minecraft:overworld", &kind, seed, overworld_min_y, level.is_some())?;
+        let new_world = level.is_none();
+        let mut worlds = vec![Self::open_world(0, &props.level_name, "minecraft:overworld", seed, generator.clone(), storage, level.as_ref())?];
+        if let (true, Some(vanilla)) = (new_world, generator.staged()) {
+            let (x, y, z) = vanilla.find_spawn();
+            worlds[0].spawn = paper_protocol::codec::BlockPos::new(x, y, z);
+            log::info!("World spawn at {x}, {y}, {z}");
         }
-        let mut worlds = vec![Self::open_world(0, &props.level_name, "minecraft:overworld", seed, generator, storage, level.as_ref())?];
         // The Nether and the End live in their own folders, as in CraftBukkit, and share the
         // overworld's seed.
         let mut dimensions: Vec<(&str, &str, &str)> = Vec::new();
@@ -321,10 +329,9 @@ impl Server {
                 Some(storage) => storage.read_level().with_context(|| format!("reading {}", storage.dir.join("level.dat").display()))?,
                 None => None,
             };
-            let generator: Arc<dyn Generator> = match dimension {
-                "minecraft:the_nether" => Arc::new(crate::world::generator::NetherGenerator::new(seed)),
-                _ => Arc::new(crate::world::generator::EndGenerator::new(seed)),
-            };
+            let kind = level.as_ref().map_or("vanilla", |l| l.generator.as_str()).to_owned();
+            let min_y = paper_data::synced::dimension_type(dimension).map_or(0, |d| d.min_y);
+            let generator = Self::make_generator(vanilla.as_deref(), dimension, &kind, seed, min_y, level.is_some())?;
             let index = worlds.len();
             let mut world = Self::open_world(index, &name, dimension, seed, generator, storage, level.as_ref())?;
             if level.is_none() {
@@ -372,6 +379,37 @@ impl Server {
             status_dirty: true,
         };
         Ok((server, ServerHandle { shared }))
+    }
+
+    /// The generator of a world: `kind` is what its `level.dat` names (`vanilla`, `flat`, or
+    /// the built-in `noise`, `nether` and `end` of worlds made before vanilla generation was
+    /// ported). Vanilla generation needs the vanilla jar; new worlds fall back to the built-in
+    /// generators without it, existing vanilla worlds refuse to start rather than grow
+    /// mismatched terrain.
+    fn make_generator(vanilla: Option<&crate::vanilla::VanillaData>, dimension: &str, kind: &str, seed: i64, min_y: i32, existing: bool) -> Result<Arc<dyn Generator>> {
+        let built_in = |dimension: &str| -> Arc<dyn Generator> {
+            match dimension {
+                "minecraft:the_nether" => Arc::new(crate::world::generator::NetherGenerator::new(seed)),
+                "minecraft:the_end" => Arc::new(crate::world::generator::EndGenerator::new(seed)),
+                _ => Arc::new(NoiseGenerator::new(seed)),
+            }
+        };
+        Ok(match kind {
+            "flat" => Arc::new(FlatGenerator::new(min_y)),
+            "noise" | "nether" | "end" => built_in(dimension),
+            _ => {
+                let made = vanilla.ok_or_else(|| anyhow!("the vanilla server jar is not available")).and_then(|v| crate::world::staged::VanillaGenerator::new(v, dimension, seed));
+                match made {
+                    Ok(generator) => Arc::new(generator),
+                    Err(e) if existing => bail!("{dimension} uses vanilla world generation, which needs the vanilla server jar's data: {e:#}"),
+                    Err(e) => {
+                        let fallback = built_in(dimension);
+                        log::warn!("Vanilla world generation is unavailable ({e:#}); {dimension} uses the built-in '{}' generator", fallback.name());
+                        fallback
+                    }
+                }
+            }
+        })
     }
 
     /// A world with its saved level data and game rules applied.
@@ -694,6 +732,14 @@ impl Server {
         let ids: Vec<i32> = self.player_order.clone();
         for id in ids {
             self.kick(id, &reason);
+        }
+        // Generation jobs hold unfinished chunks: wait for them, or the chunks they hold
+        // (and what neighbours wrote into them) would be lost.
+        let deadline = Instant::now() + std::time::Duration::from_secs(30);
+        while self.worlds.iter().any(|w| w.generation_in_flight() > 0) && Instant::now() < deadline {
+            if let Ok(task @ MainTask::World { .. }) = self.tasks.recv_timeout(std::time::Duration::from_millis(100)) {
+                self.handle_task(task);
+            }
         }
         log::info!("Saving worlds");
         for world in &self.worlds {

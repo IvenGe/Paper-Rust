@@ -8,6 +8,10 @@
 //! ticket added ──► terrain job (generate) ──► light job (needs 3x3 terrain) ──► lit chunk
 //!                                                         packet requested ──► encode job
 //! ```
+//!
+//! With vanilla generation, terrain is followed by decoration, which writes into the
+//! neighbours too; chunks are only handed to the rest of the server once finished (see
+//! [`staged`]).
 
 pub mod block_updates;
 pub mod chunk;
@@ -17,10 +21,12 @@ pub mod generator;
 pub mod light;
 pub mod portal;
 pub mod rules;
+pub mod staged;
 pub mod storage;
 pub mod ticks;
 
-use chunk::{Chunk, ChunkPos, LightSection};
+use chunk::{Chunk, ChunkPos, GenStatus, LightSection};
+use staged::ProtoEntry;
 use generator::Generator;
 use light::{ChangedSection, Terrain};
 use storage::{LevelData, SaveChunk, WorldStorage};
@@ -33,8 +39,12 @@ use std::sync::Arc;
 
 /// Results of worker jobs, delivered to the main thread.
 pub enum WorldEvent {
-    /// Terrain for a chunk was generated.
+    /// A finished chunk was generated or loaded.
     Terrain(Box<Chunk>),
+    /// An unfinished chunk (vanilla generation) was generated or loaded.
+    Proto(Box<ProtoEntry>),
+    /// The chunk at `center` was decorated; these are it and its neighbours.
+    Decorated { center: ChunkPos, entries: Vec<ProtoEntry> },
     /// Light for a chunk was computed from the terrain at `stamp`.
     Light { pos: ChunkPos, stamp: u64, sky: Vec<Arc<LightSection>>, block: Vec<Arc<LightSection>> },
     /// A chunk packet was encoded and framed for the chunk at `revision`.
@@ -111,6 +121,16 @@ pub struct World {
     /// Encoded chunk packets and the revision they were built from.
     packets: HashMap<ChunkPos, (u64, Arc<Vec<u8>>)>,
     encoding: HashMap<ChunkPos, u64>,
+    /// Unfinished chunks of vanilla generation (not part of the playable world yet).
+    pub proto: HashMap<ChunkPos, ProtoEntry>,
+    /// Unfinished chunks a decoration job has taken.
+    locked: HashSet<ChunkPos>,
+    /// Centers of decoration jobs in flight.
+    decorating: HashSet<ChunkPos>,
+    /// Chunks being turned from unfinished into finished ones.
+    finalizing: HashSet<ChunkPos>,
+    /// Chunks to save as soon as their decoration job gives them back.
+    save_on_return: HashSet<ChunkPos>,
 }
 
 /// Maximum worker jobs a world keeps in flight per worker thread.
@@ -156,6 +176,11 @@ impl World {
             lighting: HashMap::new(),
             packets: HashMap::new(),
             encoding: HashMap::new(),
+            proto: HashMap::new(),
+            locked: HashSet::new(),
+            decorating: HashSet::new(),
+            finalizing: HashSet::new(),
+            save_on_return: HashSet::new(),
         }
     }
 
@@ -211,7 +236,13 @@ impl World {
     }
 
     pub fn jobs_in_flight(&self) -> usize {
-        self.generating.len() + self.lighting.len() + self.encoding.len()
+        self.generating.len() + self.lighting.len() + self.encoding.len() + self.decorating.len() + self.finalizing.len()
+    }
+
+    /// Generation jobs holding unfinished chunks (which would be lost if the server stopped
+    /// without waiting for them).
+    pub fn generation_in_flight(&self) -> usize {
+        self.decorating.len() + self.finalizing.len()
     }
 
     // --- pipeline ----------------------------------------------------------------------
@@ -232,14 +263,18 @@ impl World {
     /// Starts worker jobs for wanted chunks. Call once per tick.
     pub fn pump(&mut self, ctx: &WorkerContext) {
         let limit = ctx.pool.current_num_threads().max(1) * JOBS_PER_WORKER;
-        let mut remaining = self.wanted.len();
-        while remaining > 0 && self.generating.len() + self.lighting.len() < limit {
-            remaining -= 1;
-            let Some(pos) = self.wanted.pop_front() else { break };
+        let staged = self.generator.staged().is_some();
+        // Wanted chunks are in the order they were asked for, nearest to players first; each
+        // tick starts from the front so that the nearest chunks get worker time first.
+        let mut i = 0;
+        while i < self.wanted.len() && self.generating.len() + self.lighting.len() + self.decorating.len() + self.finalizing.len() < limit {
+            let pos = self.wanted[i];
             if !self.tickets.contains_key(&pos) || self.is_ready(pos) {
+                self.wanted.remove(i);
                 continue;
             }
-            // Terrain for the chunk and its eight neighbours first.
+            i += 1;
+            // The chunk and its eight neighbours must be there (finished) for light.
             let mut terrain_ready = true;
             for dz in -1..=1 {
                 for dx in -1..=1 {
@@ -248,47 +283,173 @@ impl World {
                         continue;
                     }
                     terrain_ready = false;
-                    if self.generating.insert(p) {
-                        let (generator, min_y, height, index, notify) = (self.generator.clone(), self.min_y, self.height, self.index, ctx.notify.clone());
-                        let (storage, has_skylight) = (self.storage.clone(), self.has_skylight);
-                        ctx.pool.spawn(move || {
-                            // Saved chunks are loaded; missing ones are generated (and saved later).
-                            let loaded = storage.as_ref().and_then(|s| match s.load_chunk(p, min_y, height, has_skylight) {
-                                Ok(chunk) => chunk,
-                                Err(e) => {
-                                    log::error!("Could not load chunk {},{}; generating it again: {e:#}", p.x, p.z);
-                                    None
-                                }
-                            });
-                            let was_saved = loaded.is_some();
-                            let mut chunk = loaded.unwrap_or_else(|| {
-                                let mut chunk = generator.generate(p, min_y, height);
-                                chunk.dirty = storage.is_some();
-                                chunk.fresh = true;
-                                chunk
-                            });
-                            // Its entities come along (`entities/r.x.z.mca`).
-                            if was_saved {
-                                if let Some(storage) = &storage {
-                                    match storage.load_entities(p) {
-                                        Ok(entities) => {
-                                            chunk.entities_saved = !entities.is_empty();
-                                            chunk.entity_nbt = entities;
-                                        }
-                                        Err(e) => log::error!("Could not load the entities of chunk {},{}: {e:#}", p.x, p.z),
-                                    }
-                                }
-                            }
-                            notify(index, WorldEvent::Terrain(Box::new(chunk)));
-                        });
+                    if staged {
+                        self.advance_generation(p, ctx);
+                    } else {
+                        self.request_chunk(p, ctx);
                     }
                 }
             }
             if terrain_ready && !self.lighting.contains_key(&pos) {
                 self.spawn_light_job(pos, ctx);
             }
-            self.wanted.push_back(pos);
         }
+    }
+
+    /// Starts loading (or else generating) a chunk that is not here.
+    fn request_chunk(&mut self, p: ChunkPos, ctx: &WorkerContext) {
+        if self.chunks.contains_key(&p) || self.proto.contains_key(&p) || self.locked.contains(&p) || self.finalizing.contains(&p) || !self.generating.insert(p) {
+            return;
+        }
+        let (generator, min_y, height, index, notify) = (self.generator.clone(), self.min_y, self.height, self.index, ctx.notify.clone());
+        let (storage, has_skylight) = (self.storage.clone(), self.has_skylight);
+        ctx.pool.spawn(move || {
+            // Saved chunks are loaded; missing ones are generated (and saved later).
+            let mut loaded = storage.as_ref().and_then(|s| match s.load_chunk(p, min_y, height, has_skylight) {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    log::error!("Could not load chunk {},{}; generating it again: {e:#}", p.x, p.z);
+                    None
+                }
+            });
+            // An unfinished chunk continues where it stopped (with vanilla generation; any
+            // other generator makes it again).
+            if loaded.as_ref().is_some_and(|c| c.status != GenStatus::Full) {
+                match generator.staged() {
+                    Some(g) => {
+                        let entry = ProtoEntry::from_saved(loaded.as_ref().unwrap(), g);
+                        notify(index, WorldEvent::Proto(Box::new(entry)));
+                        return;
+                    }
+                    None => loaded = None,
+                }
+            }
+            if loaded.is_none() {
+                if let Some(g) = generator.staged() {
+                    let entry = ProtoEntry::new(g.inner.generate_terrain(p.x, p.z));
+                    notify(index, WorldEvent::Proto(Box::new(entry)));
+                    return;
+                }
+            }
+            let was_saved = loaded.is_some();
+            let mut chunk = loaded.unwrap_or_else(|| {
+                let mut chunk = generator.generate(p, min_y, height);
+                chunk.dirty = storage.is_some();
+                chunk.fresh = true;
+                chunk
+            });
+            // Its entities come along (`entities/r.x.z.mca`).
+            if was_saved {
+                if let Some(storage) = &storage {
+                    match storage.load_entities(p) {
+                        Ok(entities) => {
+                            chunk.entities_saved = !entities.is_empty();
+                            chunk.entity_nbt = entities;
+                        }
+                        Err(e) => log::error!("Could not load the entities of chunk {},{}: {e:#}", p.x, p.z),
+                    }
+                }
+            }
+            notify(index, WorldEvent::Terrain(Box::new(chunk)));
+        });
+    }
+
+    /// Works towards finishing chunk `q` with vanilla generation: it and its eight
+    /// neighbours must be decorated, which needs their neighbours' terrain in turn.
+    fn advance_generation(&mut self, q: ChunkPos, ctx: &WorkerContext) {
+        if self.chunks.contains_key(&q) || self.finalizing.contains(&q) {
+            return;
+        }
+        let mut all_decorated = true;
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let r = ChunkPos::new(q.x + dx, q.z + dz);
+                // Finished chunks were decorated.
+                if self.chunks.contains_key(&r) || self.finalizing.contains(&r) {
+                    continue;
+                }
+                match self.proto.get(&r) {
+                    Some(entry) if entry.decorated => {}
+                    Some(_) => {
+                        all_decorated = false;
+                        self.try_decorate(r, ctx);
+                    }
+                    None => {
+                        all_decorated = false;
+                        self.request_chunk(r, ctx);
+                    }
+                }
+            }
+        }
+        if all_decorated && self.proto.contains_key(&q) {
+            self.finalize(q, ctx);
+        }
+    }
+
+    /// Starts decorating chunk `r` once its eight neighbours have terrain and no other
+    /// decoration job holds any of them.
+    fn try_decorate(&mut self, r: ChunkPos, ctx: &WorkerContext) {
+        if self.locked.contains(&r) {
+            return;
+        }
+        let mut ready = true;
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let s = ChunkPos::new(r.x + dx, r.z + dz);
+                if self.proto.contains_key(&s) || self.chunks.contains_key(&s) {
+                    continue;
+                }
+                ready = false;
+                self.request_chunk(s, ctx);
+            }
+        }
+        if !ready {
+            return;
+        }
+        let Some(generator) = self.generator.staged() else { return };
+        let mut entries = Vec::with_capacity(9);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let s = ChunkPos::new(r.x + dx, r.z + dz);
+                match self.proto.remove(&s) {
+                    Some(entry) => {
+                        self.locked.insert(s);
+                        entries.push(entry);
+                    }
+                    // A finished neighbour (e.g. next to a chunk deleted from a saved world):
+                    // features read it but cannot change it.
+                    None => entries.push(ProtoEntry::borrowed(&self.chunks[&s], generator)),
+                }
+            }
+        }
+        self.decorating.insert(r);
+        let (generator, index, notify) = (self.generator.clone(), self.index, ctx.notify.clone());
+        ctx.pool.spawn(move || {
+            let generator = generator.staged().expect("a staged generator");
+            let entries = staged::decorate(generator, r, entries);
+            notify(index, WorldEvent::Decorated { center: r, entries });
+        });
+    }
+
+    /// Turns a chunk whose neighbours are all decorated into a finished one (on a worker).
+    fn finalize(&mut self, q: ChunkPos, ctx: &WorkerContext) {
+        let Some(entry) = self.proto.remove(&q) else { return };
+        self.finalizing.insert(q);
+        let (min_y, height, index, notify, saved) = (self.min_y, self.height, self.index, ctx.notify.clone(), self.storage.is_some());
+        ctx.pool.spawn(move || {
+            let mut chunk = entry.to_chunk(min_y, height, GenStatus::Full);
+            chunk.fresh = true;
+            chunk.dirty = saved;
+            notify(index, WorldEvent::Terrain(Box::new(chunk)));
+        });
+    }
+
+    /// Queues an unfinished chunk for saving.
+    fn save_proto(&self, entry: &ProtoEntry) {
+        let Some(storage) = &self.storage else { return };
+        let status = if entry.decorated { GenStatus::Decorated } else { GenStatus::Terrain };
+        let chunk = entry.to_chunk(self.min_y, self.height, status);
+        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: self.has_skylight, ticks: Default::default(), status, proto: chunk.proto });
     }
 
     fn spawn_light_job(&mut self, pos: ChunkPos, ctx: &WorkerContext) {
@@ -312,11 +473,37 @@ impl World {
         match event {
             WorldEvent::Terrain(chunk) => {
                 self.generating.remove(&chunk.pos);
+                self.finalizing.remove(&chunk.pos);
                 // A chunk that appeared meanwhile (e.g. loaded another way) wins.
                 let pos = chunk.pos;
                 self.chunks.entry(pos).or_insert(*chunk);
                 // Block updates: saved ticks and moving pistons continue.
                 block_updates::chunk_loaded(self, pos);
+                None
+            }
+            WorldEvent::Proto(entry) => {
+                let pos = entry.pos();
+                self.generating.remove(&pos);
+                if !self.chunks.contains_key(&pos) && !self.locked.contains(&pos) && !self.finalizing.contains(&pos) {
+                    self.proto.entry(pos).or_insert(*entry);
+                }
+                None
+            }
+            WorldEvent::Decorated { center, entries } => {
+                self.decorating.remove(&center);
+                for entry in entries {
+                    let pos = entry.pos();
+                    if entry.borrowed {
+                        continue;
+                    }
+                    self.locked.remove(&pos);
+                    // An autosave came while the job had it.
+                    let saved = self.save_on_return.remove(&pos);
+                    if saved {
+                        self.save_proto(&entry);
+                    }
+                    self.proto.insert(pos, ProtoEntry { dirty: !saved, ..entry });
+                }
                 None
             }
             WorldEvent::Light { pos, stamp, sky, block } => {
@@ -397,7 +584,7 @@ impl World {
             }
             if chunk.dirty {
                 if let Some(storage) = storage {
-                    storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age) });
+                    storage.save_chunk(SaveChunk::full(chunk, has_skylight, age));
                 }
             }
             unloaded.push((*pos, chunk.entities_saved));
@@ -405,6 +592,19 @@ impl World {
         });
         let chunks = &self.chunks;
         self.packets.retain(|pos, _| chunks.contains_key(pos));
+        // Unfinished chunks stay while finishing a ticketed chunk may need them (decorating
+        // its neighbours reaches three chunks out); then they are saved and dropped. Without
+        // storage they stay: generating them again would lose what neighbours wrote into them.
+        if self.storage.is_some() {
+            let far: Vec<ChunkPos> = self.proto.keys().copied().filter(|pos| !self.near_ticket(*pos, 3)).collect();
+            for pos in far {
+                if let Some(entry) = self.proto.remove(&pos) {
+                    if entry.dirty {
+                        self.save_proto(&entry);
+                    }
+                }
+            }
+        }
         // The entities of unloaded chunks are saved and leave memory with them.
         for (pos, was_saved) in unloaded {
             let ids: Vec<i32> = self.entity_chunks.remove(&pos).map(|s| s.into_iter().collect()).unwrap_or_default();
@@ -523,15 +723,33 @@ impl World {
         out
     }
 
+    /// Whether a ticket is held within `radius` chunks of `pos`.
+    fn near_ticket(&self, pos: ChunkPos, radius: i32) -> bool {
+        (-radius..=radius).any(|dz| (-radius..=radius).any(|dx| self.tickets.contains_key(&ChunkPos::new(pos.x + dx, pos.z + dz))))
+    }
+
     /// Queues every changed chunk for saving. Returns how many were queued.
     pub fn save_chunks(&mut self) -> usize {
         let Some(storage) = &self.storage else { return 0 };
         let mut saved = 0;
         for chunk in self.chunks.values_mut().filter(|c| c.dirty) {
-            storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight, ticks: chunk.ticks.save(self.age) });
+            storage.save_chunk(SaveChunk::full(chunk, self.has_skylight, self.age));
             chunk.dirty = false;
             saved += 1;
         }
+        // Unfinished chunks too; those a decoration job holds are saved when it is done.
+        let dirty: Vec<ChunkPos> = self.proto.iter().filter(|(_, e)| e.dirty).map(|(p, _)| *p).collect();
+        for pos in dirty {
+            if let Some(entry) = self.proto.get(&pos) {
+                self.save_proto(entry);
+            }
+            if let Some(entry) = self.proto.get_mut(&pos) {
+                entry.dirty = false;
+            }
+            saved += 1;
+        }
+        self.save_on_return.extend(self.locked.iter().copied());
+        let Some(storage) = &self.storage else { return saved };
         // Entities move all the time: every loaded chunk that has (or had) some is written.
         for (pos, chunk) in self.chunks.iter_mut() {
             let list: Vec<paper_nbt::Compound> = self.entity_chunks.get(pos).map(|ids| ids.iter().filter_map(|id| self.entities.get(id)).filter_map(entity_nbt::entity_to_nbt).collect()).unwrap_or_default();

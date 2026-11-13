@@ -15,7 +15,7 @@
 //! is on disk it stays in its world's pending table, which reads consult first, so a chunk
 //! that is unloaded and requested again straight away never comes back stale.
 
-use super::chunk::{BiomeStorage, BlockStorage, Chunk, ChunkPos, ChunkSnapshot, LightSection, Section};
+use super::chunk::{BiomeStorage, BlockStorage, Chunk, ChunkPos, ChunkSnapshot, GenStatus, LightSection, ProtoData, Section};
 use super::ticks::{ticks_from_nbt, ticks_to_nbt, ChunkTicks, SavedTicks, TickKind};
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
@@ -418,6 +418,17 @@ pub struct SaveChunk {
     pub has_skylight: bool,
     /// Scheduled block and fluid ticks, relative to the time of saving.
     pub ticks: SavedTicks,
+    /// `Full`, or how far an unfinished chunk got.
+    pub status: GenStatus,
+    /// Heightmaps and entities of an unfinished chunk.
+    pub proto: Option<Box<ProtoData>>,
+}
+
+impl SaveChunk {
+    /// A finished chunk.
+    pub fn full(chunk: &Chunk, has_skylight: bool, age: i64) -> Self {
+        SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age), status: GenStatus::Full, proto: None }
+    }
 }
 
 impl SaveChunk {
@@ -440,8 +451,50 @@ impl SaveChunk {
             entity_nbt: Vec::new(),
             entities_saved: false,
             ticks: ChunkTicks::from_saved(self.ticks.clone()),
+            status: self.status,
+            proto: self.proto.clone(),
         }
     }
+}
+
+/// Vanilla's `Status` of a chunk.
+fn status_name(status: GenStatus) -> &'static str {
+    match status {
+        GenStatus::Terrain => "minecraft:carvers",
+        GenStatus::Decorated => "minecraft:features",
+        GenStatus::Full => "minecraft:full",
+    }
+}
+
+/// A saved `Status` as far as this server continues from it; `None` for chunks saved
+/// before their terrain was complete (they are generated again).
+fn parse_status(name: &str) -> Option<GenStatus> {
+    Some(match name.trim_start_matches("minecraft:") {
+        "full" | "light" | "spawn" => GenStatus::Full,
+        "features" | "initialize_light" => GenStatus::Decorated,
+        "carvers" => GenStatus::Terrain,
+        _ => return None,
+    })
+}
+
+/// Worldgen heightmaps (`ProtoChunk` layout: highest y per `x * 16 + z`) in vanilla's
+/// packing (first free y above `min_y` per `z * 16 + x`).
+fn wg_heightmap_tag(map: &[i16; 256], min_y: i32, bits: u32) -> Tag {
+    let values = (0..256).map(|i| {
+        let (x, z) = (i & 15, i >> 4);
+        (map[x * 16 + z] as i32 + 1 - min_y).max(0) as u64
+    });
+    Tag::LongArray(pack(values.collect::<Vec<_>>().into_iter(), bits))
+}
+
+fn wg_heightmap_from(longs: &[i64], min_y: i32, bits: u32) -> Option<[i16; 256]> {
+    let values = unpack(longs, bits, 256).ok()?;
+    let mut map = [0i16; 256];
+    for (i, v) in values.into_iter().enumerate() {
+        let (x, z) = (i & 15, i >> 4);
+        map[x * 16 + z] = (v as i32 - 1 + min_y) as i16;
+    }
+    Some(map)
 }
 
 /// A chunk as vanilla stores it.
@@ -483,31 +536,45 @@ pub fn chunk_to_nbt(save: &SaveChunk) -> Compound {
             Tag::Compound(c)
         })
         .collect();
+    let mut heightmaps = Compound::new().with("MOTION_BLOCKING", heightmap(&s.motion_blocking)).with("WORLD_SURFACE", heightmap(&s.world_surface));
+    // Unfinished chunks keep the worldgen heightmaps and their entities, as in vanilla.
+    let proto_entities = match &save.proto {
+        Some(proto) => {
+            if let Some(maps) = &proto.wg_heightmaps {
+                heightmaps.insert("WORLD_SURFACE_WG", wg_heightmap_tag(&maps[0], s.min_y, heightmap_bits));
+                heightmaps.insert("OCEAN_FLOOR_WG", wg_heightmap_tag(&maps[1], s.min_y, heightmap_bits));
+            }
+            Some(proto.entities.iter().cloned().map(Tag::Compound).collect::<Vec<_>>())
+        }
+        None => None,
+    };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
-    Compound::new()
+    let mut out = Compound::new()
         .with("DataVersion", Tag::Int(data_version()))
         .with("xPos", Tag::Int(s.pos.x))
         .with("yPos", Tag::Int(min_section))
         .with("zPos", Tag::Int(s.pos.z))
-        .with("Status", Tag::String("minecraft:full".into()))
+        .with("Status", Tag::String(status_name(save.status).into()))
         .with("LastUpdate", Tag::Long(now / 50))
         .with("InhabitedTime", Tag::Long(0))
         .with("isLightOn", Tag::Byte(save.lit as i8))
         .with("sections", Tag::List(sections))
-        .with("Heightmaps", Tag::Compound(Compound::new().with("MOTION_BLOCKING", heightmap(&s.motion_blocking)).with("WORLD_SURFACE", heightmap(&s.world_surface))))
+        .with("Heightmaps", Tag::Compound(heightmaps))
         .with("block_entities", Tag::List(block_entities))
         .with("block_ticks", ticks_to_nbt(&save.ticks.blocks, TickKind::Block))
         .with("fluid_ticks", ticks_to_nbt(&save.ticks.fluids, TickKind::Fluid))
-        .with("structures", Tag::Compound(Compound::new().with("References", Tag::Compound(Compound::new())).with("starts", Tag::Compound(Compound::new()))))
+        .with("structures", Tag::Compound(Compound::new().with("References", Tag::Compound(Compound::new())).with("starts", Tag::Compound(Compound::new()))));
+    if let Some(entities) = proto_entities {
+        out.insert("entities", Tag::List(entities));
+    }
+    out
 }
 
-/// Reads a chunk saved by this server, vanilla or Paper. Returns `None` for chunks that were
-/// not finished generating (they are generated again).
+/// Reads a chunk saved by this server, vanilla or Paper. Unfinished chunks come back with
+/// their `status`; `None` for chunks saved before their terrain was complete (they are
+/// generated again).
 pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, has_skylight: bool) -> Result<Option<Chunk>> {
-    let status = nbt.string("Status").unwrap_or("minecraft:full");
-    if status != "minecraft:full" && status != "full" {
-        return Ok(None);
-    }
+    let Some(status) = parse_status(nbt.string("Status").unwrap_or("minecraft:full")) else { return Ok(None) };
     if let (Some(x), Some(z)) = (nbt.i32("xPos"), nbt.i32("zPos")) {
         if (x, z) != (pos.x, pos.z) {
             bail!("chunk {},{} is stored where {},{} belongs", x, z, pos.x, pos.z);
@@ -571,6 +638,19 @@ pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, ha
         }
     }
     chunk.dirty = false;
+    chunk.status = status;
+    if status != GenStatus::Full {
+        chunk.lit = false;
+        let bits = ceil_log2(height as usize + 1);
+        let maps = nbt.compound("Heightmaps");
+        let wg = |key: &str| maps.and_then(|m| m.long_array(key)).and_then(|l| wg_heightmap_from(l, min_y, bits));
+        let wg_heightmaps = match (wg("WORLD_SURFACE_WG"), wg("OCEAN_FLOOR_WG")) {
+            (Some(surface), Some(ocean)) => Some(Box::new([surface, ocean])),
+            _ => None,
+        };
+        let entities = nbt.list("entities").unwrap_or(&[]).iter().filter_map(|t| t.as_compound().cloned()).collect();
+        chunk.proto = Some(Box::new(ProtoData { wg_heightmaps, entities }));
+    }
     Ok(Some(chunk))
 }
 
@@ -581,7 +661,8 @@ pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, ha
 pub struct LevelData {
     pub name: String,
     pub seed: i64,
-    /// `flat` or `noise`: the built-in generator the world was created with.
+    /// The generator the world was created with: `vanilla`, `flat`, or the built-in
+    /// `noise`, `nether` and `end` (see `server::Server::make_generator`).
     pub generator: String,
     pub spawn: (i32, i32, i32),
     pub spawn_yaw: f32,
@@ -676,7 +757,8 @@ impl LevelData {
                     .and_then(|o| o.compound("generator"))
                     .and_then(|g| g.string("type"))
                     .unwrap_or("minecraft:noise");
-                if kind.ends_with("flat") { "flat" } else { "noise" }.to_owned()
+                // A world from vanilla or Paper.
+                if kind.ends_with("flat") { "flat" } else { "vanilla" }.to_owned()
             }
         };
         let spawn = match data.compound("spawn").and_then(|s| s.get("pos")).and_then(Tag::as_int_array) {
@@ -1083,7 +1165,7 @@ mod tests {
         chunk.block_light[7] = Arc::new(lamp);
         chunk.lit = true;
 
-        let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true, ticks: SavedTicks::default() };
+        let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None };
         let nbt = chunk_to_nbt(&save);
         let mut bytes = Vec::new();
         paper_nbt::write_named(&mut bytes, "", &nbt);
@@ -1116,7 +1198,7 @@ mod tests {
         let pos = ChunkPos::new(-40, 70);
         let mut chunk = generator.generate(pos, -64, 384);
         chunk.set_block(3, -60, 3, blocks::default_state("minecraft:gold_block").unwrap()).unwrap();
-        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: SavedTicks::default() });
+        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None });
         // Readable at once, whether or not the write has happened yet.
         let loaded = storage.load_chunk(pos, -64, 384, true).unwrap().unwrap();
         assert_eq!(loaded.get_block(3, -60, 3), blocks::default_state("minecraft:gold_block").unwrap());

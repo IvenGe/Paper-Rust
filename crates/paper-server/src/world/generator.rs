@@ -1,12 +1,13 @@
 //! World generators.
 //!
-//! Two generators exist:
-//!
+//! * Vanilla generation (`paper-worldgen`, wrapped by [`super::staged::VanillaGenerator`])
+//!   is used for new worlds whenever the vanilla jar's data is available.
 //! * [`FlatGenerator`] reproduces vanilla's default superflat preset (bedrock, two layers
 //!   of dirt, grass) and is selected by `level-type=minecraft:flat`.
 //! * [`NoiseGenerator`] produces rolling terrain with water, beaches and trees. It is this
-//!   project's own generator, not a port of vanilla's world generation: worlds it creates
-//!   do not match what vanilla or Paper would generate from the same seed.
+//!   project's own generator from before vanilla generation was ported, kept for worlds
+//!   created with it and as the fallback without the vanilla data; [`NetherGenerator`] and
+//!   [`EndGenerator`] are its counterparts for the other dimensions.
 //!
 //! Generators only place blocks and biomes; lighting is a separate stage.
 
@@ -25,6 +26,10 @@ pub trait Generator: Send + Sync {
     /// Y of the highest solid block at a block column, used to place the world spawn.
     fn surface_y(&self, x: i32, z: i32) -> i32;
     fn name(&self) -> &'static str;
+    /// Vanilla generation, which decorates chunks after their terrain (see `world::staged`).
+    fn staged(&self) -> Option<&super::staged::VanillaGenerator> {
+        None
+    }
 }
 
 fn state(name: &str) -> u32 {

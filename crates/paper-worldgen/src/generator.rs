@@ -261,6 +261,11 @@ impl WorldGenerator {
         self.decoration.decorate(self, chunk_x, chunk_z, region);
     }
 
+    /// The block properties generation uses (for heightmaps of chunks read back from disk).
+    pub fn block_flags(&self) -> &BlockFlags {
+        &self.flags
+    }
+
     /// Feature types the data uses that this crate does not implement (they place nothing).
     pub fn unsupported_features(&self) -> &[String] {
         &self.decoration.unsupported

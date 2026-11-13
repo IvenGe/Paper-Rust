@@ -11,6 +11,7 @@ paper-nbt        NBT (file and network forms), SNBT, modified UTF-8
 paper-data       version tables for 26.3, compiled in from data/26.3 by build.rs
 paper-protocol   codec, framing, zlib compression, AES/CFB8, text components, packets
 paper-bridge     the plugin bridge wire format (frames and dynamically typed values)
+paper-worldgen   vanilla world generation, built from the vanilla jar's worldgen data
 paper-server     the server itself, and the `paper` binary
 ```
 
@@ -72,8 +73,24 @@ ticket added ──► load or generate (worker) ──► light (worker, needs 
                                                          packet wanted ──► encode (worker)
 ```
 
+With vanilla generation (`world::staged`) the terrain job is followed by decoration:
+
+```text
+terrain (worker) ──► decorate (worker, takes the 3x3 around the chunk) ──► finish (worker)
+                       a chunk is finished once it and its 8 neighbours are decorated
+```
+
+Decorating a chunk writes into its neighbours (trees cross borders), so a decoration job
+takes the nine chunks out of the world's table of unfinished chunks and hands them back when
+done; no two jobs share a chunk. Unfinished chunks are invisible to the rest of the server.
+A chunk is finished once nothing can write into it any more, and lit once its eight
+neighbours are finished, so a view needs terrain three chunks beyond its lit area.
+Unfinished chunks are saved with vanilla's `Status` (`carvers` or `features`) and their
+worldgen heightmaps, and at shutdown the server waits for decoration jobs, so generation
+resumes after a restart without decorating anything twice.
+
 Players hold tickets on the chunks in their view distance. `World::pump` starts jobs for
-wanted chunks every tick, a bounded number per worker. A chunk is *ready* once it is lit;
+wanted chunks every tick, nearest first, a bounded number per worker. A chunk is *ready* once it is lit;
 then `World::chunk_packet` returns its cached, already framed packet or starts an encode
 job. Each chunk has a revision; results computed from an older revision are discarded, and
 light jobs compare a stamp of the 3x3 terrain they were started from.
@@ -112,7 +129,10 @@ chunk I/O thread. Until a chunk or player file is written it stays in a pending 
 reads check first, so a chunk unloaded and requested again right away is never read stale.
 
 Generated chunks are saved too, so explored terrain does not depend on the generator staying
-the same. Changed chunks are saved when they are unloaded, on autosave
+the same. `level.dat` records which generator a world was made with (`paper-rs.generator`:
+`vanilla`, `flat`, or `noise`, `nether` and `end` for the built-in generators worlds made
+before vanilla generation was ported keep using); worlds from vanilla or Paper use vanilla
+generation. Changed chunks are saved when they are unloaded, on autosave
 (`world.autosave-interval-ticks`, 6000 by default), on `/save-all` and at shutdown.
 `session.lock` is locked while a server uses a world.
 

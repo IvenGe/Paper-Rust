@@ -369,8 +369,10 @@ impl Default for NetworkConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct WorldConfig {
-    /// `auto` follows `level-type` in server.properties (`minecraft:flat` -> flat, anything
-    /// else -> noise). `flat` and `noise` force a generator.
+    /// The generator of new worlds. `auto` follows `level-type` in server.properties
+    /// (`minecraft:flat` -> flat, anything else -> vanilla). `vanilla`, `flat` and `noise`
+    /// (the built-in terrain generator from before vanilla generation was ported) force one.
+    /// Existing worlds keep the generator they were made with.
     pub generator: String,
     /// Ticks between automatic world saves (0 disables autosave).
     pub autosave_interval_ticks: u64,

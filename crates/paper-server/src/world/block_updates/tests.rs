@@ -587,7 +587,7 @@ fn scheduled_ticks_are_saved_and_loaded_with_their_chunk() {
     assert_eq!((saved.fluids[0].pos, saved.fluids[0].delay), (p(0, Y, 0), 3));
     assert_eq!(saved.blocks.len(), 1);
     assert_eq!((saved.blocks[0].delay, saved.blocks[0].priority), (6, ticks::TickPriority::High));
-    let nbt = chunk_to_nbt(&SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: saved.clone() });
+    let nbt = chunk_to_nbt(&SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: saved.clone(), status: crate::world::chunk::GenStatus::Full, proto: None });
     let fluid_ticks = nbt.list("fluid_ticks").unwrap()[0].as_compound().unwrap();
     assert_eq!(fluid_ticks.string("i"), Some("minecraft:water"));
     assert_eq!((fluid_ticks.i32("x"), fluid_ticks.i32("y"), fluid_ticks.i32("z"), fluid_ticks.i32("t"), fluid_ticks.i32("p")), (Some(0), Some(Y), Some(0), Some(3), Some(0)));

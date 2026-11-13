@@ -228,6 +228,29 @@ impl LightSection {
     }
 }
 
+/// How far a chunk's generation got (vanilla's chunk `Status`). Only chunks on their way
+/// to or from disk carry anything but `Full`: the world keeps unfinished chunks apart (see
+/// `world::staged`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GenStatus {
+    /// Terrain (biomes, noise, surface, carvers) without its own features yet.
+    Terrain,
+    /// Its features are placed, but a neighbour's features may still reach into it.
+    Decorated,
+    /// Finished.
+    #[default]
+    Full,
+}
+
+/// What an unfinished chunk keeps besides its blocks.
+#[derive(Clone, Debug, Default)]
+pub struct ProtoData {
+    /// WORLD_SURFACE_WG and OCEAN_FLOOR_WG as `paper_worldgen::ProtoChunk` keeps them.
+    pub wg_heightmaps: Option<Box<[[i16; 256]; 2]>>,
+    /// Entities placed by generation; vanilla saves them inside unfinished chunks.
+    pub entities: Vec<Compound>,
+}
+
 /// A chunk column.
 #[derive(Clone, Debug)]
 pub struct Chunk {
@@ -262,6 +285,10 @@ pub struct Chunk {
     pub entities_saved: bool,
     /// Scheduled block and fluid ticks (block updates; see `world::ticks`).
     pub ticks: super::ticks::ChunkTicks,
+    /// `Full` except for unfinished chunks being saved or loaded.
+    pub status: GenStatus,
+    /// Unfinished chunks only.
+    pub proto: Option<Box<ProtoData>>,
 }
 
 fn motion_blocking(state: u32) -> bool {
@@ -288,6 +315,8 @@ impl Chunk {
             entity_nbt: Vec::new(),
             entities_saved: false,
             ticks: Default::default(),
+            status: GenStatus::Full,
+            proto: None,
         }
     }
 

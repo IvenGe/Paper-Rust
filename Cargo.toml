@@ -21,6 +21,7 @@ paper-nbt = { path = "crates/paper-nbt" }
 paper-data = { path = "crates/paper-data" }
 paper-protocol = { path = "crates/paper-protocol" }
 paper-bridge = { path = "crates/paper-bridge" }
+paper-worldgen = { path = "crates/paper-worldgen" }
 
 aes = "0.8"
 anyhow = "1"

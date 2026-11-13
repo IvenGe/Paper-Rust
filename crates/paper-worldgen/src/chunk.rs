@@ -206,6 +206,17 @@ impl ProtoChunk {
         }
     }
 
+    /// The worldgen heightmaps (WORLD_SURFACE_WG, OCEAN_FLOOR_WG): highest y per column
+    /// (`x * 16 + z`), `min_y - 1` when empty. Saved with chunks that are not finished yet.
+    pub fn wg_heightmaps(&self) -> &[[i16; 256]; 2] {
+        &self.wg_heights
+    }
+
+    /// Restores the worldgen heightmaps of a chunk read back from disk.
+    pub fn set_wg_heightmaps(&mut self, maps: [[i16; 256]; 2]) {
+        self.wg_heights = maps;
+    }
+
     /// Freezes the worldgen heightmaps (done after carving).
     pub fn snapshot_wg_heightmaps(&mut self) {
         self.wg_heights[0] = self.heights[SURFACE];
