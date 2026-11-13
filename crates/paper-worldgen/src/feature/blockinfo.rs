@@ -135,6 +135,10 @@ enum Survival {
     WeepingVines,
     Kelp,
     Bamboo,
+    /// Coral plants and fans: a sturdy top face below.
+    CoralPlant,
+    /// Coral wall fans: a sturdy face behind.
+    CoralWallFan,
 }
 
 /// Tags the survival rules use, by index into `Blocks::survival_tags`.
@@ -518,6 +522,7 @@ impl Blocks {
         survival[id("pale_moss_carpet")] = Survival::Carpet;
         survival[id("seagrass")] = Survival::Seagrass;
         survival[id("tall_seagrass")] = Survival::TallSeagrass;
+        double_plant.insert(id("tall_seagrass") as u32);
         survival[id("cocoa")] = Survival::Cocoa;
         survival[id("sea_pickle")] = Survival::SeaPickle;
         survival[id("lily_pad")] = Survival::LilyPad;
@@ -535,6 +540,13 @@ impl Blocks {
         survival[id("weeping_vines_plant")] = Survival::WeepingVines;
         survival[id("kelp")] = Survival::Kelp;
         survival[id("kelp_plant")] = Survival::Kelp;
+        for coral in ["tube", "brain", "bubble", "fire", "horn"] {
+            for dead in ["", "dead_"] {
+                survival[id(&format!("{dead}{coral}_coral"))] = Survival::CoralPlant;
+                survival[id(&format!("{dead}{coral}_coral_fan"))] = Survival::CoralPlant;
+                survival[id(&format!("{dead}{coral}_coral_wall_fan"))] = Survival::CoralWallFan;
+            }
+        }
         for name in ["grass_block", "podzol", "mycelium"] {
             snowy_dirt.insert(id(name) as u32);
         }
@@ -807,6 +819,11 @@ impl Blocks {
                 let facing = self.prop(state, "facing").and_then(Dir::parse).unwrap_or(Dir::North);
                 tag(tag_index("minecraft:supports_cocoa")).has(w.get(pos.rel(facing)))
             }
+            Survival::CoralPlant => self.sturdy(below(), Dir::Up),
+            Survival::CoralWallFan => match self.prop(state, "facing").and_then(Dir::parse) {
+                Some(facing) => self.sturdy(w.get(pos.rel(facing.opposite())), facing),
+                None => true,
+            },
             Survival::SeaPickle => {
                 let b = below();
                 self.sturdy(b, Dir::Up) || self.has_collision(b)

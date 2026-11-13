@@ -5,6 +5,7 @@ mod cave;
 mod end;
 mod misc;
 mod nether;
+mod surface;
 mod terrain;
 mod tree;
 
@@ -31,6 +32,9 @@ pub(crate) fn parse(p: &mut Parser, t: &str, v: &Value) -> Result<Option<Box<dyn
         return Ok(Some(f));
     }
     if let Some(f) = end::parse(p, t, v)? {
+        return Ok(Some(f));
+    }
+    if let Some(f) = surface::parse(p, t, v)? {
         return Ok(Some(f));
     }
     misc::parse(p, t, v)

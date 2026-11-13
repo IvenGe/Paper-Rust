@@ -134,6 +134,20 @@ const PUMPKIN_CROSS_CHECK: &[(Dimension, i32, i32, &str)] = &[
     (Dimension::End, -63, -80, "bb20c7761deae20497b9b04496f0d1b8a14c86c3f2aa7f526e865b1334c5f7b2"),
     (Dimension::End, -59, -80, "efd5b5b40d9cc6f49b586d419c0b53b883803da603c2a2e818809b9a505d780c"),
     (Dimension::End, 0, 0, "9d6a6e3bbd379cfb1b1030fb35954292239196f6ab3f210f916e92ba35a0b248"),
+    // Overworld biomes with code-defined features. For these Pumpkin was first corrected
+    // where it departs from vanilla 26.3: the ice spike's edge draw and replaceable tag,
+    // the iceberg cut-out's and snow cap's random draws, the forest rock's
+    // `forest_rock_can_place_on` tag and the huge mushrooms' height and clearance checks.
+    // Ice spikes, deep frozen ocean, old growth pine taiga, mushroom fields, dark forest,
+    // warm ocean (corals).
+    (Dimension::Overworld, 208, -80, "b7c748c510298ac9383411187ddd67a951be353baf235b3f32d6dd9f9e13edc1"),
+    (Dimension::Overworld, 208, -76, "ada3dd03d0065ed17c6ff72d55cd05258f56cc9747e201a91028a8b93d86aa12"),
+    (Dimension::Overworld, -152, 152, "c00b55511021b8834e1a938f4053df5f8a295db25f9cc2fde0efda0d67e904ca"),
+    (Dimension::Overworld, 172, 16, "c2a0a1ca2e17aa88793b6f42f19cce6b62d76e829582e1e566a7cc936b4649e6"),
+    (Dimension::Overworld, -40, -60, "3293b219561aca17b462099ea91c7d22033d82a84853615fb7120b1cb004a4c7"),
+    (Dimension::Overworld, -84, 72, "74344211e7b103505eb8afe525c9ad720872b2915cf70be830093646cc583bc3"),
+    (Dimension::Overworld, 16, 4, "c66819538844cf67621dfb4dff5d71a7f0bc7329ffed180802bba987b01dc942"),
+    (Dimension::Overworld, 20, 4, "dca117360b65af5213ce6299d454facb12e2563ea4c7e1d8fd511ccb7811a885"),
 ];
 
 #[test]

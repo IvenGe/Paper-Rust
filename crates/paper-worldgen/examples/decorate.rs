@@ -50,16 +50,38 @@ fn main() -> anyhow::Result<()> {
     let center = region.center();
 
     let mut sha = Sha256::new();
-    for y in center.min_y..center.min_y + center.height {
-        for z in 0..16 {
-            for x in 0..16 {
-                sha.update(center.get(x, y, z).to_be_bytes());
+    let mut sections = Vec::new();
+    for s in 0..center.height / 16 {
+        let mut fnv: u64 = 0xcbf2_9ce4_8422_2325;
+        for y in center.min_y + s * 16..center.min_y + s * 16 + 16 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    let state = center.get(x, y, z);
+                    fnv = (fnv ^ state as u64).wrapping_mul(0x0000_0100_0000_01B3);
+                    sha.update(state.to_be_bytes());
+                }
             }
         }
+        sections.push(fnv);
     }
     let hash: String = sha.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let changed = before.iter().zip(&center.blocks).filter(|(a, b)| a != b).count();
     println!("{dimension:?} chunk ({cx}, {cz}) seed {seed}: {hash}");
+    if std::env::var_os("SECTIONS").is_some() {
+        println!("section hashes: {sections:?}");
+    }
+    if let Some(dir) = std::env::var_os("DUMP") {
+        // The center chunk's state ids as little-endian u16, y-major then z then x.
+        let mut out = Vec::new();
+        for y in center.min_y..center.min_y + center.height {
+            for z in 0..16 {
+                for x in 0..16 {
+                    out.extend_from_slice(&(center.get(x, y, z) as u16).to_le_bytes());
+                }
+            }
+        }
+        std::fs::write(std::path::Path::new(&dir).join(format!("mine_{cx}_{cz}.bin")), out)?;
+    }
     println!("terrain of 9 chunks: {terrain:?}; decoration: {decoration:?}; blocks changed in the center: {changed}");
     for (pos, e) in &region.block_entities {
         println!("block entity at {pos:?}: {e:?}");
