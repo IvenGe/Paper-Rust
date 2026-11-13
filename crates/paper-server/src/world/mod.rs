@@ -13,6 +13,7 @@ pub mod chunk;
 pub mod entity;
 pub mod generator;
 pub mod light;
+pub mod rules;
 pub mod storage;
 
 use chunk::{Chunk, ChunkPos, LightSection};
@@ -79,6 +80,7 @@ pub struct World {
     /// Time of the world's clock in ticks (0 = sunrise).
     pub day_time: i64,
     pub daylight_cycle: bool,
+    pub rules: rules::GameRules,
     /// Network id of the world's clock in `minecraft:world_clock`, if it has one.
     pub clock: Option<i32>,
     /// Size of the synchronised biome registry.
@@ -133,6 +135,7 @@ impl World {
             age: 0,
             day_time: 0,
             daylight_cycle: true,
+            rules: rules::GameRules::default(),
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
             storage: None,
@@ -252,6 +255,7 @@ impl World {
                             let chunk = loaded.unwrap_or_else(|| {
                                 let mut chunk = generator.generate(p, min_y, height);
                                 chunk.dirty = storage.is_some();
+                                chunk.fresh = true;
                                 chunk
                             });
                             notify(index, WorldEvent::Terrain(Box::new(chunk)));

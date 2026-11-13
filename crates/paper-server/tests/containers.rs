@@ -213,8 +213,10 @@ fn chests_join_into_a_double_chest_and_drop_their_contents_when_broken() {
                     _ => None,
                 })
                 .sum();
+            // Alice may already have picked them up.
+            let picked: i32 = s.players[&id].inventory.iter().filter_map(|i| i.0.as_ref()).filter(|i| i.item == stick).map(|i| i.count).sum();
             let state = s.worlds[0].block_at(b.x, b.y, b.z).unwrap();
-            (sticks, blocks::property(state, "type").map(str::to_owned), s.container_items(0, b))
+            (sticks + picked, blocks::property(state, "type").map(str::to_owned), s.container_items(0, b))
         })
         .unwrap();
     assert_eq!(sticks_on_ground, 3, "the broken half drops its sticks");

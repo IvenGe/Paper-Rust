@@ -72,6 +72,9 @@ impl CommandRegistry {
             Builtin { name: "setblock", aliases: &[], description: "Changes a block", usage: "/setblock <x> <y> <z> <block>", min_op: 2, handler: cmd_setblock, completer: complete_setblock },
             Builtin { name: "time", aliases: &[], description: "Changes or queries the world's time", usage: "/time <set|add|query> <value>", min_op: 2, handler: cmd_time, completer: complete_time },
             Builtin { name: "difficulty", aliases: &[], description: "Sets the difficulty", usage: "/difficulty [peaceful|easy|normal|hard]", min_op: 2, handler: cmd_difficulty, completer: complete_difficulty },
+            Builtin { name: "gamerule", aliases: &[], description: "Sets or queries a game rule", usage: "/gamerule <rule> [value]", min_op: 2, handler: cmd_gamerule, completer: complete_gamerule },
+            Builtin { name: "summon", aliases: &[], description: "Summons an entity", usage: "/summon <entity> [x y z]", min_op: 2, handler: cmd_summon, completer: complete_summon },
+            Builtin { name: "kill", aliases: &[], description: "Kills entities", usage: "/kill [targets]", min_op: 2, handler: cmd_kill, completer: complete_kill },
             Builtin { name: "seed", aliases: &[], description: "Displays the world seed", usage: "/seed", min_op: 2, handler: cmd_seed, completer: no_completions },
             Builtin { name: "setworldspawn", aliases: &[], description: "Sets the world spawn", usage: "/setworldspawn [x y z]", min_op: 2, handler: cmd_set_world_spawn, completer: no_completions },
             Builtin { name: "tps", aliases: &[], description: "Shows the server's ticks per second", usage: "/tps", min_op: 2, handler: cmd_tps, completer: no_completions },
@@ -682,6 +685,112 @@ fn cmd_difficulty(server: &mut Server, source: &CommandSource, args: &[&str]) {
             server.broadcast(&play::ChangeDifficulty { difficulty: difficulty.id(), locked: false });
             server.feedback(source, Component::translatable("commands.difficulty.success", vec![Component::text(difficulty.name())]));
         }
+    }
+}
+
+fn cmd_gamerule(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    let world = server.source_location(source).map_or(0, |(w, _)| w);
+    let Some(name) = args.first() else { return usage(server, source, "/gamerule <rule> [value]") };
+    let Some(rule) = paper_data::game_rules::get(name) else { return server.fail(source, &format!("Unknown game rule: {name}")) };
+    let short = rule.name.strip_prefix("minecraft:").unwrap_or(&rule.name).to_owned();
+    match args.get(1) {
+        None => {
+            let value = server.worlds[world].rules.get(&rule.name);
+            server.feedback(source, Component::translatable("commands.gamerule.query", vec![Component::text(short), Component::text(value.to_string())]));
+        }
+        Some(text) => {
+            let Some(value) = rule.parse(text) else {
+                return server.fail(source, &format!("Invalid value for {short}: {text}"));
+            };
+            server.set_game_rule(world, &rule.name, value);
+            server.feedback(source, Component::translatable("commands.gamerule.set", vec![Component::text(short), Component::text(value.to_string())]));
+        }
+    }
+}
+
+fn complete_gamerule(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {
+    match args.len() {
+        0 | 1 => paper_data::game_rules::all().iter().map(|r| r.name.strip_prefix("minecraft:").unwrap_or(&r.name).to_owned()).collect(),
+        2 => match paper_data::game_rules::get(args[0]).map(|r| r.default) {
+            Some(paper_data::game_rules::Value::Bool(_)) => vec!["true".into(), "false".into()],
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+fn cmd_summon(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    let Some(name) = args.first() else { return usage(server, source, "/summon <entity> [x y z]") };
+    let (world, base) = server.source_location(source).unwrap_or((0, Location::default()));
+    let pos = match &args[1..] {
+        [] => crate::world::entity::Vec3::new(base.x, base.y, base.z),
+        [x, y, z] => match (parse_coordinate(x, base.x, true), parse_coordinate(y, base.y, false), parse_coordinate(z, base.z, true)) {
+            (Some(x), Some(y), Some(z)) => crate::world::entity::Vec3::new(x, y, z),
+            _ => return server.fail(source, "Expected three coordinates"),
+        },
+        _ => return usage(server, source, "/summon <entity> [x y z]"),
+    };
+    let name = if name.contains(':') { (*name).to_owned() } else { format!("minecraft:{name}") };
+    if paper_data::entity_types::by_name(&name).is_none() || name == "minecraft:player" {
+        return server.fail(source, format!("Unknown entity type '{name}'"));
+    }
+    match server.spawn_mob(world, &name, pos, super::mobs::SpawnReason::Command) {
+        Some(id) => {
+            let shown = server.entity_display_name(world, id).unwrap_or_else(|| Component::text(name.clone()));
+            server.feedback(source, Component::translatable("commands.summon.success", vec![shown]));
+        }
+        None => server.fail(source, "Unable to summon entity"),
+    }
+}
+
+fn complete_summon(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {
+    if args.len() <= 1 {
+        paper_data::entity_types::all().filter(|e| e.name != "minecraft:player").map(|e| e.name.clone()).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+fn cmd_kill(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    let world = server.source_location(source).map_or(0, |(w, _)| w);
+    let token = args.first().copied().unwrap_or("@s");
+    // Entities: @e (all non-player entities and players), @e[type=...]; players otherwise.
+    let mut players = Vec::new();
+    let mut entities = Vec::new();
+    if let Some(rest) = token.strip_prefix("@e") {
+        let wanted = rest.trim_start_matches('[').trim_end_matches(']').split(',').find_map(|kv| kv.strip_prefix("type=")).map(|t| if t.contains(':') { t.to_owned() } else { format!("minecraft:{t}") });
+        entities = server.worlds[world].entities.values().filter(|e| e.is_alive() && wanted.as_ref().is_none_or(|w| *w == e.info.name)).map(|e| e.id).collect();
+        if wanted.as_deref().is_none_or(|w| w == "minecraft:player") {
+            players = server.players.values().filter(|p| p.world == world).map(|p| p.entity_id).collect();
+        }
+    } else {
+        players = server.resolve_players(source, token);
+    }
+    if players.is_empty() && entities.is_empty() {
+        return server.fail(source, "No entity was found");
+    }
+    let count = players.len() + entities.len();
+    for id in players {
+        server.hurt_player(id, super::survival::Damage::new("minecraft:generic_kill"), f32::MAX);
+    }
+    for id in entities {
+        let is_mob = server.worlds[world].entities.get(&id).is_some_and(|e| e.mob().is_some());
+        if is_mob {
+            server.hurt_entity(world, id, super::survival::Damage::new("minecraft:generic_kill"), f32::MAX);
+        } else if let Some(e) = server.worlds[world].entities.get_mut(&id) {
+            e.removed = true;
+        }
+    }
+    server.feedback(source, Component::translatable("commands.kill.success.multiple", vec![Component::text(count.to_string())]));
+}
+
+fn complete_kill(server: &Server, source: &CommandSource, args: &[&str]) -> Vec<String> {
+    if args.len() <= 1 {
+        let mut out: Vec<String> = vec!["@e".into(), "@s".into(), "@a".into(), "@p".into()];
+        out.extend(complete_players(server, source, args));
+        out
+    } else {
+        Vec::new()
     }
 }
 

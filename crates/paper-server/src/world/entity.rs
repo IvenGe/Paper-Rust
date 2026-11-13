@@ -327,6 +327,8 @@ pub struct MobBrain {
     /// Skeleton bow draw time.
     pub charge: i32,
     pub speed_factor: f64,
+    /// Ambient sound counter (`ambientSoundTime`).
+    pub ambient: i32,
 }
 
 /// A mob.

@@ -245,6 +245,8 @@ pub struct Chunk {
     pub dirty: bool,
     /// Incremented on every change that affects what clients see.
     pub revision: u64,
+    /// Freshly generated (not loaded from disk): creatures are placed once it is ready.
+    pub fresh: bool,
 }
 
 fn motion_blocking(state: u32) -> bool {
@@ -267,6 +269,7 @@ impl Chunk {
             lit: false,
             dirty: false,
             revision: 0,
+            fresh: false,
         }
     }
 

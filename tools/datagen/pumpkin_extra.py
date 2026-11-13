@@ -61,6 +61,7 @@ def main():
     out = Path(sys.argv[2])
     ours_blocks = json.loads((out / "blocks.json").read_text())["blocks"]
     ours_items = json.loads((out / "items.json").read_text())["items"]
+    registries = json.loads((out / "registries.json").read_text())
     errors = []
 
     # --- items -------------------------------------------------------------------------
@@ -154,6 +155,21 @@ def main():
     tracked = json.loads((pumpkin / "tracked_data.json").read_text())
     data = {ns(name): {field: [v["id"], v["type_id"]] for field, v in fields.items()} for name, fields in tracked.items()}
     (out / "entity_data.json").write_text(json.dumps({"entities": data}, sort_keys=True, separators=(",", ":")) + "\n")
+
+    # Game rules with their defaults (and bounds for integer rules), checked against the
+    # minecraft:game_rule registry.
+    rules = json.loads((pumpkin / "game_rules.json").read_text())
+    registered = set(registries.get("minecraft:game_rule", []))
+    for name in rules:
+        if ns(name) not in registered:
+            errors.append(f"game rule {name} is not in minecraft:game_rule")
+    out_rules = {}
+    for name, value in rules.items():
+        if isinstance(value, bool):
+            out_rules[ns(name)] = {"default": value}
+        else:
+            out_rules[ns(name)] = {"default": value["default"], "min": value["min"], "max": value["max"]}
+    (out / "game_rules.json").write_text(json.dumps({"rules": out_rules}, sort_keys=True, separators=(",", ":")) + "\n")
 
     if errors:
         print("\n".join(errors[:50]), file=sys.stderr)

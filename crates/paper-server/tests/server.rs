@@ -170,12 +170,13 @@ fn players_see_each_other() {
     assert_eq!(info.entries[0].game_mode, 1);
     let joined: play::SystemChat = alice.expect();
     assert_eq!(joined.content.to_plain(), "Bob joined the game");
-    let spawn: play::AddEntity = alice.expect();
+    let bob_id = bob.entity_id;
+    let spawn: play::AddEntity = alice.find(TIMEOUT, |a: &play::AddEntity| a.entity_id.0 == bob_id).expect("Bob appears");
     assert_eq!(spawn.entity_id.0, bob.entity_id);
     assert_eq!(spawn.uuid, bob.profile.as_ref().unwrap().uuid);
     assert_eq!(spawn.entity_type.0, paper_data::registries::id("minecraft:entity_type", "minecraft:player").unwrap() as i32);
     assert_eq!((spawn.x, spawn.y, spawn.z), (8.5, -60.0, 8.5));
-    let metadata: play::SetEntityData = alice.expect();
+    let metadata: play::SetEntityData = alice.find(TIMEOUT, |m: &play::SetEntityData| m.entity_id.0 == bob_id).expect("Bob's metadata");
     assert_eq!(metadata.entity_id.0, bob.entity_id);
     assert_eq!(*metadata.metadata.0.last().unwrap(), 0xFF);
 
@@ -184,7 +185,8 @@ fn players_see_each_other() {
     let mut names: Vec<&str> = info.entries.iter().map(|e| e.name.as_str()).collect();
     names.sort_unstable();
     assert_eq!(names, ["Alice", "Bob"]);
-    let spawn: play::AddEntity = bob.expect();
+    let alice_id = alice.entity_id;
+    let spawn: play::AddEntity = bob.find(TIMEOUT, |a: &play::AddEntity| a.entity_id.0 == alice_id).expect("Alice appears");
     assert_eq!(spawn.entity_id.0, alice.entity_id);
 
     // The first movement packet sets Bob on the ground; a change of the on-ground state is
@@ -225,7 +227,7 @@ fn players_see_each_other() {
 
     // Bob leaves: Alice is told to forget him.
     drop(bob);
-    let removed: play::RemoveEntities = alice.expect();
+    let removed: play::RemoveEntities = alice.find(TIMEOUT, |r: &play::RemoveEntities| r.entity_ids.contains(&VarInt(bob_id))).expect("Bob removed");
     assert_eq!(removed.entity_ids.len(), 1);
     let info: play::PlayerInfoRemove = alice.expect();
     assert_eq!(info.uuids.len(), 1);
@@ -242,13 +244,14 @@ fn far_apart_players_do_not_see_each_other() {
     alice.expect::<play::PlayerPosition>();
     let mut bob = Client::join(server.port(), "Bob");
     bob.expect::<play::PlayerPosition>();
-    alice.expect::<play::AddEntity>();
+    let bob_id = bob.entity_id;
+    alice.find(TIMEOUT, |a: &play::AddEntity| a.entity_id.0 == bob_id).expect("Alice sees Bob");
     expect_chunk(&mut bob, 0, 0);
 
     // Bob walks far away: Alice's client is told to remove him; coming back re-adds him.
     alice.clear_backlog();
     bob.move_to(1000.5, -60.0, 8.5);
-    let removed: play::RemoveEntities = alice.expect();
+    let removed: play::RemoveEntities = alice.find(TIMEOUT, |r: &play::RemoveEntities| r.entity_ids.contains(&VarInt(bob_id))).expect("Bob removed");
     assert_eq!(removed.entity_ids, vec![VarInt(bob.entity_id)]);
     // Bob's view follows him: new centre and chunks around it.
     let center: play::SetChunkCacheCenter = bob.find(TIMEOUT, |c: &play::SetChunkCacheCenter| c.x.0 == 62).expect("view recentred");
@@ -257,7 +260,7 @@ fn far_apart_players_do_not_see_each_other() {
     assert!(bob.find(TIMEOUT, |f: &play::ForgetLevelChunk| f.x == 0 && f.z == 0).is_some(), "old chunks are unloaded");
 
     bob.move_to(8.5, -60.0, 8.5);
-    let spawn: play::AddEntity = alice.expect();
+    let spawn: play::AddEntity = alice.find(TIMEOUT, |a: &play::AddEntity| a.entity_id.0 == bob_id).expect("Bob is back");
     assert_eq!(spawn.entity_id.0, bob.entity_id);
     assert_eq!(spawn.x, 8.5);
     server.stop();

@@ -95,6 +95,11 @@ impl Server {
             xp_total: 0,
             respawn: None,
             last_attacker: None,
+            last_damage: None,
+            last_fall: 0.0,
+            moved_this_tick: false,
+            sent_health: None,
+            xp_pickup_delay: 0,
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -122,9 +127,9 @@ impl Server {
             max_players: VarInt(props.max_players),
             view_distance: VarInt(player.view.radius),
             simulation_distance: VarInt(props.simulation_distance),
-            reduced_debug_info: false,
-            enable_respawn_screen: true,
-            limited_crafting: false,
+            reduced_debug_info: world.rules.bool("reduced_debug_info"),
+            enable_respawn_screen: !world.rules.bool("immediate_respawn"),
+            limited_crafting: world.rules.bool("limited_crafting"),
             spawn: self.spawn_info(world_index, player.game_mode, None),
             online_mode: props.online_mode,
             enforces_secure_chat: false,

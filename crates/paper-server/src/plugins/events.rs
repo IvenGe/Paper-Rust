@@ -355,6 +355,116 @@ pub fn on_crafted(server: &mut Server, id: i32, crafted: &[paper_protocol::types
     fire(server, "CraftItemEvent", "event.crafted", bmap! { "uuid" => uuid, "items" => items });
 }
 
+/// EntityDamageEvent (and its ByEntity/ByBlock forms): plugins may cancel the damage or
+/// change the amount.
+pub fn on_entity_damage(server: &mut Server, id: i32, damage: &crate::server::survival::Damage, amount: &mut f32) -> bool {
+    let listened = ["EntityDamageEvent", "EntityDamageByEntityEvent", "EntityDamageByBlockEvent"].iter().any(|e| server.plugin_events.contains(*e));
+    if server.plugins.is_none() || !listened {
+        return true;
+    }
+    let target = match server.players.get(&id) {
+        Some(p) => bmap! { "player" => p.uuid().to_string() },
+        None => bmap! { "entity" => id as i64 },
+    };
+    let mut args = bmap! { "target" => target, "cause" => damage.kind, "amount" => *amount as f64 };
+    if let Some(attacker) = damage.attacker {
+        match server.players.get(&attacker) {
+            Some(p) => args.set("attacker_player", p.uuid().to_string()),
+            None => args.set("attacker_entity", attacker as i64),
+        }
+    }
+    match fire(server, "", "event.entity_damage", args) {
+        Some(result) => {
+            if result.bool("cancelled") == Some(true) {
+                return false;
+            }
+            if let Some(a) = result.f64("amount") {
+                *amount = a as f32;
+            }
+            true
+        }
+        None => true,
+    }
+}
+
+/// PlayerDeathEvent: returns the death message to show (`None` when a plugin cancelled the
+/// death, which Paper allows).
+pub fn on_player_death(server: &mut Server, id: i32, message: Component) -> Option<Component> {
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerDeathEvent") {
+        return Some(message);
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return Some(message) };
+    let args = bmap! { "uuid" => uuid, "message" => component_value(&message) };
+    match fire(server, "PlayerDeathEvent", "event.player_death", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => {
+            if let Some(p) = server.players.get_mut(&id) {
+                p.health = 1.0;
+            }
+            None
+        }
+        Some(result) => {
+            let m = result.get("message");
+            Some(component_from(m).unwrap_or(message))
+        }
+        None => Some(message),
+    }
+}
+
+/// EntityDeathEvent for mobs: returns false if a plugin cancelled the death.
+pub fn on_entity_death(server: &mut Server, world: usize, id: i32) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("EntityDeathEvent") {
+        return true;
+    }
+    let ty = server.worlds.get(world).and_then(|w| w.entities.get(&id)).map(|e| e.info.name.clone()).unwrap_or_default();
+    match fire(server, "EntityDeathEvent", "event.entity_death", bmap! { "entity" => id as i64, "type" => ty }) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// PlayerRespawnEvent: plugins may change where the player respawns.
+pub fn on_respawn(server: &mut Server, id: i32, world: usize, target: crate::server::player::Location) -> crate::server::player::Location {
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerRespawnEvent") {
+        return target;
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return target };
+    let world_name = server.worlds[world].name.clone();
+    let args = bmap! { "uuid" => uuid, "world" => world_name, "x" => target.x, "y" => target.y, "z" => target.z, "yaw" => target.yaw as f64, "pitch" => target.pitch as f64 };
+    match fire(server, "PlayerRespawnEvent", "event.respawn", args) {
+        Some(result) => crate::server::player::Location {
+            x: result.f64("x").unwrap_or(target.x),
+            y: result.f64("y").unwrap_or(target.y),
+            z: result.f64("z").unwrap_or(target.z),
+            yaw: result.f64("yaw").map_or(target.yaw, |v| v as f32),
+            pitch: result.f64("pitch").map_or(target.pitch, |v| v as f32),
+        },
+        None => target,
+    }
+}
+
+/// CreatureSpawnEvent, after the fact: a cancelled spawn is removed again.
+pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: crate::server::mobs::SpawnReason) {
+    if server.plugins.is_none() || !server.plugin_events.contains("CreatureSpawnEvent") {
+        return;
+    }
+    let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return };
+    let reason = match reason {
+        crate::server::mobs::SpawnReason::Natural => "NATURAL",
+        crate::server::mobs::SpawnReason::ChunkGeneration => "CHUNK_GEN",
+        crate::server::mobs::SpawnReason::Command => "COMMAND",
+        crate::server::mobs::SpawnReason::Plugin => "CUSTOM",
+        crate::server::mobs::SpawnReason::Egg => "SPAWNER_EGG",
+    };
+    let args = bmap! { "entity" => id as i64, "type" => e.info.name.clone(), "world" => server.worlds[world].name.clone(), "x" => e.pos.x, "y" => e.pos.y, "z" => e.pos.z, "reason" => reason };
+    if let Some(result) = fire(server, "CreatureSpawnEvent", "event.creature_spawn", args) {
+        if result.bool("cancelled") == Some(true) {
+            if let Some(e) = server.worlds[world].entities.get_mut(&id) {
+                e.removed = true;
+            }
+        }
+    }
+}
+
 /// Applies a plugin list / command list / event subscription update from the host.
 pub fn apply_plugin_list(server: &mut Server, value: &Value) {
     if let Some(plugins) = value.list("plugins") {

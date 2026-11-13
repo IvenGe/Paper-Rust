@@ -20,10 +20,11 @@ pub mod containers;
 pub mod entities;
 pub mod loot;
 pub mod menu;
-mod mobs;
+pub mod mobs;
 pub mod player;
 mod playerdata;
 pub mod recipes;
+pub mod survival;
 mod view;
 
 pub use join::info_entry as join_info_entry;
@@ -163,6 +164,10 @@ pub struct Server {
     pub loot: loot::LootTables,
     /// Crafting and smelting recipes from the vanilla data.
     pub recipes: Option<Arc<recipes::Recipes>>,
+    /// `minecraft:damage_type` entries (death messages, exhaustion, difficulty scaling).
+    pub damage_types: HashMap<String, survival::DamageTypeInfo>,
+    /// Biome spawner lists by `biome|category`, read from the vanilla data on demand.
+    pub spawner_cache: HashMap<String, Vec<mobs::SpawnerEntry>>,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
 }
@@ -288,6 +293,12 @@ impl Server {
             world.apply_level(level);
             log::info!("Loaded world '{}' (seed {}, {} terrain)", world.name, seed, world.generator.name());
         }
+        if let Some(storage) = &storage {
+            if let Some(rules) = storage.read_game_rules().context("reading game rules")? {
+                world.rules = rules;
+            }
+        }
+        world.daylight_cycle = world.rules.bool("advance_time");
         world.storage = storage;
 
         let server = Self {
@@ -313,6 +324,8 @@ impl Server {
             io,
             loot: loot::LootTables::new(vanilla.clone()),
             recipes: vanilla.as_ref().map(|v| Arc::new(recipes::Recipes::load(v))),
+            damage_types: survival::load_damage_types(vanilla.as_deref()),
+            spawner_cache: HashMap::new(),
             vanilla,
             tasks,
             status_dirty: true,
@@ -362,8 +375,13 @@ impl Server {
             MainTask::Packet { entity_id, packet } => self.handle_packet(entity_id, packet),
             MainTask::Disconnected { entity_id, reason } => self.handle_disconnect(entity_id, &reason),
             MainTask::World { world, event } => {
-                if let Some(w) = self.worlds.get_mut(world) {
-                    w.handle_event(event);
+                let ready = self.worlds.get_mut(world).and_then(|w| w.handle_event(event));
+                // A newly generated chunk gets its animals once it is ready.
+                if let Some(pos) = ready {
+                    let fresh = self.worlds[world].chunks.get_mut(&pos).is_some_and(|c| std::mem::take(&mut c.fresh));
+                    if fresh {
+                        self.spawn_for_chunk_generation(world, pos);
+                    }
                 }
             }
             MainTask::ConsoleCommand(line) => {
@@ -400,6 +418,7 @@ impl Server {
         self.tick_chunk_views();
         self.tick_players();
         self.tick_entities();
+        self.tick_spawning();
         self.tick_furnaces();
         self.tick_tracker();
 
@@ -528,6 +547,9 @@ impl Server {
                 if let Err(e) = storage.save_level(&world.level_data(game_type, hardcore)) {
                     log::error!("Could not save level.dat of {}: {e:#}", world.name);
                 }
+                if let Err(e) = storage.save_game_rules(&world.rules) {
+                    log::error!("Could not save the game rules of {}: {e:#}", world.name);
+                }
             }
             log::debug!("Queued {chunks} chunk(s) of '{}' for saving", world.name);
         }
@@ -540,6 +562,33 @@ impl Server {
             }
         }
         true
+    }
+
+    /// Changes a game rule of a world and applies its side effects.
+    pub fn set_game_rule(&mut self, world: usize, name: &str, value: paper_data::game_rules::Value) {
+        let Some(w) = self.worlds.get_mut(world) else { return };
+        if !w.rules.set(name, value) {
+            return;
+        }
+        match paper_data::game_rules::get(name).map(|r| r.name.as_str()) {
+            Some("minecraft:advance_time") => {
+                w.daylight_cycle = value.as_bool();
+                let payload = self.time_payload(world);
+                self.broadcast_payload_in_world(world, payload);
+            }
+            Some("minecraft:immediate_respawn") => {
+                let packet = play::GameEvent { event: play::game_event::IMMEDIATE_RESPAWN, value: if value.as_bool() { 1.0 } else { 0.0 } };
+                for p in self.players.values().filter(|p| p.world == world) {
+                    p.conn.send(&packet);
+                }
+            }
+            Some("minecraft:reduced_debug_info") => {
+                for p in self.players.values().filter(|p| p.world == world) {
+                    p.conn.send(&play::EntityEvent { entity_id: p.entity_id, status: if value.as_bool() { 22 } else { 23 } });
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn mark_status_dirty(&mut self) {

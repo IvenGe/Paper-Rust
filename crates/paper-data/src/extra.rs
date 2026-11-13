@@ -171,7 +171,8 @@ pub mod item_data {
         /// (e.g. `minecraft:cooking/time_coal`), resolved from the vanilla data.
         pub fuel: Option<String>,
         pub fire_resistant: bool,
-        pub raw: Option<&'static Value>,
+        /// All of the item's default components (without the `minecraft:` prefix).
+        pub raw: Option<Value>,
     }
 
     impl ItemData {
@@ -242,7 +243,7 @@ pub mod item_data {
                         modifiers,
                         fuel: c.get("cooking_fuel").and_then(|f| f["burn_time"].as_str()).map(str::to_owned),
                         fire_resistant: c.get("damage_resistant").is_some(),
-                        raw: None,
+                        raw: Some(c.clone()),
                     },
                 );
             }
@@ -407,5 +408,135 @@ mod tests {
         let item = entity_types::by_name("minecraft:item").unwrap();
         assert_eq!((item.width, item.height), (0.25, 0.25));
         assert_eq!(entity_types::by_id(item.id).unwrap().name, "minecraft:item");
+    }
+}
+
+/// Game rules (`minecraft:game_rule`) and their defaults.
+pub mod game_rules {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Value {
+        Bool(bool),
+        Int(i32),
+    }
+
+    impl Value {
+        pub fn as_bool(self) -> bool {
+            match self {
+                Value::Bool(b) => b,
+                Value::Int(i) => i != 0,
+            }
+        }
+
+        pub fn as_int(self) -> i32 {
+            match self {
+                Value::Bool(b) => b as i32,
+                Value::Int(i) => i,
+            }
+        }
+    }
+
+    impl std::fmt::Display for Value {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Value::Bool(b) => write!(f, "{b}"),
+                Value::Int(i) => write!(f, "{i}"),
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct GameRule {
+        /// Registry name, e.g. `minecraft:keep_inventory`.
+        pub name: String,
+        pub default: Value,
+        /// Bounds of an integer rule.
+        pub min: i32,
+        pub max: i32,
+    }
+
+    impl GameRule {
+        /// Parses a value as typed in `/gamerule`, checking bounds.
+        pub fn parse(&self, text: &str) -> Option<Value> {
+            match self.default {
+                Value::Bool(_) => text.parse().ok().map(Value::Bool),
+                Value::Int(_) => text.parse().ok().filter(|v| (self.min..=self.max).contains(v)).map(Value::Int),
+            }
+        }
+    }
+
+    /// Every game rule, sorted by name.
+    pub fn all() -> &'static [GameRule] {
+        static T: OnceLock<Vec<GameRule>> = OnceLock::new();
+        T.get_or_init(|| {
+            let v: serde_json::Value = serde_json::from_str(include_str!("../../../data/26.3/game_rules.json")).expect("game_rules.json");
+            let mut rules: Vec<GameRule> = v["rules"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(name, r)| {
+                    let default = match &r["default"] {
+                        serde_json::Value::Bool(b) => Value::Bool(*b),
+                        other => Value::Int(other.as_i64().unwrap_or(0) as i32),
+                    };
+                    let bound = |k: &str, d: i64| r.get(k).and_then(serde_json::Value::as_i64).unwrap_or(d).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+                    GameRule { name: name.clone(), default, min: bound("min", i32::MIN as i64), max: bound("max", i32::MAX as i64) }
+                })
+                .collect();
+            rules.sort_by(|a, b| a.name.cmp(&b.name));
+            rules
+        })
+    }
+
+    /// A rule by name, with or without the `minecraft:` prefix; also accepts the old
+    /// camelCase names (`keepInventory`).
+    pub fn get(name: &str) -> Option<&'static GameRule> {
+        let name = normalize(&legacy_name(name)).into_owned();
+        all().iter().find(|r| r.name == name)
+    }
+
+    /// Maps pre-26 camelCase rule names to the current ones.
+    pub fn legacy_name(name: &str) -> String {
+        let renamed = match name {
+            "doDaylightCycle" => "advance_time",
+            "doWeatherCycle" => "advance_weather",
+            "doTileDrops" => "block_drops",
+            "doEntityDrops" => "entity_drops",
+            "doMobLoot" => "mob_drops",
+            "doMobSpawning" => "spawn_mobs",
+            "doFireTick" => "fire_spread_radius_around_player",
+            "doImmediateRespawn" => "immediate_respawn",
+            "naturalRegeneration" => "natural_health_regeneration",
+            "doInsomnia" => "spawn_phantoms",
+            "doPatrolSpawning" => "spawn_patrols",
+            "doTraderSpawning" => "spawn_wandering_traders",
+            "doWardenSpawning" => "spawn_wardens",
+            "disableRaids" => "raids",
+            "announceAdvancements" => "show_advancement_messages",
+            "commandModificationBlockLimit" => "max_block_modifications",
+            "maxCommandChainLength" => "max_command_sequence_length",
+            "playersSleepingPercentage" => "players_sleeping_percentage",
+            "randomTickSpeed" => "random_tick_speed",
+            "spawnRadius" => "respawn_radius",
+            "snowAccumulationHeight" => "max_snow_accumulation_height",
+            "waterSourceConversion" => "water_source_conversion",
+            "lavaSourceConversion" => "lava_source_conversion",
+            _ => "",
+        };
+        if !renamed.is_empty() {
+            return renamed.to_owned();
+        }
+        // keepInventory -> keep_inventory and similar.
+        let mut out = String::with_capacity(name.len() + 4);
+        for c in name.chars() {
+            if c.is_ascii_uppercase() {
+                out.push('_');
+                out.push(c.to_ascii_lowercase());
+            } else {
+                out.push(c);
+            }
+        }
+        out
     }
 }

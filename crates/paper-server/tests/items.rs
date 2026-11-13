@@ -36,7 +36,7 @@ fn broken_blocks_drop_items_that_players_pick_up() {
     let item = slot.item.0.as_ref().unwrap();
     let name = paper_data::items::get(item.item as u32).unwrap().name;
     assert!(name == "minecraft:dirt" || name == "minecraft:grass_block", "grass drops dirt (or itself without loot tables), got {name}");
-    let removed: play::RemoveEntities = alice.expect();
+    let removed: play::RemoveEntities = alice.find(TIMEOUT, |r: &play::RemoveEntities| r.entity_ids.contains(&spawn.entity_id)).expect("item removed");
     assert_eq!(removed.entity_ids, vec![spawn.entity_id]);
 
     // Throwing it (Q) spawns a new item entity in front of her and empties the slot.
@@ -46,7 +46,7 @@ fn broken_blocks_drop_items_that_players_pick_up() {
     assert!(emptied.item.is_empty());
     let thrown: play::AddEntity = alice.find(TIMEOUT, |a: &play::AddEntity| a.entity_type.0 == item_type()).expect("thrown item");
     assert!(thrown.velocity.2 > 0.1, "thrown forward (yaw 0 looks towards +z): {:?}", thrown.velocity);
-    let count = server.handle.run(|s| s.worlds[0].entities.len()).unwrap();
+    let count = server.handle.run(|s| s.worlds[0].entities.values().filter(|e| matches!(e.kind, paper_server::world::entity::EntityKind::Item { .. })).count()).unwrap();
     assert_eq!(count, 1, "the thrown item exists on the server");
     server.stop();
 }

@@ -182,6 +182,16 @@ pub struct Player {
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// Who hurt this player last and when (tick), for death messages.
     pub last_attacker: Option<(i32, u64)>,
+    /// The last damage taken, for death messages.
+    pub last_damage: Option<super::survival::Damage>,
+    /// Fall distance of the last landing.
+    pub last_fall: f64,
+    /// Whether a movement packet moved the player since the last tick.
+    pub moved_this_tick: bool,
+    /// Health, food and "saturation is zero" as last sent.
+    pub sent_health: Option<(f32, i32, bool)>,
+    /// Ticks until the next experience orb can be picked up.
+    pub xp_pickup_delay: i32,
 }
 
 impl Player {

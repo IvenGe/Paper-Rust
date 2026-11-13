@@ -29,18 +29,37 @@ fn angle_byte(degrees: f32) -> u8 {
     (degrees.rem_euclid(360.0) * 256.0 / 360.0) as i32 as u8
 }
 
-/// The metadata other players need to render `player`.
+/// The metadata other players need to render `player` (and the player's own client needs
+/// for its air bar and burning overlay).
 fn player_metadata(player: &Player) -> Vec<u8> {
     let mut bits = 0;
+    if player.fire_ticks > 0 {
+        bits |= flags::ON_FIRE;
+    }
     if player.sneaking {
         bits |= flags::SNEAKING;
     }
     if player.sprinting {
         bits |= flags::SPRINTING;
     }
+    let pose = if player.dead {
+        pose::DYING
+    } else if player.sneaking {
+        pose::SNEAKING
+    } else {
+        pose::STANDING
+    };
+    // Living entity flags: 0x01 using an item, 0x02 with the off hand.
+    let hands = match player.using_item {
+        Some((hand, _)) => 0x01 | if hand == 1 { 0x02 } else { 0 },
+        None => 0,
+    };
     Metadata::new()
         .byte(index::FLAGS, bits)
-        .pose(index::POSE, if player.sneaking { pose::SNEAKING } else { pose::STANDING })
+        .varint(index::AIR_TICKS, player.air)
+        .pose(index::POSE, pose)
+        .byte(index::HAND_STATES, hands)
+        .float(index::HEALTH, player.health.max(0.0))
         .byte(index::SKIN_PARTS, player.settings.skin_parts as i8)
         .finish()
 }
@@ -261,7 +280,10 @@ impl Server {
 
             if player.metadata_dirty {
                 player.metadata_dirty = false;
-                payloads.push(encode_packet(&play::SetEntityData { entity_id: VarInt(id), metadata: RemainingBytes(player_metadata(player)) }).into());
+                let payload: Bytes = encode_packet(&play::SetEntityData { entity_id: VarInt(id), metadata: RemainingBytes(player_metadata(player)) }).into();
+                // The player's own client shows its air supply and burning from this too.
+                player.conn.send_payload(payload.clone());
+                payloads.push(payload);
             }
             if player.equipment_dirty {
                 player.equipment_dirty = false;

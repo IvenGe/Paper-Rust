@@ -433,6 +433,7 @@ impl SaveChunk {
             lit: self.lit,
             dirty: false,
             revision: 0,
+            fresh: false,
         }
     }
 }
@@ -878,6 +879,21 @@ impl WorldStorage {
     /// Queues `level.dat` for writing.
     pub fn save_level(&self, level: &LevelData) -> Result<()> {
         self.io.write_file(self.dir.join("level.dat"), gzip_nbt(&level.to_nbt())?);
+        Ok(())
+    }
+
+    /// Game rules from `data/minecraft/game_rules.dat`, or from the `GameRules` of an older
+    /// `level.dat`. `None` for a new world.
+    pub fn read_game_rules(&self) -> Result<Option<super::rules::GameRules>> {
+        if let Some(root) = read_gzip_nbt(&self.dir.join("data").join("minecraft").join("game_rules.dat"))? {
+            return Ok(Some(super::rules::GameRules::from_nbt(&root)));
+        }
+        let Some(level) = read_gzip_nbt(&self.dir.join("level.dat"))? else { return Ok(None) };
+        Ok(level.compound("Data").and_then(|d| d.compound("GameRules")).map(super::rules::GameRules::from_legacy))
+    }
+
+    pub fn save_game_rules(&self, rules: &super::rules::GameRules) -> Result<()> {
+        self.io.write_file(self.dir.join("data").join("minecraft").join("game_rules.dat"), gzip_nbt(&rules.to_nbt())?);
         Ok(())
     }
 

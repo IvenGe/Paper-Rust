@@ -457,6 +457,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             if let Some(cycle) = args.bool("daylight_cycle") {
                 server.worlds[world].daylight_cycle = cycle;
+                server.worlds[world].rules.set("advance_time", paper_data::game_rules::Value::Bool(cycle));
             }
             server.resend_time(world);
             Ok(Value::Null)

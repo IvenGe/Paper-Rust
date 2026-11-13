@@ -177,6 +177,13 @@ impl Server {
             }
             Serverbound::SetCarriedItem(p) => {
                 if (0..9).contains(&p.slot) {
+                    if player.held_slot != p.slot as u8 {
+                        // Switching items resets the attack cooldown and stops eating.
+                        player.last_swing = self.tick;
+                        if player.using_item.take().is_some() {
+                            player.metadata_dirty = true;
+                        }
+                    }
                     player.held_slot = p.slot as u8;
                     player.equipment_dirty = true;
                 } else {
@@ -186,7 +193,14 @@ impl Server {
             Serverbound::SetCreativeModeSlot(p) => self.handle_creative_slot(id, p.slot, p.item),
             Serverbound::PlayerAction(p) => self.handle_player_action(id, p),
             Serverbound::UseItemOn(p) => self.handle_use_item_on(id, p),
-            Serverbound::UseItem(p) => player.conn.send(&play::BlockChangedAck { sequence: p.sequence }),
+            Serverbound::UseItem(p) => self.handle_use_item(id, p.hand.0, p.sequence.0),
+            Serverbound::Attack(p) => self.handle_attack(id, p.entity_id.0),
+            Serverbound::ClientCommand(p) => {
+                // 0: respawn after death, 1: statistics request.
+                if p.action.0 == 0 {
+                    self.respawn_player(id);
+                }
+            }
             Serverbound::Punch => {
                 self.broadcast_to_viewers(id, &play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(0), animation_type: VarInt(1), duration: VarInt(6) });
             }
@@ -210,9 +224,7 @@ impl Server {
                     player.brand = Reader::new(&p.data.0).string(256).ok();
                 }
             }
-            Serverbound::ClientCommand(_)
-            | Serverbound::Attack(_)
-            | Serverbound::Interact(_)
+            Serverbound::Interact(_)
             | Serverbound::ChatAck(_)
             | Serverbound::ChatSessionUpdate(_)
             | Serverbound::ClientTickEnd
@@ -236,6 +248,7 @@ impl Server {
             return;
         }
         let old_chunk = player.loc.chunk();
+        let (old_loc, was_on_ground) = (player.loc, player.on_ground);
         if let Some((x, y, z)) = pos {
             player.loc.x = x.clamp(-3.0e7, 3.0e7);
             player.loc.y = y.clamp(-2.0e7, 2.0e7);
@@ -268,6 +281,7 @@ impl Server {
         } else if delta > 1.0 / 256.0 || turn > 10.0 {
             player.last_move_event = to;
         }
+        self.after_player_moved(id, old_loc, was_on_ground);
         if self.players.get(&id).is_some_and(|p| p.loc.chunk() != old_chunk) {
             self.refresh_chunk_view(id);
         }
@@ -293,7 +307,12 @@ impl Server {
         use play::player_action::*;
         let Some(player) = self.players.get_mut(&id) else { return };
         let mode = player.game_mode;
+        if player.dead {
+            self.send(id, &play::BlockChangedAck { sequence: action.sequence });
+            return;
+        }
         match action.status.0 {
+            RELEASE_USE_ITEM => self.release_using_item(id),
             START_DESTROY_BLOCK | STOP_DESTROY_BLOCK => {
                 let world = player.world;
                 let state = self.worlds[world].block_at(action.pos.x, action.pos.y, action.pos.z).unwrap_or(blocks::AIR);
@@ -355,6 +374,11 @@ impl Server {
     }
 
     fn handle_use_item_on(&mut self, id: i32, use_on: play::UseItemOn) {
+        if self.players.get(&id).is_some_and(|p| p.dead) {
+            self.resend_block(id, use_on.pos);
+            self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
+            return;
+        }
         // Using a block (opening a chest, ...) comes first, unless sneaking with an item.
         if let Some(player) = self.players.get(&id) {
             let world = player.world;

@@ -1509,6 +1509,18 @@ impl Encode for DamageEvent {
     }
 }
 
+impl Decode for DamageEvent {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let entity_id = r.varint()?;
+        let source_type = r.varint()?;
+        let id = |v: i32| (v > 0).then(|| v - 1);
+        let cause_id = id(r.varint()?);
+        let direct_id = id(r.varint()?);
+        let source_position = r.option(|r| Ok((r.f64()?, r.f64()?, r.f64()?)))?;
+        Ok(Self { entity_id, source_type, cause_id, direct_id, source_position })
+    }
+}
+
 packet! {
     /// Shows the death screen with a message.
     PlayerCombatKill = play::clientbound::PLAYER_COMBAT_KILL {
@@ -1695,6 +1707,20 @@ impl Encode for Explode {
         w.put_varint(0);
         // Play the explosion sound.
         w.put_bool(true);
+    }
+}
+
+impl Decode for Explode {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let center = (r.f64()?, r.f64()?, r.f64()?);
+        let radius = r.f32()?;
+        let block_count = r.i32()?;
+        let knockback = r.option(|r| Ok((r.f64()?, r.f64()?, r.f64()?)))?;
+        let particle = r.varint()?;
+        let sound = SoundRef::decode(r)?;
+        let _block_particles = r.varint()?;
+        let _play_sound = r.bool()?;
+        Ok(Self { center, radius, block_count, knockback, particle, sound })
     }
 }
 

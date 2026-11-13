@@ -285,6 +285,7 @@ impl Server {
                 }
             }
             EntityKind::ExperienceOrb { .. } => {
+                self.tick_experience_orb(world, &mut e);
                 let w = &self.worlds[world];
                 e.vel.y -= 0.03;
                 let d = e.vel;
