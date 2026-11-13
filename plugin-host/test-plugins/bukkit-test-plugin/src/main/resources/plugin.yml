@@ -12,6 +12,9 @@ commands:
   secret:
     description: Only for operators
     permission: bukkittest.secret
+  apitest:
+    description: Exercises the plugin API (items, gui, chest, entities, offline, scoreboard)
+    usage: /apitest <area>
 permissions:
   bukkittest.greet:
     default: true

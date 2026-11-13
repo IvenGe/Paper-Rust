@@ -454,30 +454,46 @@ public final class ItemComponents {
 
     // --- equality ---------------------------------------------------------------------------
 
+    /**
+     * The patch as compared: text components by their meaning (a name set here as JSON equals
+     * the same name the server sent as bytes), everything else by its bytes.
+     */
+    private Map<Object, Object> comparable() {
+        final Map<Object, Object> out = new java.util.HashMap<>();
+        final Set<Integer> text = new java.util.HashSet<>();
+        if (this.name != null) {
+            out.put(CUSTOM_NAME, io.papermc.paperrs.host.Components.fromJson(this.name));
+            text.add(typeId(CUSTOM_NAME));
+        }
+        if (this.itemName != null) {
+            out.put(ITEM_NAME, io.papermc.paperrs.host.Components.fromJson(this.itemName));
+            text.add(typeId(ITEM_NAME));
+        }
+        if (this.lore != null) {
+            final List<Object> lines = new ArrayList<>();
+            for (String line : this.lore) {
+                lines.add(io.papermc.paperrs.host.Components.fromJson(line));
+            }
+            out.put(LORE, lines);
+            text.add(typeId(LORE));
+        }
+        this.raw.forEach((id, bytes) -> {
+            if (!text.contains(id)) {
+                out.put(id, java.nio.ByteBuffer.wrap(bytes));
+            }
+        });
+        out.put("removed", this.removed);
+        return out;
+    }
+
     @Override
     public boolean equals(final Object o) {
-        if (!(o instanceof ItemComponents other)) {
-            return false;
-        }
-        if (!Objects.equals(this.name, other.name) || !Objects.equals(this.itemName, other.itemName) || !Objects.equals(this.lore, other.lore)
-            || !this.removed.equals(other.removed) || !this.raw.keySet().equals(other.raw.keySet())) {
-            return false;
-        }
-        for (Map.Entry<Integer, byte[]> e : this.raw.entrySet()) {
-            if (!Arrays.equals(e.getValue(), other.raw.get(e.getKey()))) {
-                return false;
-            }
-        }
-        return true;
+        return o instanceof ItemComponents other && this.comparable().equals(other.comparable());
     }
 
     @Override
     public int hashCode() {
-        int h = Objects.hash(this.name, this.itemName, this.lore, this.removed);
-        for (Map.Entry<Integer, byte[]> e : this.raw.entrySet()) {
-            h = 31 * h + e.getKey() * 17 + Arrays.hashCode(e.getValue());
-        }
-        return h;
+        return this.comparable().hashCode();
     }
 
     // --- binary helpers ---------------------------------------------------------------------

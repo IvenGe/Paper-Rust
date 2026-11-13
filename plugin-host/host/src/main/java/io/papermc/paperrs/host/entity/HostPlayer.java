@@ -957,6 +957,22 @@ public final class HostPlayer extends AbstractPlayer {
         return this.name;
     }
 
+    @Override
+    public double getWidth() {
+        return 0.6;
+    }
+
+    @Override
+    public double getHeight() {
+        return this.isSneaking() ? 1.5 : 1.8;
+    }
+
+    @Override
+    public org.bukkit.util.BoundingBox getBoundingBox() {
+        final double x = this.getX(), y = this.getY(), z = this.getZ();
+        return new org.bukkit.util.BoundingBox(x - 0.3, y, z - 0.3, x + 0.3, y + this.getHeight(), z + 0.3);
+    }
+
     // --- metadata ---------------------------------------------------------------------------
 
     @Override

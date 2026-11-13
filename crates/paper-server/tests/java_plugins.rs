@@ -191,3 +191,240 @@ fn bukkit_and_paper_plugins_run_against_the_rust_server() {
     server.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Waits for a chat line, failing with what arrived instead.
+fn expect_line(client: &mut Client, wanted: &str) {
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        if let Some(m) = client.try_expect::<play::SystemChat>(Duration::from_millis(100)) {
+            let text = m.content.to_plain();
+            if text == wanted {
+                return;
+            }
+            seen.push(text);
+        }
+    }
+    panic!("no {wanted:?} among {seen:?}");
+}
+
+fn component_id(name: &str) -> i32 {
+    paper_data::registries::id("minecraft:data_component_type", name).unwrap() as i32
+}
+
+/// The plugin API areas end to end with the test plugin's `/apitest`: item stacks and metas,
+/// inventories and their events, entities and their events, offline players, scoreboards,
+/// and `/reload`.
+#[test]
+fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
+    use paper_protocol::types::{HashedSlot, Slot};
+    use paper_server::world::entity::EntityKind;
+
+    let Some(setup) = setup() else { return };
+    let dir = std::env::temp_dir().join(format!("paper-rs-java-api-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let plugins_dir = dir.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    for jar in &setup.plugins {
+        std::fs::copy(jar, plugins_dir.join(jar.file_name().unwrap())).unwrap();
+    }
+    let server = start_server_with_host(
+        |c| {
+            c.root = dir.clone();
+            c.paper.plugins.java = setup.java.clone();
+            c.paper.plugins.host_dir = setup.host_dir.display().to_string();
+            c.paper.plugins.plugins_dir = plugins_dir.display().to_string();
+            c.paper.plugins.jvm_args = vec!["-Xmx512M".into()];
+            c.paper.plugins.startup_timeout_seconds = 120;
+        },
+        paper_server::plugins::java_launcher(),
+    );
+    let item = |name: &str| paper_data::items::id(name).unwrap() as i32;
+
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    alice.find(TIMEOUT, |c: &play::LevelChunkWithLight| c.x == 0 && c.z == 0).expect("spawn chunk");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+
+    // --- item stacks and the player inventory ---------------------------------------------
+    alice.command("apitest items");
+    expect_line(&mut alice, "items: ok");
+    let (sword, ender) = server
+        .handle
+        .run(|s| {
+            let p = s.player_by_name("Alice").unwrap();
+            (p.inventory[36].clone(), p.ender_items[4].clone())
+        })
+        .unwrap();
+    let stack = sword.0.clone().expect("the sword is in the first hotbar slot");
+    assert_eq!(stack.item, item("minecraft:diamond_sword"));
+    let types: Vec<i32> = stack.added.iter().map(|(t, _)| *t).collect();
+    for component in ["minecraft:custom_name", "minecraft:lore", "minecraft:unbreakable", "minecraft:custom_model_data", "minecraft:custom_data", "minecraft:tooltip_display", "minecraft:enchantments", "minecraft:damage"] {
+        assert!(types.contains(&component_id(component)), "{component} missing from {types:?}");
+    }
+    assert_eq!(paper_server::server::loot::enchantment_level(Some(&sword), "minecraft:sharpness"), 5, "the server reads the plugin's enchantment");
+    assert_eq!(paper_server::server::survival::item_damage(&stack), 10, "and its damage");
+    assert_eq!(ender, Slot::of(item("minecraft:emerald"), 2), "the ender chest");
+
+    // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
+    alice.command("apitest unsupported");
+    expect_line(&mut alice, "unsupported: ItemMeta#getAttributeModifiers is not supported by Paper-RS yet");
+
+    // --- a custom inventory: open, click (cancelled by the plugin), closed by the plugin ----
+    alice.clear_backlog();
+    alice.command("apitest gui");
+    let open: play::OpenScreen = alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("the menu opens");
+    assert_eq!(open.title.to_plain(), "Test Menu");
+    assert_eq!(open.menu_type.0, paper_data::registries::id("minecraft:menu", "minecraft:generic_9x3").unwrap() as i32);
+    let window = open.window_id.0;
+    // (The window content holds stacks with components, which this test client cannot
+    // decode; the server's copy is checked instead.)
+    let button = server
+        .handle
+        .run(|s| match s.player_by_name("Alice").unwrap().open_menu.as_ref().map(|m| m.kind.clone()) {
+            Some(paper_server::server::containers::MenuKind::Custom { id }) => s.plugin_data.inventories.get(&id).map(|i| (i.items.len(), i.items[13].0.as_ref().map(|s| s.item))),
+            _ => None,
+        })
+        .unwrap()
+        .expect("a custom menu is open");
+    assert_eq!(button, (27, Some(item("minecraft:emerald"))));
+    expect_line(&mut alice, "opened Test Menu");
+    expect_line(&mut alice, "gui: open true");
+    alice.send(&play::ContainerClick { window_id: window, state_id: 0, slot: 13, button: 0, mode: 0, changed_slots: Vec::new(), carried: HashedSlot(None) });
+    expect_line(&mut alice, "clicked emerald with LEFT");
+    expect_line(&mut alice, "menu closed (PLUGIN)");
+    let carried = server.handle.run(|s| s.player_by_name("Alice").unwrap().carried.clone()).unwrap();
+    assert!(carried.is_empty(), "the cancelled click took nothing");
+    let open_menu = server.handle.run(|s| s.player_by_name("Alice").unwrap().open_menu.is_some()).unwrap();
+    assert!(!open_menu, "the plugin closed the window");
+
+    // --- a chest's block state and inventory -----------------------------------------------
+    let chest = BlockPos::new(10, -60, 8);
+    server
+        .handle
+        .run(move |s| {
+            let state = paper_data::blocks::default_state("minecraft:chest").unwrap();
+            let change = s.worlds[0].set_block(chest.x, chest.y, chest.z, state).unwrap();
+            s.publish_block_change(0, &change);
+        })
+        .unwrap();
+    alice.command("apitest chest 10 -60 8");
+    expect_line(&mut alice, "chest: ok");
+    let held = server.handle.run(move |s| s.container_items(0, chest)[0].clone()).unwrap();
+    assert_eq!(held, Slot::of(item("minecraft:diamond"), 3));
+
+    // --- entities: spawning, state, damage and their events --------------------------------
+    alice.command("apitest entities");
+    expect_line(&mut alice, "spawned zombie");
+    expect_line(&mut alice, "hit Bob the Zombie for 4 (ENTITY_ATTACK)");
+    expect_line(&mut alice, "entities: ok");
+    let zombie = server
+        .handle
+        .run(|s| {
+            s.worlds[0]
+                .entities
+                .values()
+                .find(|e| e.custom_name.as_ref().is_some_and(|n| n.to_plain() == "Bob the Zombie"))
+                .map(|e| (e.id, e.mob().unwrap().living.health, e.mob().unwrap().equipment[5].clone()))
+        })
+        .unwrap()
+        .expect("the zombie exists");
+    assert!(zombie.1 < 10.0, "damaged: {}", zombie.1);
+    assert_eq!(zombie.2.0.as_ref().map(|s| s.item), Some(item("minecraft:golden_helmet")));
+    // EntityDeathEvent replaces the drops with one diamond.
+    let zombie_id = zombie.0;
+    let diamonds = server
+        .handle
+        .run(move |s| {
+            s.hurt_entity(0, zombie_id, paper_server::server::survival::Damage::new("minecraft:generic_kill"), 1000.0);
+            s.worlds[0].entities.values().filter(|e| matches!(&e.kind, EntityKind::Item { stack: Slot(Some(st)), .. } if st.item == paper_data::items::id("minecraft:diamond").unwrap() as i32)).count()
+        })
+        .unwrap();
+    assert_eq!(diamonds, 1, "the plugin's drop");
+
+    // --- dropping (cancelled for dirt) and picking up ----------------------------------------
+    let dirt_slot = server.handle.run(move |s| s.player_by_name("Alice").unwrap().inventory.iter().position(|i| i.0.as_ref().is_some_and(|st| st.item == paper_data::items::id("minecraft:dirt").unwrap() as i32))).unwrap().expect("dirt in the inventory");
+    assert!((36..45).contains(&dirt_slot), "on the hotbar: {dirt_slot}");
+    alice.send(&play::SetCarriedItem { slot: (dirt_slot - 36) as i16 });
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::DROP_ITEM), pos: BlockPos::new(0, 0, 0), face: 0, sequence: VarInt(0) });
+    expect_line(&mut alice, "dirt stays with you");
+    let dirt = server.handle.run(move |s| s.player_by_name("Alice").unwrap().inventory[dirt_slot].clone()).unwrap();
+    assert_eq!(dirt, Slot::of(item("minecraft:dirt"), 3), "the cancelled drop went back");
+    server
+        .handle
+        .run(|s| {
+            let p = s.player_by_name("Alice").unwrap();
+            let at = paper_server::world::entity::Vec3::new(p.loc.x, p.loc.y, p.loc.z);
+            s.spawn_item(0, at, Slot::of(paper_data::items::id("minecraft:apple").unwrap() as i32, 1), paper_server::world::entity::Vec3::ZERO, 0);
+        })
+        .unwrap();
+    expect_line(&mut alice, "picked up apple");
+
+    // --- scoreboards: objectives, scores, teams and per-player boards -------------------------
+    alice.clear_backlog();
+    alice.command("apitest scoreboard");
+    let objective: play::SetObjective = alice.find(TIMEOUT, |o: &play::SetObjective| o.name == "kills" && o.mode == 0).expect("objective created");
+    assert_eq!(objective.display_name.to_plain(), "Kills");
+    let display: play::SetDisplayObjective = alice.find(TIMEOUT, |_: &play::SetDisplayObjective| true).expect("shown in the sidebar");
+    assert_eq!((display.slot.0, display.objective.as_str()), (1, "kills"));
+    let score: play::SetScore = alice.find(TIMEOUT, |s: &play::SetScore| s.objective == "kills").expect("score");
+    assert_eq!((score.owner.as_str(), score.value), ("Alice", 3));
+    let team: play::SetPlayerTeam = alice.find(TIMEOUT, |t: &play::SetPlayerTeam| t.name == "red" && t.method == 3).expect("Alice joins red");
+    assert_eq!(team.members, vec!["Alice".to_owned()]);
+    let personal: play::SetScore = alice.find(TIMEOUT, |s: &play::SetScore| s.objective == "personal").expect("the personal board is shown");
+    assert_eq!((personal.owner.as_str(), personal.value), ("coins", 42));
+    expect_line(&mut alice, "scoreboard: ok");
+    // A player who joins later sees the main board, team colours included.
+    let mut carol = Client::join(server.port(), "Carol");
+    let objective: play::SetObjective = carol.find(TIMEOUT, |o: &play::SetObjective| o.name == "kills").expect("main board for newcomers");
+    assert_eq!(objective.mode, 0);
+    let team: play::SetPlayerTeam = carol.find(TIMEOUT, |t: &play::SetPlayerTeam| t.name == "red").expect("teams for newcomers");
+    assert_eq!((team.method, team.members.clone()), (0, vec!["Alice".to_owned()]));
+    assert_eq!(team.parameters.as_ref().and_then(|p| p.color), Some(12), "red");
+    assert_eq!(team.parameters.as_ref().map(|p| p.prefix.to_plain()), Some("[R] ".to_owned()));
+
+    // --- offline players ------------------------------------------------------------------------
+    server.handle.console_command("kick Carol");
+    carol.wait_closed(TIMEOUT);
+    alice.clear_backlog();
+    alice.command("apitest offline Carol");
+    expect_line(&mut alice, "offline Carol played=true online=false first=true last=true known=2");
+    alice.command("apitest offline Nobody");
+    expect_line(&mut alice, "offline Nobody played=false online=false first=false last=false known=2");
+
+    // --- death and respawn events ----------------------------------------------------------------
+    alice.clear_backlog();
+    let spawn_y = server.handle.run(|s| s.worlds[0].spawn.y).unwrap();
+    server
+        .handle
+        .run(|s| {
+            let id = s.player_by_name("Alice").unwrap().entity_id;
+            s.hurt_player(id, paper_server::server::survival::Damage::new("minecraft:generic_kill"), 1000.0);
+        })
+        .unwrap();
+    expect_line(&mut alice, "Alice was defeated (api test)");
+    let kept = server.handle.run(|s| s.player_by_name("Alice").unwrap().inventory[36].clone()).unwrap();
+    assert_eq!(kept.0.as_ref().map(|s| s.item), Some(item("minecraft:diamond_sword")), "PlayerDeathEvent kept the inventory");
+    alice.send(&play::ClientCommand { action: VarInt(0) });
+    let respawned: play::PlayerPosition = alice.find(TIMEOUT, |p: &play::PlayerPosition| p.y > spawn_y as f64 + 3.0).expect("PlayerRespawnEvent moved the respawn point up");
+    assert!(respawned.y >= spawn_y as f64 + 4.9, "{}", respawned.y);
+
+    // --- /reload: a new plugin host with the players already online ----------------------------
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    server.handle.console_command("reload confirm");
+    expect_line(&mut alice, "BukkitTestPlugin enabled with 1 player(s) online");
+    expect_line(&mut alice, "server loaded: RELOAD");
+    expect_line(&mut alice, "Reload complete.");
+    let (plugins, kills) = server.handle.run(|s| (s.plugin_names(), s.scoreboards.get(0).is_some_and(|b| b.objectives.contains_key("kills")))).unwrap();
+    assert_eq!(plugins, vec![("BukkitTestPlugin".to_owned(), true), ("PaperTestPlugin".to_owned(), true)]);
+    assert!(kills, "the main scoreboard outlives the plugin host");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    alice.command("apitest items");
+    expect_line(&mut alice, "items: ok");
+
+    server.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

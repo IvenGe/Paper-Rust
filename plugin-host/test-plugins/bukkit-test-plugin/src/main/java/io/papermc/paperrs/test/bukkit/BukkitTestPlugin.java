@@ -33,6 +33,13 @@ public final class BukkitTestPlugin extends JavaPlugin implements Listener {
             return true;
         });
         this.getServer().getScheduler().runTaskLater(this, () -> this.getLogger().info("Scheduled task ran"), 5L);
+        final ApiTests api = new ApiTests(this);
+        this.getServer().getPluginManager().registerEvents(api, this);
+        this.getCommand("apitest").setExecutor(api);
+        // After /reload the players are already online when plugins are enabled.
+        for (org.bukkit.entity.Player player : this.getServer().getOnlinePlayers()) {
+            player.sendMessage("BukkitTestPlugin enabled with " + this.getServer().getOnlinePlayers().size() + " player(s) online");
+        }
         this.getLogger().info("Enabled; protecting " + Material.GRASS_BLOCK.getKey());
     }
 

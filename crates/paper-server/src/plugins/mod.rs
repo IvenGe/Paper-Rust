@@ -256,7 +256,14 @@ fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inb
                 }
             }
             Ok(Some(Frame::Notify { method, args })) => {
-                let _ = to_main.send(MainTask::Run(Box::new(move |server| events::handle_notify(server, &method, &args))));
+                let conn = conn.clone();
+                let _ = to_main.send(MainTask::Run(Box::new(move |server| {
+                    // A host stopped by `/reload` may still report its last changes; only the
+                    // current host's notifications count.
+                    if server.plugins.as_ref().is_some_and(|current| Arc::ptr_eq(current, &conn)) {
+                        events::handle_notify(server, &method, &args);
+                    }
+                })));
             }
             Ok(Some(other)) => log::warn!("Unexpected frame from the plugin host: {other:?}"),
             Ok(None) => break "the plugin host closed the connection".to_owned(),
