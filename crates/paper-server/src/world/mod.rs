@@ -14,6 +14,7 @@ pub mod chunk;
 pub mod entity;
 pub mod generator;
 pub mod light;
+pub mod portal;
 pub mod rules;
 pub mod storage;
 pub mod ticks;
@@ -423,6 +424,7 @@ impl World {
         s.water_source_conversion = self.rules.bool("water_source_conversion");
         s.lava_source_conversion = self.rules.bool("lava_source_conversion");
         s.tnt_explodes = self.rules.bool("tnt_explodes");
+        s.fire_spreads = self.rules.int("fire_spread_radius_around_player") != 0;
     }
 
     /// Y of the first free block above the highest motion-blocking block of a column.

@@ -27,6 +27,16 @@ pub struct SavedPlayer {
     pub held_slot: u8,
     pub inventory: Vec<Slot>,
     pub flying: bool,
+    pub ender_items: Vec<Slot>,
+    pub xp_level: i32,
+    pub xp_progress: f32,
+    pub xp_total: i32,
+    pub exhaustion: f32,
+    pub food_timer: i32,
+    pub fire_ticks: i32,
+    pub air: i32,
+    pub fall_distance: f64,
+    pub seen_credits: bool,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -138,6 +148,26 @@ impl Server {
         if let Some(previous) = player.previous_game_mode {
             c.insert("previousPlayerGameType", Tag::Int(previous.id()));
         }
+        let ender: Vec<Tag> = player
+            .ender_items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                let mut e = item_to_nbt(slot)?;
+                e.insert("Slot", Tag::Byte(i as i8));
+                Some(Tag::Compound(e))
+            })
+            .collect();
+        c.insert("EnderItems", Tag::List(ender));
+        c.insert("XpLevel", Tag::Int(player.xp_level));
+        c.insert("XpP", Tag::Float(player.xp_progress));
+        c.insert("XpTotal", Tag::Int(player.xp_total));
+        c.insert("foodExhaustionLevel", Tag::Float(player.exhaustion));
+        c.insert("foodTickTimer", Tag::Int(player.food_timer));
+        c.insert("Fire", Tag::Short(player.fire_ticks.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
+        c.insert("Air", Tag::Short(player.air.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
+        c.insert("fall_distance", Tag::Double(player.fall_distance));
+        c.insert("seenCredits", Tag::Byte(player.seen_credits as i8));
         c
     }
 
@@ -180,6 +210,25 @@ impl Server {
             held_slot: c.i32("SelectedItemSlot").unwrap_or(0).clamp(0, 8) as u8,
             inventory,
             flying: c.compound("abilities").and_then(|a| a.bool("flying")).unwrap_or(false),
+            ender_items: {
+                let mut items = vec![Slot::EMPTY; 27];
+                for entry in c.list("EnderItems").unwrap_or(&[]) {
+                    let Some(entry) = entry.as_compound() else { continue };
+                    if let Some(slot) = entry.i32("Slot").filter(|s| (0..27).contains(s)) {
+                        items[slot as usize] = item_from_nbt(entry);
+                    }
+                }
+                items
+            },
+            xp_level: c.i32("XpLevel").unwrap_or(0).max(0),
+            xp_progress: c.f64("XpP").map_or(0.0, |v| v as f32).clamp(0.0, 1.0),
+            xp_total: c.i32("XpTotal").unwrap_or(0).max(0),
+            exhaustion: c.f64("foodExhaustionLevel").map_or(0.0, |v| v as f32),
+            food_timer: c.i32("foodTickTimer").unwrap_or(0),
+            fire_ticks: c.i32("Fire").unwrap_or(0).max(0),
+            air: c.i32("Air").unwrap_or(300),
+            fall_distance: c.f64("fall_distance").unwrap_or(0.0),
+            seen_credits: c.bool("seenCredits").unwrap_or(false),
         })
     }
 

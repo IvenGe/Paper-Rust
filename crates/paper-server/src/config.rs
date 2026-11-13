@@ -114,6 +114,8 @@ pub struct ServerProperties {
     pub hide_online_players: bool,
     pub prevent_proxy_connections: bool,
     pub allow_flight: bool,
+    /// `allow-nether`: create the Nether (`<level-name>_nether`) and let portals lead there.
+    pub allow_nether: bool,
     pub player_idle_timeout: i32,
     pub op_permission_level: u8,
     pub spawn_protection: i32,
@@ -127,6 +129,7 @@ pub struct ServerProperties {
 const DEFAULTS: &[(&str, &str)] = &[
     ("accepts-transfers", "false"),
     ("allow-flight", "false"),
+    ("allow-nether", "true"),
     ("difficulty", "easy"),
     ("enable-status", "true"),
     ("enforce-whitelist", "false"),
@@ -267,6 +270,7 @@ impl ServerProperties {
             hide_online_players: get_bool("hide-online-players", false),
             prevent_proxy_connections: get_bool("prevent-proxy-connections", false),
             allow_flight: get_bool("allow-flight", false),
+            allow_nether: get_bool("allow-nether", true),
             player_idle_timeout: get_int("player-idle-timeout", 0).max(0),
             op_permission_level: get_int("op-permission-level", 4).clamp(0, 4) as u8,
             spawn_protection: get_int("spawn-protection", 16),
@@ -375,11 +379,13 @@ pub struct WorldConfig {
     pub vanilla_jar: String,
     /// Allow downloading the server jar from Mojang when it is not present.
     pub download_vanilla_jar: bool,
+    /// Create the End (`<level-name>_the_end`), like Bukkit's `settings.allow-end`.
+    pub allow_end: bool,
 }
 
 impl Default for WorldConfig {
     fn default() -> Self {
-        Self { generator: "auto".into(), autosave_interval_ticks: 6000, vanilla_jar: String::new(), download_vanilla_jar: true }
+        Self { generator: "auto".into(), autosave_interval_ticks: 6000, vanilla_jar: String::new(), download_vanilla_jar: true, allow_end: true }
     }
 }
 

@@ -84,6 +84,15 @@ What works:
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
   that smelt over time; vanilla's click rules (shift-clicks, drags, number keys).
+* **Dimensions**: the Nether and the End as separate worlds in CraftBukkit's layout
+  (`world_nether/DIM-1`, `world_the_end/DIM1`; `allow-nether` in `server.properties`,
+  `allow-end` in `config/paper-rs.toml`). Nether portals are lit with flint and steel or fire
+  charges, take players across after vanilla's delay with coordinates scaled by eight, and
+  lead to an existing portal nearby or a new one built like vanilla's; frames that break put
+  the portal out. End portal frames filled with eyes of ender open the End portal, players
+  arrive on the obsidian platform, and the exit portal shows the credits and brings them
+  home. Fire burns, spreads and lights portals; buckets scoop up and pour water and lava
+  (water boils away in the Nether).
 * **Game rules**: all 26.3 rules with `/gamerule`, saved in `data/minecraft/game_rules.dat`.
 * **Saving**: chunks in region files, `level.dat` and player data in vanilla's layout,
   autosave, `/save-all`, saving on shutdown.
@@ -106,7 +115,9 @@ What works:
 
 Not yet:
 
-* Vanilla world generation, the Nether and the End. Mobs are not saved with the world yet,
+* Vanilla world generation: the Nether and the End use simple stand-in terrain (a netherrack
+  cavern over a lava sea; the main End island with an open exit portal, no dragon fight, no
+  outer islands or end cities). Mobs are not saved with the world yet,
   status effects, breeding, villagers and trading, beds, enchanting and anvils are missing.
   Pressure plates, tripwires, dispensers, droppers and hoppers do not react yet, and
   pistons do not push entities.

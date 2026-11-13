@@ -192,6 +192,16 @@ pub struct Player {
     pub sent_health: Option<(f32, i32, bool)>,
     /// Ticks until the next experience orb can be picked up.
     pub xp_pickup_delay: i32,
+    /// Ticks spent in a Nether portal.
+    pub portal_time: i32,
+    /// After arriving through a portal: ticks out of portals until one works again.
+    pub portal_cooldown: i32,
+    /// A portal trip waiting for the destination to load.
+    pub travel: Option<super::portals::Travel>,
+    /// Has seen the end credits (vanilla's `seenCredits`).
+    pub seen_credits: bool,
+    /// Left the End and waits for the client to ask to respawn.
+    pub won_game: bool,
 }
 
 impl Player {

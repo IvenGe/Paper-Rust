@@ -24,6 +24,7 @@ pub mod menu;
 pub mod mobs;
 pub mod player;
 mod playerdata;
+pub mod portals;
 pub mod recipes;
 pub mod survival;
 mod view;
@@ -289,26 +290,48 @@ impl Server {
         if !flat && level.is_none() && props.level_type != "minecraft:flat" {
             log::warn!("Vanilla world generation is not ported; '{}' worlds use the built-in '{}' terrain generator.", props.level_type, generator.name());
         }
-        let mut world = World::new(0, &props.level_name, "minecraft:overworld", seed, generator);
-        if let Some(level) = &level {
-            world.apply_level(level);
-            log::info!("Loaded world '{}' (seed {}, {} terrain)", world.name, seed, world.generator.name());
+        let mut worlds = vec![Self::open_world(0, &props.level_name, "minecraft:overworld", seed, generator, storage, level.as_ref())?];
+        // The Nether and the End live in their own folders, as in CraftBukkit, and share the
+        // overworld's seed.
+        let mut dimensions: Vec<(&str, &str, &str)> = Vec::new();
+        if props.allow_nether {
+            dimensions.push(("_nether", "minecraft:the_nether", "DIM-1"));
         }
-        if let Some(storage) = &storage {
-            if let Some(rules) = storage.read_game_rules().context("reading game rules")? {
-                world.rules = rules;
+        if config.paper.world.allow_end {
+            dimensions.push(("_the_end", "minecraft:the_end", "DIM1"));
+        }
+        for (suffix, dimension, subdir) in dimensions {
+            let name = format!("{}{}", props.level_name, suffix);
+            let storage = match &io {
+                Some(io) => Some(WorldStorage::open_dimension(&config.root.join(&name), subdir, io.clone())?),
+                None => None,
+            };
+            let level = match &storage {
+                Some(storage) => storage.read_level().with_context(|| format!("reading {}", storage.dir.join("level.dat").display()))?,
+                None => None,
+            };
+            let generator: Arc<dyn Generator> = match dimension {
+                "minecraft:the_nether" => Arc::new(crate::world::generator::NetherGenerator::new(seed)),
+                _ => Arc::new(crate::world::generator::EndGenerator::new(seed)),
+            };
+            let index = worlds.len();
+            let mut world = Self::open_world(index, &name, dimension, seed, generator, storage, level.as_ref())?;
+            if level.is_none() {
+                // Where portals and /tp put arrivals without a better place.
+                world.spawn = match dimension {
+                    "minecraft:the_end" => paper_protocol::codec::BlockPos::new(100, 49, 0),
+                    _ => paper_protocol::codec::BlockPos::new(0, 64, 0),
+                };
             }
+            worlds.push(world);
         }
-        world.daylight_cycle = world.rules.bool("advance_time");
-        world.sync_rule_settings();
-        world.storage = storage;
 
         let server = Self {
             default_game_mode: props.gamemode,
             difficulty: props.difficulty,
             config,
             shared: shared.clone(),
-            worlds: vec![world],
+            worlds,
             players: HashMap::new(),
             player_order: Vec::new(),
             by_uuid: HashMap::new(),
@@ -333,6 +356,29 @@ impl Server {
             status_dirty: true,
         };
         Ok((server, ServerHandle { shared }))
+    }
+
+    /// A world with its saved level data and game rules applied.
+    fn open_world(index: usize, name: &str, dimension: &str, seed: i64, generator: Arc<dyn Generator>, storage: Option<Arc<WorldStorage>>, level: Option<&crate::world::storage::LevelData>) -> Result<World> {
+        let mut world = World::new(index, name, dimension, seed, generator);
+        if let Some(level) = level {
+            world.apply_level(level);
+            log::info!("Loaded world '{}' (seed {}, {} terrain)", world.name, seed, world.generator.name());
+        }
+        if let Some(storage) = &storage {
+            if let Some(rules) = storage.read_game_rules().context("reading game rules")? {
+                world.rules = rules;
+            }
+        }
+        world.daylight_cycle = world.rules.bool("advance_time");
+        world.sync_rule_settings();
+        world.storage = storage;
+        Ok(world)
+    }
+
+    /// The world of a dimension (`minecraft:the_nether`, ...), if it exists.
+    pub fn world_of_dimension(&self, dimension: &str) -> Option<usize> {
+        self.worlds.iter().position(|w| w.dimension == dimension)
     }
 
     /// Runs the tick loop on the calling thread until the server is stopped.

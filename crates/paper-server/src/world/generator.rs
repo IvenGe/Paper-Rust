@@ -385,3 +385,222 @@ impl Generator for NoiseGenerator {
         "noise"
     }
 }
+
+/// Fills a chunk's sections from dense block arrays with one biome.
+fn finish_chunk(mut chunk: Chunk, data: Vec<Option<Box<[u16; 4096]>>>, biome: u8) -> Chunk {
+    for (i, section_data) in data.into_iter().enumerate() {
+        let blocks = match section_data {
+            Some(d) => BlockStorage::Dense(d),
+            None => BlockStorage::Uniform(blocks::AIR as u16),
+        };
+        let mut section = Section { blocks, biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0 };
+        section.compact();
+        section.recount();
+        chunk.sections[i] = Arc::new(section);
+    }
+    chunk.recompute_derived();
+    chunk
+}
+
+fn put_block(data: &mut [Option<Box<[u16; 4096]>>], min_y: i32, x: usize, y: i32, z: usize, s: u32) {
+    let rel = y - min_y;
+    if rel < 0 || (rel >> 4) as usize >= data.len() {
+        return;
+    }
+    let rel = rel as usize;
+    let section = data[rel >> 4].get_or_insert_with(|| Box::new([blocks::AIR as u16; 4096]));
+    section[((rel & 15) << 8) | (z << 4) | x] = s as u16;
+}
+
+/// A stand-in for the Nether until vanilla generation is ported: a cavern of netherrack
+/// between a bedrock floor and roof, a lava sea at y 31, soul sand and gravel patches and
+/// glowstone on the ceiling.
+pub struct NetherGenerator {
+    seed: u64,
+    netherrack: u32,
+    bedrock: u32,
+    lava: u32,
+    soul_sand: u32,
+    gravel: u32,
+    glowstone: u32,
+    wastes: u8,
+}
+
+impl NetherGenerator {
+    pub const LAVA_SEA: i32 = 31;
+
+    pub fn new(seed: i64) -> Self {
+        Self {
+            seed: seed as u64 ^ 0x4E45_5448,
+            netherrack: state("minecraft:netherrack"),
+            bedrock: state("minecraft:bedrock"),
+            lava: state("minecraft:lava"),
+            soul_sand: state("minecraft:soul_sand"),
+            gravel: state("minecraft:gravel"),
+            glowstone: state("minecraft:glowstone"),
+            wastes: biome("minecraft:nether_wastes"),
+        }
+    }
+
+    /// Top of the floor and bottom of the ceiling at a column.
+    fn bounds(&self, x: i32, z: i32) -> (i32, i32) {
+        let (fx, fz) = (x as f64, z as f64);
+        let floor = 34.0 + fbm(self.seed, fx / 48.0, fz / 48.0, 4) * 22.0 + fbm(self.seed ^ 0x77, fx / 12.0, fz / 12.0, 2) * 4.0;
+        let ceiling = 96.0 + fbm(self.seed ^ 0x1234, fx / 40.0, fz / 40.0, 4) * 18.0;
+        // Pillars join floor and ceiling now and then.
+        let pillar = fbm(self.seed ^ 0x9999, fx / 20.0, fz / 20.0, 3);
+        let floor = if pillar > 0.55 { ceiling } else { floor };
+        (floor as i32, ceiling as i32)
+    }
+}
+
+impl Generator for NetherGenerator {
+    fn generate(&self, pos: ChunkPos, min_y: i32, height: i32) -> Chunk {
+        let chunk = Chunk::empty(pos, min_y, height, self.wastes);
+        let mut data: Vec<Option<Box<[u16; 4096]>>> = (0..(height / 16) as usize).map(|_| None).collect();
+        let (bx, bz) = (pos.x * 16, pos.z * 16);
+        for z in 0..16 {
+            for x in 0..16 {
+                let (wx, wz) = (bx + x as i32, bz + z as i32);
+                let (floor, ceiling) = self.bounds(wx, wz);
+                for y in min_y..128.min(min_y + height) {
+                    let roof = 127 - y;
+                    let bedrock = y - min_y < 5 && hash2(self.seed ^ y as u64, wx, wz) % 5 >= (y - min_y) as u64 || roof < 5 && hash2(self.seed ^ 0xB0 ^ y as u64, wx, wz) % 5 >= roof as u64;
+                    let s = if bedrock {
+                        self.bedrock
+                    } else if y <= floor || y >= ceiling {
+                        let near_floor_top = y == floor && y < Self::LAVA_SEA + 4;
+                        if near_floor_top && fbm(self.seed ^ 0x50, wx as f64 / 16.0, wz as f64 / 16.0, 2) > 0.2 {
+                            self.soul_sand
+                        } else if near_floor_top && fbm(self.seed ^ 0x51, wx as f64 / 16.0, wz as f64 / 16.0, 2) > 0.35 {
+                            self.gravel
+                        } else if y == ceiling && hash2(self.seed ^ 0x60, wx, wz) % 97 == 0 {
+                            self.glowstone
+                        } else {
+                            self.netherrack
+                        }
+                    } else if y <= Self::LAVA_SEA {
+                        self.lava
+                    } else {
+                        continue;
+                    };
+                    put_block(&mut data, min_y, x, y, z, s);
+                }
+            }
+        }
+        finish_chunk(chunk, data, self.wastes)
+    }
+
+    fn is_flat(&self) -> bool {
+        false
+    }
+
+    fn sea_level(&self) -> i32 {
+        Self::LAVA_SEA + 1
+    }
+
+    fn surface_y(&self, x: i32, z: i32) -> i32 {
+        self.bounds(x, z).0.max(Self::LAVA_SEA)
+    }
+
+    fn name(&self) -> &'static str {
+        "nether"
+    }
+}
+
+/// A stand-in for the End until vanilla generation is ported: the main island of end stone
+/// (an inverted cone around the origin) with the exit portal at its centre, and void around.
+pub struct EndGenerator {
+    seed: u64,
+    end_stone: u32,
+    bedrock: u32,
+    portal: u32,
+    the_end: u8,
+}
+
+impl EndGenerator {
+    pub fn new(seed: i64) -> Self {
+        Self { seed: seed as u64 ^ 0x454E_44, end_stone: state("minecraft:end_stone"), bedrock: state("minecraft:bedrock"), portal: state("minecraft:end_portal"), the_end: biome("minecraft:the_end") }
+    }
+
+    /// (top, bottom) of the island at a column, if there is island there.
+    fn island(&self, x: i32, z: i32) -> Option<(i32, i32)> {
+        let d = ((x * x + z * z) as f64).sqrt();
+        let edge = 72.0 + fbm(self.seed, x as f64 / 24.0, z as f64 / 24.0, 3) * 14.0;
+        if d >= edge {
+            return None;
+        }
+        let t = d / edge;
+        let top = 60.0 + (1.0 - t * t) * 6.0 + fbm(self.seed ^ 0x10, x as f64 / 10.0, z as f64 / 10.0, 2) * 1.5;
+        let bottom = top - (1.0 - t).powf(0.7) * 42.0 - 2.0;
+        Some((top as i32, bottom as i32))
+    }
+
+    /// Y of the exit portal floor.
+    pub fn portal_y(&self) -> i32 {
+        self.island(0, 0).map_or(64, |(top, _)| top + 1)
+    }
+}
+
+impl Generator for EndGenerator {
+    fn generate(&self, pos: ChunkPos, min_y: i32, height: i32) -> Chunk {
+        let chunk = Chunk::empty(pos, min_y, height, self.the_end);
+        let mut data: Vec<Option<Box<[u16; 4096]>>> = (0..(height / 16) as usize).map(|_| None).collect();
+        let (bx, bz) = (pos.x * 16, pos.z * 16);
+        for z in 0..16 {
+            for x in 0..16 {
+                let (wx, wz) = (bx + x as i32, bz + z as i32);
+                if let Some((top, bottom)) = self.island(wx, wz) {
+                    for y in bottom.max(min_y)..=top {
+                        put_block(&mut data, min_y, x, y, z, self.end_stone);
+                    }
+                }
+            }
+        }
+        // The exit portal: a bedrock bowl with portal blocks, open from the start since the
+        // dragon fight is not implemented.
+        if (-1..=0).contains(&pos.x) && (-1..=0).contains(&pos.z) {
+            let y = self.portal_y();
+            for dz in -4i32..=4 {
+                for dx in -4i32..=4 {
+                    let (wx, wz) = (dx, dz);
+                    if !(bx..bx + 16).contains(&wx) || !(bz..bz + 16).contains(&wz) {
+                        continue;
+                    }
+                    let (x, z) = ((wx - bx) as usize, (wz - bz) as usize);
+                    let r2 = dx * dx + dz * dz;
+                    if r2 <= 12 {
+                        put_block(&mut data, min_y, x, y - 1, z, self.bedrock);
+                        let block = if r2 == 0 { self.bedrock } else { self.portal };
+                        put_block(&mut data, min_y, x, y, z, block);
+                    } else if r2 <= 20 {
+                        put_block(&mut data, min_y, x, y - 1, z, self.bedrock);
+                        put_block(&mut data, min_y, x, y, z, self.bedrock);
+                    }
+                    if r2 == 0 {
+                        for h in 1..4 {
+                            put_block(&mut data, min_y, x, y + h, z, self.bedrock);
+                        }
+                    }
+                }
+            }
+        }
+        finish_chunk(chunk, data, self.the_end)
+    }
+
+    fn is_flat(&self) -> bool {
+        false
+    }
+
+    fn sea_level(&self) -> i32 {
+        0
+    }
+
+    fn surface_y(&self, x: i32, z: i32) -> i32 {
+        self.island(x, z).map_or(49, |(top, _)| top)
+    }
+
+    fn name(&self) -> &'static str {
+        "end"
+    }
+}

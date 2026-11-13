@@ -53,6 +53,12 @@ pub struct DimensionTypeInfo {
     pub has_ceiling: bool,
     /// The `minecraft:gameplay/fast_lava` attribute: lava flows faster and further.
     pub fast_lava: bool,
+    /// Blocks here are this many blocks of the overworld (8 in the Nether).
+    pub coordinate_scale: f64,
+    /// The `minecraft:gameplay/water_evaporates` attribute: water cannot be placed.
+    pub water_evaporates: bool,
+    /// Block tag of blocks fire burns on forever (`minecraft:infiniburn_overworld`, ...).
+    pub infiniburn: &'static str,
 }
 
 fn name_index(names: &'static [&'static str]) -> HashMap<&'static str, u32> {

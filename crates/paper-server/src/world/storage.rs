@@ -785,8 +785,14 @@ impl ChunkIo {
 // --- one world's files ---------------------------------------------------------------------
 
 /// The files of one world: regions, `level.dat`, player data.
+///
+/// Like CraftBukkit, every world has its own folder with a `level.dat`; the Nether and the
+/// End keep their regions in a dimension subfolder (`world_nether/DIM-1/region`,
+/// `world_the_end/DIM1/region`).
 pub struct WorldStorage {
     pub dir: PathBuf,
+    /// Where regions (and other per-dimension data) live: `dir` or `dir/DIM-1`, `dir/DIM1`.
+    pub dimension_dir: PathBuf,
     io: ChunkIo,
     regions: Mutex<HashMap<(i32, i32), Arc<Mutex<RegionFile>>>>,
     /// Chunks queued for writing, by position; the newest version of each.
@@ -800,7 +806,14 @@ pub struct WorldStorage {
 impl WorldStorage {
     /// Opens (creating if needed) a world directory and locks it against other servers.
     pub fn open(dir: &Path, io: ChunkIo) -> Result<Arc<WorldStorage>> {
-        std::fs::create_dir_all(dir.join("region")).with_context(|| format!("creating {}", dir.display()))?;
+        Self::open_dimension(dir, "", io)
+    }
+
+    /// Opens a world whose regions are in the subfolder `dimension` (`DIM-1`, `DIM1`, or
+    /// empty for the overworld).
+    pub fn open_dimension(dir: &Path, dimension: &str, io: ChunkIo) -> Result<Arc<WorldStorage>> {
+        let dimension_dir = if dimension.is_empty() { dir.to_owned() } else { dir.join(dimension) };
+        std::fs::create_dir_all(dimension_dir.join("region")).with_context(|| format!("creating {}", dimension_dir.display()))?;
         let lock_path = dir.join("session.lock");
         let mut lock = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&lock_path).with_context(|| format!("opening {}", lock_path.display()))?;
         match lock.try_lock() {
@@ -812,6 +825,7 @@ impl WorldStorage {
         lock.write_all("☃".as_bytes())?;
         Ok(Arc::new(WorldStorage {
             dir: dir.to_owned(),
+            dimension_dir,
             io,
             regions: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
@@ -830,7 +844,7 @@ impl WorldStorage {
         if let Some(region) = regions.get(&key) {
             return Ok(Some(region.clone()));
         }
-        let path = self.dir.join("region").join(format!("r.{}.{}.mca", key.0, key.1));
+        let path = self.dimension_dir.join("region").join(format!("r.{}.{}.mca", key.0, key.1));
         let Some(file) = RegionFile::open(&path, create)? else { return Ok(None) };
         if regions.len() >= MAX_OPEN_REGIONS {
             // Close an arbitrary region; any one in use stays alive through its Arc.

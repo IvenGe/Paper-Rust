@@ -219,7 +219,8 @@ fn plugins_drive_the_server_through_the_bridge() {
     let server = start_server_with_host(|_| {}, fake_launcher(seen.clone()));
     let welcome = seen.welcome.lock().unwrap().clone().expect("host was welcomed");
     assert_eq!(welcome.str("minecraft_version"), Some(paper_data::VERSION_NAME));
-    assert_eq!(welcome.list("worlds").map(|w| w.len()), Some(1));
+    let worlds: Vec<(String, String)> = welcome.list("worlds").unwrap().iter().map(|w| (w.str("name").unwrap().to_owned(), w.str("environment").unwrap().to_owned())).collect();
+    assert_eq!(worlds.iter().map(|(_, e)| e.as_str()).collect::<Vec<_>>(), ["NORMAL", "NETHER", "THE_END"], "{worlds:?}");
     assert_eq!(seen.calls.lock().unwrap()[..2], ["host.load".to_owned(), "host.post_world".to_owned()]);
 
     // The plugin list reached the server.

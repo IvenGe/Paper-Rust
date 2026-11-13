@@ -193,7 +193,7 @@ impl Server {
             Serverbound::SetCreativeModeSlot(p) => self.handle_creative_slot(id, p.slot, p.item),
             Serverbound::PlayerAction(p) => self.handle_player_action(id, p),
             Serverbound::UseItemOn(p) => self.handle_use_item_on(id, p),
-            Serverbound::UseItem(p) => self.handle_use_item(id, p.hand.0, p.sequence.0),
+            Serverbound::UseItem(p) => self.handle_use_item(id, p.hand.0, p.sequence.0, p.yaw, p.pitch),
             Serverbound::Attack(p) => self.handle_attack(id, p.entity_id.0),
             Serverbound::ClientCommand(p) => {
                 // 0: respawn after death, 1: statistics request.
@@ -390,6 +390,11 @@ impl Server {
                 self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
                 return;
             }
+        }
+        // Flint and steel, fire charges and eyes of ender act on the block they are used on.
+        if self.within_reach(id, use_on.pos) && (self.use_igniter(id, &use_on) || self.use_ender_eye(id, &use_on)) {
+            self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
+            return;
         }
         // Levers, buttons, doors, repeaters... react to the click instead of a block being placed.
         let used = self.within_reach(id, use_on.pos) && self.use_block(id, &use_on);

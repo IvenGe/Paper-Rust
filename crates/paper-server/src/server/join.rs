@@ -100,6 +100,11 @@ impl Server {
             moved_this_tick: false,
             sent_health: None,
             xp_pickup_delay: 0,
+            portal_time: 0,
+            portal_cooldown: 0,
+            travel: None,
+            seen_credits: false,
+            won_game: false,
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -112,6 +117,16 @@ impl Server {
             player.saturation = saved.saturation;
             player.held_slot = saved.held_slot;
             player.inventory = saved.inventory;
+            player.ender_items = saved.ender_items;
+            player.xp_level = saved.xp_level;
+            player.xp_progress = saved.xp_progress;
+            player.xp_total = saved.xp_total;
+            player.exhaustion = saved.exhaustion;
+            player.food_timer = saved.food_timer;
+            player.fire_ticks = saved.fire_ticks;
+            player.air = saved.air;
+            player.fall_distance = saved.fall_distance;
+            player.seen_credits = saved.seen_credits;
             player.apply_game_mode_abilities();
             player.flying = saved.flying && player.allow_flight;
         } else {
@@ -168,7 +183,7 @@ impl Server {
         player.conn.send(&play::SetChunkCacheCenter { x: VarInt(player.view.center.x), z: VarInt(player.view.center.z) });
         player.conn.send(&play::ContainerSetContent { window_id: 0, state_id: player.inventory_state, slots: player.inventory.clone(), carried: Slot::EMPTY });
         player.conn.send(&play::SetHealth { health: player.health, food: VarInt(player.food), saturation: player.saturation });
-        player.conn.send(&play::SetExperience { bar: 0.0, level: VarInt(0), total: VarInt(0) });
+        player.conn.send(&play::SetExperience { bar: player.xp_progress, level: VarInt(player.xp_level), total: VarInt(player.xp_total) });
 
         let name = player.name().to_owned();
         let uuid = player.uuid();

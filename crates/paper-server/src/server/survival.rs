@@ -365,7 +365,9 @@ impl Server {
     pub(super) fn tick_players(&mut self) {
         for id in self.player_order.clone() {
             self.tick_player(id);
+            self.tick_player_portal(id);
         }
+        self.tick_travels();
     }
 
     fn tick_player(&mut self, id: i32) {
@@ -933,24 +935,31 @@ impl Server {
     /// The client asked to respawn after the death screen.
     pub(super) fn respawn_player(&mut self, id: i32) {
         let Some(p) = self.players.get(&id) else { return };
-        if !p.dead {
+        // After the end credits the player comes back with everything it had.
+        let after_credits = p.won_game && !p.dead;
+        if !p.dead && !after_credits {
             return;
         }
-        let keep_inventory = self.worlds[p.world].rules.bool("keep_inventory");
+        let overworld = self.world_of_dimension("minecraft:overworld").unwrap_or(0);
         // Respawn at the bed / anchor, or at the world spawn with some spread.
         let (world, target) = match p.respawn.filter(|(w, _)| *w < self.worlds.len()) {
             Some((w, pos)) => (w, Location { x: pos.x as f64 + 0.5, y: pos.y as f64 + 0.6, z: pos.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 }),
-            None => (0, self.world_spawn_location(0, true)),
+            None => (overworld, self.world_spawn_location(overworld, true)),
         };
         let target = crate::plugins::events::on_respawn(self, id, world, target);
-        let hardcore = self.config.properties.hardcore;
+        let hardcore = self.config.properties.hardcore && !after_credits;
+        let old_world = self.players[&id].world;
 
-        // Others see the old body disappear and the new player appear.
-        let viewers: Vec<i32> = self.players[&id].seen_by.iter().copied().collect();
-        for v in viewers {
-            if let Some(viewer) = self.players.get_mut(&v) {
-                viewer.conn.send(&play::RemoveEntities { entity_ids: vec![VarInt(id)] });
-                viewer.visible.remove(&id);
+        if old_world != world {
+            self.leave_world(id);
+        } else {
+            // Others see the old body disappear and the new player appear.
+            let viewers: Vec<i32> = self.players[&id].seen_by.iter().copied().collect();
+            for v in viewers {
+                if let Some(viewer) = self.players.get_mut(&v) {
+                    viewer.conn.send(&play::RemoveEntities { entity_ids: vec![VarInt(id)] });
+                    viewer.visible.remove(&id);
+                }
             }
         }
         let spawn_info = {
@@ -958,20 +967,25 @@ impl Server {
             let mode = if hardcore { GameMode::Spectator } else { p.game_mode };
             self.spawn_info(world, mode, p.previous_game_mode)
         };
+        let server_view = self.config.properties.view_distance;
         let p = self.players.get_mut(&id).unwrap();
         p.seen_by.clear();
+        if !after_credits {
+            p.health = 20.0;
+            p.food = 20;
+            p.saturation = 5.0;
+            p.exhaustion = 0.0;
+            p.food_timer = 0;
+            p.air = 300;
+            p.last_attacker = None;
+            p.last_damage = None;
+        }
         p.dead = false;
-        p.health = 20.0;
-        p.food = 20;
-        p.saturation = 5.0;
-        p.exhaustion = 0.0;
-        p.food_timer = 0;
-        p.air = 300;
+        p.won_game = false;
         p.fire_ticks = 0;
         p.fall_distance = 0.0;
         p.invulnerable_time = 0;
-        p.last_attacker = None;
-        p.last_damage = None;
+        p.portal_time = 0;
         p.sent_health = None;
         p.metadata_dirty = true;
         p.equipment_dirty = true;
@@ -979,11 +993,12 @@ impl Server {
             p.game_mode = GameMode::Spectator;
             p.apply_game_mode_abilities();
         }
-        let _ = keep_inventory;
-        let old_world = p.world;
         p.world = world;
-        p.conn.send(&play::Respawn { spawn: spawn_info, data_kept: 0 });
-        let w = &self.worlds[world];
+        if old_world != world {
+            p.view = super::player::ChunkView::new(target.chunk(), p.view_distance(server_view));
+        }
+        p.conn.send(&play::Respawn { spawn: spawn_info, data_kept: if after_credits { 3 } else { 0 } });
+        let w = &self.worlds[overworld];
         let p = &self.players[&id];
         p.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         p.conn.send(&play::SetDefaultSpawnPosition { dimension: w.dimension.clone(), pos: w.spawn, yaw: w.spawn_yaw, pitch: 0.0 });
@@ -993,13 +1008,16 @@ impl Server {
         p.conn.send(&play::EntityEvent { entity_id: id, status: 24 + p.op_level.min(4) as i8 });
         p.conn.send_payload(self.time_payload(world));
         if old_world != world {
-            self.change_player_world(id, old_world, world);
+            p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
         }
         self.teleport(id, target);
         self.resync_inventory(id);
         self.send_experience(id);
         self.send_health_if_changed(id);
         self.refresh_chunk_view(id);
+        if old_world != world {
+            crate::plugins::events::on_changed_world(self, id, old_world);
+        }
     }
 
     /// The world spawn, spread over `respawn_radius` like vanilla when `spread` is set.
@@ -1024,24 +1042,14 @@ impl Server {
         base
     }
 
-    /// Moves a player's bookkeeping from one world to another (entities, view).
-    pub(super) fn change_player_world(&mut self, id: i32, _from: usize, _to: usize) {
-        let Some(p) = self.players.get_mut(&id) else { return };
-        // The client forgot everything about the old world.
-        p.view.sent.clear();
-        p.view.tracked.clear();
-        p.view.pending.clear();
-        p.visible.clear();
-        for e in self.worlds.iter_mut().flat_map(|w| w.entities.values_mut()) {
-            e.viewers.remove(&id);
-        }
-    }
-
     // --- eating and using items --------------------------------------------------------------
 
     /// Right-click with an item in the air.
-    pub(super) fn handle_use_item(&mut self, id: i32, hand: i32, sequence: i32) {
+    pub(super) fn handle_use_item(&mut self, id: i32, hand: i32, sequence: i32, yaw: f32, pitch: f32) {
         self.send(id, &play::BlockChangedAck { sequence: VarInt(sequence) });
+        if self.players.get(&id).is_some_and(|p| p.dead) || self.use_bucket(id, hand, yaw, pitch) {
+            return;
+        }
         let Some(p) = self.players.get_mut(&id) else { return };
         if p.dead || p.game_mode == GameMode::Spectator {
             return;

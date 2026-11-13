@@ -21,6 +21,7 @@
 //! need support or connect to their neighbours).
 
 pub mod doors;
+pub mod fire;
 pub mod fluid;
 pub mod piston;
 pub mod redstone;
@@ -104,13 +105,15 @@ pub struct UpdateSettings {
     pub lava_source_conversion: bool,
     /// `tnt_explodes` game rule: powered TNT is primed.
     pub tnt_explodes: bool,
+    /// `fire_spread_radius_around_player` is not 0: fire ages, burns and spreads.
+    pub fire_spreads: bool,
 }
 
 impl UpdateSettings {
     /// Vanilla's defaults for a dimension type (`minecraft:overworld`, ...).
     pub fn for_dimension(dimension: &str) -> UpdateSettings {
         let fast_lava = paper_data::synced::dimension_type(dimension).is_some_and(|d| d.fast_lava);
-        UpdateSettings { fast_lava, water_source_conversion: true, lava_source_conversion: false, tnt_explodes: true }
+        UpdateSettings { fast_lava, water_source_conversion: true, lava_source_conversion: false, tnt_explodes: true, fire_spreads: true }
     }
 }
 
@@ -260,6 +263,11 @@ impl<'w> Level<'w> {
 
     pub fn settings(&self) -> UpdateSettings {
         self.world.updates.settings
+    }
+
+    /// The dimension's tag of blocks fire burns on forever.
+    pub fn world_infiniburn(&self) -> &'static str {
+        paper_data::synced::dimension_type(&self.world.dimension).map_or("minecraft:infiniburn_overworld", |d| d.infiniburn)
     }
 
     pub fn random(&mut self) -> u64 {
@@ -693,6 +701,7 @@ impl<'w> Level<'w> {
             Kind::Observer => redstone::observer_on_place(self, state, pos, old),
             Kind::Piston { .. } => piston::on_place(self, state, pos, old),
             Kind::Tnt if kind(old) != Kind::Tnt => self.prime_if_powered(pos),
+            Kind::Fire => fire::on_place(self, state, pos, old),
             _ => {}
         }
     }
@@ -759,6 +768,8 @@ impl<'w> Level<'w> {
             Kind::FenceGate => doors::fence_gate_update_shape(self, state, pos, dir, neighbor_state),
             Kind::Bed => doors::bed_update_shape(state, dir, neighbor_state),
             Kind::PistonHead => piston::head_update_shape(self, state, pos, dir),
+            Kind::Fire => fire::update_shape(self, state, pos),
+            Kind::NetherPortal => fire::portal_update_shape(self, state, pos, dir, neighbor_state),
             _ => support::update_shape(self, state, pos, dir, neighbor_pos, neighbor_state),
         }
     }
@@ -779,6 +790,7 @@ impl<'w> Level<'w> {
             Kind::RedstoneLamp => redstone::lamp_tick(self, state, pos),
             Kind::Observer => redstone::observer_tick(self, state, pos),
             Kind::Button { .. } => redstone::button_tick(self, state, pos),
+            Kind::Fire => fire::tick(self, state, pos),
             _ => {}
         }
     }

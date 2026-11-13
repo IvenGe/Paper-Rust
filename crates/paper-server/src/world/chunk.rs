@@ -88,6 +88,14 @@ impl Section {
         }
     }
 
+    /// Whether any block of the section is one of `states`.
+    pub fn contains_any(&self, states: &[u16]) -> bool {
+        match &self.blocks {
+            BlockStorage::Uniform(v) => states.contains(v),
+            BlockStorage::Dense(data) => data.iter().any(|v| states.contains(v)),
+        }
+    }
+
     /// Sets a block and returns the previous state.
     pub fn set(&mut self, x: usize, y: usize, z: usize, state: u32) -> u32 {
         let state16 = state as u16;

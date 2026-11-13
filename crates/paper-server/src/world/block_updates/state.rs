@@ -320,6 +320,9 @@ pub enum Kind {
     MovingPiston,
     /// Primed by redstone power.
     Tnt,
+    /// Fire and soul fire.
+    Fire,
+    NetherPortal,
 }
 
 fn classify(name: &str) -> Kind {
@@ -349,6 +352,8 @@ fn classify(name: &str) -> Kind {
         "piston_head" => return Kind::PistonHead,
         "moving_piston" => return Kind::MovingPiston,
         "tnt" => return Kind::Tnt,
+        "fire" | "soul_fire" => return Kind::Fire,
+        "nether_portal" => return Kind::NetherPortal,
         "grass_block" | "podzol" | "mycelium" => return Kind::SnowyDirt,
         "iron_bars" | "glass_pane" => return Kind::Pane,
         "moss_carpet" | "pale_moss_carpet" => return Kind::Carpet,

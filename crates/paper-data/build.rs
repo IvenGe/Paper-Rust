@@ -278,13 +278,16 @@ fn gen_synced() {
     for (name, d) in dims.as_object().expect("dimension_types.json must be an object") {
         writeln!(
             s,
-            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {} }},",
+            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {}, coordinate_scale: {:?}, water_evaporates: {}, infiniburn: {:?} }},",
             d["min_y"].as_i64().expect("min_y"),
             d["height"].as_i64().expect("height"),
             d["logical_height"].as_i64().unwrap_or_else(|| d["height"].as_i64().unwrap()),
             d["has_skylight"].as_bool().unwrap_or(true),
             d["has_ceiling"].as_bool().unwrap_or(false),
             d["attributes"]["minecraft:gameplay/fast_lava"].as_bool().unwrap_or(false),
+            d["coordinate_scale"].as_f64().unwrap_or(1.0),
+            d["attributes"]["minecraft:gameplay/water_evaporates"].as_bool().unwrap_or(false),
+            d["infiniburn"].as_str().unwrap_or("#minecraft:infiniburn_overworld").trim_start_matches('#'),
         )
         .unwrap();
     }

@@ -465,6 +465,30 @@ pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: cra
     }
 }
 
+/// PlayerChangedWorldEvent, after a player moved to another world.
+pub fn on_changed_world(server: &mut Server, id: i32, from: usize) {
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerChangedWorldEvent") {
+        return;
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return };
+    let from = server.worlds.get(from).map(|w| w.name.clone()).unwrap_or_default();
+    fire(server, "PlayerChangedWorldEvent", "event.changed_world", bmap! { "uuid" => uuid, "from" => from });
+}
+
+/// BlockIgniteEvent for a player lighting a fire: returns false if cancelled.
+pub fn on_block_ignite(server: &mut Server, id: i32, world: usize, pos: BlockPos) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("BlockIgniteEvent") {
+        return true;
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
+    let world_name = server.worlds[world].name.clone();
+    let args = bmap! { "uuid" => uuid, "world" => world_name, "x" => pos.x, "y" => pos.y, "z" => pos.z, "cause" => "FLINT_AND_STEEL" };
+    match fire(server, "BlockIgniteEvent", "event.block_ignite", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
 /// Applies a plugin list / command list / event subscription update from the host.
 pub fn apply_plugin_list(server: &mut Server, value: &Value) {
     if let Some(plugins) = value.list("plugins") {
