@@ -286,6 +286,75 @@ pub fn on_pickup_item(server: &mut Server, player: i32, _world: usize, item: i32
     }
 }
 
+/// Describes an open window for inventory events.
+fn menu_value(server: &Server, id: i32, kind: Option<&crate::server::containers::MenuKind>) -> Value {
+    use crate::server::containers::MenuKind;
+    let world_name = |w: usize| server.worlds.get(w).map(|w| w.name.clone()).unwrap_or_default();
+    match kind {
+        None => bmap! { "type" => "CRAFTING", "size" => 5 },
+        Some(MenuKind::Container { world, positions }) => {
+            let p = positions[0];
+            let block = server.worlds[*world].block_at(p.x, p.y, p.z).map(|s| paper_data::blocks::block_of_state(s).name).unwrap_or("minecraft:chest");
+            let ty = if block == "minecraft:barrel" { "BARREL" } else { "CHEST" };
+            bmap! { "type" => ty, "size" => (positions.len() * 27) as i64, "world" => world_name(*world), "x" => p.x, "y" => p.y, "z" => p.z }
+        }
+        Some(MenuKind::EnderChest) => bmap! { "type" => "ENDER_CHEST", "size" => 27, "owner" => server.players.get(&id).map(|p| p.uuid().to_string()).unwrap_or_default() },
+        Some(MenuKind::CraftingTable) => bmap! { "type" => "WORKBENCH", "size" => 10 },
+        Some(MenuKind::Furnace { world, pos, recipe_type }) => {
+            let ty = match *recipe_type {
+                "minecraft:smoking" => "SMOKER",
+                "minecraft:blasting" => "BLAST_FURNACE",
+                _ => "FURNACE",
+            };
+            bmap! { "type" => ty, "size" => 3, "world" => world_name(*world), "x" => pos.x, "y" => pos.y, "z" => pos.z }
+        }
+    }
+}
+
+/// InventoryOpenEvent: returns false if a plugin cancelled it.
+pub fn on_inventory_open(server: &mut Server, id: i32, kind: &crate::server::containers::MenuKind) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("InventoryOpenEvent") {
+        return true;
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
+    let args = bmap! { "uuid" => uuid, "inventory" => menu_value(server, id, Some(kind)) };
+    match fire(server, "InventoryOpenEvent", "event.inventory_open", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// InventoryClickEvent (and InventoryDragEvent for drags): returns false if cancelled.
+pub fn on_inventory_click(server: &mut Server, id: i32, click: &paper_protocol::packets::play::ContainerClick, kind: Option<&crate::server::containers::MenuKind>) -> bool {
+    let drag = click.mode == 5;
+    let event = if drag { "InventoryDragEvent" } else { "InventoryClickEvent" };
+    if server.plugins.is_none() || !server.plugin_events.contains(event) {
+        return true;
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
+    let args = bmap! {
+        "uuid" => uuid,
+        "inventory" => menu_value(server, id, kind),
+        "slot" => click.slot as i64,
+        "button" => click.button as i64,
+        "mode" => click.mode as i64,
+    };
+    match fire(server, event, "event.inventory_click", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// CraftItemEvent is reported after the fact (the result has already been taken).
+pub fn on_crafted(server: &mut Server, id: i32, crafted: &[paper_protocol::types::ItemStack]) {
+    if server.plugins.is_none() || !server.plugin_events.contains("CraftItemEvent") {
+        return;
+    }
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return };
+    let items = Value::List(crafted.iter().map(|s| super::api::item_value(&paper_protocol::types::Slot(Some(s.clone())))).collect());
+    fire(server, "CraftItemEvent", "event.crafted", bmap! { "uuid" => uuid, "items" => items });
+}
+
 /// Applies a plugin list / command list / event subscription update from the host.
 pub fn apply_plugin_list(server: &mut Server, value: &Value) {
     if let Some(plugins) = value.list("plugins") {

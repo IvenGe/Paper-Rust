@@ -606,7 +606,12 @@ impl ChunkSnapshot {
                     .string("id")
                     .and_then(|id| paper_data::registries::id("minecraft:block_entity_type", id))
                     .or_else(|| paper_data::registries::id("minecraft:block_entity_type", name))?;
-                Some(ChunkBlockEntity { packed_xz: (*x << 4) | *z, y: *y as i16, block_entity_type: ty as i32, data: Some(paper_nbt::Tag::Compound(nbt.clone())) })
+                // Clients are only sent what they render: container contents stay on the server.
+                let mut data = nbt.clone();
+                for hidden in ["Items", "LootTable", "LootTableSeed", "RecipesUsed", "lit_time_remaining", "lit_total_time", "cooking_time_spent", "cooking_total_time"] {
+                    data.remove(hidden);
+                }
+                Some(ChunkBlockEntity { packed_xz: (*x << 4) | *z, y: *y as i16, block_entity_type: ty as i32, data: Some(paper_nbt::Tag::Compound(data)) })
             })
             .collect();
         LevelChunkWithLight {

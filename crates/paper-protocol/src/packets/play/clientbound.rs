@@ -1538,6 +1538,12 @@ impl Encode for BlockEvent {
     }
 }
 
+impl Decode for BlockEvent {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self { pos: BlockPos::decode(r)?, action: r.u8()?, param: r.u8()?, block: r.varint()? })
+    }
+}
+
 /// A container property, such as a furnace's progress.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContainerSetData {
@@ -1553,6 +1559,12 @@ impl Encode for ContainerSetData {
         w.put_varint(self.window_id);
         w.put_i16(self.property);
         w.put_i16(self.value);
+    }
+}
+
+impl Decode for ContainerSetData {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self { window_id: r.varint()?, property: r.i16()?, value: r.i16()? })
     }
 }
 

@@ -268,6 +268,11 @@ pub mod items {
     pub fn by_name(name: &str) -> Option<&'static ItemInfo> {
         id(name).and_then(get)
     }
+
+    /// Number of items in the registry.
+    pub fn count() -> usize {
+        ITEMS.len()
+    }
 }
 
 /// Registries synchronised to clients, their tags, and related configuration data.

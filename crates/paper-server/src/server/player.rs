@@ -154,6 +154,34 @@ pub struct Player {
     pub last_move_event: Location,
     /// The player is being removed; events and kicks must not start a second removal.
     pub leaving: bool,
+    // --- windows ---
+    /// The window open besides the player's own inventory.
+    pub open_menu: Option<super::containers::OpenMenu>,
+    pub drag: super::menu::Drag,
+    pub ender_items: Vec<Slot>,
+    pub next_window_id: i32,
+    // --- survival ---
+    pub exhaustion: f32,
+    /// Ticks towards the next regeneration or starvation step.
+    pub food_timer: i32,
+    pub fall_distance: f64,
+    pub fire_ticks: i32,
+    /// Breath in ticks (300 when full).
+    pub air: i32,
+    pub invulnerable_time: i32,
+    pub last_hurt: f32,
+    pub dead: bool,
+    /// Eating or drinking: (hand, ticks left).
+    pub using_item: Option<(u8, i32)>,
+    /// Tick of the last attack swing (for the attack cooldown).
+    pub last_swing: u64,
+    pub xp_level: i32,
+    pub xp_progress: f32,
+    pub xp_total: i32,
+    /// Where the player respawns, if not at the world spawn: (world, block position).
+    pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
+    /// Who hurt this player last and when (tick), for death messages.
+    pub last_attacker: Option<(i32, u64)>,
 }
 
 impl Player {

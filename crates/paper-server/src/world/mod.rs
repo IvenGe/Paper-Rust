@@ -89,6 +89,9 @@ pub struct World {
     pub entities: HashMap<i32, entity::Entity>,
     /// Entity ids per chunk, for area queries and saving.
     pub entity_chunks: HashMap<ChunkPos, HashSet<i32>>,
+    /// Block entities removed by block changes since the server last looked (position, old
+    /// block state, data).
+    pub removed_block_entities: Vec<(BlockPos, u32, paper_nbt::Compound)>,
     /// Players (or other holders) wanting each chunk loaded and lit.
     tickets: HashMap<ChunkPos, u32>,
     /// Ticketed chunks that are not lit yet, in request order.
@@ -135,6 +138,7 @@ impl World {
             storage: None,
             entities: HashMap::new(),
             entity_chunks: HashMap::new(),
+            removed_block_entities: Vec::new(),
             tickets: HashMap::new(),
             wanted: VecDeque::new(),
             generating: HashSet::new(),
@@ -385,9 +389,15 @@ impl World {
         }
         let pos = ChunkPos::of_block(x, z);
         let chunk = self.chunks.get_mut(&pos)?;
+        let key = (y, (z & 15) as u8, (x & 15) as u8);
+        let block_entity = chunk.block_entities.get(&key).cloned();
         let old = chunk.set_block((x & 15) as usize, y, (z & 15) as usize, state)?;
         if old == state {
             return None;
+        }
+        // A replaced block entity is handed to the server (containers drop their contents).
+        if let Some(nbt) = block_entity.filter(|_| !chunk.block_entities.contains_key(&key)) {
+            self.removed_block_entities.push((BlockPos::new(x, y, z), old, nbt));
         }
         let light = if chunk.lit { light::update_after_block_change(&mut self.chunks, self.has_skylight, x, y, z, old, state) } else { HashSet::new() };
         Some(BlockChange { pos: BlockPos::new(x, y, z), old, new: state, light })

@@ -177,6 +177,9 @@ impl Server {
         let chunk = ChunkPos::of_block(change.pos.x, change.pos.z);
         self.broadcast_to_chunk_viewers(world, chunk, &play::BlockUpdate { pos: change.pos, state: VarInt(change.new as i32) });
         self.publish_light_changes(world, &change.light);
+        if !self.worlds[world].removed_block_entities.is_empty() {
+            self.process_removed_block_entities(world);
+        }
     }
 
     fn publish_light_changes(&mut self, world: usize, changed: &HashSet<ChangedSection>) {

@@ -190,12 +190,13 @@ impl Server {
             Serverbound::Punch => {
                 self.broadcast_to_viewers(id, &play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(0), animation_type: VarInt(1), duration: VarInt(6) });
             }
-            Serverbound::ContainerClose(_) => player.carried = Slot::EMPTY,
-            Serverbound::ContainerClick(_) => {
-                // Inventory click simulation is not implemented yet: put the client back in
-                // sync with what the server holds so nothing is duplicated or lost.
-                self.resync_inventory(id);
+            Serverbound::ContainerClose(p) => {
+                let open = player.open_menu.as_ref().map_or(0, |m| m.window_id);
+                if p.window_id.0 == open {
+                    self.close_menu(id, false);
+                }
             }
+            Serverbound::ContainerClick(p) => self.handle_container_click(id, p),
             Serverbound::PickItemFromBlock(p) => self.handle_pick_block(id, p.pos),
             Serverbound::ChangeGameMode(p) => {
                 if player.op_level >= 2 {
@@ -354,6 +355,16 @@ impl Server {
     }
 
     fn handle_use_item_on(&mut self, id: i32, use_on: play::UseItemOn) {
+        // Using a block (opening a chest, ...) comes first, unless sneaking with an item.
+        if let Some(player) = self.players.get(&id) {
+            let world = player.world;
+            let hands_empty = player.inventory[HOTBAR_START + player.held_slot as usize].is_empty() && player.inventory[OFFHAND_SLOT].is_empty();
+            let usable = player.game_mode != GameMode::Spectator && (!player.sneaking || hands_empty) && self.within_reach(id, use_on.pos);
+            if usable && self.try_open_container(id, world, use_on.pos) {
+                self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
+                return;
+            }
+        }
         let placed = self.try_place_block(id, &use_on);
         if !placed {
             // Undo whatever the client predicted at the clicked block and beside it.
@@ -390,7 +401,15 @@ impl Server {
                 block = wall;
             }
         }
-        let state = placement_state(block, face, use_on.cursor_y, yaw, pitch);
+        let mut state = placement_state(block, face, use_on.cursor_y, yaw, pitch);
+        // A chest beside a single chest facing the same way joins it.
+        let mut neighbour: Option<(BlockPos, u32)> = None;
+        if !player.sneaking {
+            if let Some((joined, other)) = self.chest_placement(world, target, state) {
+                state = joined;
+                neighbour = Some(other);
+            }
+        }
 
         // A block with collision cannot be placed inside a player.
         if blocks::has_collision(state) {
@@ -427,7 +446,7 @@ impl Server {
         }
         let Some(change) = self.worlds[world].set_block(target.x, target.y, target.z, state) else { return false };
         self.publish_block_change(world, &change);
-        if let Some((pos, second_state)) = second {
+        if let Some((pos, second_state)) = second.or(neighbour) {
             if let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, second_state) {
                 self.publish_block_change(world, &change);
             }

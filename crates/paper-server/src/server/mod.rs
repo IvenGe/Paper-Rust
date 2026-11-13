@@ -16,11 +16,14 @@ pub mod commands;
 mod handlers;
 mod join;
 mod combat;
+pub mod containers;
 pub mod entities;
 pub mod loot;
+pub mod menu;
 mod mobs;
 pub mod player;
 mod playerdata;
+pub mod recipes;
 mod view;
 
 pub use join::info_entry as join_info_entry;
@@ -158,6 +161,8 @@ pub struct Server {
     /// Vanilla's data files (loot tables, recipes, ...), when the server jar is available.
     pub vanilla: Option<Arc<crate::vanilla::VanillaData>>,
     pub loot: loot::LootTables,
+    /// Crafting and smelting recipes from the vanilla data.
+    pub recipes: Option<Arc<recipes::Recipes>>,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
 }
@@ -307,6 +312,7 @@ impl Server {
             workers,
             io,
             loot: loot::LootTables::new(vanilla.clone()),
+            recipes: vanilla.as_ref().map(|v| Arc::new(recipes::Recipes::load(v))),
             vanilla,
             tasks,
             status_dirty: true,
@@ -394,6 +400,7 @@ impl Server {
         self.tick_chunk_views();
         self.tick_players();
         self.tick_entities();
+        self.tick_furnaces();
         self.tick_tracker();
 
         if self.tick % 100 == 0 {
