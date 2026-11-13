@@ -4,7 +4,7 @@
 //! surface_height_sampler,multi_noise_sampler}.rs` of Pumpkin
 //! (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0.
 
-use crate::density::chunk::{build_chunk_stack, sample, sample_volume, Buf, ChunkComp, InterpolationMode};
+use crate::density::chunk::{build_chunk_stack, build_chunk_stack_with, sample, sample_volume, Buf, ChunkComp, InterpolationMode};
 use crate::density::stack::{Dependent, ProtoKind};
 use crate::density::SeededStack;
 use crate::noise::DensityVolume;
@@ -20,6 +20,11 @@ impl<'a> ChunkRouter<'a> {
     /// range, like vanilla's `NoiseChunk`.
     pub fn terrain(stack: &'a SeededStack) -> Self {
         Self { stack: build_chunk_stack(&stack.protos, InterpolationMode::Cells, true) }
+    }
+
+    /// [`ChunkRouter::terrain`] with the beardifier of the chunk's structures.
+    pub fn terrain_with(stack: &'a SeededStack, beard: Option<&'a crate::structure::Beardifier>) -> Self {
+        Self { stack: build_chunk_stack_with(&stack.protos, InterpolationMode::Cells, true, beard) }
     }
 
     /// An evaluator without cell interpolation (climate sampling, surface estimation).

@@ -741,6 +741,7 @@ dependencies = [
  "flate2",
  "md-5",
  "paper-data",
+ "paper-nbt",
  "serde_json",
  "sha2",
  "zip",

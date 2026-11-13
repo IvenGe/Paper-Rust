@@ -356,6 +356,18 @@ impl<'a> World<'a> {
         self.region.add_entity(entity);
     }
 
+    /// Block entity data as NBT (from structure templates).
+    pub fn add_block_entity_nbt(&mut self, p: Pos, nbt: paper_nbt::Compound) {
+        if self.can_write(p) && !self.out_of_height(p.y) {
+            self.region.add_block_entity_nbt(p.x, p.y, p.z, nbt);
+        }
+    }
+
+    /// An entity as NBT (from structures).
+    pub fn add_entity_nbt(&mut self, nbt: paper_nbt::Compound) {
+        self.region.add_entity_nbt(nbt);
+    }
+
     #[inline]
     pub fn is_air(&self, p: Pos) -> bool {
         self.b.is_air(self.get(p))

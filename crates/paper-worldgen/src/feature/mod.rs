@@ -3,7 +3,8 @@
 //! The driver follows `ProtoChunk::generate_features_and_structure` and
 //! `generation/feature_order.rs` of Pumpkin (https://github.com/Pumpkin-MC/Pumpkin),
 //! GPL-3.0, checked against vanilla 26.3's `ChunkGenerator.applyBiomeDecoration` and
-//! `FeatureSorter`. Structures are not generated.
+//! `FeatureSorter`. Each step first places the structure pieces of that step (see
+//! [`crate::structure`]).
 
 pub mod blockinfo;
 pub mod javaset;
@@ -25,6 +26,7 @@ use parse::Parser;
 use placement::PlacedFeature;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use paper_nbt::Compound;
 use std::sync::Arc;
 use world::{Pos, World};
 
@@ -40,6 +42,32 @@ pub enum BlockEntity {
     /// An end gateway and its exit (`exact`: teleport to the exit itself rather than to a
     /// safe spot near it).
     EndGateway { exit: Option<(i32, i32, i32)>, exact: bool },
+}
+
+impl BlockEntity {
+    /// The typed form of block entity NBT, where it carries nothing else: a container with
+    /// a loot table and seed, or a spawner of one entity type with vanilla's defaults.
+    pub fn from_nbt(nbt: &Compound) -> Option<Self> {
+        let ignorable = |k: &str| matches!(k, "id" | "x" | "y" | "z" | "keepPacked");
+        if let Some(table) = nbt.string("LootTable") {
+            let items_empty = nbt.list("Items").is_none_or(|l| l.is_empty());
+            let others = nbt.iter().any(|(k, _)| !ignorable(k) && !matches!(k.as_str(), "LootTable" | "LootTableSeed" | "Items"));
+            if items_empty && !others {
+                return Some(BlockEntity::Loot { table: table.to_owned(), seed: nbt.i64("LootTableSeed").unwrap_or(0) });
+            }
+            return None;
+        }
+        if nbt.string("id") == Some("minecraft:mob_spawner") {
+            let entity = nbt.compound("SpawnData")?.compound("entity")?;
+            if entity.len() != 1 || nbt.list("SpawnPotentials").is_some_and(|l| !l.is_empty()) {
+                return None;
+            }
+            let id = entity.string("id")?;
+            let name = paper_data::registries::entries("minecraft:entity_type")?.iter().copied().find(|e| *e == id)?;
+            return Some(BlockEntity::Spawner { entity: name });
+        }
+        None
+    }
 }
 
 /// An entity a feature spawned.
@@ -60,6 +88,18 @@ pub trait RegionAccess {
     fn add_block_entity(&mut self, _x: i32, _y: i32, _z: i32, _entity: BlockEntity) {}
     /// Called for the entities features spawn (end crystals). Ignored by default.
     fn add_entity(&mut self, _entity: Entity) {}
+    /// Called for block entity data structures place as vanilla block entity NBT (`id` and
+    /// the block entity's fields, no position), e.g. from structure templates. By default
+    /// the data is passed to [`RegionAccess::add_block_entity`] when [`BlockEntity::from_nbt`]
+    /// can express it, and dropped otherwise.
+    fn add_block_entity_nbt(&mut self, x: i32, y: i32, z: i32, nbt: Compound) {
+        if let Some(be) = BlockEntity::from_nbt(&nbt) {
+            self.add_block_entity(x, y, z, be);
+        }
+    }
+    /// Called for entities structures spawn, as vanilla entity NBT (`id`, `Pos`, `Rotation`
+    /// and the entity's fields, no `UUID`). Ignored by default.
+    fn add_entity_nbt(&mut self, _nbt: Compound) {}
 }
 
 /// A ready-made [`RegionAccess`]: nine chunks around a center, collecting block entities
@@ -71,6 +111,12 @@ pub struct Region {
     pub chunks: Vec<ProtoChunk>,
     pub block_entities: Vec<((i32, i32, i32), BlockEntity)>,
     pub entities: Vec<Entity>,
+    /// Block entities as NBT that [`BlockEntity`] cannot express (template block entities:
+    /// signs, banners, beds, trial spawners, vaults, chests with items, ...).
+    pub block_entity_nbt: Vec<((i32, i32, i32), Compound)>,
+    /// Entities structures spawned, as NBT (villagers, golems, cats, witches, guardians,
+    /// shulkers, ...).
+    pub entity_nbt: Vec<Compound>,
 }
 
 impl Region {
@@ -83,7 +129,7 @@ impl Region {
             slots[((dz + 1) * 3 + dx + 1) as usize] = Some(c);
         }
         let chunks = slots.into_iter().map(|c| c.expect("a region needs all nine chunks")).collect();
-        Self { center_x, center_z, chunks, block_entities: Vec::new(), entities: Vec::new() }
+        Self { center_x, center_z, chunks, block_entities: Vec::new(), entities: Vec::new(), block_entity_nbt: Vec::new(), entity_nbt: Vec::new() }
     }
 
     fn index(&self, chunk_x: i32, chunk_z: i32) -> Option<usize> {
@@ -115,6 +161,17 @@ impl RegionAccess for Region {
 
     fn add_entity(&mut self, entity: Entity) {
         self.entities.push(entity);
+    }
+
+    fn add_block_entity_nbt(&mut self, x: i32, y: i32, z: i32, nbt: Compound) {
+        match BlockEntity::from_nbt(&nbt) {
+            Some(be) => self.block_entities.push(((x, y, z), be)),
+            None => self.block_entity_nbt.push(((x, y, z), nbt)),
+        }
+    }
+
+    fn add_entity_nbt(&mut self, nbt: Compound) {
+        self.entity_nbt.push(nbt);
     }
 }
 
@@ -342,10 +399,12 @@ impl Decoration {
 
         let mut r = WorldgenRandom::xoroshiro(0);
         let decoration_seed = r.set_decoration_seed(gen.seed, origin.x, origin.z);
+        let refs = if gen.structures.enabled { gen.structures.references(gen, chunk_x, chunk_z, |_| true) } else { Vec::new() };
         let mut w = World::new(gen, &self.blocks, region, chunk_x, chunk_z);
         let step_count = self.steps.len().max(11);
         let mut indices: Vec<u32> = Vec::new();
         for step in 0..step_count {
+            gen.structures.place_step(step, &mut w, &mut r, decoration_seed, &refs);
             if step >= self.steps.len() {
                 continue;
             }

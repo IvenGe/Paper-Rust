@@ -94,8 +94,10 @@ pub enum ChunkComp<'a> {
     Cache(CacheState),
     Interpolated(InterpState),
     PassThrough { input: usize, min: f32, max: f32 },
-    /// A constant zero with the given range (the beardifier).
+    /// A constant zero with the given range (the beardifier without structures).
     Zero { min: f32, max: f32 },
+    /// The beardifier of a chunk with structures nearby (range infinite).
+    Beard(&'a crate::structure::Beardifier),
 }
 
 /// How `interpolated` wrappers behave in a chunk stack.
@@ -115,6 +117,7 @@ impl ChunkComp<'_> {
             ChunkComp::Cache(c) => c.min,
             ChunkComp::Interpolated(i) => i.min,
             ChunkComp::PassThrough { min, .. } | ChunkComp::Zero { min, .. } => *min,
+            ChunkComp::Beard(_) => f32::NEG_INFINITY,
         }
     }
 
@@ -125,6 +128,7 @@ impl ChunkComp<'_> {
             ChunkComp::Cache(c) => c.max,
             ChunkComp::Interpolated(i) => i.max,
             ChunkComp::PassThrough { max, .. } | ChunkComp::Zero { max, .. } => *max,
+            ChunkComp::Beard(_) => f32::INFINITY,
         }
     }
 }
@@ -133,13 +137,20 @@ impl ChunkComp<'_> {
 /// beardifier reports (vanilla's noise router uses an infinite one, the other routers a
 /// plain constant zero).
 pub fn build_chunk_stack(protos: &[Proto], mode: InterpolationMode, beardifier_infinite: bool) -> Vec<ChunkComp<'_>> {
+    build_chunk_stack_with(protos, mode, beardifier_infinite, None)
+}
+
+/// [`build_chunk_stack`] with the beardifier of the chunk's structures.
+pub fn build_chunk_stack_with<'a>(protos: &'a [Proto], mode: InterpolationMode, beardifier_infinite: bool, beard: Option<&'a crate::structure::Beardifier>) -> Vec<ChunkComp<'a>> {
     let mut stack: Vec<ChunkComp<'_>> = Vec::with_capacity(protos.len());
     for p in protos {
         let comp = match &p.kind {
             ProtoKind::Independent(_) | ProtoKind::Dependent(_) => ChunkComp::Proto(p),
             ProtoKind::PassThrough(input) => ChunkComp::PassThrough { input: *input, min: p.min, max: p.max },
             ProtoKind::Beardifier => {
-                if beardifier_infinite {
+                if let Some(b) = beard {
+                    ChunkComp::Beard(b)
+                } else if beardifier_infinite {
                     ChunkComp::Zero { min: f32::NEG_INFINITY, max: f32::INFINITY }
                 } else {
                     ChunkComp::Zero { min: 0.0, max: 0.0 }
@@ -193,6 +204,7 @@ pub fn sample(stack: &mut [ChunkComp], x: i32, y: i32, z: i32) -> f32 {
         ChunkComp::Interpolated(i) => interpolated_sample(i, rest, x, y, z),
         ChunkComp::PassThrough { input, .. } => sample(&mut rest[..=*input], x, y, z),
         ChunkComp::Zero { .. } => 0.0,
+        ChunkComp::Beard(b) => b.sample(x, y, z),
     }
 }
 
@@ -216,6 +228,7 @@ pub fn sample_volume(stack: &mut [ChunkComp], buffer: &mut [f32], volume: &Densi
         ChunkComp::Interpolated(i) => interpolated_volume(i, rest, buffer, volume),
         ChunkComp::PassThrough { input, .. } => sample_volume(&mut rest[..=*input], buffer, volume),
         ChunkComp::Zero { .. } => buffer.fill(0.0),
+        ChunkComp::Beard(b) => b.sample_volume(buffer, volume),
     }
 }
 
