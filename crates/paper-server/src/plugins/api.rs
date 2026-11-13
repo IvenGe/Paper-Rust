@@ -455,6 +455,11 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             player.conn.send(&packet);
             Ok(Value::Null)
         }
+        "player.stop_sound" => {
+            let id = player_id(server, args)?;
+            server.players[&id].conn.send(&play::StopSound { category: args.i32("category"), sound: args.str("sound").map(str::to_owned) });
+            Ok(Value::Null)
+        }
         "player.inventory" => {
             let id = player_id(server, args)?;
             let player = &server.players[&id];
@@ -521,6 +526,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         m if m.starts_with("inventory.") => super::inventory::handle(server, m, args),
         m if m.starts_with("entity.") || m == "world.entities" || m == "world.spawn_entity" || m == "world.drop_item" => super::entity::handle(server, m, args),
         m if m.starts_with("scoreboard.") => super::scoreboard::handle(server, m, args),
+        m if m.starts_with("bossbar.") => super::bossbar::handle(server, m, args),
         m if m.starts_with("offline.") => super::offline::handle(server, m, args),
 
         // --- worlds and blocks ---

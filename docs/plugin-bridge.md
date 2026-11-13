@@ -185,6 +185,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.send_plugin_message` | `uuid`, `channel`, `data` |
 | `player.update_commands` | `uuid` |
 | `player.play_sound` | `uuid`, `sound`, `category`, `x`, `y`, `z`, `volume`, `pitch` |
+| `player.stop_sound` | `uuid`, and optionally `sound` and `category` (none: all sounds) |
 | `player.inventory` / `player.set_slot` / `player.set_held_slot` | `uuid` / `slot`, `item` (window slot numbers) / `slot` |
 | `player.open_inventory` | `uuid`, `inventory` (descriptor), `title` (answers `opened`, `window`) |
 | `player.close_inventory` | `uuid`, `reason` |
@@ -204,6 +205,10 @@ same name, which stay reachable as `minecraft:<name>`.
 | `entity.set` | `id` and any of `custom_name`, `clear_custom_name`, `custom_name_visible`, `gravity`, `vx`/`vy`/`vz`, `health`, `max_health`, `fire_ticks`, `air`, `no_damage_ticks`, `persistent`, `baby`, `equipment` (`[[slot 0-5, item]]`), `target`, `clear_target`, `item`, `pickup_delay`, `damage`, `pickup`, `critical`, `experience`, `fuse` (answers the state) |
 | `entity.teleport` / `entity.remove` | `id`, `world`, `x`, `y`, `z`, `yaw`, `pitch` / `id` |
 | `entity.damage` | `id` (also of a player), `amount`, `source` (`{player}`/`{entity}`) |
+| `entity.add_effect` | `id` (also of a player), `effect`, `duration` (-1 infinite), `amplifier`, `ambient`, `particles`, `icon` (answers whether it took) |
+| `entity.remove_effect` / `entity.clear_effects` / `entity.effects` | `id`, `effect` / `id` (answers how many) / `id` (answers `[{effect, duration, amplifier, ambient, particles, icon}]`) |
+| `bossbar.update` | `id` (a UUID the host picks), and any of `title`, `progress`, `color` (`pink`...`white`), `overlay` (`progress`, `notched_6`...), `flags` (1 darken, 2 music, 4 fog); creates the bar |
+| `bossbar.show` / `bossbar.hide` / `bossbar.remove` | `id`, `player` / `id`, `player` / `id` |
 | `scoreboard.new` / `scoreboard.release` / `scoreboard.retain` | / `board` / `board` |
 | `scoreboard.objectives` / `scoreboard.objective` | `board` / `board`, `name` |
 | `scoreboard.register_objective` / `unregister_objective` / `update_objective` | `board`, `name`, `criteria`, `display_name`, `render_type` |

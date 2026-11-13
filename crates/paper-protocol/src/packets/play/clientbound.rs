@@ -137,6 +137,42 @@ pub struct BossEvent {
 
 packet_id!(BossEvent = play::clientbound::BOSS_EVENT);
 
+impl Decode for BossEvent {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let uuid = r.uuid()?;
+        let action = match r.varint()? {
+            0 => BossEventAction::Add { title: r.component()?, health: r.f32()?, color: r.varint()?, division: r.varint()?, flags: r.u8()? },
+            1 => BossEventAction::Remove,
+            2 => BossEventAction::UpdateHealth(r.f32()?),
+            3 => BossEventAction::UpdateTitle(r.component()?),
+            4 => BossEventAction::UpdateStyle { color: r.varint()?, division: r.varint()? },
+            _ => BossEventAction::UpdateFlags(r.u8()?),
+        };
+        Ok(Self { uuid, action })
+    }
+}
+
+/// Stops sounds on the client: all of them, those of one category, or one sound.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StopSound {
+    pub category: Option<i32>,
+    pub sound: Option<String>,
+}
+
+packet_id!(StopSound = play::clientbound::STOP_SOUND);
+
+impl Encode for StopSound {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_u8(self.category.is_some() as u8 | (self.sound.is_some() as u8) << 1);
+        if let Some(c) = self.category {
+            w.put_varint(c);
+        }
+        if let Some(s) = &self.sound {
+            w.put_string(s);
+        }
+    }
+}
+
 impl Encode for BossEvent {
     fn encode(&self, w: &mut Vec<u8>) {
         w.put_uuid(self.uuid);

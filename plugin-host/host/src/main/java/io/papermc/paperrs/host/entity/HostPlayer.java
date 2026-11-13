@@ -307,6 +307,227 @@ public final class HostPlayer extends AbstractPlayer {
         this.sendRawMessage(message);
     }
 
+    // --- Adventure: Audience's default methods do nothing; each one works or throws ---------
+
+    @Override
+    public void sendMessage(final net.kyori.adventure.text.ComponentLike message) {
+        this.sendMessage(message.asComponent());
+    }
+
+    @Override
+    public void sendMessage(final net.kyori.adventure.text.ComponentLike message, final ChatType.Bound boundChatType) {
+        this.sendMessage(message.asComponent(), boundChatType);
+    }
+
+    @Override
+    public void sendMessage(final net.kyori.adventure.chat.SignedMessage signedMessage, final ChatType.Bound boundChatType) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#sendMessage(SignedMessage, ChatType.Bound)");
+    }
+
+    @Override
+    public void deleteMessage(final net.kyori.adventure.chat.SignedMessage signedMessage) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#deleteMessage");
+    }
+
+    @Override
+    public void deleteMessage(final net.kyori.adventure.chat.SignedMessage.Signature signature) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#deleteMessage");
+    }
+
+    @Override
+    public void sendActionBar(final net.kyori.adventure.text.ComponentLike message) {
+        this.sendActionBar(message.asComponent());
+    }
+
+    private Component listHeader = Component.empty();
+    private Component listFooter = Component.empty();
+
+    @Override
+    public void sendPlayerListHeader(final net.kyori.adventure.text.ComponentLike header) {
+        this.sendPlayerListHeaderAndFooter(header.asComponent(), this.listFooter);
+    }
+
+    @Override
+    public void sendPlayerListHeader(final Component header) {
+        this.sendPlayerListHeaderAndFooter(header, this.listFooter);
+    }
+
+    @Override
+    public void sendPlayerListFooter(final net.kyori.adventure.text.ComponentLike footer) {
+        this.sendPlayerListHeaderAndFooter(this.listHeader, footer.asComponent());
+    }
+
+    @Override
+    public void sendPlayerListFooter(final Component footer) {
+        this.sendPlayerListHeaderAndFooter(this.listHeader, footer);
+    }
+
+    @Override
+    public void sendPlayerListHeaderAndFooter(final net.kyori.adventure.text.ComponentLike header, final net.kyori.adventure.text.ComponentLike footer) {
+        this.sendPlayerListHeaderAndFooter(header.asComponent(), footer.asComponent());
+    }
+
+    @Override
+    public void showBossBar(final net.kyori.adventure.bossbar.BossBar bar) {
+        io.papermc.paperrs.host.bossbar.BossBars.show(this.server, this, bar);
+    }
+
+    @Override
+    public void hideBossBar(final net.kyori.adventure.bossbar.BossBar bar) {
+        io.papermc.paperrs.host.bossbar.BossBars.hide(this.server, this, bar);
+    }
+
+    @Override
+    public Iterable<? extends net.kyori.adventure.bossbar.BossBar> activeBossBars() {
+        return io.papermc.paperrs.host.bossbar.BossBars.shownTo(this);
+    }
+
+    @Override
+    public void playSound(final net.kyori.adventure.sound.Sound sound, final net.kyori.adventure.sound.Sound.Emitter emitter) {
+        if (emitter == net.kyori.adventure.sound.Sound.Emitter.self()) {
+            this.playSound(sound);
+        } else if (emitter instanceof Entity entity) {
+            final Location at = entity.getLocation();
+            this.playSound(sound, at.getX(), at.getY(), at.getZ());
+        } else {
+            throw io.papermc.paperrs.host.Unsupported.method("Player#playSound(Sound, Sound.Emitter) with emitter " + emitter);
+        }
+    }
+
+    @Override
+    public void stopSound(final net.kyori.adventure.sound.Sound sound) {
+        this.stopSound(net.kyori.adventure.sound.SoundStop.namedOnSource(sound.name(), sound.source()));
+    }
+
+    @Override
+    public void stopSound(final net.kyori.adventure.sound.SoundStop stop) {
+        final Map<String, Object> args = this.args();
+        if (stop.sound() != null) {
+            args.put("sound", stop.sound().asString());
+        }
+        if (stop.source() != null) {
+            args.put("category", stop.source().ordinal());
+        }
+        this.server.send("player.stop_sound", args);
+    }
+
+    @Override
+    public void stopAllSounds() {
+        this.server.send("player.stop_sound", this.args());
+    }
+
+    @Override
+    public void openBook(final net.kyori.adventure.inventory.Book.Builder book) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#openBook");
+    }
+
+    @Override
+    public void openBook(final net.kyori.adventure.inventory.BookLike book) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#openBook");
+    }
+
+    @Override
+    public void openBook(final net.kyori.adventure.inventory.Book book) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#openBook");
+    }
+
+    @Override
+    public void sendResourcePacks(final net.kyori.adventure.resource.ResourcePackInfoLike first, final net.kyori.adventure.resource.ResourcePackInfoLike... others) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#sendResourcePacks");
+    }
+
+    @Override
+    public void sendResourcePacks(final net.kyori.adventure.resource.ResourcePackRequestLike request) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#sendResourcePacks");
+    }
+
+    @Override
+    public void sendResourcePacks(final net.kyori.adventure.resource.ResourcePackRequest request) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#sendResourcePacks");
+    }
+
+    @Override
+    public void removeResourcePacks(final net.kyori.adventure.resource.ResourcePackRequestLike request) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+    }
+
+    @Override
+    public void removeResourcePacks(final net.kyori.adventure.resource.ResourcePackRequest request) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+    }
+
+    @Override
+    public void removeResourcePacks(final net.kyori.adventure.resource.ResourcePackInfoLike request, final net.kyori.adventure.resource.ResourcePackInfoLike... others) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+    }
+
+    @Override
+    public void removeResourcePacks(final Iterable<UUID> ids) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+    }
+
+    @Override
+    public void removeResourcePacks(final UUID id, final UUID... others) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+    }
+
+    @Override
+    public void clearResourcePacks() {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#clearResourcePacks");
+    }
+
+    @Override
+    public void showDialog(final net.kyori.adventure.dialog.DialogLike dialog) {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#showDialog");
+    }
+
+    @Override
+    public void closeDialog() {
+        throw io.papermc.paperrs.host.Unsupported.method("Player#closeDialog");
+    }
+
+    // --- potion effects ----------------------------------------------------------------------
+
+    @Override
+    public boolean addPotionEffect(final org.bukkit.potion.PotionEffect effect) {
+        return Effects.add(this.server, this.entityId, effect);
+    }
+
+    @Override
+    public boolean addPotionEffect(final org.bukkit.potion.PotionEffect effect, final boolean force) {
+        return Effects.add(this.server, this.entityId, effect);
+    }
+
+    @Override
+    public boolean addPotionEffects(final java.util.Collection<org.bukkit.potion.PotionEffect> effects) {
+        return Effects.addAll(this.server, this.entityId, effects);
+    }
+
+    @Override
+    public java.util.Collection<org.bukkit.potion.PotionEffect> getActivePotionEffects() {
+        return Effects.list(this.server, this.entityId);
+    }
+
+    @Override
+    public boolean hasPotionEffect(final org.bukkit.potion.PotionEffectType type) {
+        return Effects.get(this.server, this.entityId, type) != null;
+    }
+
+    @Override
+    public org.bukkit.potion.@Nullable PotionEffect getPotionEffect(final org.bukkit.potion.PotionEffectType type) {
+        return Effects.get(this.server, this.entityId, type);
+    }
+
+    @Override
+    public void removePotionEffect(final org.bukkit.potion.PotionEffectType type) {
+        Effects.remove(this.server, this.entityId, type);
+    }
+
+    @Override
+    public boolean clearActivePotionEffects() {
+        return Effects.clear(this.server, this.entityId);
+    }
+
     @Override
     public void sendActionBar(final Component message) {
         this.server.send("player.send_message", this.args("message", Components.toJson(message), "overlay", true));
@@ -314,6 +535,8 @@ public final class HostPlayer extends AbstractPlayer {
 
     @Override
     public void sendPlayerListHeaderAndFooter(final Component header, final Component footer) {
+        this.listHeader = header;
+        this.listFooter = footer;
         this.server.send("player.send_tab_list", this.args("header", Components.toJson(header), "footer", Components.toJson(footer)));
     }
 

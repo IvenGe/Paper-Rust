@@ -91,6 +91,7 @@ pub fn on_quit(server: &mut Server, uuid: uuid::Uuid, reason: &str, default: Com
             on_inventory_close(server, id, "DISCONNECT");
         }
         server.scoreboards.player_left(id);
+        super::bossbar::player_left(server, id);
     }
     server.plugin_state_cache.retain(|_, v| v.str("uuid") != Some(uuid.to_string().as_str()));
     let args = bmap! { "uuid" => uuid.to_string(), "reason" => reason, "message" => component_value(&default) };

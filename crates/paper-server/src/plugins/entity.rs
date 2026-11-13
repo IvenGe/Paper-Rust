@@ -219,6 +219,35 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             server.worlds[world].entities.get_mut(&id).unwrap().removed = true;
             Ok(Value::Null)
         }
+        "entity.add_effect" | "entity.remove_effect" | "entity.clear_effects" | "entity.effects" => {
+            let id = args.i32("id").ok_or_else(|| anyhow!("missing id"))?;
+            let world = match server.players.get(&id) {
+                Some(p) => p.world,
+                None => world_of(server, id).ok_or_else(|| anyhow!("entity {id} does not exist"))?,
+            };
+            let effect_name = || args.str("effect").ok_or_else(|| anyhow!("missing effect"));
+            match method {
+                "entity.add_effect" => {
+                    let mut effect = crate::server::effects::ActiveEffect::new(effect_name()?, args.i32("duration").unwrap_or(600), args.i32("amplifier").unwrap_or(0)).ok_or_else(|| anyhow!("unknown effect {}", args.str("effect").unwrap_or("")))?;
+                    effect.ambient = args.bool("ambient").unwrap_or(false);
+                    effect.particles = args.bool("particles").unwrap_or(true);
+                    effect.icon = args.bool("icon").unwrap_or(true);
+                    Ok(Value::Bool(server.add_effect(world, id, effect)))
+                }
+                "entity.remove_effect" => {
+                    let effect = paper_data::effects::by_name(effect_name()?).ok_or_else(|| anyhow!("unknown effect"))?;
+                    Ok(Value::Bool(server.remove_effect(world, id, effect.id)))
+                }
+                "entity.clear_effects" => Ok(Value::Int(server.clear_effects(world, id) as i64)),
+                _ => Ok(Value::List(
+                    server
+                        .effects_of(world, id)
+                        .iter()
+                        .map(|e| bmap! { "effect" => e.name(), "duration" => e.duration, "amplifier" => e.amplifier, "ambient" => e.ambient, "particles" => e.particles, "icon" => e.icon })
+                        .collect(),
+                )),
+            }
+        }
         "entity.damage" => {
             let id = args.i32("id").ok_or_else(|| anyhow!("missing id"))?;
             let world = match server.players.get(&id) {

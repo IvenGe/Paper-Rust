@@ -152,6 +152,42 @@ public final class CraftServer extends AbstractServer {
     }
 
     /** Calls the Rust server and waits for the answer. */
+    private final Map<org.bukkit.NamespacedKey, io.papermc.paperrs.host.bossbar.HostBossBar> bossBars = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Override
+    public org.bukkit.boss.BossBar createBossBar(final String title, final org.bukkit.boss.BarColor color, final org.bukkit.boss.BarStyle style, final org.bukkit.boss.BarFlag... flags) {
+        return new io.papermc.paperrs.host.bossbar.HostBossBar(this, null, title, color, style, flags);
+    }
+
+    @Override
+    public org.bukkit.boss.KeyedBossBar createBossBar(final org.bukkit.NamespacedKey key, final String title, final org.bukkit.boss.BarColor color, final org.bukkit.boss.BarStyle style, final org.bukkit.boss.BarFlag... flags) {
+        final io.papermc.paperrs.host.bossbar.HostBossBar bar = new io.papermc.paperrs.host.bossbar.HostBossBar(this, key, title, color, style, flags);
+        if (this.bossBars.putIfAbsent(key, bar) != null) {
+            throw new IllegalArgumentException("A boss bar with the key " + key + " already exists");
+        }
+        return bar;
+    }
+
+    @Override
+    public java.util.Iterator<org.bukkit.boss.KeyedBossBar> getBossBars() {
+        return java.util.List.<org.bukkit.boss.KeyedBossBar>copyOf(this.bossBars.values()).iterator();
+    }
+
+    @Override
+    public org.bukkit.boss.@Nullable KeyedBossBar getBossBar(final org.bukkit.NamespacedKey key) {
+        return this.bossBars.get(key);
+    }
+
+    @Override
+    public boolean removeBossBar(final org.bukkit.NamespacedKey key) {
+        final io.papermc.paperrs.host.bossbar.HostBossBar bar = this.bossBars.remove(key);
+        if (bar == null) {
+            return false;
+        }
+        bar.removeAll();
+        return true;
+    }
+
     public Object call(final String method, final Map<String, Object> args) {
         this.epoch++;
         try {

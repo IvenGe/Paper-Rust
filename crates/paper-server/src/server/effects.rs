@@ -75,6 +75,15 @@ impl Server {
         mob.living.effects.iter().find(|(e, _, _)| *e == id).map(|(_, amp, _)| *amp)
     }
 
+    /// The effects a player or mob has now.
+    pub fn effects_of(&self, world: usize, target: i32) -> Vec<ActiveEffect> {
+        if let Some(p) = self.players.get(&target) {
+            return p.effects.clone();
+        }
+        let Some(mob) = self.worlds.get(world).and_then(|w| w.entities.get(&target)).and_then(|e| e.mob()) else { return Vec::new() };
+        mob.living.effects.iter().map(|(id, amplifier, duration)| ActiveEffect { id: *id, amplifier: *amplifier, duration: *duration, ambient: false, particles: true, icon: true }).collect()
+    }
+
     /// Gives an effect (instant ones act at once). Returns whether it took effect.
     pub fn add_effect(&mut self, world: usize, target: i32, effect: ActiveEffect) -> bool {
         let Some(info) = effects::by_id(effect.id) else { return false };

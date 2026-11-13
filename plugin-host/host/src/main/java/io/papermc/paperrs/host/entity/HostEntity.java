@@ -485,6 +485,38 @@ public final class HostEntity implements HostProxies.Backed {
         return Values.f64(this.state(), "max_health", 20);
     }
 
+    public boolean addPotionEffect(final org.bukkit.potion.PotionEffect effect) {
+        return Effects.add(this.server, this.id, effect);
+    }
+
+    public boolean addPotionEffect(final org.bukkit.potion.PotionEffect effect, final boolean force) {
+        return Effects.add(this.server, this.id, effect);
+    }
+
+    public boolean addPotionEffects(final java.util.Collection<org.bukkit.potion.PotionEffect> effects) {
+        return Effects.addAll(this.server, this.id, effects);
+    }
+
+    public java.util.Collection<org.bukkit.potion.PotionEffect> getActivePotionEffects() {
+        return Effects.list(this.server, this.id);
+    }
+
+    public boolean hasPotionEffect(final org.bukkit.potion.PotionEffectType type) {
+        return Effects.get(this.server, this.id, type) != null;
+    }
+
+    public org.bukkit.potion.@Nullable PotionEffect getPotionEffect(final org.bukkit.potion.PotionEffectType type) {
+        return Effects.get(this.server, this.id, type);
+    }
+
+    public void removePotionEffect(final org.bukkit.potion.PotionEffectType type) {
+        Effects.remove(this.server, this.id, type);
+    }
+
+    public boolean clearActivePotionEffects() {
+        return Effects.clear(this.server, this.id);
+    }
+
     public void setMaxHealth(final double health) {
         this.set("max_health", health);
     }

@@ -159,6 +159,9 @@ What works:
   * scoreboards: the main scoreboard and new ones, objectives, display slots, scores
     (`health`, `food`, `air`, `armor`, `level` and `xp` follow the players), teams and
     `Player.setScoreboard`;
+  * potion effects of players and mobs (`addPotionEffect`, `getActivePotionEffects`, ...);
+  * boss bars, Adventure's (`showBossBar`) and Bukkit's (`Server.createBossBar`, keyed ones
+    included);
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload)).
 
 Not yet:
@@ -172,8 +175,8 @@ Not yet:
   crafters and observers of entities do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.
-* Plugin API: block data, boss bars, creating worlds, registry and tag lifecycle events,
-  potion effects and attributes, statistics, entity AI and passengers, the data component API
+* Plugin API: block data, creating worlds, registry and tag lifecycle events,
+  attributes, statistics, books (`openBook`), resource packs, dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, most special item metas (skulls, potions, books,
   banners, ...), inventories of other block types and anvils, enchanting or merchant views,
   stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the

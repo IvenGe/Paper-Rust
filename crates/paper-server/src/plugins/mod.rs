@@ -19,6 +19,7 @@
 //! they are queued as [`MainTask`]s and run between ticks.
 
 pub mod api;
+pub mod bossbar;
 pub mod entity;
 pub mod events;
 pub mod inventory;
@@ -59,6 +60,8 @@ pub struct PluginData {
     pub reloading: bool,
     /// Players whose `InventoryCloseEvent` is being fired.
     pub closing: HashSet<i32>,
+    /// Boss bars plugins show.
+    pub boss_bars: bossbar::BossBars,
 }
 
 /// A loaded plugin, as reported by the host.
@@ -512,6 +515,7 @@ pub fn reload(server: &mut Server) -> Result<()> {
     server.plugin_list.clear();
     server.plugin_data.inventories.clear();
     server.reset_plugin_scoreboards();
+    bossbar::clear(server);
 
     log::info!("Reloading plugins: starting a new plugin host");
     server.plugin_data.reloading = true;
@@ -571,6 +575,7 @@ pub fn host_died(server: &mut Server, reason: &str) {
     }
     server.plugin_data.inventories.clear();
     server.reset_plugin_scoreboards();
+    bossbar::clear(server);
     match server.config.paper.plugins.on_host_crash {
         OnHostCrash::Shutdown => {
             log::error!("The plugin host stopped unexpectedly ({reason}). Stopping the server so plugins that protect the world are not silently missing.");

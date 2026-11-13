@@ -99,6 +99,8 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "entities" -> this.entities((Player) sender);
                 case "offline" -> this.offline(sender, args[1]);
                 case "scoreboard" -> this.scoreboard((Player) sender);
+                case "effects" -> this.effects((Player) sender);
+                case "bossbar" -> this.bossbar((Player) sender);
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
@@ -116,6 +118,39 @@ final class ApiTests implements Listener, CommandExecutor {
             sender.sendMessage(args[0] + ": FAIL " + e);
         }
         return true;
+    }
+
+    // --- potion effects and boss bars ---------------------------------------------------------
+
+    private void effects(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        check(failures, player.addPotionEffect(new org.bukkit.potion.PotionEffect(org.bukkit.potion.PotionEffectType.SPEED, 600, 1)), "add");
+        check(failures, player.hasPotionEffect(org.bukkit.potion.PotionEffectType.SPEED), "has");
+        final org.bukkit.potion.PotionEffect speed = player.getPotionEffect(org.bukkit.potion.PotionEffectType.SPEED);
+        check(failures, speed != null && speed.getAmplifier() == 1 && speed.getDuration() > 500, "get " + speed);
+        check(failures, player.getActivePotionEffects().size() == 1, "active " + player.getActivePotionEffects());
+        player.removePotionEffect(org.bukkit.potion.PotionEffectType.SPEED);
+        check(failures, !player.hasPotionEffect(org.bukkit.potion.PotionEffectType.SPEED), "removed");
+        player.addPotionEffect(new org.bukkit.potion.PotionEffect(org.bukkit.potion.PotionEffectType.GLOWING, 2000, 0));
+        final Zombie zombie = player.getWorld().spawn(player.getLocation().add(3, 0, 0), Zombie.class);
+        check(failures, zombie.addPotionEffect(new org.bukkit.potion.PotionEffect(org.bukkit.potion.PotionEffectType.SLOWNESS, 200, 2)), "mob add");
+        check(failures, zombie.hasPotionEffect(org.bukkit.potion.PotionEffectType.SLOWNESS), "mob has");
+        zombie.remove();
+        report(player, "effects", failures);
+    }
+
+    private void bossbar(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final net.kyori.adventure.bossbar.BossBar raid = net.kyori.adventure.bossbar.BossBar.bossBar(Component.text("Raid"), 0.5f, net.kyori.adventure.bossbar.BossBar.Color.RED, net.kyori.adventure.bossbar.BossBar.Overlay.NOTCHED_10);
+        player.showBossBar(raid);
+        check(failures, player.activeBossBars().iterator().hasNext(), "active");
+        raid.progress(0.25f);
+        final NamespacedKey key = new NamespacedKey(this.plugin, "event");
+        final org.bukkit.boss.KeyedBossBar event = Bukkit.createBossBar(key, "Event", org.bukkit.boss.BarColor.BLUE, org.bukkit.boss.BarStyle.SOLID);
+        event.addPlayer(player);
+        check(failures, event.getPlayers().contains(player), "bukkit players");
+        check(failures, Bukkit.getBossBar(key) == event, "by key");
+        report(player, "bossbar", failures);
     }
 
     // --- items and inventories ----------------------------------------------------------------

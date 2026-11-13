@@ -405,6 +405,20 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert_eq!(team.parameters.as_ref().and_then(|p| p.color), Some(12), "red");
     assert_eq!(team.parameters.as_ref().map(|p| p.prefix.to_plain()), Some("[R] ".to_owned()));
 
+    // --- potion effects and boss bars -----------------------------------------------------------
+    alice.clear_backlog();
+    alice.command("apitest effects");
+    expect_line(&mut alice, "effects: ok");
+    let glowing = server.handle.run(|s| s.player_by_name("Alice").unwrap().effects.iter().any(|e| e.name() == "minecraft:glowing")).unwrap();
+    assert!(glowing, "the plugin's effect is on the player");
+    alice.command("apitest bossbar");
+    let raid: play::BossEvent = alice.find(TIMEOUT, |b: &play::BossEvent| matches!(&b.action, play::BossEventAction::Add { title, .. } if title.to_plain() == "Raid")).expect("the raid bar");
+    assert!(matches!(raid.action, play::BossEventAction::Add { color: 2, division: 2, .. }), "{raid:?}");
+    let progress: play::BossEvent = alice.find(TIMEOUT, |b: &play::BossEvent| b.uuid == raid.uuid && matches!(b.action, play::BossEventAction::UpdateHealth(_))).expect("progress update");
+    assert_eq!(progress.action, play::BossEventAction::UpdateHealth(0.25));
+    alice.find(TIMEOUT, |b: &play::BossEvent| matches!(&b.action, play::BossEventAction::Add { title, color: 1, .. } if title.to_plain() == "Event")).expect("the Bukkit bar");
+    expect_line(&mut alice, "bossbar: ok");
+
     // --- offline players ------------------------------------------------------------------------
     server.handle.console_command("kick Carol");
     carol.wait_closed(TIMEOUT);
