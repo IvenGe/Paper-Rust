@@ -39,6 +39,7 @@ pub struct SavedPlayer {
     pub seen_credits: bool,
     pub effects: Vec<super::effects::ActiveEffect>,
     pub absorption: f32,
+    pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -189,6 +190,19 @@ impl Server {
             c.insert("active_effects", Tag::List(effects));
         }
         c.insert("AbsorptionAmount", Tag::Float(player.absorption));
+        if let Some((w, pos)) = player.respawn.filter(|(w, _)| *w < self.worlds.len()) {
+            c.insert(
+                "respawn",
+                Tag::Compound(
+                    Compound::new()
+                        .with("dimension", Tag::String(self.worlds[w].dimension.clone()))
+                        .with("pos", Tag::IntArray(vec![pos.x, pos.y, pos.z]))
+                        .with("yaw", Tag::Float(0.0))
+                        .with("pitch", Tag::Float(0.0))
+                        .with("forced", Tag::Byte(0)),
+                ),
+            );
+        }
         c
     }
 
@@ -264,6 +278,11 @@ impl Server {
                 })
                 .collect(),
             absorption: c.f64("AbsorptionAmount").map_or(0.0, |a| a as f32),
+            respawn: c.compound("respawn").and_then(|r| {
+                let world = self.worlds.iter().position(|w| Some(w.dimension.as_str()) == r.string("dimension"))?;
+                let Some(Tag::IntArray(pos)) = r.get("pos") else { return None };
+                (pos.len() == 3).then(|| (world, paper_protocol::codec::BlockPos::new(pos[0], pos[1], pos[2])))
+            }),
         })
     }
 

@@ -17,6 +17,7 @@ pub mod commands;
 mod handlers;
 mod join;
 mod combat;
+mod beds;
 mod machines;
 mod mining;
 pub mod containers;
@@ -480,6 +481,7 @@ impl Server {
         self.tick_players();
         self.tick_effects();
         self.tick_digging();
+        self.tick_sleeping();
         self.tick_entities();
         self.tick_spawning();
         self.tick_furnaces();

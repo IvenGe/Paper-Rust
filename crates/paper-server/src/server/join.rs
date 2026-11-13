@@ -110,6 +110,8 @@ impl Server {
             digging: None,
             delayed_break: None,
             crack_stage: -1,
+            sleeping: None,
+            sleep_ticks: 0,
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -134,6 +136,7 @@ impl Server {
             player.seen_credits = saved.seen_credits;
             player.effects = saved.effects;
             player.absorption = saved.absorption;
+            player.respawn = saved.respawn;
             player.apply_game_mode_abilities();
             player.flying = saved.flying && player.allow_flight;
         } else {

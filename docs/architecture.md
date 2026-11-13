@@ -162,8 +162,8 @@ damage each tick, fall damage from movement packets, hunger and natural regenera
 eating, experience, death and respawn. `server::combat` is fighting (`Player.attack` with the
 cooldown, criticals, sweeps, knockback and enchantments; damage to mobs and their deaths with
 loot tables and experience; bows and arrows; explosions). `server::effects` keeps status
-effects on players and mobs; `server::mining` checks how long blocks take to break.
-Damage types, recipes and loot tables are read from the vanilla server jar at startup
+effects on players and mobs; `server::mining` checks how long blocks take to break;
+`server::beds` is `BedBlock` and sleeping (respawn points, skipping the night). Damage types, recipes and loot tables are read from the vanilla server jar at startup
 (`vanilla.rs`).
 
 ## Containers

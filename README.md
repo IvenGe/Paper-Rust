@@ -86,6 +86,9 @@ What works:
   mob bites): regeneration, poison, wither, hunger, saturation, instant health and damage,
   absorption, resistance, fire resistance, water breathing, strength, weakness, jump boost,
   slow falling, invisibility, and the attribute effects (speed, slowness, ...) for clients.
+  Beds set the respawn point and let players sleep through the night (with
+  `players_sleeping_percentage`; not with monsters nearby, and getting hurt wakes them); they
+  explode in the Nether and the End.
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
   that smelt over time, hoppers, droppers and dispensers; vanilla's click rules
@@ -132,7 +135,7 @@ Not yet:
   cavern over a lava sea; the main End island with an open exit portal, no dragon fight, no
   outer islands or end cities).
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, breeding); beds, enchanting, anvils and brewing are missing. Tripwires,
+  trading, breeding); enchanting, anvils and brewing are missing. Tripwires,
   crafters, observers of entities and brewing stands do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.

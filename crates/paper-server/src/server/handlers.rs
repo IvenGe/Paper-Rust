@@ -159,6 +159,7 @@ impl Server {
                     player.metadata_dirty = true;
                 }
             }
+            Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::LEAVE_BED => self.wake_up(id),
             Serverbound::PlayerCommand(p) => {
                 let sprinting = match p.action.0 {
                     play::player_command::START_SPRINTING => Some(true),
@@ -243,8 +244,9 @@ impl Server {
             self.kick(id, &Component::translatable("multiplayer.disconnect.invalid_player_movement", vec![]));
             return;
         }
-        // Until a teleport is confirmed the client is still reporting its old position.
-        if player.pending_teleport.is_some() {
+        // Until a teleport is confirmed the client is still reporting its old position; in
+        // bed the player stays put.
+        if player.pending_teleport.is_some() || player.sleeping.is_some() {
             return;
         }
         let old_chunk = player.loc.chunk();
@@ -393,7 +395,7 @@ impl Server {
             let world = player.world;
             let hands_empty = player.inventory[HOTBAR_START + player.held_slot as usize].is_empty() && player.inventory[OFFHAND_SLOT].is_empty();
             let usable = player.game_mode != GameMode::Spectator && (!player.sneaking || hands_empty) && self.within_reach(id, use_on.pos);
-            if usable && self.try_open_container(id, world, use_on.pos) {
+            if usable && (self.try_open_container(id, world, use_on.pos) || self.use_bed(id, use_on.pos)) {
                 self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
                 return;
             }

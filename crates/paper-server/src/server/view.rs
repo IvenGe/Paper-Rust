@@ -50,6 +50,8 @@ fn player_metadata(player: &Player) -> Vec<u8> {
     }
     let pose = if player.dead {
         pose::DYING
+    } else if player.sleeping.is_some() {
+        pose::SLEEPING
     } else if player.sneaking {
         pose::SNEAKING
     } else {
@@ -69,6 +71,8 @@ fn player_metadata(player: &Player) -> Vec<u8> {
         .byte(index::SKIN_PARTS, player.settings.skin_parts as i8)
         // `DATA_PLAYER_ABSORPTION_ID`
         .float(17, player.absorption)
+        // `SLEEPING_POS_ID`
+        .optional_block_pos(14, player.sleeping)
         .finish()
 }
 

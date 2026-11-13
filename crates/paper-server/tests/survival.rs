@@ -271,3 +271,52 @@ fn golden_apples_poison_and_milk() {
     assert_eq!(left, (0, Some("minecraft:bucket")));
     server.stop();
 }
+
+#[test]
+fn sleeping_skips_the_night_and_beds_are_respawn_points() {
+    let server = survival_server();
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let (foot, head) = (paper_protocol::codec::BlockPos::new(10, -60, 8), paper_protocol::codec::BlockPos::new(11, -60, 8));
+    server
+        .handle
+        .run(move |s| {
+            let bed = paper_data::blocks::default_state("minecraft:red_bed").unwrap();
+            let bed = paper_data::blocks::with_property(bed, "facing", "east").unwrap();
+            s.set_block_and_update(0, foot, paper_data::blocks::with_property(bed, "part", "foot").unwrap());
+            s.set_block_and_update(0, head, paper_data::blocks::with_property(bed, "part", "head").unwrap());
+        })
+        .unwrap();
+    // Monsters would come and wake her (as in vanilla); the spawn spread may have put her out
+    // of reach of the bed.
+    server.handle.console_command("gamerule spawn_monsters false");
+    server.handle.console_command("tp Alice 9.5 -60 8.5");
+    alice.expect::<play::PlayerPosition>();
+    server.handle.console_command("time set midnight");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+
+    // Right-click the bed: the spawn point is set and Alice lies down.
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: foot, face: VarInt(1), cursor_x: 0.5, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(1) });
+    let message: play::SystemChat = alice.find(TIMEOUT, |c: &play::SystemChat| c.content.0["translate"] == "block.minecraft.set_spawn").expect("respawn point set");
+    assert!(!message.overlay);
+    let lying: play::PlayerPosition = alice.expect();
+    assert_eq!((lying.x, lying.z), (11.5, 8.5), "in the bed");
+    assert_eq!(server.handle.run(move |s| s.players[&id].sleeping).unwrap(), Some(head));
+
+    // Alone on the server: after five seconds asleep it is morning and she wakes up.
+    let wake: play::Animate = alice.find(Duration::from_secs(10), |a: &play::Animate| a.entity_id.0 == id && a.animation == 2).expect("woken up");
+    assert_eq!(wake.animation, 2);
+    let (time, hurt) = server.handle.run(move |s| (s.worlds[0].day_time, s.players[&id].last_damage.as_ref().map(|d| (d.kind, d.attacker.and_then(|a| s.worlds[0].entities.get(&a).map(|e| e.info.name.clone())))))).unwrap();
+    assert!(time.rem_euclid(24000) < 100, "morning: {time}, last damage: {hurt:?}");
+
+    // Dying sends her back to the bed.
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.clear_backlog();
+    alice.send(&play::ClientCommand { action: VarInt(0) });
+    alice.expect::<play::Respawn>();
+    let back: play::PlayerPosition = alice.expect();
+    assert!((back.x - 11.0).abs() < 3.0 && (back.z - 8.5).abs() < 3.0, "respawned by the bed: {back:?}");
+    server.stop();
+}

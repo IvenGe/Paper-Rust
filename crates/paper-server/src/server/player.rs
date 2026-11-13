@@ -212,6 +212,9 @@ pub struct Player {
     pub delayed_break: Option<(paper_protocol::codec::BlockPos, u64)>,
     /// Crack stage last shown to others (-1 none).
     pub crack_stage: i32,
+    /// The head of the bed the player sleeps in.
+    pub sleeping: Option<paper_protocol::codec::BlockPos>,
+    pub sleep_ticks: i32,
 }
 
 impl Player {

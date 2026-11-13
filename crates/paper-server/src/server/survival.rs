@@ -846,6 +846,9 @@ impl Server {
                 self.play_sound(world, pos, sound, category::PLAYERS, 1.0, Self::random_pitch(), None);
             }
         }
+        if self.players.get(&id).is_some_and(|p| p.sleeping.is_some()) {
+            self.wake_up(id);
+        }
         if dead {
             self.kill_player(id, damage);
         }
@@ -961,9 +964,9 @@ impl Server {
             return;
         }
         let overworld = self.world_of_dimension("minecraft:overworld").unwrap_or(0);
-        // Respawn at the bed / anchor, or at the world spawn with some spread.
-        let (world, target) = match p.respawn.filter(|(w, _)| *w < self.worlds.len()) {
-            Some((w, pos)) => (w, Location { x: pos.x as f64 + 0.5, y: pos.y as f64 + 0.6, z: pos.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 }),
+        // Respawn next to the bed, or at the world spawn with some spread.
+        let (world, target) = match self.bed_respawn(id) {
+            Some(found) => found,
             None => (overworld, self.world_spawn_location(overworld, true)),
         };
         let target = crate::plugins::events::on_respawn(self, id, world, target);

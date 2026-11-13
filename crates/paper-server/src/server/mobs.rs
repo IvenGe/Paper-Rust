@@ -930,6 +930,7 @@ impl Server {
     fn spawn_category_in_chunk(&mut self, world: usize, chunk: ChunkPos, category: &str, key: &str) -> i32 {
         let mut rng = rand::thread_rng();
         let w = &self.worlds[world];
+        let spawn_center = Vec3::new(w.spawn.x as f64 + 0.5, w.spawn.y as f64 + 0.5, w.spawn.z as f64 + 0.5);
         let (x0, z0) = (chunk.x * 16 + rng.gen_range(0..16), chunk.z * 16 + rng.gen_range(0..16));
         let Some(top) = w.chunks.get(&chunk).map(|c| c.min_y + c.world_surface[(((z0 & 15) << 4) | (x0 & 15)) as usize] as i32 + 1) else { return 0 };
         let y = rng.gen_range(w.min_y..=top.max(w.min_y));
@@ -957,8 +958,9 @@ impl Server {
                 z += rng.gen_range(0..6) - rng.gen_range(0..6);
                 let at = Vec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
                 let nearest = self.players.values().filter(|p| p.world == world).map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z).distance_squared(at)).fold(f64::MAX, f64::min);
-                // Not too close to a player, not so far that it would despawn at once.
-                if nearest <= 576.0 || nearest > 128.0 * 128.0 {
+                // Not too close to a player, not so far that it would despawn at once, and not
+                // within 24 blocks of the world spawn (`isRightDistanceToPlayerAndSpawnPoint`).
+                if nearest <= 576.0 || nearest > 128.0 * 128.0 || spawn_center.distance_squared(at) < 576.0 {
                     continue;
                 }
                 if chosen.is_none() {
