@@ -1,0 +1,1509 @@
+{
+ "sections": [
+  {
+   "title": "bytecode: structural facts the id rules rest on",
+   "checks": [
+    {
+     "name": "MappedRegistry.register assigns id = byId.size() (registration order is the protocol id)",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "StateDefinition sorts properties by name (ImmutableSortedMap) before enumerating states",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "Blocks.<clinit> fills Block.BLOCK_STATE_REGISTRY by iterating BuiltInRegistries.BLOCK and each block's getPossibleStates() in order",
+     "status": "ok",
+     "detail": "in lambda$static$429"
+    },
+    {
+     "name": "ProtocolInfo.Details.listPackets reports packet id = index in the builder's packet list",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "EntityDataSerializers.registerSerializer adds to a CrudeIncrementalIntIdentityHashBiMap, whose add() hands out nextId() (sequential ids)",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "Block.asItem() is Item.byBlock(block) = Item.BY_BLOCK.getOrDefault(block, Items.AIR)",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "Registries.elementsDirPath/tagsDirPath are '<path>' and 'tags/<path>'",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "TagNetworkSerialization.serializeTagsToNetwork starts from RegistrySynchronization.networkSafeRegistries",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "... and drops registries whose tag payload is empty (NetworkPayload.isEmpty)",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "networkSafeRegistries = all registries of RegistryLayer.STATIC (the built-in ones) + networkedRegistries(...)",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "networkedRegistries = registries from RegistryLayer.WORLD upwards filtered by isNetworkable (key in NETWORKABLE_REGISTRIES)",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "NETWORKABLE_REGISTRIES = keys of RegistryDataLoader.SYNCHRONIZED_REGISTRIES",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "TagLoader.tryBuildTag collects entries in file order into a LinkedHashSet",
+     "status": "ok",
+     "detail": ""
+    }
+   ]
+  },
+  {
+   "title": "bytecode: evaluation of Bootstrap.bootStrap()",
+   "checks": [
+    {
+     "name": "unit clinit:net/minecraft/world/level/material/Fluids",
+     "status": "info",
+     "detail": "skipped a region with unmodelled side effects (undecidable branch) in net/minecraft/world/level/material/Fluids.<clinit>()V @107"
+    },
+    {
+     "name": "every registry is filled by exactly one class initialiser / bootstrap method",
+     "status": "ok",
+     "detail": "96 registries"
+    },
+    {
+     "name": "system properties consulted by the analysed code (modelled as not set)",
+     "status": "info",
+     "detail": "MC_DEBUG_ENABLED, MC_DEBUG_PRINT_PROPERTIES, max.bg.threads"
+    },
+    {
+     "name": "instructions evaluated",
+     "status": "info",
+     "detail": "3617403"
+    },
+    {
+     "name": "second analysis with a different evaluation strategy (deferred class initialisation) gives identical registries, packets, serializers, block and item data",
+     "status": "ok",
+     "detail": ""
+    }
+   ]
+  },
+  {
+   "title": "inputs",
+   "checks": [
+    {
+     "name": "mcmeta summary is for the same version as the jar (id, protocol, data version, pack versions)",
+     "status": "ok",
+     "detail": "26.3 / 26.3"
+    },
+    {
+     "name": "sha256 of server jar",
+     "status": "info",
+     "detail": "d052f14d7a173734fba553711e5b570162e2f2a313267ee31a21b975a679be64  (/home/user/upstream/vanilla/jar/server.jar)"
+    },
+    {
+     "name": "sha256 of mcmeta registries/data.json",
+     "status": "info",
+     "detail": "2e092bc461886f1af5a24727af4ba6a6839768a7cf2e1410b8cae495987f7dc0  (/home/user/upstream/mcmeta/summary/registries/data.json)"
+    },
+    {
+     "name": "sha256 of mcmeta blocks/data.json",
+     "status": "info",
+     "detail": "4d4f4e55cddefd0d28aa28d5b92c19b29a8fe5cc6418196e73d819f4406e9ba9  (/home/user/upstream/mcmeta/summary/blocks/data.json)"
+    },
+    {
+     "name": "sha256 of mcmeta item_components/data.json",
+     "status": "info",
+     "detail": "6f55ec3af4a0876988a2a10479200a7da8472d28875a774f2c0e51fe14ecb482  (/home/user/upstream/mcmeta/summary/item_components/data.json)"
+    },
+    {
+     "name": "sha256 of pumpkin assets/blocks.json",
+     "status": "info",
+     "detail": "4714470b70eafe9ff34b67f498723c1cd7ba281d99a20c7c4415708497b2a9df  (/home/user/upstream/pumpkin/assets/blocks.json)"
+    }
+   ]
+  },
+  {
+   "title": "registries (bytecode) vs mcmeta: identical set, count, no duplicates",
+   "checks": [
+    {
+     "name": "minecraft:sound_event",
+     "status": "ok",
+     "detail": "1991 entries, same set"
+    },
+    {
+     "name": "minecraft:fluid",
+     "status": "ok",
+     "detail": "5 entries, same set"
+    },
+    {
+     "name": "minecraft:block",
+     "status": "ok",
+     "detail": "1286 entries, same set"
+    },
+    {
+     "name": "minecraft:particle_type",
+     "status": "ok",
+     "detail": "128 entries, same set"
+    },
+    {
+     "name": "minecraft:attribute",
+     "status": "ok",
+     "detail": "40 entries, same set"
+    },
+    {
+     "name": "minecraft:mob_effect",
+     "status": "ok",
+     "detail": "40 entries, same set"
+    },
+    {
+     "name": "minecraft:entity_type",
+     "status": "ok",
+     "detail": "161 entries, same set"
+    },
+    {
+     "name": "minecraft:item",
+     "status": "ok",
+     "detail": "1658 entries, same set"
+    },
+    {
+     "name": "minecraft:data_component_type",
+     "status": "ok",
+     "detail": "122 entries, same set"
+    },
+    {
+     "name": "minecraft:game_event",
+     "status": "ok",
+     "detail": "61 entries, same set"
+    },
+    {
+     "name": "minecraft:debug_subscription",
+     "status": "ok",
+     "detail": "16 entries, same set"
+    },
+    {
+     "name": "minecraft:potion",
+     "status": "ok",
+     "detail": "46 entries, same set"
+    },
+    {
+     "name": "minecraft:block_entity_type",
+     "status": "ok",
+     "detail": "49 entries, same set"
+    },
+    {
+     "name": "minecraft:stat_type",
+     "status": "ok",
+     "detail": "9 entries, same set"
+    },
+    {
+     "name": "minecraft:custom_stat",
+     "status": "ok",
+     "detail": "78 entries, same set"
+    },
+    {
+     "name": "minecraft:chunk_status",
+     "status": "ok",
+     "detail": "10 entries, same set"
+    },
+    {
+     "name": "minecraft:rule_test",
+     "status": "ok",
+     "detail": "10 entries, same set"
+    },
+    {
+     "name": "minecraft:rule_block_entity_modifier",
+     "status": "ok",
+     "detail": "4 entries, same set"
+    },
+    {
+     "name": "minecraft:pos_rule_test",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:menu",
+     "status": "ok",
+     "detail": "25 entries, same set"
+    },
+    {
+     "name": "minecraft:recipe_type",
+     "status": "ok",
+     "detail": "8 entries, same set"
+    },
+    {
+     "name": "minecraft:recipe_serializer",
+     "status": "ok",
+     "detail": "22 entries, same set"
+    },
+    {
+     "name": "minecraft:position_source_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:command_argument_type",
+     "status": "ok",
+     "detail": "62 entries, same set"
+    },
+    {
+     "name": "minecraft:villager_type",
+     "status": "ok",
+     "detail": "7 entries, same set"
+    },
+    {
+     "name": "minecraft:villager_profession",
+     "status": "ok",
+     "detail": "15 entries, same set"
+    },
+    {
+     "name": "minecraft:point_of_interest_type",
+     "status": "ok",
+     "detail": "21 entries, same set"
+    },
+    {
+     "name": "minecraft:memory_module_type",
+     "status": "ok",
+     "detail": "115 entries, same set"
+    },
+    {
+     "name": "minecraft:sensor_type",
+     "status": "ok",
+     "detail": "24 entries, same set"
+    },
+    {
+     "name": "minecraft:activity",
+     "status": "ok",
+     "detail": "26 entries, same set"
+    },
+    {
+     "name": "minecraft:loot_pool_entry_type",
+     "status": "ok",
+     "detail": "9 entries, same set"
+    },
+    {
+     "name": "minecraft:loot_function_type",
+     "status": "ok",
+     "detail": "42 entries, same set"
+    },
+    {
+     "name": "minecraft:map_decoration_type",
+     "status": "ok",
+     "detail": "40 entries, same set"
+    },
+    {
+     "name": "minecraft:context_key_set",
+     "status": "ok",
+     "detail": "31 entries, same set"
+    },
+    {
+     "name": "minecraft:loot_condition_type",
+     "status": "ok",
+     "detail": "20 entries, same set"
+    },
+    {
+     "name": "minecraft:attribute_type",
+     "status": "ok",
+     "detail": "15 entries, same set"
+    },
+    {
+     "name": "minecraft:environment_attribute",
+     "status": "ok",
+     "detail": "51 entries, same set"
+    },
+    {
+     "name": "minecraft:context_float_provider_type",
+     "status": "ok",
+     "detail": "28 entries, same set"
+    },
+    {
+     "name": "minecraft:context_int_provider_type",
+     "status": "ok",
+     "detail": "23 entries, same set"
+    },
+    {
+     "name": "minecraft:loot_nbt_provider_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:loot_score_provider_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:float_provider_type",
+     "status": "ok",
+     "detail": "4 entries, same set"
+    },
+    {
+     "name": "minecraft:int_provider_type",
+     "status": "ok",
+     "detail": "8 entries, same set"
+    },
+    {
+     "name": "minecraft:height_provider_type",
+     "status": "ok",
+     "detail": "6 entries, same set"
+    },
+    {
+     "name": "minecraft:block_predicate_type",
+     "status": "ok",
+     "detail": "16 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/carver_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/feature_type",
+     "status": "ok",
+     "detail": "58 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/structure_placement",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/structure_piece",
+     "status": "ok",
+     "detail": "56 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/structure_type",
+     "status": "ok",
+     "detail": "16 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/placement_modifier_type",
+     "status": "ok",
+     "detail": "18 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/block_state_provider_type",
+     "status": "ok",
+     "detail": "10 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/foliage_placer_type",
+     "status": "ok",
+     "detail": "12 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/trunk_placer_type",
+     "status": "ok",
+     "detail": "10 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/root_placer_type",
+     "status": "ok",
+     "detail": "1 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/tree_decorator_type",
+     "status": "ok",
+     "detail": "11 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/feature_size_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/biome_source",
+     "status": "ok",
+     "detail": "4 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/chunk_generator",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/material_condition_type",
+     "status": "ok",
+     "detail": "11 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/material_rule_type",
+     "status": "ok",
+     "detail": "5 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/density_function_type",
+     "status": "ok",
+     "detail": "44 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/structure_processor",
+     "status": "ok",
+     "detail": "11 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/structure_pool_element",
+     "status": "ok",
+     "detail": "5 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/pool_alias_binding",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:creative_mode_tab",
+     "status": "ok",
+     "detail": "14 entries, same set"
+    },
+    {
+     "name": "minecraft:trigger_type",
+     "status": "ok",
+     "detail": "58 entries, same set"
+    },
+    {
+     "name": "minecraft:number_format_type",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:game_rule",
+     "status": "ok",
+     "detail": "59 entries, same set"
+    },
+    {
+     "name": "minecraft:entity_sub_predicate_type",
+     "status": "ok",
+     "detail": "25 entries, same set"
+    },
+    {
+     "name": "minecraft:data_component_predicate_type",
+     "status": "ok",
+     "detail": "15 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment_effect_component_type",
+     "status": "ok",
+     "detail": "31 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment_level_based_value_type",
+     "status": "ok",
+     "detail": "6 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment_entity_effect_type",
+     "status": "ok",
+     "detail": "15 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment_location_based_effect_type",
+     "status": "ok",
+     "detail": "16 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment_value_effect_type",
+     "status": "ok",
+     "detail": "6 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment_provider_type",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:consume_effect_type",
+     "status": "ok",
+     "detail": "5 entries, same set"
+    },
+    {
+     "name": "minecraft:recipe_display",
+     "status": "ok",
+     "detail": "5 entries, same set"
+    },
+    {
+     "name": "minecraft:slot_display",
+     "status": "ok",
+     "detail": "11 entries, same set"
+    },
+    {
+     "name": "minecraft:recipe_book_category",
+     "status": "ok",
+     "detail": "13 entries, same set"
+    },
+    {
+     "name": "minecraft:ticket_type",
+     "status": "ok",
+     "detail": "9 entries, same set"
+    },
+    {
+     "name": "minecraft:incoming_rpc_methods",
+     "status": "ok",
+     "detail": "69 entries, same set"
+    },
+    {
+     "name": "minecraft:outgoing_rpc_methods",
+     "status": "ok",
+     "detail": "21 entries, same set"
+    },
+    {
+     "name": "minecraft:test_environment_definition_type",
+     "status": "ok",
+     "detail": "7 entries, same set"
+    },
+    {
+     "name": "minecraft:test_instance_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:spawn_condition_type",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:dialog_type",
+     "status": "ok",
+     "detail": "5 entries, same set"
+    },
+    {
+     "name": "minecraft:dialog_action_type",
+     "status": "ok",
+     "detail": "9 entries, same set"
+    },
+    {
+     "name": "minecraft:input_control_type",
+     "status": "ok",
+     "detail": "4 entries, same set"
+    },
+    {
+     "name": "minecraft:dialog_body_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:permission_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:permission_check_type",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:slot_source_type",
+     "status": "ok",
+     "detail": "6 entries, same set"
+    },
+    {
+     "name": "minecraft:test_function",
+     "status": "ok",
+     "detail": "1 entries, same set"
+    }
+   ]
+  },
+  {
+   "title": "registries.json",
+   "checks": [
+    {
+     "name": "registries written",
+     "status": "info",
+     "detail": "95 built-in + paper-rs:entity_data_serializer"
+    }
+   ]
+  },
+  {
+   "title": "packets.json",
+   "checks": [
+    {
+     "name": "packets per state (serverbound/clientbound)",
+     "status": "info",
+     "detail": "handshake 1/0, status 2/2, login 5/6, configuration 10/21, play 69/144"
+    }
+   ]
+  },
+  {
+   "title": "blocks.json",
+   "checks": [
+    {
+     "name": "anchor: minecraft:air is block 0 / state 0",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "anchor: minecraft:stone is state 1",
+     "status": "ok",
+     "detail": ""
+    },
+    {
+     "name": "anchor: default state of minecraft:grass_block is snowy=false",
+     "status": "ok",
+     "detail": "{'snowy': 'false'}"
+    },
+    {
+     "name": "hardness and blast resistance derived for every block",
+     "status": "ok",
+     "detail": "1286 blocks"
+    },
+    {
+     "name": "blocks with an item (Item.BY_BLOCK)",
+     "status": "info",
+     "detail": "1208 of 1286"
+    },
+    {
+     "name": "total block states",
+     "status": "info",
+     "detail": "35723"
+    }
+   ]
+  },
+  {
+   "title": "items.json",
+   "checks": [
+    {
+     "name": "every item->block reference is a registered block",
+     "status": "ok",
+     "detail": "1141 block items"
+    },
+    {
+     "name": "items whose block does not map back to them via Block.asItem()",
+     "status": "info",
+     "detail": "0: []"
+    }
+   ]
+  },
+  {
+   "title": "independent order check: registries vs Pumpkin extractor dumps",
+   "checks": [
+    {
+     "name": "minecraft:block",
+     "status": "ok",
+     "detail": "1286 entries, identical order"
+    },
+    {
+     "name": "minecraft:block_entity_type",
+     "status": "ok",
+     "detail": "49 entries, identical order"
+    },
+    {
+     "name": "minecraft:item",
+     "status": "ok",
+     "detail": "1658 entries, identical order"
+    },
+    {
+     "name": "minecraft:entity_type",
+     "status": "ok",
+     "detail": "161 entries, identical order"
+    },
+    {
+     "name": "minecraft:sound_event",
+     "status": "ok",
+     "detail": "1991 entries, identical order"
+    },
+    {
+     "name": "minecraft:particle_type",
+     "status": "ok",
+     "detail": "128 entries, identical order"
+    },
+    {
+     "name": "minecraft:mob_effect",
+     "status": "ok",
+     "detail": "40 entries, identical order"
+    },
+    {
+     "name": "minecraft:attribute",
+     "status": "ok",
+     "detail": "40 entries, identical order"
+    },
+    {
+     "name": "minecraft:fluid",
+     "status": "ok",
+     "detail": "5 entries, identical order"
+    },
+    {
+     "name": "minecraft:game_event",
+     "status": "ok",
+     "detail": "61 entries, identical order"
+    },
+    {
+     "name": "minecraft:data_component_type",
+     "status": "ok",
+     "detail": "122 entries, identical order"
+    },
+    {
+     "name": "minecraft:potion",
+     "status": "ok",
+     "detail": "46 entries, identical order"
+    },
+    {
+     "name": "minecraft:custom_stat",
+     "status": "ok",
+     "detail": "78 entries, identical order"
+    },
+    {
+     "name": "minecraft:point_of_interest_type",
+     "status": "ok",
+     "detail": "21 entries, identical order"
+    },
+    {
+     "name": "minecraft:menu",
+     "status": "ok",
+     "detail": "25 entries, identical order"
+    },
+    {
+     "name": "minecraft:chunk_status",
+     "status": "ok",
+     "detail": "10 entries, identical order"
+    },
+    {
+     "name": "minecraft:map_decoration_type",
+     "status": "ok",
+     "detail": "40 entries, identical order"
+    },
+    {
+     "name": "minecraft:position_source_type",
+     "status": "ok",
+     "detail": "2 entries, identical order"
+    },
+    {
+     "name": "minecraft:stat_type",
+     "status": "ok",
+     "detail": "9 entries, identical order"
+    },
+    {
+     "name": "minecraft:game_rule",
+     "status": "ok",
+     "detail": "59 entries, identical order"
+    },
+    {
+     "name": "minecraft:villager_profession",
+     "status": "ok",
+     "detail": "15 entries, identical order"
+    },
+    {
+     "name": "minecraft:villager_type",
+     "status": "ok",
+     "detail": "7 entries, identical order"
+    }
+   ]
+  },
+  {
+   "title": "independent check: block table vs Pumpkin blocks.json",
+   "checks": [
+    {
+     "name": "block names and order",
+     "status": "ok",
+     "detail": "1286 blocks"
+    },
+    {
+     "name": "total number of block states",
+     "status": "ok",
+     "detail": "35723"
+    },
+    {
+     "name": "state id range of every block",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    },
+    {
+     "name": "default state id of every block",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    },
+    {
+     "name": "property names and value order of every block",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    },
+    {
+     "name": "item of every block (Block.asItem())",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    },
+    {
+     "name": "hardness of every block",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    },
+    {
+     "name": "blast resistance of every block",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    }
+   ]
+  },
+  {
+   "title": "independent check: entity data serializers",
+   "checks": [
+    {
+     "name": "pumpkin meta_data_type.json",
+     "status": "ok",
+     "detail": "44 serializers, identical ids"
+    }
+   ]
+  },
+  {
+   "title": "block_states.json",
+   "checks": [
+    {
+     "name": "pumpkin: state list of every block lines up / values in range",
+     "status": "ok",
+     "detail": "all 1286 blocks"
+    },
+    {
+     "name": "air flag: bytecode (Properties.isAir) == pumpkin (state.isAir) for every state",
+     "status": "ok",
+     "detail": "all 35723 states"
+    },
+    {
+     "name": "replaceable flag: bytecode (Properties.replaceable) == pumpkin (canBeReplaced)",
+     "status": "ok",
+     "detail": "all 35723 states"
+    },
+    {
+     "name": "block entity flag: bytecode (class implements EntityBlock) == pumpkin (a block entity type is valid)",
+     "status": "ok",
+     "detail": "all 35723 states"
+    },
+    {
+     "name": "luminance: bytecode (Properties.lightEmission evaluated per state) == pumpkin (state.lightEmission)",
+     "status": "ok",
+     "detail": "35723 of 35723 states derived from bytecode (1226 blocks with a constant emission), all agree"
+    },
+    {
+     "name": "fluid flag == (waterlogged == true) for every state that has the property",
+     "status": "ok",
+     "detail": "all waterloggable states"
+    },
+    {
+     "name": "fluid flag only on blocks whose class overrides getFluidState",
+     "status": "ok",
+     "detail": "holds"
+    },
+    {
+     "name": "blocks built with noCollision() have no collision shape",
+     "status": "ok",
+     "detail": "holds"
+    },
+    {
+     "name": "full-cube flag == (collision shape is exactly the unit cube box)",
+     "status": "ok",
+     "detail": "all 35723 states"
+    },
+    {
+     "name": "source of luminance / opacity / collision and fluid bits",
+     "status": "info",
+     "detail": "Pumpkin assets/blocks.json"
+    }
+   ]
+  },
+  {
+   "title": "independent check: packet ids",
+   "checks": [
+    {
+     "name": "pumpkin-packets.json declares protocol version",
+     "status": "ok",
+     "detail": "777"
+    },
+    {
+     "name": "pumpkin-packets.json handshake/serverbound",
+     "status": "ok",
+     "detail": "1 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json status/serverbound",
+     "status": "ok",
+     "detail": "2 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json login/serverbound",
+     "status": "ok",
+     "detail": "5 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json configuration/serverbound",
+     "status": "ok",
+     "detail": "10 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json play/serverbound",
+     "status": "ok",
+     "detail": "69 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json status/clientbound",
+     "status": "ok",
+     "detail": "2 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json login/clientbound",
+     "status": "ok",
+     "detail": "6 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json configuration/clientbound",
+     "status": "ok",
+     "detail": "21 packets, identical ids"
+    },
+    {
+     "name": "pumpkin-packets.json play/clientbound",
+     "status": "ok",
+     "detail": "144 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json declares protocol version",
+     "status": "ok",
+     "detail": "777"
+    },
+    {
+     "name": "pumpkin assets/packets.json handshake/serverbound",
+     "status": "ok",
+     "detail": "1 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json status/serverbound",
+     "status": "ok",
+     "detail": "2 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json login/serverbound",
+     "status": "ok",
+     "detail": "5 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json configuration/serverbound",
+     "status": "ok",
+     "detail": "10 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json play/serverbound",
+     "status": "ok",
+     "detail": "69 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json status/clientbound",
+     "status": "ok",
+     "detail": "2 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json login/clientbound",
+     "status": "ok",
+     "detail": "6 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json configuration/clientbound",
+     "status": "ok",
+     "detail": "21 packets, identical ids"
+    },
+    {
+     "name": "pumpkin assets/packets.json play/clientbound",
+     "status": "ok",
+     "detail": "144 packets, identical ids"
+    },
+    {
+     "name": "wiki handshake/serverbound",
+     "status": "ok",
+     "detail": "1 packets, identical order"
+    },
+    {
+     "name": "wiki status/clientbound",
+     "status": "ok",
+     "detail": "2 packets, identical order"
+    },
+    {
+     "name": "wiki status/serverbound",
+     "status": "ok",
+     "detail": "2 packets, identical order"
+    },
+    {
+     "name": "wiki login/clientbound",
+     "status": "ok",
+     "detail": "6 packets, identical order"
+    },
+    {
+     "name": "wiki login/serverbound",
+     "status": "ok",
+     "detail": "5 packets, identical order"
+    },
+    {
+     "name": "wiki configuration/clientbound",
+     "status": "ok",
+     "detail": "21 packets, identical order"
+    },
+    {
+     "name": "wiki configuration/serverbound",
+     "status": "ok",
+     "detail": "10 packets, identical order"
+    },
+    {
+     "name": "wiki play/clientbound",
+     "status": "FAILED",
+     "detail": "144 packets; 4 resource names are spelled differently on the wiki: 0x1A minecraft:debug/block_value (wiki: minecraft:debug_block_value); 0x1B minecraft:debug/chunk_value (wiki: minecraft:debug_chunk_value); 0x1C minecraft:debug/entity_value (wiki: minecraft:debug_entity_value); 0x1D minecraft:debug/event (wiki: minecraft:debug_event)"
+    },
+    {
+     "name": "wiki play/serverbound",
+     "status": "ok",
+     "detail": "69 packets, identical order"
+    }
+   ]
+  },
+  {
+   "title": "independent check: numeric id tables on the wiki pages",
+   "checks": [
+    {
+     "name": "wiki Entity_metadata.wiki table vs minecraft:entity_type",
+     "status": "ok",
+     "detail": "161 ids, identical"
+    },
+    {
+     "name": "wiki Command_data.wiki table vs minecraft:command_argument_type",
+     "status": "FAILED",
+     "detail": "bytecode/mcmeta have 62 entries, the wiki table 57; 3 ids differ: 16: minecraft:team_color (wiki: minecraft:color); 55: minecraft:context_float_provider (wiki: minecraft:dialog); 56: minecraft:context_int_provider (wiki: minecraft:uuid); not on the wiki: 16 minecraft:team_color, 55 minecraft:context_float_provider, 56 minecraft:context_int_provider, 57 minecraft:slot_source, 59 minecraft:feature, 60 minecraft:swing_animation"
+    },
+    {
+     "name": "wiki Inventory.wiki table vs minecraft:menu",
+     "status": "ok",
+     "detail": "25 ids, identical"
+    },
+    {
+     "name": "wiki Slot_data.wiki table vs minecraft:data_component_type",
+     "status": "info",
+     "detail": "the page has no id column, lists only 109 of the 122 entries and not in registry order (5 places, first use_effects) -- it cannot confirm or contradict ids; not on the page: attack_animation, interact_animation, block_transformer, villager_food, compostable, cooking_fuel, brewing_fuel, mob_visibility, provides_pottery_pattern, sign_text_front, sign_text_back, waxed, cushion/color"
+    }
+   ]
+  },
+  {
+   "title": "independent check: metadata types on the wiki",
+   "checks": [
+    {
+     "name": "wiki metadata types",
+     "status": "ok",
+     "detail": "44 types, identical order (wiki names mapped to field names)"
+    }
+   ]
+  },
+  {
+   "title": "independent check: Burger dump",
+   "checks": [
+    {
+     "name": "burger particle types",
+     "status": "ok",
+     "detail": "128 entries, identical order"
+    },
+    {
+     "name": "burger sound events (dump is INCOMPLETE: 1897 of 1991, lacks e.g. entity.cat.ambient, entity.cat.stray_ambient, entity.cat.hiss)",
+     "status": "ok",
+     "detail": "the 1897 it has are in the same relative order; its numeric ids are not comparable"
+    }
+   ]
+  },
+  {
+   "title": "sanity only: older PrismarineJS minecraft-data",
+   "checks": [
+    {
+     "name": "minecraft:block vs 26.1",
+     "status": "info",
+     "detail": "1168 names in common, 1131 keep their relative order"
+    },
+    {
+     "name": "minecraft:item vs 26.1",
+     "status": "info",
+     "detail": "1506 names in common, 1487 keep their relative order"
+    },
+    {
+     "name": "minecraft:entity_type vs 26.1",
+     "status": "info",
+     "detail": "157 names in common, 157 keep their relative order"
+    },
+    {
+     "name": "hardness/resistance vs older minecraft-data",
+     "status": "info",
+     "detail": "1165 common blocks identical, 3 differ ['quartz_slab', 'red_sandstone_slab', 'cut_red_sandstone_slab']"
+    }
+   ]
+  },
+  {
+   "title": "synced_registries.json (entries vs mcmeta)",
+   "checks": [
+    {
+     "name": "minecraft:worldgen/biome",
+     "status": "ok",
+     "detail": "67 entries, same set"
+    },
+    {
+     "name": "minecraft:chat_type",
+     "status": "ok",
+     "detail": "7 entries, same set"
+    },
+    {
+     "name": "minecraft:trim_pattern",
+     "status": "ok",
+     "detail": "18 entries, same set"
+    },
+    {
+     "name": "minecraft:trim_material",
+     "status": "ok",
+     "detail": "11 entries, same set"
+    },
+    {
+     "name": "minecraft:wolf_variant",
+     "status": "ok",
+     "detail": "9 entries, same set"
+    },
+    {
+     "name": "minecraft:wolf_sound_variant",
+     "status": "ok",
+     "detail": "7 entries, same set"
+    },
+    {
+     "name": "minecraft:pig_variant",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:pig_sound_variant",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:frog_variant",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:cat_variant",
+     "status": "ok",
+     "detail": "11 entries, same set"
+    },
+    {
+     "name": "minecraft:cat_sound_variant",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:cow_sound_variant",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:cow_variant",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:chicken_sound_variant",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:chicken_variant",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:zombie_nautilus_variant",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:painting_variant",
+     "status": "ok",
+     "detail": "51 entries, same set"
+    },
+    {
+     "name": "minecraft:sulfur_cube_archetype",
+     "status": "ok",
+     "detail": "12 entries, same set"
+    },
+    {
+     "name": "minecraft:dimension_type",
+     "status": "ok",
+     "detail": "4 entries, same set"
+    },
+    {
+     "name": "minecraft:damage_type",
+     "status": "ok",
+     "detail": "51 entries, same set"
+    },
+    {
+     "name": "minecraft:banner_pattern",
+     "status": "ok",
+     "detail": "43 entries, same set"
+    },
+    {
+     "name": "minecraft:enchantment",
+     "status": "ok",
+     "detail": "43 entries, same set"
+    },
+    {
+     "name": "minecraft:jukebox_song",
+     "status": "ok",
+     "detail": "22 entries, same set"
+    },
+    {
+     "name": "minecraft:instrument",
+     "status": "ok",
+     "detail": "8 entries, same set"
+    },
+    {
+     "name": "minecraft:test_environment",
+     "status": "ok",
+     "detail": "1 entries, same set"
+    },
+    {
+     "name": "minecraft:test_instance",
+     "status": "ok",
+     "detail": "1 entries, same set"
+    },
+    {
+     "name": "minecraft:dialog",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:world_clock",
+     "status": "ok",
+     "detail": "2 entries, same set"
+    },
+    {
+     "name": "minecraft:timeline",
+     "status": "ok",
+     "detail": "4 entries, same set"
+    },
+    {
+     "name": "minecraft:decorated_pot_pattern",
+     "status": "ok",
+     "detail": "23 entries, same set"
+    },
+    {
+     "name": "minecraft:block_transformer",
+     "status": "ok",
+     "detail": "3 entries, same set"
+    },
+    {
+     "name": "minecraft:worldgen/block_state_provider",
+     "status": "ok",
+     "detail": "8 entries, same set"
+    },
+    {
+     "name": "synchronized registries without any entry in the jar",
+     "status": "info",
+     "detail": "[]"
+    }
+   ]
+  },
+  {
+   "title": "tags.json",
+   "checks": [
+    {
+     "name": "minecraft:game_event",
+     "status": "ok",
+     "detail": "5 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:fluid",
+     "status": "ok",
+     "detail": "10 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:block",
+     "status": "ok",
+     "detail": "300 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:entity_type",
+     "status": "ok",
+     "detail": "49 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:item",
+     "status": "ok",
+     "detail": "236 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:potion",
+     "status": "ok",
+     "detail": "5 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:point_of_interest_type",
+     "status": "ok",
+     "detail": "3 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:worldgen/biome",
+     "status": "ok",
+     "detail": "86 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:painting_variant",
+     "status": "ok",
+     "detail": "1 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:damage_type",
+     "status": "ok",
+     "detail": "36 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:banner_pattern",
+     "status": "ok",
+     "detail": "11 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:enchantment",
+     "status": "ok",
+     "detail": "22 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:instrument",
+     "status": "ok",
+     "detail": "3 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:dialog",
+     "status": "ok",
+     "detail": "2 tags, same names as mcmeta"
+    },
+    {
+     "name": "minecraft:timeline",
+     "status": "ok",
+     "detail": "4 tags, same names as mcmeta"
+    },
+    {
+     "name": "registries that have tags in the data pack but are NOT sent (neither built-in nor synchronized)",
+     "status": "info",
+     "detail": "tag/villager_trade, tag/worldgen/feature, tag/worldgen/flat_level_generator_preset, tag/worldgen/structure, tag/worldgen/world_preset"
+    }
+   ]
+  },
+  {
+   "title": "independent check: tag resolution vs Burger",
+   "checks": [
+    {
+     "name": "burger tags: resolved contents and element order",
+     "status": "ok",
+     "detail": "750 of my 773 tags identical (after de-duplicating Burger's lists); 110 Burger tags belong to registries that are not sent"
+    },
+    {
+     "name": "burger tags it could not resolve itself",
+     "status": "info",
+     "detail": "23 tags of ['minecraft:worldgen/biome']: Burger's list is exactly the tag file's direct elements, i.e. it did not expand the '#tag' references there (e.g. minecraft:worldgen/biome minecraft:has_structure/buried_treasure)"
+    }
+   ]
+  },
+  {
+   "title": "dimension_types.json",
+   "checks": [
+    {
+     "name": "dimension types",
+     "status": "ok",
+     "detail": "minecraft:overworld, minecraft:overworld_caves, minecraft:the_end, minecraft:the_nether"
+    }
+   ]
+  },
+  {
+   "title": "feature_flags.json",
+   "checks": [
+    {
+     "name": "FeatureFlags",
+     "status": "info",
+     "detail": "FeatureFlags.DEFAULT_FLAGS is the enabled set of WorldDataConfiguration.<clinit>, WorldDataConfiguration.lambda$static$0"
+    },
+    {
+     "name": "flags contained in FeatureFlags.DEFAULT_FLAGS (what REGISTRY.toNames(DEFAULT_FLAGS) yields)",
+     "status": "ok",
+     "detail": "['minecraft:vanilla']"
+    },
+    {
+     "name": "all known feature flags",
+     "status": "info",
+     "detail": "['minecraft:minecart_improvements', 'minecraft:redstone_experiments', 'minecraft:trade_rebalance', 'minecraft:vanilla']"
+    }
+   ]
+  },
+  {
+   "title": "output (/home/user/paper-rs/data/26.3)",
+   "checks": [
+    {
+     "name": "version.json",
+     "status": "info",
+     "detail": "108 bytes"
+    },
+    {
+     "name": "packets.json",
+     "status": "info",
+     "detail": "7478 bytes"
+    },
+    {
+     "name": "registries.json",
+     "status": "info",
+     "detail": "215355 bytes"
+    },
+    {
+     "name": "blocks.json",
+     "status": "info",
+     "detail": "345249 bytes"
+    },
+    {
+     "name": "block_states.json",
+     "status": "info",
+     "detail": "234926 bytes"
+    },
+    {
+     "name": "items.json",
+     "status": "info",
+     "detail": "158878 bytes"
+    },
+    {
+     "name": "synced_registries.json",
+     "status": "info",
+     "detail": "11374 bytes"
+    },
+    {
+     "name": "tags.json",
+     "status": "info",
+     "detail": "104921 bytes"
+    },
+    {
+     "name": "dimension_types.json",
+     "status": "info",
+     "detail": "5180 bytes"
+    },
+    {
+     "name": "feature_flags.json",
+     "status": "info",
+     "detail": "22 bytes"
+    }
+   ]
+  }
+ ],
+ "fatal": [],
+ "version": {
+  "id": "26.3",
+  "protocol": 777,
+  "data_version": 5023,
+  "data_pack_version": [
+   121,
+   0
+  ],
+  "resource_pack_version": [
+   97,
+   1
+  ]
+ },
+ "id_source": "bytecode"
+}

@@ -83,12 +83,17 @@ impl Server {
                 player.conn.send(&play::ForgetLevelChunk { x: pos.x, z: pos.z });
             }
         }
-        let mut entered = false;
-        for pos in &wanted {
-            if player.view.tracked.insert(*pos) {
-                world.add_ticket(*pos);
-                entered = true;
-            }
+        // Request new chunks nearest first, so terrain appears around the player before
+        // the edges of the view.
+        let mut entering: Vec<ChunkPos> = wanted.iter().filter(|p| !player.view.tracked.contains(p)).copied().collect();
+        entering.sort_unstable_by_key(|p| {
+            let (dx, dz) = ((p.x - center.x) as i64, (p.z - center.z) as i64);
+            dx * dx + dz * dz
+        });
+        let entered = !entering.is_empty();
+        for pos in entering {
+            player.view.tracked.insert(pos);
+            world.add_ticket(pos);
         }
         if entered || recentered || !leaving.is_empty() {
             let view = &mut player.view;
@@ -212,9 +217,65 @@ impl Server {
 
     // --- other players ---------------------------------------------------------------------
 
-    /// Updates which players see each other and broadcasts movement, metadata and equipment.
+    /// Broadcasts movement, metadata and equipment to existing viewers, then updates who
+    /// sees whom. Doing movement first means new viewers spawn a player at the position
+    /// that was just broadcast, so later relative moves apply to the right base.
     pub(super) fn tick_tracker(&mut self) {
         let ids = self.player_order.clone();
+
+        // Movement, metadata and equipment of each player to those who already see it.
+        for &id in &ids {
+            let Some(player) = self.players.get_mut(&id) else { continue };
+            let mut payloads: Vec<Bytes> = Vec::new();
+            let (cur, prev) = (player.loc, player.tracked_loc);
+            let (dx, dy, dz) = (fixed(cur.x) - fixed(prev.x), fixed(cur.y) - fixed(prev.y), fixed(cur.z) - fixed(prev.z));
+            let moved = dx != 0 || dy != 0 || dz != 0;
+            let rotated = angle_byte(cur.yaw) != angle_byte(prev.yaw) || angle_byte(cur.pitch) != angle_byte(prev.pitch);
+            let fits = |d: i64| (i16::MIN as i64..=i16::MAX as i64).contains(&d);
+            player.ticks_since_position_sync += 1;
+            // An absolute update when the delta does not fit a packet, when the on-ground
+            // state flips, after a teleport, and periodically to correct any drift.
+            let sync = player.force_position_sync
+                || player.ticks_since_position_sync > POSITION_SYNC_INTERVAL
+                || player.on_ground != player.tracked_on_ground
+                || !(fits(dx) && fits(dy) && fits(dz));
+            if sync {
+                payloads.push(encode_packet(&play::EntityPositionSync { entity_id: id, x: cur.x, y: cur.y, z: cur.z, yaw: cur.yaw, pitch: cur.pitch, on_ground: player.on_ground }).into());
+                player.ticks_since_position_sync = 0;
+                player.force_position_sync = false;
+            } else if moved && rotated {
+                payloads.push(encode_packet(&play::MoveEntityPosRot { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, yaw: cur.yaw, pitch: cur.pitch, on_ground: player.on_ground }).into());
+            } else if moved {
+                payloads.push(encode_packet(&play::MoveEntityPos { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, on_ground: player.on_ground }).into());
+            } else if rotated {
+                payloads.push(encode_packet(&play::MoveEntityRot { entity_id: VarInt(id), on_ground: player.on_ground, yaw: Angle(cur.yaw), pitch: Angle(cur.pitch) }).into());
+            }
+            if rotated || sync {
+                payloads.push(encode_packet(&play::RotateHead { entity_id: VarInt(id), head_yaw: Angle(cur.yaw) }).into());
+            }
+            player.tracked_loc = cur;
+            player.tracked_on_ground = player.on_ground;
+
+            if player.metadata_dirty {
+                player.metadata_dirty = false;
+                payloads.push(encode_packet(&play::SetEntityData { entity_id: VarInt(id), metadata: RemainingBytes(player_metadata(player)) }).into());
+            }
+            if player.equipment_dirty {
+                player.equipment_dirty = false;
+                payloads.push(encode_packet(&play::SetEquipment { entity_id: id, equipment: player_equipment(player) }).into());
+            }
+            if payloads.is_empty() || player.seen_by.is_empty() {
+                continue;
+            }
+            let viewers: Vec<i32> = player.seen_by.iter().copied().collect();
+            for viewer in viewers {
+                if let Some(v) = self.players.get(&viewer) {
+                    for payload in &payloads {
+                        v.conn.send_payload(payload.clone());
+                    }
+                }
+            }
+        }
 
         // Visibility.
         for &viewer_id in &ids {
@@ -265,60 +326,6 @@ impl Server {
                 for id in vanished {
                     if let Some(target) = self.players.get_mut(&id) {
                         target.seen_by.remove(&viewer_id);
-                    }
-                }
-            }
-        }
-
-        // Movement, metadata and equipment of each player to those who see it.
-        for &id in &ids {
-            let Some(player) = self.players.get_mut(&id) else { continue };
-            let mut payloads: Vec<Bytes> = Vec::new();
-            let (cur, prev) = (player.loc, player.tracked_loc);
-            let (dx, dy, dz) = (fixed(cur.x) - fixed(prev.x), fixed(cur.y) - fixed(prev.y), fixed(cur.z) - fixed(prev.z));
-            let moved = dx != 0 || dy != 0 || dz != 0;
-            let rotated = angle_byte(cur.yaw) != angle_byte(prev.yaw) || angle_byte(cur.pitch) != angle_byte(prev.pitch);
-            let fits = |d: i64| (i16::MIN as i64..=i16::MAX as i64).contains(&d);
-            player.ticks_since_position_sync += 1;
-            // An absolute update when the delta does not fit a packet, when the on-ground
-            // state flips, after a teleport, and periodically to correct any drift.
-            let sync = player.force_position_sync
-                || player.ticks_since_position_sync > POSITION_SYNC_INTERVAL
-                || player.on_ground != player.tracked_on_ground
-                || !(fits(dx) && fits(dy) && fits(dz));
-            if sync {
-                payloads.push(encode_packet(&play::EntityPositionSync { entity_id: id, x: cur.x, y: cur.y, z: cur.z, yaw: cur.yaw, pitch: cur.pitch, on_ground: player.on_ground }).into());
-                player.ticks_since_position_sync = 0;
-                player.force_position_sync = false;
-            } else if moved && rotated {
-                payloads.push(encode_packet(&play::MoveEntityPosRot { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, yaw: cur.yaw, pitch: cur.pitch, on_ground: player.on_ground }).into());
-            } else if moved {
-                payloads.push(encode_packet(&play::MoveEntityPos { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, on_ground: player.on_ground }).into());
-            } else if rotated {
-                payloads.push(encode_packet(&play::MoveEntityRot { entity_id: VarInt(id), on_ground: player.on_ground, yaw: Angle(cur.yaw), pitch: Angle(cur.pitch) }).into());
-            }
-            if rotated || sync {
-                payloads.push(encode_packet(&play::RotateHead { entity_id: VarInt(id), head_yaw: Angle(cur.yaw) }).into());
-            }
-            player.tracked_loc = cur;
-            player.tracked_on_ground = player.on_ground;
-
-            if player.metadata_dirty {
-                player.metadata_dirty = false;
-                payloads.push(encode_packet(&play::SetEntityData { entity_id: VarInt(id), metadata: RemainingBytes(player_metadata(player)) }).into());
-            }
-            if player.equipment_dirty {
-                player.equipment_dirty = false;
-                payloads.push(encode_packet(&play::SetEquipment { entity_id: id, equipment: player_equipment(player) }).into());
-            }
-            if payloads.is_empty() || player.seen_by.is_empty() {
-                continue;
-            }
-            let viewers: Vec<i32> = player.seen_by.iter().copied().collect();
-            for viewer in viewers {
-                if let Some(v) = self.players.get(&viewer) {
-                    for payload in &payloads {
-                        v.conn.send_payload(payload.clone());
                     }
                 }
             }

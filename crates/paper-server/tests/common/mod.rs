@@ -15,7 +15,10 @@ use std::time::{Duration, Instant};
 
 /// Starts a server on an ephemeral port with the test configuration, after `tweak`.
 pub fn start_server(tweak: impl FnOnce(&mut Config)) -> RunningServer {
-    paper_server::logging::init(None, log::LevelFilter::Info);
+    // Server logs go to the real stdout, which the test harness cannot capture; keep them
+    // quiet unless asked for with PAPER_TEST_LOG=info (or debug, warn, ...).
+    let level = std::env::var("PAPER_TEST_LOG").ok().and_then(|l| l.parse().ok()).unwrap_or(log::LevelFilter::Error);
+    paper_server::logging::init(None, level);
     let mut config = Config::for_tests(std::path::Path::new(""));
     tweak(&mut config);
     paper_server::start(config).expect("server starts")
@@ -252,9 +255,15 @@ impl Client {
         }
     }
 
-    /// Reads until the server has been quiet for `quiet`, keeping everything in the backlog.
+    /// Reads until the server has been quiet for `quiet` (or for at most ten times that,
+    /// since some packets, like the time update, arrive periodically), keeping everything
+    /// in the backlog.
     pub fn drain(&mut self, quiet: Duration) {
+        let give_up = Instant::now() + quiet * 10;
         loop {
+            if Instant::now() >= give_up {
+                return;
+            }
             let Some(frame) = self.read_frame(Instant::now() + quiet) else { return };
             let id = packet_id(&frame);
             if !self.auto_handle(id, &frame) {

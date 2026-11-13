@@ -100,7 +100,7 @@ fn join_flat_world() {
     assert!(chunk.light.block_arrays.is_empty());
 
     // Every chunk in view arrives (view distance 4), in batches the client acknowledges.
-    alice.drain(Duration::from_millis(1500));
+    alice.drain(QUIET);
     assert!(alice.has::<play::ChunkBatchStart>());
     assert!(alice.has::<play::ChunkBatchFinished>());
     assert!(alice.has::<play::Commands>());
@@ -187,8 +187,14 @@ fn players_see_each_other() {
     let spawn: play::AddEntity = bob.expect();
     assert_eq!(spawn.entity_id.0, alice.entity_id);
 
-    // Movement: a small step is a relative move, with the head following.
+    // The first movement packet sets Bob on the ground; a change of the on-ground state is
+    // sent as an absolute position, as vanilla does.
     alice.clear_backlog();
+    bob.move_to(8.5, -60.0, 8.5);
+    let sync: play::EntityPositionSync = alice.find(TIMEOUT, |s: &play::EntityPositionSync| s.entity_id == bob.entity_id && s.on_ground).expect("on-ground sync");
+    assert_eq!((sync.x, sync.y, sync.z), (8.5, -60.0, 8.5));
+
+    // Movement: a small step is a relative move, with the head following.
     bob.move_to(9.5, -60.0, 8.5);
     let moved: play::MoveEntityPos = alice.find(TIMEOUT, |m: &play::MoveEntityPos| m.entity_id == bob.entity_id).expect("relative move");
     assert_eq!((moved.dx, moved.dy, moved.dz), (4096, 0, 0));
@@ -237,6 +243,7 @@ fn far_apart_players_do_not_see_each_other() {
     let mut bob = Client::join(server.port(), "Bob");
     bob.expect::<play::PlayerPosition>();
     alice.expect::<play::AddEntity>();
+    expect_chunk(&mut bob, 0, 0);
 
     // Bob walks far away: Alice's client is told to remove him; coming back re-adds him.
     alice.clear_backlog();
@@ -264,10 +271,13 @@ fn commands_and_permissions() {
     alice.drain(QUIET);
     alice.clear_backlog();
 
-    // Not an operator: operator commands are unknown.
+    // Not an operator: operator commands are unknown, followed by a line pointing at the
+    // offending input.
     alice.command("gamemode survival");
     let reply: play::SystemChat = alice.expect();
     assert_eq!(reply.content.0["translate"], "command.unknown.command");
+    let context: play::SystemChat = alice.expect();
+    assert_eq!(context.content.to_plain(), "gamemode survival<--[HERE]");
     alice.clear_backlog();
 
     // Everyone may use /list.
