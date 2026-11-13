@@ -149,7 +149,12 @@ pub fn parse_block_state(v: &Value) -> Result<u32> {
     match v {
         Value::String(s) => paper_data::blocks::parse_state(s).ok_or_else(|| anyhow!("unknown block state {s}")),
         Value::Object(o) => {
-            let name = o.get("Name").or_else(|| o.get("name")).and_then(Value::as_str).ok_or_else(|| anyhow!("block state without Name: {v}"))?;
+            let name = o
+                .get("Name")
+                .or_else(|| o.get("name"))
+                .or_else(|| o.get("id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("block state without Name: {v}"))?;
             let mut state = paper_data::blocks::default_state(name).ok_or_else(|| anyhow!("unknown block {name}"))?;
             if let Some(props) = o.get("Properties").or_else(|| o.get("properties")).and_then(Value::as_object) {
                 for (k, val) in props {

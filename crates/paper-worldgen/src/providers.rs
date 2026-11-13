@@ -32,6 +32,9 @@ impl IntProvider {
             return Ok(IntProvider::Constant(i as i32));
         }
         let mi = |k: &str| v.i64_or(k, 0) as i32;
+        if v.get("type").is_none() && v.get("min_inclusive").is_some() {
+            return Ok(IntProvider::Uniform(mi("min_inclusive"), mi("max_inclusive")));
+        }
         Ok(match type_of(v)? {
             "constant" => IntProvider::Constant(mi("value")),
             "uniform" => IntProvider::Uniform(mi("min_inclusive"), mi("max_inclusive")),
@@ -44,7 +47,11 @@ impl IntProvider {
                 min: mi("min_inclusive"),
                 max: mi("max_inclusive"),
             },
-            "trapezoid" => IntProvider::Trapezoid { min: mi("min_inclusive"), max: mi("max_inclusive"), plateau: mi("plateau") },
+            "trapezoid" => IntProvider::Trapezoid {
+                min: v.get("min").map_or_else(|| mi("min_inclusive"), |_| mi("min")),
+                max: v.get("max").map_or_else(|| mi("max_inclusive"), |_| mi("max")),
+                plateau: mi("plateau"),
+            },
             "weighted_list" => IntProvider::WeightedList(
                 v.field("distribution")?
                     .as_array()

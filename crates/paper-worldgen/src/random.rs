@@ -492,9 +492,9 @@ impl WorldgenRandom {
         }
     }
 
+    /// `setSeed`: reseeds the wrapped source. Like vanilla, the cached second gaussian is kept.
     pub fn set_seed(&mut self, seed: i64) {
         self.source.set_seed(seed);
-        self.gaussian = Gaussian::default();
     }
 
     /// `setDecorationSeed`; returns the population seed.

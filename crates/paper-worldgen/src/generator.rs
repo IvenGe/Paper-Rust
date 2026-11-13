@@ -82,6 +82,7 @@ pub struct WorldGenerator {
     pub(crate) biome_zoom_seed: i64,
     pub(crate) surface: SurfaceSystem,
     pub(crate) carvers: crate::carver::Carvers,
+    pub(crate) decoration: crate::feature::Decoration,
 }
 
 impl WorldGenerator {
@@ -182,6 +183,7 @@ impl WorldGenerator {
             frozen_oceans,
         };
         let carvers = crate::carver::Carvers::load(data, &biomes, &possible)?;
+        let decoration = crate::feature::Decoration::load(data, &biomes, dimension, &possible).context("loading features")?;
 
         Ok(Self {
             dimension,
@@ -210,6 +212,7 @@ impl WorldGenerator {
             biome_zoom_seed: obfuscate_seed(seed),
             surface,
             carvers,
+            decoration,
         })
     }
 
@@ -233,6 +236,23 @@ impl WorldGenerator {
 
     pub fn sea_level(&self) -> i32 {
         self.sea_level
+    }
+
+    /// The vertical range height providers resolve against (`WorldGenerationContext`).
+    pub(crate) fn gen_context(&self) -> crate::providers::GenContext {
+        crate::providers::GenContext { min_y: self.gen_min_y, height: self.gen_height, sea_level: self.sea_level }
+    }
+
+    /// The features stage ("decoration") of the chunk at the center of `region`, which must
+    /// provide that chunk and its eight neighbours after [`WorldGenerator::generate_terrain`].
+    /// Features write into the neighbours too, as vanilla's do; structures are not placed.
+    pub fn decorate(&self, chunk_x: i32, chunk_z: i32, region: &mut dyn crate::feature::RegionAccess) {
+        self.decoration.decorate(self, chunk_x, chunk_z, region);
+    }
+
+    /// Feature types the data uses that this crate does not implement (they place nothing).
+    pub fn unsupported_features(&self) -> &[String] {
+        &self.decoration.unsupported
     }
 
     pub(crate) fn fluid_picker(&self) -> FluidPicker {

@@ -15,6 +15,7 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `dimension_types.json` | the vanilla dimension type definitions |
 | `feature_flags.json` | feature flags enabled by default |
 | `worldgen/multi_noise_biome_tree.json.gz` | the multi-noise biome parameter R-trees of the `overworld` and `nether` presets (embedded by `paper-worldgen`) |
+| `worldgen/block_physics.bin.gz` | per block state: physical flags and sturdy faces that world generation features test (embedded by `paper-worldgen`) |
 
 ## Provenance
 
@@ -41,6 +42,16 @@ exact inputs, the method and the full list of checks
   26.3 in vanilla's own R-tree layout, so searching them visits leaves in vanilla's order.
   Pumpkin's `assets/NOTICE.md` treats data extracted from Minecraft as Mojang's, not covered
   by Pumpkin's licence.
+* `worldgen/block_physics.bin.gz` holds, for every block state id in order, the
+  `state_flags` (u16, little endian: air, burnable, tool required, sided transparency,
+  replaceable, liquid, legacy solid, full cube, solid block, random ticks, solid render, can
+  occlude, analog output) and `side_flags` (u8: sturdy down/up/north/south/west/east, center
+  sturdy down/up) of `assets/blocks.json` of
+  [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) at commit e9dc12e9, gzipped.
+  Vanilla computes these from block shapes in code. Rebuild it with
+  `python3 -I crates/paper-worldgen/scripts/block_physics.py <pumpkin>/assets/blocks.json
+  data/26.3/blocks.json data/26.3/worldgen/block_physics.bin.gz`, which also checks that every
+  state id belongs to the same block in both files.
 
 Every registry was checked for an identical name set against mcmeta, and every
 order that an independent source covers (packets, block states, 22 registries)

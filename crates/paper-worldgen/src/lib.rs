@@ -15,7 +15,7 @@
 //!   the decorated one, all of which must have their terrain generated.
 //!
 //! The algorithms are ported from Pumpkin (https://github.com/Pumpkin-MC/Pumpkin, GPL-3.0),
-//! which reproduces vanilla's output; see the crate README.
+//! which reproduces vanilla's output; see the crate README. Structures are not generated.
 
 pub mod aquifer;
 pub mod biome;
@@ -24,6 +24,7 @@ pub mod carver;
 pub mod chunk;
 pub mod data;
 pub mod density;
+pub mod feature;
 mod generator;
 pub mod math;
 pub mod noise;
@@ -34,4 +35,5 @@ pub mod surface;
 
 pub use chunk::{Heightmap, ProtoChunk};
 pub use data::DataSource;
+pub use feature::{BlockEntity, Region, RegionAccess};
 pub use generator::{Dimension, Stage, WorldGenerator};
