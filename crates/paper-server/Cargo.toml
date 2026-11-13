@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "The paper-rs Minecraft server"
 
+[lib]
+name = "paper_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "paper"
 path = "src/main.rs"
@@ -15,3 +19,23 @@ paper-nbt.workspace = true
 paper-data.workspace = true
 paper-protocol.workspace = true
 paper-bridge.workspace = true
+
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+crossbeam-channel.workspace = true
+flate2.workspace = true
+log.workspace = true
+num-bigint.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+rayon.workspace = true
+rsa.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+ureq.workspace = true
+uuid.workspace = true
