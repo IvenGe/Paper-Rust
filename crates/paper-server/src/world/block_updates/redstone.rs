@@ -71,13 +71,7 @@ pub fn signal(level: &Level, state: u32, pos: BlockPos, dir: Dir) -> u8 {
         Kind::PressurePlate { weighted: true } | Kind::DaylightDetector | Kind::TargetBlock | Kind::SculkSensor => get_int(state, "power") as u8,
         Kind::RedstoneBlock => 15,
         Kind::Repeater | Kind::Comparator => diode_signal(level, state, pos, dir),
-        Kind::Observer => {
-            if powered(state) && facing(state) == dir {
-                15
-            } else {
-                0
-            }
-        }
+        Kind::Observer if powered(state) && facing(state) == dir => 15,
         _ => 0,
     }
 }
@@ -116,13 +110,7 @@ pub fn direct_signal(level: &Level, state: u32, pos: BlockPos, dir: Dir) -> u8 {
                 0
             }
         }
-        Kind::LightningRod | Kind::TripwireHook => {
-            if powered(state) && facing(state) == dir {
-                15
-            } else {
-                0
-            }
-        }
+        Kind::LightningRod | Kind::TripwireHook if powered(state) && facing(state) == dir => 15,
         _ => 0,
     }
 }
@@ -228,30 +216,30 @@ pub fn container_signal(world: &World, pos: BlockPos, state: u32) -> u8 {
 // --- redstone wire ------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Side {
+enum Connection {
     Up,
     Side,
     None,
 }
 
-fn side(state: u32, dir: Dir) -> Side {
+fn side(state: u32, dir: Dir) -> Connection {
     match prop(state, dir.name()) {
-        Some("up") => Side::Up,
-        Some("side") => Side::Side,
-        _ => Side::None,
+        Some("up") => Connection::Up,
+        Some("side") => Connection::Side,
+        _ => Connection::None,
     }
 }
 
-fn set_side(state: u32, dir: Dir, side: Side) -> u32 {
+fn set_side(state: u32, dir: Dir, side: Connection) -> u32 {
     with(state, dir.name(), match side {
-        Side::Up => "up",
-        Side::Side => "side",
-        Side::None => "none",
+        Connection::Up => "up",
+        Connection::Side => "side",
+        Connection::None => "none",
     })
 }
 
 fn connected(state: u32, dir: Dir) -> bool {
-    side(state, dir) != Side::None
+    side(state, dir) != Connection::None
 }
 
 fn is_dot(state: u32) -> bool {
@@ -271,7 +259,7 @@ fn wire_power(state: u32) -> u8 {
 }
 
 fn cross_state() -> u32 {
-    Dir::HORIZONTAL.iter().fold(default_state!("redstone_wire"), |s, d| set_side(s, *d, Side::Side))
+    Dir::HORIZONTAL.iter().fold(default_state!("redstone_wire"), |s, d| set_side(s, *d, Connection::Side))
 }
 
 /// The state a wire placed at `pos` gets: a cross, shaped to its neighbours.
@@ -290,16 +278,16 @@ fn connection_state(level: &Level, state: u32, pos: BlockPos) -> u32 {
     let north_south_empty = !n && !south;
     let east_west_empty = !e && !w;
     if !w && north_south_empty {
-        s = set_side(s, Dir::West, Side::Side);
+        s = set_side(s, Dir::West, Connection::Side);
     }
     if !e && north_south_empty {
-        s = set_side(s, Dir::East, Side::Side);
+        s = set_side(s, Dir::East, Connection::Side);
     }
     if !n && east_west_empty {
-        s = set_side(s, Dir::North, Side::Side);
+        s = set_side(s, Dir::North, Connection::Side);
     }
     if !south && east_west_empty {
-        s = set_side(s, Dir::South, Side::Side);
+        s = set_side(s, Dir::South, Connection::Side);
     }
     s
 }
@@ -315,19 +303,19 @@ fn missing_connections(level: &Level, mut state: u32, pos: BlockPos) -> u32 {
 }
 
 /// `getConnectingSide`.
-fn connecting_side(level: &Level, pos: BlockPos, dir: Dir, can_connect_up: bool) -> Side {
+fn connecting_side(level: &Level, pos: BlockPos, dir: Dir, can_connect_up: bool) -> Connection {
     let rpos = pos.rel(dir);
     let rstate = level.state(rpos);
     if can_connect_up {
         let placeable_above = matches!(kind(rstate), Kind::Trapdoor { .. }) || can_survive_on(rstate);
         if placeable_above && should_connect_to(level, level.state(rpos.above()), None) {
-            return if physics::is_face_sturdy(rstate, dir.opposite().index()) { Side::Up } else { Side::Side };
+            return if physics::is_face_sturdy(rstate, dir.opposite().index()) { Connection::Up } else { Connection::Side };
         }
     }
     if !should_connect_to(level, rstate, Some(dir)) && (physics::is_redstone_conductor(rstate) || !should_connect_to(level, level.state(rpos.below()), None)) {
-        Side::None
+        Connection::None
     } else {
-        Side::Side
+        Connection::Side
     }
 }
 
@@ -381,7 +369,7 @@ pub fn wire_update_shape(level: &Level, state: u32, pos: BlockPos, dir: Dir, nei
         _ => {
             let can_connect_up = !physics::is_redstone_conductor(level.state(pos.above()));
             let new_side = connecting_side(level, pos, dir, can_connect_up);
-            if (new_side != Side::None) == connected(state, dir) && !is_cross(state) {
+            if (new_side != Connection::None) == connected(state, dir) && !is_cross(state) {
                 set_side(state, dir, new_side)
             } else {
                 connection_state(level, set_side(set_int(cross_state(), "power", get_int(state, "power")), dir, new_side), pos)
@@ -394,7 +382,7 @@ pub fn wire_update_shape(level: &Level, state: u32, pos: BlockPos, dir: Dir, nei
 /// connection towards this one.
 pub fn wire_update_indirect_shapes(level: &mut Level, state: u32, pos: BlockPos, flags: u32, limit: i32) {
     for dir in Dir::HORIZONTAL {
-        if side(state, dir) == Side::None || is_wire(level.state(pos.rel(dir))) {
+        if side(state, dir) == Connection::None || is_wire(level.state(pos.rel(dir))) {
             continue;
         }
         for vertical in [Dir::Down, Dir::Up] {

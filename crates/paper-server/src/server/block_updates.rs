@@ -12,13 +12,11 @@ use crate::config::GameMode;
 use crate::world::block_updates::state::kind;
 use crate::world::block_updates::support::{self, PlaceContext};
 use crate::world::block_updates::{self, flags, Dir, Effect, Kind, Level, UseContext};
-use crate::world::chunk::ChunkPos;
 use bytes::Bytes;
 use paper_nbt::Compound;
 use paper_protocol::codec::{BlockPos, VarInt};
 use paper_protocol::packets::play::{self, SoundRef};
 use paper_protocol::packets::{encode_packet, Packet};
-use std::collections::HashSet;
 
 /// Players this far from a world or block event see it (vanilla's 64 blocks).
 const EVENT_RANGE: f64 = 64.0;
@@ -98,9 +96,7 @@ impl Server {
     /// game tick. Chunks run theirs while players keep them loaded.
     pub fn tick_block_updates(&mut self) {
         for index in 0..self.worlds.len() {
-            let w = &mut self.worlds[index];
-            let ticking: HashSet<ChunkPos> = w.chunks.keys().filter(|p| w.has_ticket(**p) && w.is_ready(**p)).copied().collect();
-            block_updates::tick(w, &|p| ticking.contains(&p));
+            block_updates::tick(&mut self.worlds[index], &|w, p| w.has_ticket(p) && w.is_ready(p));
             self.publish_block_updates(index);
         }
     }

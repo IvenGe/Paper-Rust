@@ -222,10 +222,9 @@ impl ChunkTicks {
     pub fn unpack(&mut self, now: i64) {
         let Some(saved) = self.saved.take() else { return };
         for (list, queue) in [(&saved.blocks, &mut self.blocks), (&saved.fluids, &mut self.fluids)] {
-            let mut sub_order = -(list.len() as i64);
-            for t in list {
-                queue.schedule(ScheduledTick { ty: t.ty, pos: t.pos, trigger: now + t.delay as i64, priority: t.priority, sub_order });
-                sub_order += 1;
+            let first = -(list.len() as i64);
+            for (i, t) in list.iter().enumerate() {
+                queue.schedule(ScheduledTick { ty: t.ty, pos: t.pos, trigger: now + t.delay as i64, priority: t.priority, sub_order: first + i as i64 });
             }
         }
     }

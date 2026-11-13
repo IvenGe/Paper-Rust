@@ -450,8 +450,7 @@ impl<'w> Level<'w> {
             while let Some(update) = self.added.pop() {
                 self.stack.push(update);
             }
-            loop {
-                let Some(top) = self.stack.last_mut() else { break };
+            while let Some(top) = self.stack.last_mut() {
                 let (step, more) = top.next_step();
                 if !more {
                     self.stack.pop();
@@ -548,11 +547,11 @@ impl<'w> Level<'w> {
         }
     }
 
-    fn run_block_events(&mut self, ticking: &dyn Fn(ChunkPos) -> bool) {
+    fn run_block_events(&mut self, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
         let mut later = Vec::new();
         while let Some(event) = self.world.updates.block_events.pop_front() {
             self.world.updates.queued_events.remove(&event);
-            if !ticking(ChunkPos::of_block(event.pos.x, event.pos.z)) {
+            if !ticking(self.world, ChunkPos::of_block(event.pos.x, event.pos.z)) {
                 later.push(event);
                 continue;
             }
@@ -812,10 +811,16 @@ fn in_tag_fire(state: u32) -> bool {
 
 /// Runs a world's block ticks, fluid ticks and block events for the current game tick
 /// (call after the world's time advanced). `ticking` says which chunks may run theirs.
-pub fn tick(world: &mut World, ticking: &dyn Fn(ChunkPos) -> bool) {
+pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
     let now = world.age;
     for (index, kind) in [(0, TickKind::Block), (1, TickKind::Fluid)] {
-        let due = ticks::collect_due(&mut world.chunks, kind, now, MAX_TICKS_PER_TICK, ticking);
+        // Only chunks with due ticks are asked whether they tick.
+        let candidates: HashSet<ChunkPos> =
+            world.chunks.iter().filter(|(_, c)| c.ticks.queue(kind).first().is_some_and(|t| t.trigger <= now)).map(|(p, _)| *p).filter(|p| ticking(world, *p)).collect();
+        if candidates.is_empty() {
+            continue;
+        }
+        let due = ticks::collect_due(&mut world.chunks, kind, now, MAX_TICKS_PER_TICK, |p| candidates.contains(&p));
         if due.is_empty() {
             continue;
         }

@@ -52,7 +52,7 @@ fn name(w: &World, pos: BlockPos) -> &'static str {
 fn run(w: &mut World, n: usize) {
     for _ in 0..n {
         w.tick_time();
-        tick(w, &|_| true);
+        tick(w, &|_, _| true);
     }
 }
 
@@ -558,10 +558,74 @@ fn ticks_wait_for_unticking_chunks() {
     set(&mut w, p(0, Y, 0), s("water"));
     for _ in 0..20 {
         w.tick_time();
-        tick(&mut w, &|_| false);
+        tick(&mut w, &|_, _| false);
     }
     assert_eq!(name(&w, p(1, Y, 0)), "air", "chunks that do not tick keep their ticks");
     run(&mut w, 1);
     assert!(water_level(&w, p(1, Y, 0)).is_some(), "overdue ticks run once the chunk ticks");
 }
 
+
+// --- persistence --------------------------------------------------------------------------
+
+#[test]
+fn scheduled_ticks_are_saved_and_loaded_with_their_chunk() {
+    use crate::world::storage::{chunk_from_nbt, chunk_to_nbt, ChunkIo, SaveChunk, WorldStorage};
+    use crate::world::WorldEvent;
+
+    // The NBT form: `block_ticks` / `fluid_ticks` with delays relative to the save.
+    let mut w = world();
+    set(&mut w, p(0, Y, 0), s("water"));
+    set(&mut w, p(3, Y, 3), s("repeater[facing=west,delay=4]"));
+    set(&mut w, p(2, Y, 3), s("redstone_block"));
+    run(&mut w, 2);
+    let chunk = &w.chunks[&ChunkPos::new(0, 0)];
+    let saved = chunk.ticks.save(w.age);
+    assert_eq!(saved.fluids.len(), 1);
+    assert_eq!((saved.fluids[0].pos, saved.fluids[0].delay), (p(0, Y, 0), 3));
+    assert_eq!(saved.blocks.len(), 1);
+    assert_eq!((saved.blocks[0].delay, saved.blocks[0].priority), (6, ticks::TickPriority::High));
+    let nbt = chunk_to_nbt(&SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: saved.clone() });
+    let fluid_ticks = nbt.list("fluid_ticks").unwrap()[0].as_compound().unwrap();
+    assert_eq!(fluid_ticks.string("i"), Some("minecraft:water"));
+    assert_eq!((fluid_ticks.i32("x"), fluid_ticks.i32("y"), fluid_ticks.i32("z"), fluid_ticks.i32("t"), fluid_ticks.i32("p")), (Some(0), Some(Y), Some(0), Some(3), Some(0)));
+    assert_eq!(nbt.list("block_ticks").unwrap()[0].as_compound().unwrap().string("i"), Some("minecraft:repeater"));
+    let back = chunk_from_nbt(&nbt, ChunkPos::new(0, 0), -64, 384, true).unwrap().unwrap();
+    assert_eq!(back.ticks.saved.as_deref(), Some(&saved));
+
+    // Through region files: a world saves the chunk, another world loads it much later and the
+    // ticks are still due 3 ticks after loading.
+    let dir = std::env::temp_dir().join(format!("paper-rs-ticks-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let io = ChunkIo::start();
+    let storage = WorldStorage::open(&dir, io.clone()).unwrap();
+    w.storage = Some(storage.clone());
+    assert!(w.save_chunks() > 0);
+    io.flush();
+    let loaded = storage.load_chunk(ChunkPos::new(0, 0), -64, 384, true).unwrap().unwrap();
+    let mut other = World::new(0, "test", "minecraft:overworld", 1, Arc::new(FlatGenerator::new(-64)));
+    other.age = 50_000;
+    for cx in -1..=1 {
+        for cz in -1..=1 {
+            if (cx, cz) != (0, 0) {
+                let chunk = other.generator.generate(ChunkPos::new(cx, cz), other.min_y, other.height);
+                other.chunks.insert(chunk.pos, chunk);
+            }
+        }
+    }
+    other.handle_event(WorldEvent::Terrain(Box::new(loaded)));
+    assert_eq!(other.chunks[&ChunkPos::new(0, 0)].ticks.fluids.first().map(|t| t.trigger), Some(50_003));
+    run(&mut other, 2);
+    assert_eq!(name(&other, p(1, Y, 0)), "air");
+    assert!(!get_bool(get(&other, p(3, Y, 3)), "powered"));
+    run(&mut other, 1);
+    assert!(water_level(&other, p(1, Y, 0)).is_some(), "the saved fluid tick ran");
+    run(&mut other, 2);
+    assert!(!get_bool(get(&other, p(3, Y, 3)), "powered"));
+    run(&mut other, 1);
+    assert!(get_bool(get(&other, p(3, Y, 3)), "powered"), "the saved repeater tick ran");
+    drop(other);
+    drop(w);
+    drop(storage);
+    let _ = std::fs::remove_dir_all(&dir);
+}

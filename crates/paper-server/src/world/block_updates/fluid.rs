@@ -244,7 +244,7 @@ pub fn tick(level: &mut Level, pos: BlockPos, mut state: u32, mut fs: FluidState
 
 fn spread_delay(level: &mut Level, fluid: Fluid, pos: BlockPos, old: FluidState, new: FluidState) -> i32 {
     let delay = tick_delay(fluid, level.settings());
-    if fluid == Fluid::Lava && !old.is_empty() && !new.is_empty() && !old.falling && !new.falling && new.height(level, pos) > old.height(level, pos) && level.random() % 4 != 0 {
+    if fluid == Fluid::Lava && !old.is_empty() && !new.is_empty() && !old.falling && !new.falling && new.height(level, pos) > old.height(level, pos) && !level.random().is_multiple_of(4) {
         return delay * 4;
     }
     delay
@@ -257,6 +257,10 @@ fn get_new_liquid(level: &Level, fluid: Fluid, pos: BlockPos, state: u32) -> Flu
     let mut sources = 0;
     for dir in Dir::HORIZONTAL {
         let npos = pos.rel(dir);
+        // Paper: fluids never look into unloaded chunks.
+        if !level.is_loaded(npos) {
+            continue;
+        }
         let nstate = level.state(npos);
         let nfluid = fluid_state(nstate);
         if nfluid.fluid == fluid && can_pass_through_wall(dir, state, nstate) {
@@ -319,6 +323,9 @@ fn spread_to_sides(level: &mut Level, fluid: Fluid, pos: BlockPos, fs: FluidStat
     }
     for (dir, new) in get_spread(level, fluid, pos, state) {
         let npos = pos.rel(dir);
+        if !level.is_loaded(npos) {
+            continue;
+        }
         let nstate = level.state(npos);
         spread_to(level, fluid, npos, nstate, dir, new);
     }
@@ -354,6 +361,9 @@ fn get_spread(level: &Level, fluid: Fluid, pos: BlockPos, state: u32) -> Vec<(Di
     let mut ctx: Option<SpreadContext> = None;
     for dir in Dir::HORIZONTAL {
         let tpos = pos.rel(dir);
+        if !level.is_loaded(tpos) {
+            continue;
+        }
         let tstate = level.state(tpos);
         let tfluid = fluid_state(tstate);
         if !can_maybe_pass_through(fluid, state, dir, tstate, tfluid) {
@@ -387,6 +397,9 @@ fn slope_distance(level: &Level, fluid: Fluid, pos: BlockPos, pass: i32, from: D
             continue;
         }
         let tpos = pos.rel(dir);
+        if !level.is_loaded(tpos) {
+            continue;
+        }
         let tstate = ctx.state(level, tpos);
         let tfluid = fluid_state(tstate);
         if can_pass_through(fluid, state, dir, tstate, tfluid) {

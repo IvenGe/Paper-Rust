@@ -67,9 +67,8 @@ pub fn update_shape(level: &mut Level, state: u32, pos: BlockPos, dir: Dir, neig
         Kind::TallPlant => {
             let lower = prop(state, "half") == Some("lower");
             let towards_partner = dir.axis() == super::Axis::Y && lower == (dir == Dir::Up);
-            if towards_partner && !(block_id(neighbor_state) == block_id(state) && prop(neighbor_state, "half") != prop(state, "half")) {
-                blocks::AIR
-            } else if lower && dir == Dir::Down && !survive(level) {
+            let partner = block_id(neighbor_state) == block_id(state) && prop(neighbor_state, "half") != prop(state, "half");
+            if (towards_partner && !partner) || (lower && dir == Dir::Down && !survive(level)) {
                 blocks::AIR
             } else {
                 state
