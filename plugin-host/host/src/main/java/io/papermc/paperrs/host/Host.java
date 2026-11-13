@@ -122,6 +122,12 @@ public final class Host implements Bridge.Handler {
         this.server = new CraftServer(this, this.welcome, this.root, this.pluginsDirectory);
         this.commands.attach((CraftCommandMap) this.server.getCommandMap());
         this.events = new HostEvents(this.server);
+        // After /reload the players are already online: plugins see them from onLoad on,
+        // without join events.
+        for (Object state : Values.list(this.welcome.get("players"))) {
+            this.server.addPlayer(Values.map(state));
+        }
+        io.papermc.paperrs.host.registry.HostEnchantment.setInfo(Values.map(this.welcome.get("enchantments")));
         // Initialise the classes holding registry constants here, on the main thread, before
         // any plugin code can touch them from another thread.
         HostRegistryAccess.instance().lockReferenceHolders();
@@ -135,7 +141,7 @@ public final class Host implements Bridge.Handler {
         final CraftServer server = this.server();
         server.enablePlugins(PluginLoadOrder.POSTWORLD);
         LifecycleEventRunner.INSTANCE.callReloadableRegistrarEvent(LifecycleEvents.COMMANDS, this.commands, Plugin.class, ReloadableRegistrarEvent.Cause.INITIAL);
-        new ServerLoadEvent(ServerLoadEvent.LoadType.STARTUP).callEvent();
+        new ServerLoadEvent(Values.bool(this.welcome, "reload", false) ? ServerLoadEvent.LoadType.RELOAD : ServerLoadEvent.LoadType.STARTUP).callEvent();
         return this.snapshot();
     }
 

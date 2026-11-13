@@ -49,6 +49,47 @@ public final class HostItemType extends AbstractItemType<ItemMeta> {
     }
 
     @Override
+    public org.bukkit.inventory.ItemStack createItemStack() {
+        return this.createItemStack(1);
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack createItemStack(final int amount) {
+        final Material material = this.asMaterial();
+        if (material == null || material.isAir()) {
+            return io.papermc.paperrs.host.item.HostItemStack.empty();
+        }
+        return new io.papermc.paperrs.host.item.HostItemStack(material, amount);
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack createItemStack(final java.util.function.Consumer<? super ItemMeta> metaConfigurator) {
+        return this.createItemStack(1, metaConfigurator);
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack createItemStack(final int amount, final java.util.function.@org.jetbrains.annotations.Nullable Consumer<? super ItemMeta> metaConfigurator) {
+        final org.bukkit.inventory.ItemStack stack = this.createItemStack(amount);
+        if (metaConfigurator != null) {
+            stack.editMeta(metaConfigurator);
+        }
+        return stack;
+    }
+
+    @Override
+    public Class<ItemMeta> getItemMetaClass() {
+        final Material material = this.asMaterial();
+        @SuppressWarnings("unchecked") final Class<ItemMeta> kind = (Class<ItemMeta>) (Class<?>) (material == null
+            ? ItemMeta.class : io.papermc.paperrs.host.item.MetaKinds.of(material).getInterfaces()[0]);
+        return kind;
+    }
+
+    @Override
+    public short getMaxDurability() {
+        return (short) (this.info == null ? 0 : this.info.maxDamage());
+    }
+
+    @Override
     public org.bukkit.inventory.ItemType.Typed<ItemMeta> typed() {
         return this;
     }

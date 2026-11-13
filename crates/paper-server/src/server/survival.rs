@@ -888,9 +888,11 @@ impl Server {
         let Some(p) = self.players.get(&id) else { return };
         let world = p.world;
         let message = self.death_message(id, &damage);
-        let Some(message) = crate::plugins::events::on_player_death(self, id, message) else { return };
-        let rules = &self.worlds[world].rules;
-        let (show, keep_inventory) = (rules.bool("show_death_messages"), rules.bool("keep_inventory"));
+        // Plugin hook: PlayerDeathEvent may cancel the death, change the message, keep the
+        // inventory or level, and change the drops (it applies the game rules without plugins).
+        let Some(death) = crate::plugins::events::on_player_death(self, id, &damage, message) else { return };
+        let show = self.worlds[world].rules.bool("show_death_messages") && death.message.is_some();
+        let message = death.message.clone().unwrap_or_else(|| Component::text(""));
         self.close_menu(id, true);
         let Some(p) = self.players.get_mut(&id) else { return };
         p.dead = true;
@@ -908,13 +910,20 @@ impl Server {
         self.play_sound(world, pos, "minecraft:entity.player.death", category::PLAYERS, 1.0, Self::random_pitch(), None);
 
         // Drop everything (unless the inventory is kept) and some of the experience.
-        if !keep_inventory {
+        // (`death` holds what PlayerDeathEvent decided; the drops fall even with a kept
+        // inventory, as in Paper.)
+        {
             let p = self.players.get_mut(&id).unwrap();
-            let items: Vec<Slot> = p.inventory.iter_mut().map(std::mem::take).filter(|s| !s.is_empty()).collect();
-            let xp = (p.xp_level * 7).min(100);
-            p.xp_level = 0;
-            p.xp_progress = 0.0;
-            p.xp_total = 0;
+            if !death.keep_inventory {
+                p.inventory.iter_mut().for_each(|s| *s = Slot::EMPTY);
+            }
+            let items = death.drops;
+            let xp = death.xp;
+            if !death.keep_level {
+                p.xp_level = 0;
+                p.xp_progress = 0.0;
+                p.xp_total = 0;
+            }
             p.equipment_dirty = true;
             let mut rng = rand::thread_rng();
             for stack in items {

@@ -79,6 +79,11 @@ public final class HostUnsafeValues extends AbstractUnsafeValues {
     }
 
     @Override
+    public org.bukkit.inventory.ItemStack deserializeStack(final java.util.Map<String, Object> args) {
+        return io.papermc.paperrs.host.item.HostItemStack.deserialize(args);
+    }
+
+    @Override
     public <B extends Keyed> B get(final RegistryKey<B> registry, final NamespacedKey key) {
         return RegistryAccess.registryAccess().getRegistry(registry).get(key);
     }

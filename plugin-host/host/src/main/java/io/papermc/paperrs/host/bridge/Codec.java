@@ -298,6 +298,21 @@ public final class Codec {
         }
     }
 
+    /** Encodes a single value (no frame), e.g. to store it. */
+    public static byte[] encodeValue(Object value) {
+        Out out = new Out(64);
+        value(out, value);
+        return java.util.Arrays.copyOf(out.buffer(), out.size());
+    }
+
+    /** The inverse of {@link #encodeValue(Object)}. */
+    public static Object decodeValue(byte[] bytes) {
+        In in = new In(bytes);
+        Object value = in.value();
+        in.finish();
+        return value;
+    }
+
     /** Decodes a frame body (the bytes after the length prefix). */
     public static Frame decode(byte[] body) {
         In in = new In(body);

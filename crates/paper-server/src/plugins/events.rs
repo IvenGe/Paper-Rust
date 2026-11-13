@@ -48,6 +48,13 @@ fn fire(server: &mut Server, event: &str, method: &str, args: Value) -> Option<V
 
 /// Runs the plugin scheduler and the tick events once per server tick.
 pub fn tick(server: &mut Server) {
+    // Scores of criteria that follow player values (health, food, ...), twice a second.
+    if server.tick.is_multiple_of(10) {
+        server.tick_scoreboards();
+    }
+    if server.tick.is_multiple_of(200) {
+        super::inventory::collect_released(server);
+    }
     let Some(conn) = server.plugins.clone() else { return };
     flush_states(server);
     let tick = server.tick as i64;
@@ -59,7 +66,22 @@ pub fn tick(server: &mut Server) {
 }
 
 /// A player joined. Returns the join message to broadcast (`None` to send none).
+///
+/// Also where the plugin API's per-player bookkeeping starts (it runs with or without
+/// plugins): the name cache, the play times and ender chest from the player data, and the
+/// main scoreboard.
 pub fn on_join(server: &mut Server, id: i32, default: Component) -> Option<Component> {
+    if let Some((uuid, name)) = server.players.get(&id).map(|p| (p.uuid(), p.name().to_owned())) {
+        server.user_cache.add(&name, uuid);
+        let now = chrono::Utc::now().timestamp_millis();
+        let extras = server.load_player_extras(uuid);
+        let first_played = extras.as_ref().and_then(|(_, first)| *first).or_else(|| extras.as_ref().map(|_| now)).unwrap_or(now);
+        server.user_cache.start_session(uuid, crate::server::usercache::Session { first_played, last_login: now, played_before: extras.is_some() });
+        if let (Some((ender, _)), Some(p)) = (extras, server.players.get_mut(&id)) {
+            p.ender_items = ender;
+        }
+        server.send_scoreboard(id);
+    }
     let Some(player) = server.players.get(&id) else { return Some(default) };
     let state = super::api::player_state(server, player);
     let inventory = Value::List(player.inventory.iter().map(super::api::item_value).collect());
@@ -73,6 +95,13 @@ pub fn on_join(server: &mut Server, id: i32, default: Component) -> Option<Compo
 
 /// A player left. Returns the quit message to broadcast.
 pub fn on_quit(server: &mut Server, uuid: uuid::Uuid, reason: &str, default: Component) -> Option<Component> {
+    if let Some(id) = server.by_uuid.get(&uuid).copied() {
+        // InventoryCloseEvent (DISCONNECT) for an open window, before PlayerQuitEvent as in Paper.
+        if server.players.get(&id).is_some_and(|p| p.open_menu.is_some()) {
+            on_inventory_close(server, id, "DISCONNECT");
+        }
+        server.scoreboards.player_left(id);
+    }
     server.plugin_state_cache.retain(|_, v| v.str("uuid") != Some(uuid.to_string().as_str()));
     let args = bmap! { "uuid" => uuid.to_string(), "reason" => reason, "message" => component_value(&default) };
     match fire(server, "", "event.quit", args) {
@@ -273,41 +302,32 @@ pub fn on_chat(server: &mut Server, id: i32, message: &str, default: Component) 
     true
 }
 
-/// A player is about to pick up an item entity. Returns whether the pickup may happen.
+/// A player is about to pick up an item entity (`PlayerAttemptPickupItemEvent`, then
+/// `EntityPickupItemEvent`). Returns whether the pickup may happen.
 pub fn on_pickup_item(server: &mut Server, player: i32, _world: usize, item: i32, stack: &paper_protocol::types::ItemStack) -> bool {
-    if !server.plugin_events.contains("EntityPickupItemEvent") && !server.plugin_events.contains("PlayerAttemptPickupItemEvent") {
+    if !["EntityPickupItemEvent", "PlayerAttemptPickupItemEvent", "PlayerPickupItemEvent"].iter().any(|e| server.plugin_events.contains(*e)) {
         return true;
     }
     let Some(uuid) = server.players.get(&player).map(|p| p.uuid().to_string()) else { return true };
-    let args = bmap! { "uuid" => uuid, "item_entity" => item, "item" => super::api::item_value(&paper_protocol::types::Slot(Some(stack.clone()))) };
+    let remaining = stack.count - server.inventory_room(player, stack).min(stack.count);
+    let args = bmap! { "uuid" => uuid, "item_entity" => item, "item" => super::api::item_value(&paper_protocol::types::Slot(Some(stack.clone()))), "remaining" => remaining };
     match fire(server, "", "event.pickup_item", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
     }
 }
 
-/// Describes an open window for inventory events.
-fn menu_value(server: &Server, id: i32, kind: Option<&crate::server::containers::MenuKind>) -> Value {
-    use crate::server::containers::MenuKind;
-    let world_name = |w: usize| server.worlds.get(w).map(|w| w.name.clone()).unwrap_or_default();
-    match kind {
-        None => bmap! { "type" => "CRAFTING", "size" => 5 },
-        Some(MenuKind::Container { world, positions }) => {
-            let p = positions[0];
-            let block = server.worlds[*world].block_at(p.x, p.y, p.z).map(|s| paper_data::blocks::block_of_state(s).name).unwrap_or("minecraft:chest");
-            let ty = if block == "minecraft:barrel" { "BARREL" } else { "CHEST" };
-            bmap! { "type" => ty, "size" => (positions.len() * 27) as i64, "world" => world_name(*world), "x" => p.x, "y" => p.y, "z" => p.z }
-        }
-        Some(MenuKind::EnderChest) => bmap! { "type" => "ENDER_CHEST", "size" => 27, "owner" => server.players.get(&id).map(|p| p.uuid().to_string()).unwrap_or_default() },
-        Some(MenuKind::CraftingTable) => bmap! { "type" => "WORKBENCH", "size" => 10 },
-        Some(MenuKind::Furnace { world, pos, recipe_type }) => {
-            let ty = match *recipe_type {
-                "minecraft:smoking" => "SMOKER",
-                "minecraft:blasting" => "BLAST_FURNACE",
-                _ => "FURNACE",
-            };
-            bmap! { "type" => ty, "size" => 3, "world" => world_name(*world), "x" => pos.x, "y" => pos.y, "z" => pos.z }
-        }
+/// `PlayerDropItemEvent`: the item entity exists already; returns false if a plugin cancelled
+/// the drop (the caller then takes the item back).
+pub fn on_drop_item(server: &mut Server, player: i32, item: i32, stack: &paper_protocol::types::Slot) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerDropItemEvent") {
+        return true;
+    }
+    let Some(uuid) = server.players.get(&player).map(|p| p.uuid().to_string()) else { return true };
+    let args = bmap! { "uuid" => uuid, "item_entity" => item, "item" => super::api::item_value(stack) };
+    match fire(server, "PlayerDropItemEvent", "event.drop_item", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
     }
 }
 
@@ -317,42 +337,70 @@ pub fn on_inventory_open(server: &mut Server, id: i32, kind: &crate::server::con
         return true;
     }
     let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
-    let args = bmap! { "uuid" => uuid, "inventory" => menu_value(server, id, Some(kind)) };
+    let args = bmap! { "uuid" => uuid, "inventory" => super::inventory::menu_value(server, id, Some(kind)) };
     match fire(server, "InventoryOpenEvent", "event.inventory_open", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
     }
 }
 
-/// InventoryClickEvent (and InventoryDragEvent for drags): returns false if cancelled.
-pub fn on_inventory_click(server: &mut Server, id: i32, click: &paper_protocol::packets::play::ContainerClick, kind: Option<&crate::server::containers::MenuKind>) -> bool {
-    let drag = click.mode == 5;
-    let event = if drag { "InventoryDragEvent" } else { "InventoryClickEvent" };
-    if server.plugins.is_none() || !server.plugin_events.contains(event) {
-        return true;
-    }
-    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
-    let args = bmap! {
-        "uuid" => uuid,
-        "inventory" => menu_value(server, id, kind),
-        "slot" => click.slot as i64,
-        "button" => click.button as i64,
-        "mode" => click.mode as i64,
-    };
-    match fire(server, event, "event.inventory_click", args) {
-        Some(result) => result.bool("cancelled") != Some(true),
-        None => true,
-    }
-}
-
-/// CraftItemEvent is reported after the fact (the result has already been taken).
-pub fn on_crafted(server: &mut Server, id: i32, crafted: &[paper_protocol::types::ItemStack]) {
-    if server.plugins.is_none() || !server.plugin_events.contains("CraftItemEvent") {
+/// InventoryCloseEvent for the window a player has open (or their own inventory), with a
+/// Bukkit close `reason` (`PLAYER`, `OPEN_NEW`, `DISCONNECT`, ...).
+pub fn on_inventory_close(server: &mut Server, id: i32, reason: &str) {
+    if server.plugins.is_none() || !server.plugin_events.contains("InventoryCloseEvent") {
         return;
     }
     let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return };
-    let items = Value::List(crafted.iter().map(|s| super::api::item_value(&paper_protocol::types::Slot(Some(s.clone())))).collect());
-    fire(server, "CraftItemEvent", "event.crafted", bmap! { "uuid" => uuid, "items" => items });
+    let args = bmap! { "uuid" => uuid, "inventory" => super::inventory::window_value(server, id), "reason" => reason };
+    fire(server, "InventoryCloseEvent", "event.inventory_close", args);
+}
+
+/// InventoryClickEvent, InventoryDragEvent for drags, or CraftItemEvent when the click takes
+/// a crafting result (`craft_result`): returns false if cancelled. Listeners may change the
+/// window's slots; the click then works on what they left.
+pub fn on_inventory_click(
+    server: &mut Server,
+    id: i32,
+    click: &paper_protocol::packets::play::ContainerClick,
+    kind: Option<&crate::server::containers::MenuKind>,
+    craft_result: Option<paper_protocol::types::Slot>,
+) -> bool {
+    let drag = click.mode == 5;
+    // A drag is one event when it ends (stage 2), as in Bukkit.
+    if drag && click.button & 3 != 2 {
+        return true;
+    }
+    let event = if craft_result.is_some() { "CraftItemEvent" } else if drag { "InventoryDragEvent" } else { "InventoryClickEvent" };
+    // CraftItemEvent is an InventoryClickEvent: listeners of either see it.
+    let listened = server.plugin_events.contains(event) || craft_result.is_some() && server.plugin_events.contains("InventoryClickEvent");
+    if server.plugins.is_none() || !listened {
+        return true;
+    }
+    let Some(player) = server.players.get(&id) else { return true };
+    let (uuid, cursor, held_slot) = (player.uuid().to_string(), super::api::item_value(&player.carried), player.held_slot as i64);
+    let drag_slots = Value::List(player.drag.slots.iter().map(|s| Value::from(*s as i64)).collect());
+    let mut args = bmap! {
+        "uuid" => uuid,
+        "inventory" => super::inventory::menu_value(server, id, kind),
+        "slot" => click.slot as i64,
+        "button" => click.button as i64,
+        "mode" => click.mode as i64,
+        "cursor" => cursor,
+        "held_slot" => held_slot,
+    };
+    if let Some(result) = &craft_result {
+        args.set("craft", super::api::item_value(result));
+    }
+    if drag {
+        // The slots dragged over and how the items are spread (0 evenly, 1 one each, 2 full
+        // stacks in creative).
+        args.set("drag_slots", drag_slots);
+        args.set("drag_kind", server.players.get(&id).map_or(0, |p| p.drag.kind as i64));
+    }
+    match fire(server, "", "event.inventory_click", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
 }
 
 /// EntityDamageEvent (and its ByEntity/ByBlock forms): plugins may cancel the damage or
@@ -362,16 +410,21 @@ pub fn on_entity_damage(server: &mut Server, id: i32, damage: &crate::server::su
     if server.plugins.is_none() || !listened {
         return true;
     }
-    let target = match server.players.get(&id) {
-        Some(p) => bmap! { "player" => p.uuid().to_string() },
-        None => bmap! { "entity" => id as i64 },
-    };
+    let target = entity_ref(server, id);
     let mut args = bmap! { "target" => target, "cause" => damage.kind, "amount" => *amount as f64 };
     if let Some(attacker) = damage.attacker {
         match server.players.get(&attacker) {
             Some(p) => args.set("attacker_player", p.uuid().to_string()),
             None => args.set("attacker_entity", attacker as i64),
         }
+        args.set("attacker", entity_ref(server, attacker));
+    }
+    // The projectile, when it is not the attacker itself.
+    if let Some(direct) = damage.direct.filter(|d| Some(*d) != damage.attacker) {
+        args.set("direct", entity_ref(server, direct));
+    }
+    if let Some(pos) = damage.position {
+        args.set("source_position", Value::List(vec![pos.x.into(), pos.y.into(), pos.z.into()]));
     }
     match fire(server, "", "event.entity_damage", args) {
         Some(result) => {
@@ -387,14 +440,59 @@ pub fn on_entity_damage(server: &mut Server, id: i32, damage: &crate::server::su
     }
 }
 
-/// PlayerDeathEvent: returns the death message to show (`None` when a plugin cancelled the
-/// death, which Paper allows).
-pub fn on_player_death(server: &mut Server, id: i32, message: Component) -> Option<Component> {
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerDeathEvent") {
-        return Some(message);
+/// A player or another entity as events name it: `{player: uuid}`, or `{entity: id, value:
+/// <entity state>}` so the host knows its type without asking.
+pub fn entity_ref(server: &Server, id: i32) -> Value {
+    if let Some(p) = server.players.get(&id) {
+        return bmap! { "player" => p.uuid().to_string() };
     }
-    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return Some(message) };
-    let args = bmap! { "uuid" => uuid, "message" => component_value(&message) };
+    match super::entity::world_of(server, id) {
+        Some(world) => bmap! { "entity" => id as i64, "value" => super::entity::entity_value(server, world, &server.worlds[world].entities[&id]) },
+        None => bmap! { "entity" => id as i64 },
+    }
+}
+
+/// What happens when a player dies, after `PlayerDeathEvent`.
+pub struct PlayerDeath {
+    /// The death message to show (`None`: none).
+    pub message: Option<Component>,
+    /// Keep the inventory instead of clearing it.
+    pub keep_inventory: bool,
+    /// Keep the experience level instead of resetting it.
+    pub keep_level: bool,
+    /// The items dropped (dropped even when the inventory is kept, as in Paper).
+    pub drops: Vec<paper_protocol::types::Slot>,
+    /// Experience dropped.
+    pub xp: i32,
+}
+
+/// PlayerDeathEvent. Returns `None` when a plugin cancelled the death (which Paper allows;
+/// the player keeps half a heart). Without plugins, the outcome follows the game rules.
+pub fn on_player_death(server: &mut Server, id: i32, damage: &crate::server::survival::Damage, message: Component) -> Option<PlayerDeath> {
+    let p = server.players.get(&id)?;
+    let keep = server.worlds[p.world].rules.bool("keep_inventory");
+    let mut death = PlayerDeath {
+        message: Some(message.clone()),
+        keep_inventory: keep,
+        keep_level: keep,
+        drops: if keep { Vec::new() } else { p.inventory.iter().filter(|s| !s.is_empty()).cloned().collect() },
+        xp: if keep { 0 } else { (p.xp_level * 7).min(100) },
+    };
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerDeathEvent") {
+        return Some(death);
+    }
+    let uuid = p.uuid().to_string();
+    let killer = damage.attacker.filter(|a| *a != id).map(|a| entity_ref(server, a));
+    let args = bmap! {
+        "uuid" => uuid,
+        "message" => component_value(&message),
+        "cause" => damage.kind,
+        "killer" => killer,
+        "drops" => Value::List(death.drops.iter().map(super::api::item_value).collect()),
+        "xp" => death.xp,
+        "keep_inventory" => death.keep_inventory,
+        "keep_level" => death.keep_level,
+    };
     match fire(server, "PlayerDeathEvent", "event.player_death", args) {
         Some(result) if result.bool("cancelled") == Some(true) => {
             if let Some(p) = server.players.get_mut(&id) {
@@ -403,22 +501,49 @@ pub fn on_player_death(server: &mut Server, id: i32, message: Component) -> Opti
             None
         }
         Some(result) => {
-            let m = result.get("message");
-            Some(component_from(m).unwrap_or(message))
+            death.message = match result.get("message") {
+                Value::Null => None,
+                m => component_from(m),
+            };
+            death.keep_inventory = result.bool("keep_inventory").unwrap_or(death.keep_inventory);
+            death.keep_level = result.bool("keep_level").unwrap_or(death.keep_level);
+            death.xp = result.i32("xp").unwrap_or(death.xp);
+            if let Some(drops) = result.list("drops") {
+                death.drops = drops.iter().filter_map(|d| super::api::slot_from(d).ok()).filter(|s| !s.is_empty()).collect();
+            }
+            Some(death)
         }
-        None => Some(message),
+        None => Some(death),
     }
 }
 
-/// EntityDeathEvent for mobs: returns false if a plugin cancelled the death.
-pub fn on_entity_death(server: &mut Server, world: usize, id: i32) -> bool {
+/// EntityDeathEvent for mobs, with the loot and experience the mob drops. Returns the drops
+/// and experience plugins left, or `None` if a plugin cancelled the death.
+pub fn on_entity_death(server: &mut Server, world: usize, id: i32, damage: &crate::server::survival::Damage, drops: Vec<paper_protocol::types::Slot>, xp: i32) -> Option<(Vec<paper_protocol::types::Slot>, i32)> {
     if server.plugins.is_none() || !server.plugin_events.contains("EntityDeathEvent") {
-        return true;
+        return Some((drops, xp));
     }
-    let ty = server.worlds.get(world).and_then(|w| w.entities.get(&id)).map(|e| e.info.name.clone()).unwrap_or_default();
-    match fire(server, "EntityDeathEvent", "event.entity_death", bmap! { "entity" => id as i64, "type" => ty }) {
-        Some(result) => result.bool("cancelled") != Some(true),
-        None => true,
+    let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return Some((drops, xp)) };
+    let killer = damage.attacker.filter(|a| *a != id).map(|a| entity_ref(server, a));
+    let args = bmap! {
+        "entity" => id as i64,
+        "type" => e.info.name.clone(),
+        "value" => super::entity::entity_value(server, world, e),
+        "cause" => damage.kind,
+        "killer" => killer,
+        "drops" => Value::List(drops.iter().map(super::api::item_value).collect()),
+        "xp" => xp,
+    };
+    match fire(server, "EntityDeathEvent", "event.entity_death", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => {
+            let drops = match result.list("drops") {
+                Some(list) => list.iter().filter_map(|d| super::api::slot_from(d).ok()).filter(|s| !s.is_empty()).collect(),
+                None => drops,
+            };
+            Some((drops, result.i32("xp").unwrap_or(xp)))
+        }
+        None => Some((drops, xp)),
     }
 }
 
@@ -455,7 +580,14 @@ pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: cra
         crate::server::mobs::SpawnReason::Plugin => "CUSTOM",
         crate::server::mobs::SpawnReason::Egg => "SPAWNER_EGG",
     };
-    let args = bmap! { "entity" => id as i64, "type" => e.info.name.clone(), "world" => server.worlds[world].name.clone(), "x" => e.pos.x, "y" => e.pos.y, "z" => e.pos.z, "reason" => reason };
+    let args = bmap! {
+        "entity" => id as i64,
+        "type" => e.info.name.clone(),
+        "world" => server.worlds[world].name.clone(),
+        "x" => e.pos.x, "y" => e.pos.y, "z" => e.pos.z,
+        "reason" => reason,
+        "value" => super::entity::entity_value(server, world, e),
+    };
     if let Some(result) = fire(server, "CreatureSpawnEvent", "event.creature_spawn", args) {
         if result.bool("cancelled") == Some(true) {
             if let Some(e) = server.worlds[world].entities.get_mut(&id) {

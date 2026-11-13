@@ -130,11 +130,52 @@ impl Server {
             Vec3::new(rng.gen_range(-0.25..0.25), 0.2, rng.gen_range(-0.25..0.25))
         };
         let uuid = player.uuid();
-        if let Some(item) = self.spawn_item(world, eye, stack, vel, 40) {
+        if let Some(item) = self.spawn_item(world, eye, stack.clone(), vel, 40) {
             if let Some(EntityKind::Item { thrower, .. }) = self.worlds[world].entities.get_mut(&item).map(|e| &mut e.kind) {
                 *thrower = Some(uuid);
             }
+            // Plugin hook: PlayerDropItemEvent. A cancelled drop goes back to the player
+            // (the held slot first, as CraftBukkit does), or stays dropped if it cannot.
+            if !crate::plugins::events::on_drop_item(self, id, item, &stack) {
+                let Some(e) = self.worlds[world].entities.get_mut(&item) else { return };
+                let EntityKind::Item { stack: Slot(Some(back)), .. } = std::mem::replace(&mut e.kind, EntityKind::Other) else { return };
+                e.removed = true;
+                let Some(p) = self.players.get(&id) else { return };
+                let held = HOTBAR_START + p.held_slot as usize;
+                let room = match &p.inventory[held].0 {
+                    None => back.count,
+                    Some(s) if same_item(s, &back) => (max_stack(s) - s.count).min(back.count),
+                    Some(_) => 0,
+                };
+                if room > 0 {
+                    let current = p.inventory[held].0.as_ref().map_or(0, |s| s.count);
+                    self.set_inventory_slot(id, held, Slot(Some(back.with_count(current + room))));
+                }
+                let left = self.add_to_inventory(id, &back.with_count(back.count - room));
+                if left > 0 && back.count - room > 0 {
+                    // No room: drop the rest without asking again.
+                    self.spawn_item(world, eye, Slot(Some(back.with_count(left))), vel, 40);
+                }
+            }
         }
+    }
+
+    /// How many items of `stack` fit into a player's inventory.
+    pub fn inventory_room(&self, id: i32, stack: &ItemStack) -> i32 {
+        let Some(player) = self.players.get(&id) else { return 0 };
+        let max = max_stack(stack);
+        (HOTBAR_START..HOTBAR_START + 9)
+            .chain(9..HOTBAR_START)
+            .map(|slot| match &player.inventory[slot].0 {
+                None => max,
+                Some(existing) if same_item(existing, stack) => (max - existing.count).max(0),
+                Some(_) => 0,
+            })
+            .sum::<i32>()
+            + match &player.inventory[super::player::OFFHAND_SLOT].0 {
+                Some(existing) if same_item(existing, stack) => (max - existing.count).max(0),
+                _ => 0,
+            }
     }
 
     /// Adds a stack to a player's inventory (stacking first, hotbar before the main

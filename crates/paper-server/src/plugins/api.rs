@@ -41,7 +41,57 @@ pub fn welcome(server: &Server) -> Value {
         "whitelist" => props.white_list,
         "root" => server.config.root.display().to_string(),
         "worlds" => Value::List(server.worlds.iter().map(world_info).collect()),
+        // After `/reload` the new host starts with the players already online.
+        "reload" => server.plugin_data.reloading,
+        "players" => Value::List(server.online_players().map(|p| player_state(server, p)).collect()),
+        "enchantments" => enchantment_info(server),
     }
+}
+
+/// Vanilla's enchantment definitions the API exposes (`Enchantment#getMaxLevel`,
+/// `conflictsWith`, `canEnchantItem`), read from the game data when it is available.
+fn enchantment_info(server: &Server) -> Value {
+    let Some(vanilla) = server.vanilla.as_ref() else { return Value::Null };
+    let resolve = |registry: &str, list: Option<&serde_json::Value>| -> Vec<Value> {
+        let names: Vec<String> = match list {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        for name in names {
+            match name.strip_prefix('#') {
+                Some(tag) => {
+                    let entries = paper_data::synced::entries(registry).unwrap_or(&[]);
+                    for &id in paper_data::synced::tag(registry, tag).unwrap_or(&[]) {
+                        // Items are a built-in registry; enchantments a synchronised one.
+                        let entry = if registry == "minecraft:item" { items::get(id as u32).map(|i| i.name.to_owned()) } else { entries.get(id as usize).map(|e| (*e).to_owned()) };
+                        if let Some(entry) = entry {
+                            out.push(Value::Str(entry));
+                        }
+                    }
+                }
+                None => out.push(Value::Str(name)),
+            }
+        }
+        out
+    };
+    let mut table = bmap! {};
+    for name in paper_data::synced::entries("minecraft:enchantment").unwrap_or(&[]) {
+        let path = format!("data/minecraft/enchantment/{}.json", name.strip_prefix("minecraft:").unwrap_or(name));
+        let Some(json) = vanilla.read_json(&path) else { continue };
+        table.set(
+            name,
+            bmap! {
+                "max_level" => json["max_level"].as_i64().unwrap_or(1),
+                "exclusive_set" => Value::List(resolve("minecraft:enchantment", json.get("exclusive_set"))),
+                "supported_items" => Value::List(resolve("minecraft:item", json.get("supported_items"))),
+                "curse" => paper_data::synced::tag("minecraft:enchantment", "minecraft:curse").zip(paper_data::synced::id("minecraft:enchantment", name)).is_some_and(|(ids, id)| ids.contains(&id)),
+                "treasure" => paper_data::synced::tag("minecraft:enchantment", "minecraft:treasure").zip(paper_data::synced::id("minecraft:enchantment", name)).is_some_and(|(ids, id)| ids.contains(&id)),
+            },
+        );
+    }
+    table
 }
 
 fn world_info(w: &crate::world::World) -> Value {
@@ -103,11 +153,22 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
             "value" => prop.value.clone(),
             "signature" => prop.signature.clone(),
         }).collect()),
+        "open_inventory" => super::inventory::window_value(server, p.entity_id),
+        "scoreboard" => server.scoreboards.board_of(p.entity_id) as i64,
+        "fire_ticks" => p.fire_ticks,
+        "air" => p.air,
+        "dead" => p.dead,
+        "xp_level" => p.xp_level,
+        "xp_progress" => p.xp_progress,
+        "xp_total" => p.xp_total,
+        "exhaustion" => p.exhaustion,
     }
 }
 
-/// An item stack as the host models it: item id, count and the components the server can
-/// translate (`name`, `item_name`, `lore`), plus every other component as opaque bytes.
+/// An item stack as the host models it: item id, count, every added component as its network
+/// bytes (`raw`: `[type id, bytes]`), the ids of removed default components (`removed`), and
+/// the text components the server can translate as JSON as well (`name`, `item_name`,
+/// `lore`).
 pub fn item_value(slot: &Slot) -> Value {
     let Some(stack) = slot.0.as_ref().filter(|s| s.count > 0) else { return Value::Null };
     let Some(info) = items::get(stack.item as u32) else { return Value::Null };
@@ -117,22 +178,18 @@ pub fn item_value(slot: &Slot) -> Value {
         let name = paper_data::registries::name("minecraft:data_component_type", *ty as u32).unwrap_or("");
         match name {
             "minecraft:custom_name" | "minecraft:item_name" => {
-                let mut r = paper_protocol::codec::Reader::new(data);
-                if let Ok(c) = r.component() {
+                if let Ok(c) = paper_protocol::codec::Reader::new(data).component() {
                     out.set(if name.ends_with("custom_name") { "name" } else { "item_name" }, component_value(&c));
-                    continue;
                 }
-                raw.push(Value::List(vec![(*ty).into(), Value::Bytes(data.clone())]));
             }
             "minecraft:lore" => {
-                let mut r = paper_protocol::codec::Reader::new(data);
-                match r.list(256, |r| r.component()) {
-                    Ok(lines) => out.set("lore", Value::List(lines.iter().map(component_value).collect())),
-                    Err(_) => raw.push(Value::List(vec![(*ty).into(), Value::Bytes(data.clone())])),
+                if let Ok(lines) = paper_protocol::codec::Reader::new(data).list(256, |r| r.component()) {
+                    out.set("lore", Value::List(lines.iter().map(component_value).collect()));
                 }
             }
-            _ => raw.push(Value::List(vec![(*ty).into(), Value::Bytes(data.clone())])),
+            _ => {}
         }
+        raw.push(Value::List(vec![(*ty).into(), Value::Bytes(data.clone())]));
     }
     if !raw.is_empty() {
         out.set("raw", Value::List(raw));
@@ -143,7 +200,9 @@ pub fn item_value(slot: &Slot) -> Value {
     out
 }
 
-/// The inverse of [`item_value`].
+/// The inverse of [`item_value`]. A text component given as JSON replaces the raw bytes of
+/// the same component, unless they already encode the same text (so an unchanged stack keeps
+/// its exact bytes and still stacks with its twins). Components are kept in type order.
 pub fn slot_from(value: &Value) -> Result<Slot> {
     if value.is_null() {
         return Ok(Slot::EMPTY);
@@ -157,32 +216,37 @@ pub fn slot_from(value: &Value) -> Result<Slot> {
     let mut stack = paper_protocol::types::ItemStack::new(item, count.min(99));
     let component_id = |name: &str| paper_data::registries::id("minecraft:data_component_type", name).map(|i| i as i32);
     use paper_protocol::codec::WriteExt;
-    for (key, component) in [("name", "minecraft:custom_name"), ("item_name", "minecraft:item_name")] {
-        if let Some(c) = component_from(value.get(key)) {
-            if let Some(id) = component_id(component) {
-                let mut data = Vec::new();
-                data.put_component(&c);
-                stack.added.push((id, data));
-            }
-        }
-    }
-    if let Some(lines) = value.list("lore") {
-        if let Some(id) = component_id("minecraft:lore") {
-            let lines: Vec<Component> = lines.iter().filter_map(component_from).collect();
-            let mut data = Vec::new();
-            data.put_list(&lines, |w, c| w.put_component(c));
-            stack.added.push((id, data));
-        }
-    }
+    let mut added: std::collections::BTreeMap<i32, Vec<u8>> = std::collections::BTreeMap::new();
     if let Some(raw) = value.list("raw") {
         for entry in raw {
             if let (Some(ty), Some(data)) = (entry.at(0).as_i32(), entry.at(1).as_bytes()) {
-                stack.added.push((ty, data.to_vec()));
+                added.insert(ty, data.to_vec());
             }
         }
     }
+    for (key, component) in [("name", "minecraft:custom_name"), ("item_name", "minecraft:item_name")] {
+        let (Some(c), Some(id)) = (component_from(value.get(key)), component_id(component)) else { continue };
+        let same = added.get(&id).and_then(|bytes| paper_protocol::codec::Reader::new(bytes).component().ok()).is_some_and(|old| old == c);
+        if !same {
+            let mut data = Vec::new();
+            data.put_component(&c);
+            added.insert(id, data);
+        }
+    }
+    if let (Some(lines), Some(id)) = (value.list("lore"), component_id("minecraft:lore")) {
+        let lines: Vec<Component> = lines.iter().filter_map(component_from).collect();
+        let same = added.get(&id).and_then(|bytes| paper_protocol::codec::Reader::new(bytes).list(256, |r| r.component()).ok()).is_some_and(|old| old == lines);
+        if !same {
+            let mut data = Vec::new();
+            data.put_list(&lines, |w, c| w.put_component(c));
+            added.insert(id, data);
+        }
+    }
+    stack.added = added.into_iter().collect();
     if let Some(removed) = value.list("removed") {
         stack.removed.extend(removed.iter().filter_map(Value::as_i32));
+        stack.removed.sort_unstable();
+        stack.removed.dedup();
     }
     Ok(Slot(Some(stack)))
 }
@@ -419,6 +483,45 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let _ = HOTBAR_START;
             Ok(Value::Null)
         }
+        "player.open_inventory" => {
+            let id = player_id(server, args)?;
+            let inv = super::inventory::InvRef::parse(server, args.get("inventory"))?;
+            let opened = super::inventory::open(server, id, &inv, component_from(args.get("title")))?;
+            Ok(bmap! { "opened" => opened, "window" => super::inventory::window_value(server, id) })
+        }
+        "player.close_inventory" => {
+            let id = player_id(server, args)?;
+            let reason = args.str("reason").unwrap_or("PLUGIN").to_owned();
+            server.close_menu_with_reason(id, true, &reason);
+            Ok(Value::Null)
+        }
+        "player.cursor" => {
+            let id = player_id(server, args)?;
+            Ok(item_value(&server.players[&id].carried))
+        }
+        "player.set_cursor" => {
+            let id = player_id(server, args)?;
+            let item = slot_from(args.get("item"))?;
+            let player = server.players.get_mut(&id).unwrap();
+            player.carried = item.clone();
+            player.conn.send(&play::SetCursorItem { item });
+            Ok(Value::Null)
+        }
+        "player.set_scoreboard" => {
+            let id = player_id(server, args)?;
+            let board = args.i64("board").ok_or_else(|| anyhow!("missing board"))? as u64;
+            server.set_player_scoreboard(id, board)?;
+            Ok(Value::Null)
+        }
+        "player.give_exp" => {
+            let id = player_id(server, args)?;
+            server.give_experience(id, args.i32("amount").unwrap_or(0));
+            Ok(Value::Null)
+        }
+        m if m.starts_with("inventory.") => super::inventory::handle(server, m, args),
+        m if m.starts_with("entity.") || m == "world.entities" || m == "world.spawn_entity" || m == "world.drop_item" => super::entity::handle(server, m, args),
+        m if m.starts_with("scoreboard.") => super::scoreboard::handle(server, m, args),
+        m if m.starts_with("offline.") => super::offline::handle(server, m, args),
 
         // --- worlds and blocks ---
         "world.get_block" => {

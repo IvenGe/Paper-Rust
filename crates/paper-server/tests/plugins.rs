@@ -195,8 +195,10 @@ impl FakeHost {
 }
 
 fn fake_launcher(seen: Arc<Seen>) -> Launcher {
+    // Called again for every new host (`/reload`).
     Box::new(move |_config, port, token| {
         let token = token.to_owned();
+        let seen = seen.clone();
         std::thread::spawn(move || FakeHost::connect(port, &token, seen).run());
         Ok(None)
     })

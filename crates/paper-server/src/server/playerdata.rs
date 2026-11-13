@@ -138,7 +138,42 @@ impl Server {
         if let Some(previous) = player.previous_game_mode {
             c.insert("previousPlayerGameType", Tag::Int(previous.id()));
         }
+        // Paper-RS additions for the plugin API (see `plugins::offline`): the ender chest,
+        // and Bukkit's and Paper's play times.
+        let ender: Vec<Tag> = player
+            .ender_items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                let mut e = item_to_nbt(slot)?;
+                e.insert("Slot", Tag::Byte(i as i8));
+                Some(Tag::Compound(e))
+            })
+            .collect();
+        c.insert("EnderItems", Tag::List(ender));
+        let now = chrono::Utc::now().timestamp_millis();
+        let session = self.user_cache.session(player.uuid()).copied();
+        let first = session.map_or(now, |s| s.first_played);
+        let login = session.map_or(now, |s| s.last_login);
+        c.insert("bukkit", Tag::Compound(Compound::new().with("firstPlayed", Tag::Long(first)).with("lastPlayed", Tag::Long(now)).with("lastKnownName", Tag::String(player.name().to_owned()))));
+        c.insert("Paper", Tag::Compound(Compound::new().with("LastLogin", Tag::Long(login)).with("LastSeen", Tag::Long(now))));
         c
+    }
+
+    /// The ender chest contents and first-play time saved for a player (read when they join;
+    /// see `plugins::events::on_join`).
+    pub fn load_player_extras(&self, uuid: uuid::Uuid) -> Option<(Vec<Slot>, Option<i64>)> {
+        let storage = self.worlds.first()?.storage.as_ref()?;
+        let nbt = storage.read_player(uuid).ok()??;
+        let mut ender = vec![Slot::EMPTY; 27];
+        for entry in nbt.list("EnderItems").unwrap_or(&[]) {
+            let Some(entry) = entry.as_compound() else { continue };
+            if let Some(slot) = entry.i32("Slot").filter(|s| (0..27).contains(s)) {
+                ender[slot as usize] = item_from_nbt(entry);
+            }
+        }
+        let first_played = nbt.compound("bukkit").and_then(|b| b.i64("firstPlayed"));
+        Some((ender, first_played))
     }
 
     pub fn player_from_nbt(&self, c: &Compound) -> Option<SavedPlayer> {

@@ -57,6 +57,10 @@ public final class HostPlayer extends AbstractPlayer {
     private volatile Map<String, Object> state;
     private volatile boolean online = true;
     private @Nullable Component displayName;
+    private org.bukkit.inventory.@Nullable PlayerInventory inventory;
+    private org.bukkit.inventory.@Nullable Inventory enderChest;
+    /** The inventory a plugin opened for this player, kept alive while the window is open. */
+    private org.bukkit.inventory.@Nullable Inventory openTop;
 
     public HostPlayer(final CraftServer server, final Map<String, Object> state) {
         this.server = server;
@@ -728,6 +732,229 @@ public final class HostPlayer extends AbstractPlayer {
     @Override
     public Set<PermissionAttachmentInfo> getEffectivePermissions() {
         return this.perm.getEffectivePermissions();
+    }
+
+    // --- inventories --------------------------------------------------------------------------
+
+    @Override
+    public org.bukkit.inventory.PlayerInventory getInventory() {
+        if (this.inventory == null) {
+            this.inventory = io.papermc.paperrs.host.inventory.Inventories.player(this.server, this);
+        }
+        return this.inventory;
+    }
+
+    @Override
+    public org.bukkit.inventory.Inventory getEnderChest() {
+        if (this.enderChest == null) {
+            this.enderChest = io.papermc.paperrs.host.inventory.Inventories.enderChest(this.server, this);
+        }
+        return this.enderChest;
+    }
+
+    @Override
+    public org.bukkit.inventory.EntityEquipment getEquipment() {
+        return HostEquipment.of(this);
+    }
+
+    /** The selected hotbar slot (0-8). */
+    public int getHeldSlot() {
+        return Values.i32(this.state, "held_slot", 0);
+    }
+
+    public void setHeldSlot(final int slot) {
+        this.server.call("player.set_held_slot", this.args("slot", slot));
+        this.state.put("held_slot", (long) slot);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public org.bukkit.inventory.ItemStack getItemInHand() {
+        return this.getInventory().getItemInMainHand();
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void setItemInHand(final org.bukkit.inventory.@Nullable ItemStack item) {
+        this.getInventory().setItemInMainHand(item);
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack getItemOnCursor() {
+        return io.papermc.paperrs.host.item.HostItemStack.fromValue(this.server.call("player.cursor", this.args()));
+    }
+
+    @Override
+    public void setItemOnCursor(final org.bukkit.inventory.@Nullable ItemStack item) {
+        this.server.call("player.set_cursor", this.args("item", io.papermc.paperrs.host.item.HostItemStack.toValue(item)));
+    }
+
+    @Override
+    public org.bukkit.inventory.InventoryView getOpenInventory() {
+        return io.papermc.paperrs.host.inventory.Inventories.view(this.server, this, Values.map(this.state.get("open_inventory")));
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openInventory(final org.bukkit.inventory.Inventory inventory) {
+        final io.papermc.paperrs.host.inventory.HostInventory impl = io.papermc.paperrs.host.HostProxies.implOf(inventory, io.papermc.paperrs.host.inventory.HostInventory.class);
+        if (impl == null) {
+            throw new IllegalArgumentException("not an inventory made by Paper-RS: " + inventory);
+        }
+        final Map<String, Object> result = Values.map(this.server.call("player.open_inventory",
+            this.args("inventory", impl.ref(), "title", Components.toJson(impl.title()))));
+        this.refresh(this.server.call("player.state", this.args()));
+        if (!Values.bool(result, "opened", false)) {
+            return null;
+        }
+        this.openTop = inventory;
+        return this.getOpenInventory();
+    }
+
+    @Override
+    public void openInventory(final org.bukkit.inventory.InventoryView view) {
+        this.openInventory(view.getTopInventory());
+    }
+
+    @Override
+    public void closeInventory() {
+        this.closeInventory(org.bukkit.event.inventory.InventoryCloseEvent.Reason.PLUGIN);
+    }
+
+    @Override
+    public void closeInventory(final org.bukkit.event.inventory.InventoryCloseEvent.Reason reason) {
+        this.server.call("player.close_inventory", this.args("reason", reason.name()));
+        this.openTop = null;
+        this.refresh(this.server.call("player.state", this.args()));
+    }
+
+    /** The window closed (InventoryCloseEvent): the opened inventory need not be kept. */
+    public void windowClosed() {
+        this.openTop = null;
+    }
+
+    // --- scoreboard ---------------------------------------------------------------------------
+
+    @Override
+    public org.bukkit.scoreboard.Scoreboard getScoreboard() {
+        return io.papermc.paperrs.host.scoreboard.HostScoreboards.board(this.server, Values.i64(this.state, "scoreboard", 0));
+    }
+
+    @Override
+    public void setScoreboard(final org.bukkit.scoreboard.Scoreboard scoreboard) {
+        final long id = io.papermc.paperrs.host.scoreboard.HostScoreboards.idOf(scoreboard);
+        this.server.call("player.set_scoreboard", this.args("board", id));
+        this.state.put("scoreboard", id);
+    }
+
+    // --- offline player data ------------------------------------------------------------------
+
+    private Map<String, Object> offlineInfo() {
+        return Values.map(this.server.call("offline.get", Values.of("uuid", this.uuid.toString())));
+    }
+
+    @Override
+    public boolean hasPlayedBefore() {
+        return Values.bool(this.offlineInfo(), "played_before", false);
+    }
+
+    @Override
+    public long getFirstPlayed() {
+        return Values.i64(this.offlineInfo(), "first_played", 0);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public long getLastPlayed() {
+        return System.currentTimeMillis();
+    }
+
+    @Override
+    public long getLastLogin() {
+        return Values.i64(this.offlineInfo(), "last_login", 0);
+    }
+
+    @Override
+    public long getLastSeen() {
+        return System.currentTimeMillis();
+    }
+
+    @Override
+    public boolean isBanned() {
+        return Values.bool(this.offlineInfo(), "banned", false);
+    }
+
+    @Override
+    public boolean isWhitelisted() {
+        return Values.bool(this.offlineInfo(), "whitelisted", false);
+    }
+
+    @Override
+    public void setWhitelisted(final boolean value) {
+        this.server.call("offline.set_whitelisted", Values.of("uuid", this.uuid.toString(), "name", this.name, "value", value));
+    }
+
+    @Override
+    public org.bukkit.entity.Player getPlayer() {
+        return this;
+    }
+
+    // --- living entity --------------------------------------------------------------------------
+
+    @Override
+    public void damage(final double amount) {
+        this.server.call("entity.damage", Values.of("id", this.entityId, "amount", amount));
+    }
+
+    @Override
+    public void damage(final double amount, final @Nullable Entity source) {
+        this.server.call("entity.damage", Values.of("id", this.entityId, "amount", amount, "source", Entities.ref(source)));
+    }
+
+    @Override
+    public int getFireTicks() {
+        return Values.i32(this.state, "fire_ticks", 0);
+    }
+
+    @Override
+    public int getRemainingAir() {
+        return Values.i32(this.state, "air", 300);
+    }
+
+    @Override
+    public int getMaximumAir() {
+        return 300;
+    }
+
+    @Override
+    public int getLevel() {
+        return Values.i32(this.state, "xp_level", 0);
+    }
+
+    @Override
+    public float getExp() {
+        return (float) Values.f64(this.state, "xp_progress", 0);
+    }
+
+    @Override
+    public int getTotalExperience() {
+        return Values.i32(this.state, "xp_total", 0);
+    }
+
+    @Override
+    public void giveExp(final int amount) {
+        this.server.call("player.give_exp", this.args("amount", amount));
+    }
+
+    @Override
+    public List<Entity> getNearbyEntities(final double x, final double y, final double z) {
+        final List<Entity> out = new java.util.ArrayList<>(this.getWorld().getNearbyEntities(this.getLocation(), x, y, z));
+        out.remove(this);
+        return out;
+    }
+
+    @Override
+    public String getScoreboardEntryName() {
+        return this.name;
     }
 
     // --- metadata ---------------------------------------------------------------------------

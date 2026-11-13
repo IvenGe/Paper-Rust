@@ -109,6 +109,8 @@ public final class CraftServer extends AbstractServer {
     private final ConsoleCommandSender console;
     private final List<World> worlds = new ArrayList<>();
     private final Map<UUID, HostPlayer> players = Collections.synchronizedMap(new LinkedHashMap<>());
+    private final org.bukkit.craftbukkit.metadata.EntityMetadataStore entityMetadata = new org.bukkit.craftbukkit.metadata.EntityMetadataStore();
+    private volatile long epoch;
     private volatile Component motd;
     private volatile boolean stopping;
     private volatile int currentTick;
@@ -136,9 +138,27 @@ public final class CraftServer extends AbstractServer {
         return this.host.bridge();
     }
 
+    /**
+     * Counts calls between the two processes. Cached state of entities is good until it
+     * changes (the server cannot change anything while plugin code runs without a call).
+     */
+    public long epoch() {
+        return this.epoch;
+    }
+
+    /** Something crossed the bridge (see {@link #epoch()}). */
+    public void advanceEpoch() {
+        this.epoch++;
+    }
+
     /** Calls the Rust server and waits for the answer. */
     public Object call(final String method, final Map<String, Object> args) {
-        return this.bridge().call(method, args);
+        this.epoch++;
+        try {
+            return this.bridge().call(method, args);
+        } finally {
+            this.epoch++;
+        }
     }
 
     /**
@@ -146,6 +166,7 @@ public final class CraftServer extends AbstractServer {
      * everything else; elsewhere it is queued without waiting.
      */
     public void send(final String method, final Map<String, Object> args) {
+        this.epoch++;
         if (this.bridge().isMainThread()) {
             this.bridge().call(method, args);
         } else {
@@ -162,6 +183,10 @@ public final class CraftServer extends AbstractServer {
 
     public PlayerMetadataStore playerMetadata() {
         return this.playerMetadata;
+    }
+
+    public org.bukkit.craftbukkit.metadata.EntityMetadataStore entityMetadata() {
+        return this.entityMetadata;
     }
 
     public Difficulty difficulty() {
@@ -303,8 +328,20 @@ public final class CraftServer extends AbstractServer {
 
     @Override
     public @Nullable Entity getEntity(final UUID uuid) {
-        return this.players.get(uuid);
+        final Player player = this.players.get(uuid);
+        if (player != null) {
+            return player;
+        }
+        for (World world : this.worlds) {
+            final Entity entity = world.getEntity(uuid);
+            if (entity != null) {
+                return entity;
+            }
+        }
+        return null;
     }
+
+    // --- offline players --------------------------------------------------------------------
 
     @Override
     public OfflinePlayer getOfflinePlayer(final UUID id) {
@@ -312,16 +349,111 @@ public final class CraftServer extends AbstractServer {
         if (online != null) {
             return online;
         }
-        throw io.papermc.paperrs.host.Unsupported.feature("Offline players");
+        return new io.papermc.paperrs.host.entity.HostOfflinePlayer(this, id, null);
     }
 
+    /**
+     * By name: an online player, else the name cache ({@code usercache.json}), else the
+     * offline-mode UUID of the name. Paper asks Mojang for unknown names in online mode;
+     * Paper-RS does not block on web requests and uses the offline UUID instead.
+     */
     @Override
     public OfflinePlayer getOfflinePlayer(final String name) {
         final Player online = this.getPlayerExact(name);
         if (online != null) {
             return online;
         }
-        throw io.papermc.paperrs.host.Unsupported.feature("Offline players");
+        final Map<String, Object> info = Values.map(this.call("offline.get", Values.of("name", name)));
+        return new io.papermc.paperrs.host.entity.HostOfflinePlayer(this, Values.uuid(info, "uuid"), Values.str(info, "name", name));
+    }
+
+    @Override
+    public @Nullable OfflinePlayer getOfflinePlayerIfCached(final String name) {
+        final Player online = this.getPlayerExact(name);
+        if (online != null) {
+            return online;
+        }
+        final Object info = this.call("offline.get", Values.of("name", name, "cached_only", true));
+        if (!(info instanceof Map<?, ?>)) {
+            return null;
+        }
+        final Map<String, Object> map = Values.map(info);
+        return new io.papermc.paperrs.host.entity.HostOfflinePlayer(this, Values.uuid(map, "uuid"), Values.str(map, "name", name));
+    }
+
+    @Override
+    public OfflinePlayer[] getOfflinePlayers() {
+        final List<OfflinePlayer> out = new ArrayList<>();
+        for (Object entry : Values.list(this.call("offline.list", Values.of()))) {
+            final Map<String, Object> info = Values.map(entry);
+            final UUID uuid = Values.uuid(info, "uuid");
+            final Player online = this.getPlayer(uuid);
+            out.add(online != null ? online : new io.papermc.paperrs.host.entity.HostOfflinePlayer(this, uuid, Values.str(info, "name", null)));
+        }
+        return out.toArray(new OfflinePlayer[0]);
+    }
+
+    private Set<OfflinePlayer> offlineSet(final String key) {
+        final Set<OfflinePlayer> out = new LinkedHashSet<>();
+        for (Object entry : Values.list(Values.map(this.call("server.whitelist", Values.of())).get(key))) {
+            out.add(this.getOfflinePlayer(Values.uuid(Values.map(entry), "uuid")));
+        }
+        return out;
+    }
+
+    @Override
+    public Set<OfflinePlayer> getOperators() {
+        return this.offlineSet("ops");
+    }
+
+    @Override
+    public Set<OfflinePlayer> getWhitelistedPlayers() {
+        return this.offlineSet("players");
+    }
+
+    // --- inventories, items and scoreboards --------------------------------------------------
+
+    @Override
+    public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final org.bukkit.event.inventory.InventoryType type) {
+        return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, type, type.getDefaultSize(), null);
+    }
+
+    @Override
+    public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final org.bukkit.event.inventory.InventoryType type, final Component title) {
+        return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, type, type.getDefaultSize(), title);
+    }
+
+    @Override
+    public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final org.bukkit.event.inventory.InventoryType type, final String title) {
+        return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, type, type.getDefaultSize(), Components.legacy(title));
+    }
+
+    @Override
+    public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final int size) {
+        return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, org.bukkit.event.inventory.InventoryType.CHEST, size, null);
+    }
+
+    @Override
+    public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final int size, final Component title) {
+        return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, org.bukkit.event.inventory.InventoryType.CHEST, size, title);
+    }
+
+    @Override
+    public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final int size, final String title) {
+        return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, org.bukkit.event.inventory.InventoryType.CHEST, size, Components.legacy(title));
+    }
+
+    @Override
+    public org.bukkit.scoreboard.ScoreboardManager getScoreboardManager() {
+        return io.papermc.paperrs.host.scoreboard.HostScoreboards.manager(this);
+    }
+
+    // --- reloading ----------------------------------------------------------------------------
+
+    /** {@code Bukkit.reload()}: as {@code /reload confirm}; the plugin host is restarted. */
+    @Override
+    public void reload() {
+        this.dispatchCommand(this.console, "reload confirm");
     }
 
     @Override
@@ -550,6 +682,11 @@ public final class CraftServer extends AbstractServer {
     }
 
     @Override
+    public org.bukkit.inventory.ItemFactory getItemFactory() {
+        return io.papermc.paperrs.host.item.HostItemFactory.INSTANCE;
+    }
+
+    @Override
     public UnsafeValues getUnsafe() {
         return this.unsafe;
     }
@@ -734,8 +871,8 @@ public final class CraftServer extends AbstractServer {
     }
 
     @Override
-    public @Nullable org.bukkit.scoreboard.Criteria getScoreboardCriteria(final String name) {
-        return null;
+    public org.bukkit.scoreboard.Criteria getScoreboardCriteria(final String name) {
+        return io.papermc.paperrs.host.scoreboard.HostScoreboards.criteria(name);
     }
 
     @Override

@@ -19,7 +19,11 @@
 //! they are queued as [`MainTask`]s and run between ticks.
 
 pub mod api;
+pub mod entity;
 pub mod events;
+pub mod inventory;
+pub mod offline;
+pub mod scoreboard;
 
 use crate::config::{Config, OnHostCrash};
 use crate::server::{MainTask, Server};
@@ -41,6 +45,18 @@ enum Inbound {
     Return { id: u64, ok: bool, value: Value },
     Call { id: u64, method: String, args: Value },
     Closed(String),
+}
+
+/// State the server keeps for the plugin API.
+#[derive(Default)]
+pub struct PluginData {
+    /// Custom inventories made by plugins, by id.
+    pub inventories: HashMap<u64, inventory::CustomInventory>,
+    pub next_inventory: u64,
+    /// How the plugin host was started, to start it again for `/reload`.
+    pub launcher: Option<Arc<Launcher>>,
+    /// The current host was started by `/reload`: it loads with the players already online.
+    pub reloading: bool,
 }
 
 /// A loaded plugin, as reported by the host.
@@ -81,6 +97,9 @@ pub struct HostConnection {
     main_calls: Mutex<HashSet<u64>>,
     pending: Mutex<HashMap<u64, Pending>>,
     closed: AtomicBool,
+    /// The server is stopping this host on purpose (shutdown or `/reload`): its connection
+    /// going away is not a crash.
+    retiring: AtomicBool,
     slow_call: Duration,
     child: Mutex<Option<Child>>,
     to_main: Sender<MainTask>,
@@ -257,7 +276,7 @@ fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inb
         }
     }
     let _ = main_tx.send(Inbound::Closed(reason.clone()));
-    if !was_closed {
+    if !was_closed && !conn.retiring.load(Ordering::Relaxed) {
         let _ = to_main.send(MainTask::PluginHostDied(reason));
     }
 }
@@ -312,8 +331,9 @@ fn pipe_output(stream: impl std::io::Read + Send + 'static, name: &'static str) 
 }
 
 /// Starts the plugin host. It is given the bridge port to connect to and the token it must
-/// present, and returns the host process if there is one for the server to manage.
-pub type Launcher = Box<dyn FnOnce(&Config, u16, &str) -> Result<Option<Child>> + Send>;
+/// present, and returns the host process if there is one for the server to manage. It is
+/// kept and called again when `/reload` starts a new host.
+pub type Launcher = Box<dyn Fn(&Config, u16, &str) -> Result<Option<Child>> + Send + Sync>;
 
 /// The standard launcher: `java [jvm-args] -jar paper-rs-plugin-host.jar --connect ...`.
 pub fn java_launcher() -> Launcher {
@@ -353,6 +373,12 @@ fn launch_java(config: &Config, port: u16, token: &str) -> Result<Option<Child>>
 /// (constructing them and running `onLoad`, then enabling `STARTUP` plugins). Call before
 /// the server accepts players.
 pub fn start(server: &mut Server, launcher: Launcher) -> Result<()> {
+    let launcher = Arc::new(launcher);
+    server.plugin_data.launcher = Some(launcher.clone());
+    start_with(server, &launcher)
+}
+
+fn start_with(server: &mut Server, launcher: &Launcher) -> Result<()> {
     let config = server.config.clone();
     let settings = &config.paper.plugins;
 
@@ -419,6 +445,7 @@ pub fn start(server: &mut Server, launcher: Launcher) -> Result<()> {
         main_calls: Mutex::new(HashSet::new()),
         pending: Mutex::new(HashMap::new()),
         closed: AtomicBool::new(false),
+        retiring: AtomicBool::new(false),
         slow_call: Duration::from_millis(settings.slow_call_warning_millis.max(1)),
         child: Mutex::new(child),
         to_main: server.shared.to_main.clone(),
@@ -428,8 +455,69 @@ pub fn start(server: &mut Server, launcher: Launcher) -> Result<()> {
     std::thread::Builder::new().name("Plugin Bridge Reader".into()).spawn(move || reader_loop(reader_conn, reader, main_tx, to_main))?;
     server.plugins = Some(conn.clone());
 
+    // The host knows the players handed over in WELCOME (after `/reload`).
+    for id in server.player_order.clone() {
+        if let Some(p) = server.players.get(&id) {
+            let state = api::player_state(server, p);
+            server.plugin_state_cache.insert(id, state);
+        }
+    }
     let loaded = conn.call(server, "host.load", Value::Null).map_err(|e| anyhow!("loading plugins failed: {e}"))?;
     events::apply_plugin_list(server, &loaded);
+    Ok(())
+}
+
+/// `/reload confirm`: disables every plugin and loads them again from `plugins/`.
+///
+/// Paper reloads plugins inside its own JVM. Here the plugin host is stopped (plugins see
+/// `onDisable`) and a new one is started with the same launcher; it loads the plugins from
+/// scratch (`onLoad`, `onEnable`) with the online players already known, so no join events
+/// fire, then fires `ServerLoadEvent` with `LoadType.RELOAD`. Nothing of the old host's Java
+/// state survives: custom inventories are closed and dropped, players go back to the main
+/// scoreboard (the main scoreboard itself is kept, since the server owns it), and scheduled
+/// tasks and metadata are gone.
+pub fn reload(server: &mut Server) -> Result<()> {
+    let launcher = server.plugin_data.launcher.clone().ok_or_else(|| anyhow!("Java plugins are not enabled"))?;
+    log::info!("Reloading plugins: stopping the plugin host");
+    // Windows showing plugin inventories close (their holders lived in the old host).
+    for id in server.player_order.clone() {
+        let custom = server.players.get(&id).and_then(|p| p.open_menu.as_ref()).is_some_and(|m| matches!(m.kind, crate::server::containers::MenuKind::Custom { .. }));
+        if custom {
+            server.close_menu_with_reason(id, true, "PLUGIN");
+        }
+    }
+    if let Some(conn) = server.plugins.clone() {
+        conn.retiring.store(true, Ordering::Relaxed);
+        if !conn.is_closed() {
+            if let Err(e) = conn.call(server, "host.shutdown", Value::Null) {
+                log::warn!("The plugin host did not shut down cleanly: {e}");
+            }
+        }
+        conn.kill();
+    }
+    server.plugins = None;
+    *server.shared.plugin_host.write() = None;
+    server.plugin_commands.clear();
+    server.plugin_events.clear();
+    server.plugin_state_cache.clear();
+    server.plugin_list.clear();
+    server.plugin_data.inventories.clear();
+    server.reset_plugin_scoreboards();
+
+    log::info!("Reloading plugins: starting a new plugin host");
+    server.plugin_data.reloading = true;
+    let started = start_with(server, &launcher);
+    server.plugin_data.reloading = false;
+    if let Err(e) = started {
+        if let Some(conn) = server.plugins.take() {
+            conn.kill();
+        }
+        server.resend_command_trees();
+        return Err(e);
+    }
+    post_world(server);
+    *server.shared.plugin_host.write() = server.plugins.clone();
+    server.resend_command_trees();
     Ok(())
 }
 
@@ -445,6 +533,7 @@ pub fn post_world(server: &mut Server) {
 /// Disables all plugins and stops the host.
 pub fn shutdown(server: &mut Server) {
     let Some(conn) = server.plugins.clone() else { return };
+    conn.retiring.store(true, Ordering::Relaxed);
     if !conn.is_closed() {
         if let Err(e) = conn.call(server, "host.shutdown", Value::Null) {
             log::warn!("The plugin host did not shut down cleanly: {e}");
@@ -464,6 +553,15 @@ pub fn host_died(server: &mut Server, reason: &str) {
     for plugin in &mut server.plugin_list {
         plugin.enabled = false;
     }
+    // What the plugins made is gone with them: their windows and their scoreboards.
+    for id in server.player_order.clone() {
+        let custom = server.players.get(&id).and_then(|p| p.open_menu.as_ref()).is_some_and(|m| matches!(m.kind, crate::server::containers::MenuKind::Custom { .. }));
+        if custom {
+            server.close_menu_with_reason(id, true, "PLUGIN");
+        }
+    }
+    server.plugin_data.inventories.clear();
+    server.reset_plugin_scoreboards();
     match server.config.paper.plugins.on_host_crash {
         OnHostCrash::Shutdown => {
             log::error!("The plugin host stopped unexpectedly ({reason}). Stopping the server so plugins that protect the world are not silently missing.");

@@ -92,6 +92,8 @@ impl CommandRegistry {
             Builtin { name: "stop", aliases: &[], description: "Stops the server", usage: "/stop", min_op: 4, handler: cmd_stop, completer: no_completions },
             Builtin { name: "version", aliases: &["ver", "about"], description: "Shows the server version", usage: "/version", min_op: 0, handler: cmd_version, completer: no_completions },
             Builtin { name: "plugins", aliases: &["pl"], description: "Lists the loaded plugins", usage: "/plugins", min_op: 0, handler: cmd_plugins, completer: no_completions },
+            // Paper's /reload: restarts the plugin host (see `plugins::reload`).
+            Builtin { name: "reload", aliases: &["rl"], description: "Reloads the server's plugins", usage: "/reload [confirm]", min_op: 4, handler: cmd_reload, completer: complete_reload },
         ];
         let mut by_label = HashMap::new();
         for (i, b) in builtins.iter().enumerate() {
@@ -997,6 +999,43 @@ fn cmd_version(server: &mut Server, source: &CommandSource, _: &[&str]) {
             paper_data::VERSION_NAME
         )),
     );
+}
+
+fn complete_reload(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {
+    if args.len() <= 1 {
+        vec!["confirm".to_owned()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Paper's `/reload`: asks for confirmation, then disables every plugin and loads them again.
+/// Paper-RS does this by restarting the plugin host (see `plugins::reload`); it runs after
+/// the current tick task, so a plugin can trigger it without pulling the host out from
+/// under its own call.
+fn cmd_reload(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    if server.plugin_data.launcher.is_none() {
+        server.feedback(source, Component::text("Java plugins are not enabled on this server; there is nothing to reload.").color("red"));
+        return;
+    }
+    if args.first().is_none_or(|a| !a.eq_ignore_ascii_case("confirm")) {
+        server.feedback(source, Component::text("Are you sure you wish to reload your server? Doing so may cause bugs and memory leaks. It is recommended to restart instead of using /reload. To confirm, please type ").color("red").append(Component::text("/reload confirm").color("yellow")));
+        return;
+    }
+    let warning = Component::text("Please note that this command is not supported and may cause issues when using some plugins.").color("red");
+    let restart = Component::text("If you encounter any issues please use the /stop command to restart your server.").color("red");
+    server.broadcast_message(&warning);
+    server.broadcast_message(&restart);
+    let _ = server.shared.to_main.send(super::MainTask::Run(Box::new(move |server| {
+        let done = match crate::plugins::reload(server) {
+            Ok(()) => Component::text("Reload complete.").color("green"),
+            Err(e) => {
+                log::error!("Reloading plugins failed: {e:#}");
+                Component::text(format!("Reloading plugins failed: {e}")).color("red")
+            }
+        };
+        server.broadcast_message(&done);
+    })));
 }
 
 /// Lists plugins like Paper's `/plugins`: Paper plugins and Bukkit plugins separately.
