@@ -58,7 +58,7 @@ fn vegetation_on(state: u32) -> bool {
 }
 
 /// `updateShape` of the blocks without a dedicated module.
-pub fn update_shape(level: &mut Level, state: u32, pos: BlockPos, dir: Dir, neighbor_pos: BlockPos, neighbor_state: u32) -> u32 {
+pub fn update_shape(level: &mut Level, state: u32, pos: BlockPos, dir: Dir, _neighbor_pos: BlockPos, neighbor_state: u32) -> u32 {
     let survive = |level: &Level| can_survive(level, state, pos);
     match super::kind(state) {
         Kind::Torch | Kind::RedstoneTorch | Kind::PressurePlate { .. } if dir == Dir::Down && !survive(level) => blocks::AIR,
@@ -81,10 +81,7 @@ pub fn update_shape(level: &mut Level, state: u32, pos: BlockPos, dir: Dir, neig
             set_bool(state, dir.name(), attach)
         }
         Kind::Stairs if dir.axis() != super::Axis::Y => with(state, "shape", stairs_shape(level, state, pos)),
-        _ => {
-            let _ = neighbor_pos;
-            state
-        }
+        _ => state,
     }
 }
 

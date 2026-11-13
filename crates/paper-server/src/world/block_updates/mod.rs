@@ -676,7 +676,7 @@ impl<'w> Level<'w> {
     // --- block behaviour dispatch --------------------------------------------------------
 
     /// `onPlace`.
-    fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, moved: bool) {
+    fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, _moved: bool) {
         match kind(state) {
             Kind::Water | Kind::Lava => fluid::on_place(self, state, pos),
             Kind::RedstoneWire => redstone::wire_on_place(self, state, pos, old),
@@ -690,7 +690,6 @@ impl<'w> Level<'w> {
             Kind::Piston { .. } => piston::on_place(self, state, pos, old),
             _ => {}
         }
-        let _ = moved;
     }
 
     /// `affectNeighborsAfterRemoval`: the old block reacts to having been replaced.
@@ -707,8 +706,7 @@ impl<'w> Level<'w> {
     }
 
     /// `neighborChanged`: a neighbour changed; `source_block` is its block id.
-    fn neighbor_changed(&mut self, state: u32, pos: BlockPos, source_block: u32, moved: bool) {
-        let _ = moved;
+    fn neighbor_changed(&mut self, state: u32, pos: BlockPos, source_block: u32, _moved: bool) {
         match kind(state) {
             Kind::Water | Kind::Lava => fluid::neighbor_changed(self, state, pos),
             Kind::RedstoneWire => redstone::wire_neighbor_changed(self, state, pos),
@@ -728,11 +726,14 @@ impl<'w> Level<'w> {
     /// `updateShape`: the block's state given that its neighbour in `dir` is now
     /// `neighbor_state`. Air means the block breaks.
     fn update_shape(&mut self, state: u32, pos: BlockPos, dir: Dir, neighbor_pos: BlockPos, neighbor_state: u32) -> u32 {
-        if state::get_bool(state, "waterlogged") {
+        // Blocks holding water (waterlogged blocks, kelp, seagrass, bubble columns) let it
+        // flow again when a neighbour changes.
+        let k = kind(state);
+        if !matches!(k, Kind::Water | Kind::Lava) && fluid::fluid_state(state).fluid == fluid::Fluid::Water {
             let water = fluid::Fluid::Water;
             self.schedule_fluid_tick(pos, fluid::FluidState::source(water).type_id(), fluid::tick_delay(water, self.settings()));
         }
-        match kind(state) {
+        match k {
             Kind::Water | Kind::Lava => fluid::update_shape(self, state, pos, neighbor_state),
             Kind::RedstoneWire => redstone::wire_update_shape(self, state, pos, dir, neighbor_state),
             Kind::Repeater => redstone::repeater_update_shape(self, state, pos, dir, neighbor_state),
@@ -771,12 +772,8 @@ impl<'w> Level<'w> {
     fn trigger_event(&mut self, state: u32, pos: BlockPos, action: u8, param: u8) -> bool {
         match kind(state) {
             Kind::NoteBlock => redstone::note_trigger(self, state, pos),
-            Kind::Comparator => true,
             Kind::Piston { .. } => piston::trigger_event(self, state, pos, action, param),
-            _ => {
-                let _ = (action, param);
-                false
-            }
+            _ => false,
         }
     }
 

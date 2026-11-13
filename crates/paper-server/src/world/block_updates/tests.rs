@@ -772,3 +772,4 @@ fn plants_need_ground_and_grass_gets_snowy() {
     set(&mut w, p(4, Y, 4), blocks::AIR);
     assert!(!get_bool(get(&w, p(4, Y - 1, 4)), "snowy"));
 }
+
