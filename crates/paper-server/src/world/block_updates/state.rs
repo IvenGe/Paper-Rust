@@ -323,6 +323,10 @@ pub enum Kind {
     /// Fire and soul fire.
     Fire,
     NetherPortal,
+    /// Dispensers and droppers: fired by a rising redstone signal.
+    Dispenser,
+    /// Hoppers: locked while powered.
+    Hopper,
 }
 
 fn classify(name: &str) -> Kind {
@@ -353,6 +357,8 @@ fn classify(name: &str) -> Kind {
         "moving_piston" => return Kind::MovingPiston,
         "tnt" => return Kind::Tnt,
         "fire" | "soul_fire" => return Kind::Fire,
+        "dispenser" | "dropper" => return Kind::Dispenser,
+        "hopper" => return Kind::Hopper,
         "nether_portal" => return Kind::NetherPortal,
         "grass_block" | "podzol" | "mycelium" => return Kind::SnowyDirt,
         "iron_bars" | "glass_pane" => return Kind::Pane,

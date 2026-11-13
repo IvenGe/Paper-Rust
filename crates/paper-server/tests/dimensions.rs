@@ -105,7 +105,16 @@ fn nether_portals_lead_to_the_nether_and_back() {
     let back: play::Respawn = alice.find(TIMEOUT, |_: &play::Respawn| true).expect("back to the overworld");
     assert_eq!(back.spawn.dimension_name, "minecraft:overworld");
     let home: play::PlayerPosition = alice.expect();
-    assert!((home.x - 13.5).abs() < 2.0 && (home.z - 8.5).abs() < 2.0, "arrives at the original portal: {home:?}");
+    let (hx, hy, hz) = (home.x.floor() as i32, home.y.floor() as i32, home.z.floor() as i32);
+    let at_portal = server.handle.run(move |s| s.worlds[0].block_at(hx, hy, hz).map(|b| blocks::block_of_state(b).name)).unwrap();
+    assert_eq!(at_portal, Some("minecraft:nether_portal"), "arrives in a portal: {home:?}");
+    // The original portal is found when the way back lands within vanilla's search radius
+    // (128 blocks); the Nether portal may have been built up to 16 blocks from the scaled
+    // position, so with some seeds a new portal is made instead, as in vanilla.
+    let (back_x, back_z) = (arrived.x * 8.0, arrived.z * 8.0);
+    if (back_x - 13.5).abs() <= 120.0 && (back_z - 8.5).abs() <= 120.0 {
+        assert!((home.x - 13.5).abs() < 2.0 && (home.z - 8.5).abs() < 2.0, "arrives at the original portal: {home:?}");
+    }
     server.stop();
 }
 

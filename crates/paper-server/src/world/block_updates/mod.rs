@@ -90,6 +90,10 @@ pub enum Effect {
     Drops { pos: BlockPos, state: u32, block_entity: Option<Compound> },
     /// Powered TNT was primed (the block is already gone): the server spawns the entity.
     PrimeTnt { pos: BlockPos, igniter: Option<i32> },
+    /// A dispenser or dropper fires (its scheduled tick ran).
+    Dispense { pos: BlockPos },
+    /// A pressed pressure plate checks whether anything still stands on it.
+    CheckPlate { pos: BlockPos },
 }
 
 /// Game rules and dimension properties block updates depend on.
@@ -702,6 +706,31 @@ impl<'w> Level<'w> {
             Kind::Piston { .. } => piston::on_place(self, state, pos, old),
             Kind::Tnt if kind(old) != Kind::Tnt => self.prime_if_powered(pos),
             Kind::Fire => fire::on_place(self, state, pos, old),
+            Kind::Dispenser | Kind::Hopper if kind(old) != kind(state) => self.machine_power_changed(state, pos),
+            _ => {}
+        }
+    }
+
+    /// Dispensers fire on a rising signal (also from the block above them, vanilla's
+    /// quasi-connectivity); hoppers stop while powered.
+    fn machine_power_changed(&mut self, state: u32, pos: BlockPos) {
+        match kind(state) {
+            Kind::Dispenser => {
+                let powered = self.has_neighbor_signal(pos) || self.has_neighbor_signal(pos.rel(Dir::Up));
+                let triggered = state::get_bool(state, "triggered");
+                if powered && !triggered {
+                    self.schedule_tick(pos, state::block_id(state), 4);
+                    self.set_block(pos, state::with(state, "triggered", "true"), flags::CLIENTS);
+                } else if !powered && triggered {
+                    self.set_block(pos, state::with(state, "triggered", "false"), flags::CLIENTS);
+                }
+            }
+            Kind::Hopper => {
+                let enabled = !self.has_neighbor_signal(pos);
+                if enabled != state::get_bool(state, "enabled") {
+                    self.set_block(pos, state::with(state, "enabled", if enabled { "true" } else { "false" }), flags::CLIENTS);
+                }
+            }
             _ => {}
         }
     }
@@ -743,6 +772,7 @@ impl<'w> Level<'w> {
             Kind::Piston { .. } => piston::check_if_extend(self, state, pos),
             Kind::PistonHead => piston::head_neighbor_changed(self, state, pos, source_block),
             Kind::Tnt => self.prime_if_powered(pos),
+            Kind::Dispenser | Kind::Hopper => self.machine_power_changed(state, pos),
             _ => {}
         }
     }
@@ -791,6 +821,8 @@ impl<'w> Level<'w> {
             Kind::Observer => redstone::observer_tick(self, state, pos),
             Kind::Button { .. } => redstone::button_tick(self, state, pos),
             Kind::Fire => fire::tick(self, state, pos),
+            Kind::Dispenser => self.world.updates.effects.push(Effect::Dispense { pos }),
+            Kind::PressurePlate { .. } => self.world.updates.effects.push(Effect::CheckPlate { pos }),
             _ => {}
         }
     }

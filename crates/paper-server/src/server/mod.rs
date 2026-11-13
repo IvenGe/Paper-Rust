@@ -17,6 +17,7 @@ pub mod commands;
 mod handlers;
 mod join;
 mod combat;
+mod machines;
 pub mod containers;
 pub mod entities;
 pub mod loot;
@@ -478,6 +479,8 @@ impl Server {
         self.tick_entities();
         self.tick_spawning();
         self.tick_furnaces();
+        self.tick_hoppers();
+        self.tick_pressure_plates();
         self.tick_tracker();
 
         if self.tick % 100 == 0 {

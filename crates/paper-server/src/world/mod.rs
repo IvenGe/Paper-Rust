@@ -444,7 +444,7 @@ impl World {
             return None;
         }
         // A replaced block entity is handed to the server (containers drop their contents).
-        if let Some(nbt) = block_entity.filter(|_| !chunk.block_entities.contains_key(&key)) {
+        if let Some(nbt) = block_entity.filter(|_| blocks::block_id_of_state(old) != blocks::block_id_of_state(state)) {
             self.removed_block_entities.push((BlockPos::new(x, y, z), old, nbt));
         }
         let light = if chunk.lit { light::update_after_block_change(&mut self.chunks, self.has_skylight, x, y, z, old, state) } else { HashSet::new() };

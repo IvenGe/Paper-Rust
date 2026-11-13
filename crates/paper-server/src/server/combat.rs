@@ -405,7 +405,10 @@ impl Server {
             m.brain.path.clear();
         }
         let rules = &self.worlds[world].rules;
-        if rules.bool("mob_drops") && !baby {
+        // Baby animals drop nothing; baby monsters (zombies) drop as adults, with 2.5 times
+        // the experience.
+        let baby_animal = baby && info.category != "MONSTER";
+        if rules.bool("mob_drops") && !baby_animal {
             let tool = killer.and_then(|k| self.players.get(&k)).map(|p| p.held_item().clone());
             let table = format!("minecraft:entities/{}", info.name.strip_prefix("minecraft:").unwrap_or(&info.name));
             let drops = if self.loot.available() {
@@ -421,6 +424,7 @@ impl Server {
             }
             if killer.is_some() && info.experience > 0 {
                 let xp = if info.category == "MONSTER" { info.experience } else { info.experience + rand::thread_rng().gen_range(0..3) };
+                let xp = if baby { (xp as f64 * 2.5) as i32 } else { xp };
                 self.award_experience(world, pos, xp);
             }
         }

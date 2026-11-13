@@ -44,6 +44,9 @@ pub enum ContainerBlock {
     EnderChest,
     CraftingTable,
     Furnace(&'static str),
+    Hopper,
+    /// Dispensers and droppers (nine slots).
+    Dispenser,
 }
 
 pub fn container_block(state: u32) -> Option<ContainerBlock> {
@@ -55,15 +58,19 @@ pub fn container_block(state: u32) -> Option<ContainerBlock> {
         "minecraft:furnace" => ContainerBlock::Furnace("minecraft:smelting"),
         "minecraft:smoker" => ContainerBlock::Furnace("minecraft:smoking"),
         "minecraft:blast_furnace" => ContainerBlock::Furnace("minecraft:blasting"),
+        "minecraft:hopper" => ContainerBlock::Hopper,
+        "minecraft:dispenser" | "minecraft:dropper" => ContainerBlock::Dispenser,
         _ => return None,
     })
 }
 
 /// Number of item slots a block entity keeps.
-fn storage_size(state: u32) -> usize {
+pub fn storage_size(state: u32) -> usize {
     match container_block(state) {
         Some(ContainerBlock::Chest | ContainerBlock::Barrel) => 27,
         Some(ContainerBlock::Furnace(_)) => 3,
+        Some(ContainerBlock::Hopper) => 5,
+        Some(ContainerBlock::Dispenser) => 9,
         _ => 0,
     }
 }
@@ -133,6 +140,10 @@ impl Server {
             .collect();
         nbt.insert("Items", Tag::List(list));
         c.dirty = true;
+        // Comparators reading the container re-evaluate (`setChanged`).
+        let block = blocks::block_id_of_state(state);
+        crate::world::block_updates::Level::new(&mut self.worlds[world]).update_neighbour_for_output_signal(pos, block);
+        self.publish_block_updates(world);
     }
 
     fn block_entity_data(&self, world: usize, pos: BlockPos) -> Option<&Compound> {
@@ -190,7 +201,7 @@ impl Server {
     }
 
     /// The other half of a double chest, if it is still there.
-    fn double_chest_partner(&self, world: usize, pos: BlockPos, state: u32) -> Option<BlockPos> {
+    pub(super) fn double_chest_partner(&self, world: usize, pos: BlockPos, state: u32) -> Option<BlockPos> {
         let ty = blocks::property(state, "type")?;
         let facing = blocks::property(state, "facing")?;
         // LEFT pairs with the chest on its clockwise side, RIGHT with the counter-clockwise one.
@@ -263,6 +274,11 @@ impl Server {
                 }
             }
             ContainerBlock::Barrel => (MenuKind::Container { world, positions: vec![pos] }, "minecraft:generic_9x3", "container.barrel"),
+            ContainerBlock::Hopper => (MenuKind::Container { world, positions: vec![pos] }, "minecraft:hopper", "container.hopper"),
+            ContainerBlock::Dispenser => {
+                let title = if blocks::block_of_state(state).name == "minecraft:dropper" { "container.dropper" } else { "container.dispenser" };
+                (MenuKind::Container { world, positions: vec![pos] }, "minecraft:generic_3x3", title)
+            }
             ContainerBlock::EnderChest => (MenuKind::EnderChest, "minecraft:generic_9x3", "container.enderchest"),
             ContainerBlock::CraftingTable => (MenuKind::CraftingTable, "minecraft:crafting", "container.crafting"),
             ContainerBlock::Furnace(recipe_type) => {
@@ -442,8 +458,10 @@ impl Server {
         player.equipment_dirty = true;
         match kind {
             MenuKind::Container { world, positions } => {
+                // Each block holds an equal share (a double chest is two 27-slot halves).
+                let per = container_len / positions.len().max(1);
                 for (i, pos) in positions.iter().enumerate() {
-                    self.set_container_items(*world, *pos, &slots[i * 27..(i + 1) * 27]);
+                    self.set_container_items(*world, *pos, &slots[i * per..(i + 1) * per]);
                 }
             }
             MenuKind::EnderChest => player.ender_items.clone_from_slice(&slots[..27]),
@@ -535,7 +553,7 @@ impl Server {
         }
         // Others looking into the same container see its slots change.
         if let Some(MenuKind::Container { world, positions }) = &kind {
-            let size = positions.len() * 27;
+            let size = slots.len() - 36;
             let changed: Vec<usize> = (0..size).filter(|i| before[*i] != slots[*i]).collect();
             if !changed.is_empty() {
                 self.broadcast_container_slots(id, *world, positions, &slots[..size], &changed);

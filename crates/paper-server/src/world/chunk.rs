@@ -329,6 +329,14 @@ impl Chunk {
         if blocks::flags(old) & blocks::FLAG_BLOCK_ENTITY != 0 && blocks::block_id_of_state(old) != blocks::block_id_of_state(state) {
             self.block_entities.remove(&(y, z as u8, x as u8));
         }
+        // A new block with a block entity gets an empty one (whose type is named like the
+        // block: chests, hoppers, furnaces, ...), so it ticks and is sent to clients.
+        if blocks::flags(state) & blocks::FLAG_BLOCK_ENTITY != 0 && !self.block_entities.contains_key(&(y, z as u8, x as u8)) {
+            let name = blocks::block_of_state(state).name;
+            if paper_data::registries::id("minecraft:block_entity_type", name).is_some() {
+                self.block_entities.insert((y, z as u8, x as u8), paper_nbt::Compound::new().with("id", paper_nbt::Tag::String(name.to_owned())));
+            }
+        }
         self.dirty = true;
         self.revision += 1;
         Some(old)

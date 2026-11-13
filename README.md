@@ -83,7 +83,14 @@ What works:
   that break blocks and hurt and push entities. Blocks drop their loot when broken.
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
-  that smelt over time; vanilla's click rules (shift-clicks, drags, number keys).
+  that smelt over time, hoppers, droppers and dispensers; vanilla's click rules
+  (shift-clicks, drags, number keys).
+* **Redstone with items and entities**: hoppers move items between containers (furnace
+  sides included), pick up dropped items and lock when powered; droppers and dispensers
+  fire on a rising signal (also from above), droppers into containers in front of them,
+  dispensers shooting arrows, pouring and scooping buckets, priming TNT and lighting fire;
+  pressure plates (wooden, stone, weighted) are pressed by players, mobs and items;
+  comparators read container contents; redstone primes TNT.
 * **Dimensions**: the Nether and the End as separate worlds in CraftBukkit's layout
   (`world_nether/DIM-1`, `world_the_end/DIM1`; `allow-nether` in `server.properties`,
   `allow-end` in `config/paper-rs.toml`). Nether portals are lit with flint and steel or fire
@@ -120,9 +127,10 @@ Not yet:
   cavern over a lava sea; the main End island with an open exit portal, no dragon fight, no
   outer islands or end cities).
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, breeding); status effects, beds, enchanting and anvils are missing. Pressure
-  plates, tripwires, dispensers, droppers and hoppers do not react yet, and pistons do not
-  push entities.
+  trading, breeding); status effects, beds, enchanting and anvils are missing. Tripwires,
+  crafters, observers of entities and brewing stands do not work yet, dispensers only know
+  the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
+  entities.
 * Plugin API: item stacks and inventories, offline players, entities other than players,
   block data, scoreboards, boss bars, creating worlds, registry and tag lifecycle events,
   `/reload`.
