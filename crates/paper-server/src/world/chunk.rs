@@ -245,6 +245,8 @@ pub struct Chunk {
     pub dirty: bool,
     /// Incremented on every change that affects what clients see.
     pub revision: u64,
+    /// Scheduled block and fluid ticks (block updates; see `world::ticks`).
+    pub ticks: super::ticks::ChunkTicks,
 }
 
 fn motion_blocking(state: u32) -> bool {
@@ -267,6 +269,7 @@ impl Chunk {
             lit: false,
             dirty: false,
             revision: 0,
+            ticks: Default::default(),
         }
     }
 

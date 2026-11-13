@@ -9,10 +9,12 @@
 //!                                                         packet requested ──► encode job
 //! ```
 
+pub mod block_updates;
 pub mod chunk;
 pub mod generator;
 pub mod light;
 pub mod storage;
+pub mod ticks;
 
 use chunk::{Chunk, ChunkPos, LightSection};
 use generator::Generator;
@@ -84,6 +86,9 @@ pub struct World {
     pub biome_count: u32,
     /// Where the world is saved; `None` keeps it in memory only.
     pub storage: Option<Arc<WorldStorage>>,
+    /// Block updates: scheduled tick bookkeeping, block events and what clients must be told
+    /// (see `world::block_updates`).
+    pub updates: block_updates::BlockUpdateState,
     /// Players (or other holders) wanting each chunk loaded and lit.
     tickets: HashMap<ChunkPos, u32>,
     /// Ticketed chunks that are not lit yet, in request order.
@@ -128,6 +133,7 @@ impl World {
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
             storage: None,
+            updates: block_updates::BlockUpdateState::new(dimension, seed),
             tickets: HashMap::new(),
             wanted: VecDeque::new(),
             generating: HashSet::new(),
@@ -277,7 +283,9 @@ impl World {
             WorldEvent::Terrain(chunk) => {
                 self.generating.remove(&chunk.pos);
                 // A chunk that appeared meanwhile (e.g. loaded another way) wins.
-                self.chunks.entry(chunk.pos).or_insert(*chunk);
+                let chunk = self.chunks.entry(chunk.pos).or_insert(*chunk);
+                // Block updates: ticks saved with the chunk count from now.
+                chunk.ticks.unpack(self.age);
                 None
             }
             WorldEvent::Light { pos, stamp, sky, block } => {
@@ -339,7 +347,7 @@ impl World {
         let before = self.chunks.len();
         let tickets = &self.tickets;
         let (generating, lighting) = (&self.generating, &self.lighting);
-        let (storage, has_skylight) = (&self.storage, self.has_skylight);
+        let (storage, has_skylight, age) = (&self.storage, self.has_skylight, self.age);
         self.chunks.retain(|pos, chunk| {
             for dz in -1..=1 {
                 for dx in -1..=1 {
@@ -351,7 +359,7 @@ impl World {
             }
             if chunk.dirty {
                 match storage {
-                    Some(storage) => storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight }),
+                    Some(storage) => storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age) }),
                     None => return true,
                 }
             }
@@ -397,7 +405,7 @@ impl World {
         let Some(storage) = &self.storage else { return 0 };
         let mut saved = 0;
         for chunk in self.chunks.values_mut().filter(|c| c.dirty) {
-            storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight });
+            storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight, ticks: chunk.ticks.save(self.age) });
             chunk.dirty = false;
             saved += 1;
         }

@@ -73,6 +73,18 @@ packet! {
     }
 }
 
+packet! {
+    /// A block action the client animates or plays: note block notes, piston moves, chest
+    /// lids, bells (vanilla's `ClientboundBlockEventPacket`).
+    BlockEvent = play::clientbound::BLOCK_EVENT {
+        pos: BlockPos,
+        action: u8,
+        param: u8,
+        /// Protocol id in `minecraft:block`.
+        block: VarInt,
+    }
+}
+
 /// Several block changes within one chunk section.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SectionBlocksUpdate {

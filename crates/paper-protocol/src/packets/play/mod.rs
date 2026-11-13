@@ -73,6 +73,7 @@ mod tests {
         round(MoveEntityPosRot { entity_id: 3, dx: 1, dy: 2, dz: 3, yaw: 90.0, pitch: 0.0, on_ground: false });
         round(SectionBlocksUpdate { section_x: -3, section_y: -4, section_z: 1_000_000, blocks: vec![(0, 15, 7, 12345), (15, 0, 1, 0)] });
         round(ForgetLevelChunk { x: -1, z: 2 });
+        round(BlockEvent { pos: BlockPos::new(1, -60, -3), action: 0, param: 4, block: VarInt(118) });
         let mut root = CommandNode::root();
         root.children = vec![1, 3];
         let mut tp = CommandNode::literal("tp").executable();
