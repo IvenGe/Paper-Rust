@@ -58,7 +58,7 @@ impl Server {
                 .chunks
                 .iter()
                 .flat_map(|(cpos, chunk)| {
-                    chunk.block_entities.iter().filter_map(move |((y, z, x), nbt)| (nbt.string("id") == Some("minecraft:mob_spawner")).then(|| BlockPos::new(cpos.x * 16 + *x as i32, *y, cpos.z * 16 + *z as i32)))
+                    chunk.block_entities.iter().filter(|(_, nbt)| nbt.string("id") == Some("minecraft:mob_spawner")).map(move |((y, z, x), _)| BlockPos::new(cpos.x * 16 + *x as i32, *y, cpos.z * 16 + *z as i32))
                 })
                 .collect();
             for pos in spawners {

@@ -32,6 +32,7 @@ pub(crate) mod playerdata;
 pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
+mod animals;
 mod spawners;
 pub mod workstations;
 pub mod survival;

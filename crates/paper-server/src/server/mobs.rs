@@ -77,6 +77,8 @@ pub enum SpawnReason {
     Egg,
     /// A mob spawner block.
     Spawner,
+    /// Born to two animals.
+    Breeding,
 }
 
 // --- light and sky ---------------------------------------------------------------------------
@@ -310,6 +312,10 @@ impl Server {
             variant: 0,
             sheared: false,
             no_player_ticks: 0,
+            age: 0,
+            in_love: 0,
+            love_cause: None,
+            egg_time: rng.gen_range(6000..12000),
         };
         // Equipment and variants picked when spawning (`finalizeSpawn`).
         match name.as_str() {
@@ -340,6 +346,9 @@ impl Server {
                 mob.baby = rng.gen::<f32>() < 0.05;
             }
         }
+        if mob.baby {
+            mob.age = -24000;
+        }
         let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::Mob(Box::new(mob)));
         e.yaw = rng.gen_range(0.0..360.0);
         e.head_yaw = e.yaw;
@@ -357,6 +366,7 @@ impl Server {
         if self.mob_environment(world, id) {
             return;
         }
+        self.tick_animal(world, id);
         self.mob_ai(world, id);
         self.mob_travel(world, id);
         self.mob_sounds(world, id);
@@ -509,6 +519,7 @@ impl Server {
         let mut attack: Option<(i32, f32)> = None;
         let mut shoot: Option<(i32, Vec3)> = None;
         let mut explode = false;
+        let mut breed_with: Option<i32> = None;
 
         // Movement goal.
         brain.speed_factor = 1.0;
@@ -583,8 +594,52 @@ impl Server {
                 }
             }
         } else if matches!(kind, Behavior::Animal | Behavior::Neutral | Behavior::Melee | Behavior::Archer | Behavior::Creeper) {
-            // Wander now and then (`RandomStrollGoal`), look at nearby players.
-            if brain.path.is_empty() {
+            // Animals in love look for a partner (`BreedGoal`); their food in a player's hand
+            // tempts them (`TemptGoal`).
+            let mut busy = false;
+            if kind == Behavior::Animal && mob.in_love > 0 && mob.age == 0 {
+                let around = e.bounding_box().inflate(8.0, 8.0, 8.0);
+                let partner = w
+                    .entities_in(&around)
+                    .into_iter()
+                    .filter(|o| *o != id)
+                    .filter_map(|o| w.entities.get(&o).map(|oe| (o, oe)))
+                    .filter(|(_, oe)| oe.info.name == info.name && oe.mob().is_some_and(|m| m.in_love > 0 && m.age == 0 && !m.living.is_dead()))
+                    .min_by(|a, b| a.1.pos.distance_squared(pos).total_cmp(&b.1.pos.distance_squared(pos)));
+                match partner {
+                    Some((other, oe)) => {
+                        busy = true;
+                        goal = Some(oe.pos);
+                        brain.look_at = Some(oe.eye_pos());
+                        brain.love_time += 1;
+                        if brain.love_time >= 60 && oe.pos.distance_squared(pos) < 9.0 {
+                            breed_with = Some(other);
+                        }
+                    }
+                    None => brain.love_time = 0,
+                }
+            }
+            if kind == Behavior::Animal && !busy {
+                let tempting = self
+                    .players
+                    .values()
+                    .filter(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator)
+                    .filter(|p| [&p.inventory[super::player::HOTBAR_START + p.held_slot as usize], &p.inventory[super::player::OFFHAND_SLOT]].iter().any(|s| s.0.as_ref().is_some_and(|st| super::animals::is_food(&info.name, st.item))))
+                    .map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z))
+                    .filter(|at| at.distance_squared(pos) < 100.0)
+                    .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+                if let Some(at) = tempting {
+                    busy = true;
+                    brain.speed_factor = 1.25;
+                    brain.look_at = Some(Vec3::new(at.x, at.y + 1.62, at.z));
+                    if at.distance_squared(pos) > 6.25 {
+                        goal = Some(at);
+                    } else {
+                        brain.path.clear();
+                    }
+                }
+            }
+            if !busy && brain.path.is_empty() {
                 brain.idle_ticks -= 1;
                 if brain.idle_ticks <= 0 {
                     brain.idle_ticks = 120 + rng.gen_range(0..120);
@@ -592,12 +647,14 @@ impl Server {
                     goal = Some(pos.add(d));
                 }
             }
-            brain.look_at = self
-                .players
-                .values()
-                .filter(|p| p.world == world && p.game_mode != GameMode::Spectator)
-                .map(|p| Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z))
-                .find(|at| at.distance_squared(pos) < 36.0);
+            if !busy {
+                brain.look_at = self
+                    .players
+                    .values()
+                    .filter(|p| p.world == world && p.game_mode != GameMode::Spectator)
+                    .map(|p| Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z))
+                    .find(|at| at.distance_squared(pos) < 36.0);
+            }
         } else if matches!(kind, Behavior::Swimmer | Behavior::Flyer) && rng.gen_range(0..80) == 0 {
             let d = Vec3::new(rng.gen_range(-6.0..6.0), rng.gen_range(-2.0..2.0), rng.gen_range(-6.0..6.0));
             brain.look_at = Some(pos.add(d));
@@ -651,6 +708,9 @@ impl Server {
         }
         if explode {
             self.creeper_explode(world, id);
+        }
+        if let Some(other) = breed_with {
+            self.breed(world, id, other);
         }
     }
 

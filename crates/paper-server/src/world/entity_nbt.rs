@@ -41,7 +41,8 @@ fn short(v: i32) -> Tag {
 }
 
 /// Whether an entity type keeps its babies in the `Age` field (animals) rather than `IsBaby`.
-fn ages(name: &str) -> bool {
+/// Whether a mob type has an age (`AgeableMob`: animals and the like; not zombies).
+pub fn ages(name: &str) -> bool {
     !matches!(name, "minecraft:zombie" | "minecraft:husk" | "minecraft:drowned" | "minecraft:zombie_villager" | "minecraft:piglin" | "minecraft:zombified_piglin")
 }
 
@@ -110,7 +111,12 @@ pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
             }
             c.insert("equipment", Tag::Compound(equipment));
             if ages(&e.info.name) {
-                c.insert("Age", Tag::Int(if mob.baby { -24000 } else { 0 }));
+                let age = if mob.baby { mob.age.min(-1) } else { mob.age.max(0) };
+                c.insert("Age", Tag::Int(age));
+                c.insert("InLove", Tag::Int(mob.in_love));
+                if e.info.name == "minecraft:chicken" {
+                    c.insert("EggLayTime", Tag::Int(mob.egg_time));
+                }
             } else {
                 c.insert("IsBaby", Tag::Byte(mob.baby as i8));
             }
@@ -165,7 +171,8 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                     }
                 }
             }
-            let baby = if ages(&info.name) { c.i32("Age").unwrap_or(0) < 0 } else { c.bool("IsBaby").unwrap_or(false) };
+            let age = if ages(&info.name) { c.i32("Age").unwrap_or(0) } else { 0 };
+            let baby = if ages(&info.name) { age < 0 } else { c.bool("IsBaby").unwrap_or(false) };
             EntityKind::Mob(Box::new(Mob {
                 living,
                 equipment,
@@ -175,6 +182,10 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 variant: c.i32("Color").unwrap_or(0),
                 sheared: c.bool("Sheared").unwrap_or(false),
                 no_player_ticks: 0,
+                age,
+                in_love: c.i32("InLove").unwrap_or(0),
+                love_cause: None,
+                egg_time: c.i32("EggLayTime").unwrap_or(6000),
             }))
         }
         _ => EntityKind::Other,
@@ -216,6 +227,10 @@ mod tests {
             variant: 0,
             sheared: false,
             no_player_ticks: 0,
+            age: 0,
+            in_love: 0,
+            love_cause: None,
+            egg_time: 0,
         };
         mob.living.health = 13.5;
         mob.equipment[5] = Slot::of(paper_data::items::id("minecraft:iron_helmet").unwrap() as i32, 1);

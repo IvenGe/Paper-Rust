@@ -227,8 +227,8 @@ impl Server {
                     player.brand = Reader::new(&p.data.0).string(256).ok();
                 }
             }
-            Serverbound::Interact(_)
-            | Serverbound::ChatAck(_)
+            Serverbound::Interact(p) => self.handle_interact(id, p.entity_id.0, p.hand.0),
+            Serverbound::ChatAck(_)
             | Serverbound::ChatSessionUpdate(_)
             | Serverbound::ClientTickEnd
             | Serverbound::ConfigurationAcknowledged

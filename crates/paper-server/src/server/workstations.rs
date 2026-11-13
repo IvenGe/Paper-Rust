@@ -77,6 +77,11 @@ fn write_enchantments(stack: &mut ItemStack, list: &[(i32, i32)]) {
     set_component(stack, name, data);
 }
 
+/// The `custom_name` component of a stack.
+pub fn custom_name_of(stack: &ItemStack) -> Option<Component> {
+    custom_name(stack)
+}
+
 fn custom_name(stack: &ItemStack) -> Option<Component> {
     let ty = component("minecraft:custom_name")?;
     let (_, data) = stack.added.iter().find(|(t, _)| *t == ty)?;

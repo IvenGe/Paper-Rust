@@ -81,6 +81,9 @@ What works:
   physics, spawn naturally from the biomes' spawner lists (animals also when a chunk is
   generated), despawn far from players, and drop loot (vanilla loot tables) and experience.
   Mob spawners (dungeons) spawn their mob near players; end crystals explode when hit.
+  Animals follow players holding their food and breed when fed (babies grow up, faster when
+  fed); cows and goats give milk, mooshrooms stew; sheep are sheared and dyed and eat grass
+  to grow their wool back; chickens lay eggs; name tags name mobs.
 * **Survival**: damage from falls, the void, lava, fire, drowning, suffocation, cacti and
   magma, with armour, protection enchantments, difficulty scaling and invulnerability frames;
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
@@ -164,7 +167,7 @@ Not yet:
   patches; there is no dragon fight (the End's exit portal is open from the start).
   End gateways do not teleport yet.
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, breeding); brewing is missing. Tripwires,
+  trading, taming); brewing is missing. Tripwires,
   crafters, observers of entities and brewing stands do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.

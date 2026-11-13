@@ -375,3 +375,95 @@ fn end_crystals_explode_when_hit() {
     assert!(gone);
     server.stop();
 }
+
+fn interact(entity: i32) -> play::Interact {
+    play::Interact { entity_id: VarInt(entity), hand: VarInt(0), target: paper_protocol::types::LpVec3(0.0, 0.5, 0.0), sneaking: false }
+}
+
+#[test]
+fn fed_animals_breed_and_cows_give_milk_and_sheep_wool() {
+    let server = survival_server();
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let wheat = items::id("minecraft:wheat").unwrap() as i32;
+    let (a, b, sheep) = server
+        .handle
+        .run(move |s| {
+            let reason = paper_server::server::mobs::SpawnReason::Command;
+            let a = s.spawn_mob(0, "minecraft:cow", paper_server::world::entity::Vec3::new(10.5, -60.0, 8.5), reason).unwrap();
+            let b = s.spawn_mob(0, "minecraft:cow", paper_server::world::entity::Vec3::new(11.5, -60.0, 8.5), reason).unwrap();
+            let sheep = s.spawn_mob(0, "minecraft:sheep", paper_server::world::entity::Vec3::new(10.5, -60.0, 6.5), reason).unwrap();
+            s.players.get_mut(&id).unwrap().inventory[36] = Slot::of(wheat, 3);
+            (a, b, sheep)
+        })
+        .unwrap();
+    alice.drain(QUIET);
+    alice.send(&interact(a));
+    alice.send(&interact(b));
+    // (Chunk generation may have put baby cows elsewhere: only one born next to the parents counts.)
+    let calves = |s: &mut paper_server::server::Server| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.baby) && (e.pos.x - 11.0).abs() < 4.0 && (e.pos.z - 8.5).abs() < 4.0).count();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while server.handle.run(calves).unwrap() == 0 {
+        assert!(std::time::Instant::now() < deadline, "the cows have a calf");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let (left, parent_age) = server.handle.run(move |s| (s.players[&id].inventory[36].clone(), s.worlds[0].entities[&a].mob().unwrap().age)).unwrap();
+    assert_eq!(left, Slot::of(wheat, 1), "two wheat eaten");
+    assert!(parent_age > 5000, "the parents wait before breeding again: {parent_age}");
+
+    // A bucket of milk from a cow; wool from a sheep.
+    let (bucket, shears) = (items::id("minecraft:bucket").unwrap() as i32, items::id("minecraft:shears").unwrap() as i32);
+    server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&id).unwrap();
+            p.inventory[36] = Slot::of(bucket, 1);
+            let at = paper_server::world::entity::Vec3::new(p.loc.x - 1.5, p.loc.y, p.loc.z);
+            let e = s.worlds[0].entities.get_mut(&b).unwrap();
+            e.pos = at;
+            e.force_sync = true;
+        })
+        .unwrap();
+    alice.send(&interact(b));
+    alice.drain(QUIET);
+    let milk = server.handle.run(move |s| s.players[&id].inventory[36].0.as_ref().map(|i| i.item)).unwrap();
+    assert_eq!(milk, items::id("minecraft:milk_bucket").map(|i| i as i32));
+    server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&id).unwrap();
+            p.inventory[36] = Slot::of(shears, 1);
+            // The sheep may have wandered off meanwhile.
+            let at = paper_server::world::entity::Vec3::new(p.loc.x + 1.5, p.loc.y, p.loc.z);
+            let e = s.worlds[0].entities.get_mut(&sheep).unwrap();
+            e.pos = at;
+            e.force_sync = true;
+        })
+        .unwrap();
+    alice.send(&interact(sheep));
+    alice.drain(QUIET);
+    let (sheared, wool) = server
+        .handle
+        .run(move |s| {
+            let sheared = s.worlds[0].entities[&sheep].mob().unwrap().sheared;
+            let is_wool = |stack: &Slot| stack.0.as_ref().is_some_and(|i| items::get(i.item as u32).is_some_and(|n| n.name.ends_with("_wool")));
+            let dropped = s.worlds[0].entities.values().filter(|e| matches!(&e.kind, paper_server::world::entity::EntityKind::Item { stack, .. } if is_wool(stack))).count();
+            let picked = s.players[&id].inventory.iter().filter(|st| is_wool(st)).count();
+            let wool = dropped + picked;
+            (sheared, wool)
+        })
+        .unwrap();
+    let debug = server
+        .handle
+        .run(move |s| {
+            let items: Vec<String> = s.worlds[0].entities.values().filter_map(|e| match &e.kind {
+                paper_server::world::entity::EntityKind::Item { stack, .. } => stack.0.as_ref().and_then(|i| items::get(i.item as u32)).map(|n| format!("{} at {:?} removed {}", n.name, e.pos, e.removed)),
+                _ => None,
+            }).collect();
+            let inv: Vec<String> = s.players[&id].inventory.iter().filter_map(|sl| sl.0.as_ref().and_then(|i| items::get(i.item as u32)).map(|n| n.name.to_owned())).collect();
+            (items, inv, s.worlds[0].entities[&sheep].mob().unwrap().variant)
+        })
+        .unwrap();
+    assert!(sheared && wool >= 1, "sheared: {sheared}, wool drops: {wool}, {debug:?}");
+    server.stop();
+}

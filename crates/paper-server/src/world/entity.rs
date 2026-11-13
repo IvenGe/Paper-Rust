@@ -329,6 +329,8 @@ pub struct MobBrain {
     pub speed_factor: f64,
     /// Ambient sound counter (`ambientSoundTime`).
     pub ambient: i32,
+    /// Ticks spent near a breeding partner (`BreedGoal.loveTime`).
+    pub love_time: i32,
 }
 
 /// A mob.
@@ -346,6 +348,14 @@ pub struct Mob {
     pub sheared: bool,
     /// Ticks since a player was near (for despawning).
     pub no_player_ticks: i32,
+    /// `AgeableMob` age: negative while a baby (ticks until grown), positive while it
+    /// cannot breed again.
+    pub age: i32,
+    /// Ticks left of being in love (`Animal.inLove`), and the player who fed it.
+    pub in_love: i32,
+    pub love_cause: Option<i32>,
+    /// Chickens: ticks until the next egg.
+    pub egg_time: i32,
 }
 
 /// Behaviour-specific data.
