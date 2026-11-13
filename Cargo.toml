@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/paper-nbt",
+    "crates/paper-data",
+    "crates/paper-protocol",
+    "crates/paper-bridge",
+    "crates/paper-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/PaperMC/Paper"
+description = "A Rust port of the Paper Minecraft server with a separate-process JVM host for Java plugins"
+
+[workspace.dependencies]
+paper-nbt = { path = "crates/paper-nbt" }
+paper-data = { path = "crates/paper-data" }
+paper-protocol = { path = "crates/paper-protocol" }
+paper-bridge = { path = "crates/paper-bridge" }
+
+aes = "0.8"
+anyhow = "1"
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+crossbeam-channel = "0.5"
+flate2 = "1"
+indexmap = "2"
+log = { version = "0.4", features = ["std"] }
+md-5 = "0.10"
+num-bigint = "0.4"
+parking_lot = "0.12"
+rand = "0.8"
+rayon = "1"
+rsa = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha1 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal", "process"] }
+toml = "0.8"
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+uuid = { version = "1", features = ["v3", "v4", "serde"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 1
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,17 @@
+[package]
+name = "paper-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The paper-rs Minecraft server"
+
+[[bin]]
+name = "paper"
+path = "src/main.rs"
+
+[dependencies]
+paper-nbt.workspace = true
+paper-data.workspace = true
+paper-protocol.workspace = true
+paper-bridge.workspace = true

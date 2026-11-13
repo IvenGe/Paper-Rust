@@ -1,0 +1,18 @@
+[package]
+name = "paper-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Minecraft Java Edition wire protocol (version 777 / 26.3) for paper-rs"
+
+[dependencies]
+paper-nbt.workspace = true
+paper-data.workspace = true
+aes.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

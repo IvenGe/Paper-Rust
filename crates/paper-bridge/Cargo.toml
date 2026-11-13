@@ -1,0 +1,10 @@
+[package]
+name = "paper-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Wire format of the paper-rs separate-mode plugin bridge (server <-> JVM plugin host)"
+
+[dependencies]
+thiserror.workspace = true

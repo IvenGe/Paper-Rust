@@ -1,0 +1,11 @@
+[package]
+name = "paper-nbt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Named Binary Tag (NBT) reading and writing for paper-rs"
+
+[dependencies]
+indexmap.workspace = true
+thiserror.workspace = true
