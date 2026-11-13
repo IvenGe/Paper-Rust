@@ -93,3 +93,56 @@ fn worlds_and_players_survive_a_restart() {
     first.stop();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn mobs_and_items_are_saved_with_their_chunks() {
+    let root = temp_root("entities");
+    let server = start_server(|c| c.root = root.clone());
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    alice.drain(QUIET);
+    wait_for(&server, "the spawn chunk", |s| s.worlds[0].block_at(12, -61, 8).is_some());
+    // A cow standing still somewhere near (persistent, since a command summoned it), and a
+    // dropped item next to it.
+    server.handle.console_command("summon cow 12.5 -60 8.5");
+    server.handle.console_command("summon cow 13.5 -60 8.5");
+    wait_for(&server, "the cows", |s| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.persistent)).count() == 2);
+    let cows = server
+        .handle
+        .run(|s| {
+            let mut ids: Vec<uuid::Uuid> = s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.persistent)).map(|e| e.uuid).collect();
+            ids.sort();
+            ids
+        })
+        .unwrap();
+    // Hurt one so its health has to come back as it was.
+    server
+        .handle
+        .run(|s| {
+            let id = s.worlds[0].entities.values().find(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.persistent)).unwrap().id;
+            s.worlds[0].entities.get_mut(&id).unwrap().mob_mut().unwrap().living.health = 4.0;
+        })
+        .unwrap();
+    server.stop();
+
+    let entities_dir = root.join("world").join("entities");
+    assert!(std::fs::read_dir(&entities_dir).map(|d| d.count() > 0).unwrap_or(false), "entity region files are written");
+
+    let server = start_server(|c| c.root = root.clone());
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    alice.drain(QUIET);
+    wait_for(&server, "the cows to come back", |s| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.persistent)).count() == 2);
+    let (back, healths) = server
+        .handle
+        .run(|s| {
+            let mut found: Vec<(uuid::Uuid, f32)> = s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.persistent)).map(|e| (e.uuid, e.mob().unwrap().living.health)).collect();
+            found.sort_by_key(|(u, _)| *u);
+            (found.iter().map(|(u, _)| *u).collect::<Vec<_>>(), found.iter().map(|(_, h)| *h).collect::<Vec<_>>())
+        })
+        .unwrap();
+    assert_eq!(back, cows, "the same cows (same UUIDs)");
+    assert!(healths.contains(&4.0), "the hurt cow is still hurt: {healths:?}");
+    server.stop();
+    let _ = std::fs::remove_dir_all(&root);
+}

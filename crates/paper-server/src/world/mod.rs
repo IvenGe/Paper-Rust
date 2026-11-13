@@ -12,6 +12,7 @@
 pub mod block_updates;
 pub mod chunk;
 pub mod entity;
+pub mod entity_nbt;
 pub mod generator;
 pub mod light;
 pub mod portal;
@@ -259,12 +260,25 @@ impl World {
                                     None
                                 }
                             });
-                            let chunk = loaded.unwrap_or_else(|| {
+                            let was_saved = loaded.is_some();
+                            let mut chunk = loaded.unwrap_or_else(|| {
                                 let mut chunk = generator.generate(p, min_y, height);
                                 chunk.dirty = storage.is_some();
                                 chunk.fresh = true;
                                 chunk
                             });
+                            // Its entities come along (`entities/r.x.z.mca`).
+                            if was_saved {
+                                if let Some(storage) = &storage {
+                                    match storage.load_entities(p) {
+                                        Ok(entities) => {
+                                            chunk.entities_saved = !entities.is_empty();
+                                            chunk.entity_nbt = entities;
+                                        }
+                                        Err(e) => log::error!("Could not load the entities of chunk {},{}: {e:#}", p.x, p.z),
+                                    }
+                                }
+                            }
                             notify(index, WorldEvent::Terrain(Box::new(chunk)));
                         });
                     }
@@ -365,6 +379,8 @@ impl World {
         let tickets = &self.tickets;
         let (generating, lighting) = (&self.generating, &self.lighting);
         let (storage, has_skylight, age) = (&self.storage, self.has_skylight, self.age);
+        let mut unloaded: Vec<(ChunkPos, bool)> = Vec::new();
+        let entity_chunks = &self.entity_chunks;
         self.chunks.retain(|pos, chunk| {
             for dz in -1..=1 {
                 for dx in -1..=1 {
@@ -374,16 +390,34 @@ impl World {
                     }
                 }
             }
+            if storage.is_none() {
+                // Worlds kept in memory keep edited chunks and chunks with entities; others
+                // are generated again when needed.
+                return chunk.dirty || entity_chunks.get(pos).is_some_and(|ids| !ids.is_empty());
+            }
             if chunk.dirty {
-                match storage {
-                    Some(storage) => storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age) }),
-                    None => return true,
+                if let Some(storage) = storage {
+                    storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age) });
                 }
             }
+            unloaded.push((*pos, chunk.entities_saved));
             false
         });
         let chunks = &self.chunks;
         self.packets.retain(|pos, _| chunks.contains_key(pos));
+        // The entities of unloaded chunks are saved and leave memory with them.
+        for (pos, was_saved) in unloaded {
+            let ids: Vec<i32> = self.entity_chunks.remove(&pos).map(|s| s.into_iter().collect()).unwrap_or_default();
+            let saved: Vec<paper_nbt::Compound> = ids.iter().filter_map(|id| self.entities.get(id)).filter_map(entity_nbt::entity_to_nbt).collect();
+            if let Some(storage) = &self.storage {
+                if !saved.is_empty() || was_saved {
+                    storage.save_entities(pos, saved);
+                }
+            }
+            for id in ids {
+                self.entities.remove(&id);
+            }
+        }
         before - self.chunks.len()
     }
 
@@ -497,6 +531,15 @@ impl World {
             storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight, ticks: chunk.ticks.save(self.age) });
             chunk.dirty = false;
             saved += 1;
+        }
+        // Entities move all the time: every loaded chunk that has (or had) some is written.
+        for (pos, chunk) in self.chunks.iter_mut() {
+            let list: Vec<paper_nbt::Compound> = self.entity_chunks.get(pos).map(|ids| ids.iter().filter_map(|id| self.entities.get(id)).filter_map(entity_nbt::entity_to_nbt).collect()).unwrap_or_default();
+            if list.is_empty() && !chunk.entities_saved {
+                continue;
+            }
+            chunk.entities_saved = !list.is_empty();
+            storage.save_entities(*pos, list);
         }
         saved
     }

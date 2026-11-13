@@ -51,6 +51,20 @@ impl Server {
         id
     }
 
+    /// Brings back the entities saved with a chunk that was just loaded.
+    pub(super) fn spawn_saved_entities(&mut self, world: usize, pos: ChunkPos) {
+        let Some(saved) = self.worlds.get_mut(world).and_then(|w| w.chunks.get_mut(&pos)).map(|c| std::mem::take(&mut c.entity_nbt)) else { return };
+        for nbt in saved {
+            let id = self.next_entity_id();
+            match crate::world::entity_nbt::entity_from_nbt(id, &nbt) {
+                Some(e) => {
+                    self.spawn_entity(world, e);
+                }
+                None => log::debug!("Dropping a saved entity that could not be read: {:?}", nbt.string("id")),
+            }
+        }
+    }
+
     /// Spawns an item entity.
     pub fn spawn_item(&mut self, world: usize, pos: Vec3, stack: Slot, vel: Vec3, pickup_delay: i32) -> Option<i32> {
         if stack.0.as_ref().is_none_or(|s| s.count <= 0) {

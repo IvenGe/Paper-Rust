@@ -255,6 +255,11 @@ pub struct Chunk {
     pub revision: u64,
     /// Freshly generated (not loaded from disk): creatures are placed once it is ready.
     pub fresh: bool,
+    /// Saved entities read with the chunk, waiting for the server to bring them to life.
+    pub entity_nbt: Vec<paper_nbt::Compound>,
+    /// The chunk's entity file may hold entities (so an empty list must be written to
+    /// clear it when they are gone).
+    pub entities_saved: bool,
     /// Scheduled block and fluid ticks (block updates; see `world::ticks`).
     pub ticks: super::ticks::ChunkTicks,
 }
@@ -280,6 +285,8 @@ impl Chunk {
             dirty: false,
             revision: 0,
             fresh: false,
+            entity_nbt: Vec::new(),
+            entities_saved: false,
             ticks: Default::default(),
         }
     }

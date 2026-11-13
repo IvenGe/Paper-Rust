@@ -94,8 +94,9 @@ What works:
   home. Fire burns, spreads and lights portals; buckets scoop up and pour water and lava
   (water boils away in the Nether).
 * **Game rules**: all 26.3 rules with `/gamerule`, saved in `data/minecraft/game_rules.dat`.
-* **Saving**: chunks in region files, `level.dat` and player data in vanilla's layout,
-  autosave, `/save-all`, saving on shutdown.
+* **Saving**: chunks in region files, entities (mobs, items, arrows, ...) in
+  `entities/` region files, `level.dat`, game rules and player data (inventory, ender chest,
+  experience, ...) in vanilla's layout, autosave, `/save-all`, saving on shutdown.
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
@@ -117,7 +118,8 @@ Not yet:
 
 * Vanilla world generation: the Nether and the End use simple stand-in terrain (a netherrack
   cavern over a lava sea; the main End island with an open exit portal, no dragon fight, no
-  outer islands or end cities). Mobs are not saved with the world yet,
+  outer islands or end cities). Mobs other than these basic kinds lack their special
+  behaviour,
   status effects, breeding, villagers and trading, beds, enchanting and anvils are missing.
   Pressure plates, tripwires, dispensers, droppers and hoppers do not react yet, and
   pistons do not push entities.

@@ -23,7 +23,7 @@ pub mod loot;
 pub mod menu;
 pub mod mobs;
 pub mod player;
-mod playerdata;
+pub(crate) mod playerdata;
 pub mod portals;
 pub mod recipes;
 pub mod survival;
@@ -423,7 +423,15 @@ impl Server {
             MainTask::Packet { entity_id, packet } => self.handle_packet(entity_id, packet),
             MainTask::Disconnected { entity_id, reason } => self.handle_disconnect(entity_id, &reason),
             MainTask::World { world, event } => {
+                let terrain = match &event {
+                    WorldEvent::Terrain(chunk) => Some(chunk.pos),
+                    _ => None,
+                };
                 let ready = self.worlds.get_mut(world).and_then(|w| w.handle_event(event));
+                // Entities saved with a chunk come back to life when it is loaded.
+                if let Some(pos) = terrain {
+                    self.spawn_saved_entities(world, pos);
+                }
                 // A newly generated chunk gets its animals once it is ready.
                 if let Some(pos) = ready {
                     let fresh = self.worlds[world].chunks.get_mut(&pos).is_some_and(|c| std::mem::take(&mut c.fresh));

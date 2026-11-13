@@ -279,7 +279,7 @@ fn unpack(longs: &[i64], bits: u32, count: usize) -> Result<Vec<u32>> {
     Ok((0..count).map(|i| ((longs[i / per_long] as u64 >> ((i % per_long) as u32 * bits)) & mask) as u32).collect())
 }
 
-fn state_nbt(state: u32) -> Tag {
+pub fn state_nbt(state: u32) -> Tag {
     let info = blocks::block_of_state(state);
     let mut c = Compound::new().with("Name", Tag::String(info.name.to_owned()));
     let props = blocks::properties_of(state);
@@ -293,7 +293,7 @@ fn state_nbt(state: u32) -> Tag {
     Tag::Compound(c)
 }
 
-fn state_from_nbt(tag: &Tag) -> Option<u32> {
+pub fn state_from_nbt(tag: &Tag) -> Option<u32> {
     let c = tag.as_compound()?;
     let name = c.string("Name")?;
     let mut state = blocks::default_state(name)?;
@@ -437,6 +437,8 @@ impl SaveChunk {
             dirty: false,
             revision: 0,
             fresh: false,
+            entity_nbt: Vec::new(),
+            entities_saved: false,
             ticks: ChunkTicks::from_saved(self.ticks.clone()),
         }
     }
@@ -705,6 +707,8 @@ impl LevelData {
 
 enum IoJob {
     Chunk(Arc<WorldStorage>, Arc<SaveChunk>),
+    /// The entities of a chunk (`entities/r.x.z.mca`).
+    Entities(Arc<WorldStorage>, ChunkPos, Arc<Compound>),
     Player(Arc<WorldStorage>, uuid::Uuid, Arc<Compound>),
     File { path: PathBuf, bytes: Vec<u8> },
     Flush(std::sync::mpsc::Sender<()>),
@@ -731,6 +735,15 @@ impl ChunkIo {
                             }
                             let mut pending = storage.pending.lock();
                             if pending.get(&pos).is_some_and(|p| Arc::ptr_eq(p, &chunk)) {
+                                pending.remove(&pos);
+                            }
+                        }
+                        IoJob::Entities(storage, pos, data) => {
+                            if let Err(e) = storage.write_entities(pos, &data) {
+                                log::error!("Failed to save the entities of chunk {},{} of {}: {e:#}", pos.x, pos.z, storage.dir.display());
+                            }
+                            let mut pending = storage.pending_entities.lock();
+                            if pending.get(&pos).is_some_and(|p| Arc::ptr_eq(p, &data)) {
                                 pending.remove(&pos);
                             }
                         }
@@ -795,6 +808,9 @@ pub struct WorldStorage {
     pub dimension_dir: PathBuf,
     io: ChunkIo,
     regions: Mutex<HashMap<(i32, i32), Arc<Mutex<RegionFile>>>>,
+    entity_regions: Mutex<HashMap<(i32, i32), Arc<Mutex<RegionFile>>>>,
+    /// Entity chunks queued for writing.
+    pending_entities: Mutex<HashMap<ChunkPos, Arc<Compound>>>,
     /// Chunks queued for writing, by position; the newest version of each.
     pending: Mutex<HashMap<ChunkPos, Arc<SaveChunk>>>,
     /// Player data queued for writing.
@@ -828,6 +844,8 @@ impl WorldStorage {
             dimension_dir,
             io,
             regions: Mutex::new(HashMap::new()),
+            entity_regions: Mutex::new(HashMap::new()),
+            pending_entities: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             pending_players: Mutex::new(HashMap::new()),
             _session_lock: lock,
@@ -839,12 +857,23 @@ impl WorldStorage {
     }
 
     fn region(&self, pos: ChunkPos, create: bool) -> Result<Option<Arc<Mutex<RegionFile>>>> {
+        Self::open_region(&self.regions, &self.dimension_dir.join("region"), pos, create)
+    }
+
+    fn entity_region(&self, pos: ChunkPos, create: bool) -> Result<Option<Arc<Mutex<RegionFile>>>> {
+        Self::open_region(&self.entity_regions, &self.dimension_dir.join("entities"), pos, create)
+    }
+
+    fn open_region(regions: &Mutex<HashMap<(i32, i32), Arc<Mutex<RegionFile>>>>, dir: &Path, pos: ChunkPos, create: bool) -> Result<Option<Arc<Mutex<RegionFile>>>> {
         let key = (pos.x >> 5, pos.z >> 5);
-        let mut regions = self.regions.lock();
+        let mut regions = regions.lock();
         if let Some(region) = regions.get(&key) {
             return Ok(Some(region.clone()));
         }
-        let path = self.dimension_dir.join("region").join(format!("r.{}.{}.mca", key.0, key.1));
+        if create {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+        let path = dir.join(format!("r.{}.{}.mca", key.0, key.1));
         let Some(file) = RegionFile::open(&path, create)? else { return Ok(None) };
         if regions.len() >= MAX_OPEN_REGIONS {
             // Close an arbitrary region; any one in use stays alive through its Arc.
@@ -883,8 +912,46 @@ impl WorldStorage {
         region.write(chunk.snapshot.pos, &nbt)
     }
 
+    /// The saved entities of a chunk (the `Entities` list), from the write queue or the
+    /// entity region file.
+    pub fn load_entities(&self, pos: ChunkPos) -> Result<Vec<Compound>> {
+        let root = match self.pending_entities.lock().get(&pos).cloned() {
+            Some(pending) => (*pending).clone(),
+            None => {
+                let Some(region) = self.entity_region(pos, false)? else { return Ok(Vec::new()) };
+                let Some(bytes) = region.lock().read(pos)? else { return Ok(Vec::new()) };
+                paper_nbt::read_named(&mut bytes.as_slice(), MAX_NBT).with_context(|| format!("parsing the entities of chunk {},{}", pos.x, pos.z))?.1
+            }
+        };
+        Ok(root.list("Entities").unwrap_or(&[]).iter().filter_map(|t| t.as_compound().cloned()).collect())
+    }
+
+    /// Queues the entities of a chunk for writing (vanilla's entity chunk layout).
+    pub fn save_entities(self: &Arc<Self>, pos: ChunkPos, entities: Vec<Compound>) {
+        let root = Compound::new()
+            .with("DataVersion", Tag::Int(data_version()))
+            .with("Position", Tag::IntArray(vec![pos.x, pos.z]))
+            .with("Entities", Tag::List(entities.into_iter().map(Tag::Compound).collect()));
+        let root = Arc::new(root);
+        self.pending_entities.lock().insert(pos, root.clone());
+        let _ = self.io.tx.send(IoJob::Entities(self.clone(), pos, root));
+    }
+
+    fn write_entities(&self, pos: ChunkPos, root: &Compound) -> Result<()> {
+        let mut nbt = Vec::with_capacity(4 * 1024);
+        paper_nbt::write_named(&mut nbt, "", root);
+        let region = self.entity_region(pos, true)?.expect("created");
+        let mut region = region.lock();
+        region.write(pos, &nbt)
+    }
+
     /// Flushes region files to the disk (after [`ChunkIo::flush`]).
     pub fn sync(&self) {
+        for region in self.entity_regions.lock().values() {
+            if let Err(e) = region.lock().sync() {
+                log::warn!("Could not sync an entity region file of {}: {e}", self.dir.display());
+            }
+        }
         for region in self.regions.lock().values() {
             if let Err(e) = region.lock().sync() {
                 log::warn!("Could not sync a region file of {}: {e}", self.dir.display());
