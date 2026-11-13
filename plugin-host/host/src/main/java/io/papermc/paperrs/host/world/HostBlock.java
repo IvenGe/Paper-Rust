@@ -92,6 +92,16 @@ public final class HostBlock extends AbstractBlock {
     }
 
     @Override
+    public org.bukkit.block.BlockState getState() {
+        return HostBlockState.of(this);
+    }
+
+    @Override
+    public org.bukkit.block.BlockState getState(final boolean useSnapshot) {
+        return HostBlockState.of(this);
+    }
+
+    @Override
     public Block getRelative(final int modX, final int modY, final int modZ) {
         return new HostBlock(this.world, this.x + modX, this.y + modY, this.z + modZ);
     }

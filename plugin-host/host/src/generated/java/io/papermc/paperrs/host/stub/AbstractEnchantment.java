@@ -6,12 +6,12 @@ import io.papermc.paperrs.host.Unsupported;
 
 /** Every abstract member of {@code Enchantment}, unsupported until overridden. */
 @SuppressWarnings({"deprecation", "removal", "unchecked", "rawtypes", "unused"})
-public final class HostEnchantment extends org.bukkit.enchantments.Enchantment {
+public abstract class AbstractEnchantment extends org.bukkit.enchantments.Enchantment {
     protected final org.bukkit.NamespacedKey key;
     protected final int ordinal;
     protected final String translationKey;
 
-    public HostEnchantment(org.bukkit.NamespacedKey key, int ordinal, String translationKey) {
+    protected AbstractEnchantment(org.bukkit.NamespacedKey key, int ordinal, String translationKey) {
         super();
         this.key = key;
         this.ordinal = ordinal;
@@ -160,6 +160,6 @@ public final class HostEnchantment extends org.bukkit.enchantments.Enchantment {
 
     @Override
     public String toString() {
-        return "HostEnchantment{" + this.key + "}";
+        return "AbstractEnchantment{" + this.key + "}";
     }
 }

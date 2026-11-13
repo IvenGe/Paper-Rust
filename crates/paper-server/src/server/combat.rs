@@ -400,13 +400,38 @@ impl Server {
         // Kill credit goes to a player who hurt it in the last five seconds.
         let killer = mob.living.last_attacker.filter(|(_, t)| tick.saturating_sub(*t) < 100).map(|(a, _)| a).filter(|a| self.players.contains_key(a));
         let equipment: Vec<Slot> = mob.equipment.iter().filter(|s| !s.is_empty()).cloned().collect();
-        if !crate::plugins::events::on_entity_death(self, world, id) {
+        // Loot and experience are worked out before EntityDeathEvent, which may change them.
+        // Baby animals drop nothing; baby monsters (zombies) drop as adults, with 2.5 times
+        // the experience.
+        let baby_animal = baby && info.category != "MONSTER";
+        let (drops, xp) = if self.worlds[world].rules.bool("mob_drops") && !baby_animal {
+            let tool = killer.and_then(|k| self.players.get(&k)).map(|p| p.held_item().clone());
+            let table = format!("minecraft:entities/{}", info.name.strip_prefix("minecraft:").unwrap_or(&info.name));
+            let loot = if self.loot.available() {
+                let context = LootContext { tool: tool.as_ref(), killed_by_player: killer.is_some(), on_fire, explosion_radius: None, block_state: None };
+                self.loot.roll(&table, &context)
+            } else {
+                Vec::new()
+            };
+            let drops: Vec<Slot> = loot.into_iter().chain(equipment.into_iter().filter(|_| rand::thread_rng().gen::<f32>() < 0.085)).collect();
+            let xp = if killer.is_some() && info.experience > 0 {
+                let xp = if info.category == "MONSTER" { info.experience } else { info.experience + rand::thread_rng().gen_range(0..3) };
+                if baby { (xp as f64 * 2.5) as i32 } else { xp }
+            } else {
+                0
+            };
+            (drops, xp)
+        } else {
+            (Vec::new(), 0)
+        };
+        // Plugin hook: EntityDeathEvent can cancel the death and change the drops.
+        let Some((drops, xp)) = crate::plugins::events::on_entity_death(self, world, id, &damage, drops, xp) else {
             // A plugin cancelled the death: back to half a heart.
             if let Some(m) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.mob_mut()) {
                 m.living.health = 1.0;
             }
             return;
-        }
+        };
         if let Some(sound) = info.death_sound.as_deref() {
             self.play_sound(world, pos, sound, mob_category(info), 1.0, Self::mob_pitch(world, self, id), None);
         }
@@ -416,29 +441,13 @@ impl Server {
             m.brain.target = None;
             m.brain.path.clear();
         }
-        let rules = &self.worlds[world].rules;
-        // Baby animals drop nothing; baby monsters (zombies) drop as adults, with 2.5 times
-        // the experience.
-        let baby_animal = baby && info.category != "MONSTER";
-        if rules.bool("mob_drops") && !baby_animal {
-            let tool = killer.and_then(|k| self.players.get(&k)).map(|p| p.held_item().clone());
-            let table = format!("minecraft:entities/{}", info.name.strip_prefix("minecraft:").unwrap_or(&info.name));
-            let drops = if self.loot.available() {
-                let context = LootContext { tool: tool.as_ref(), killed_by_player: killer.is_some(), on_fire, explosion_radius: None, block_state: None };
-                self.loot.roll(&table, &context)
-            } else {
-                Vec::new()
-            };
-            for stack in drops.into_iter().chain(equipment.into_iter().filter(|_| rand::thread_rng().gen::<f32>() < 0.085)) {
-                let mut rng = rand::thread_rng();
-                let vel = Vec3::new(rng.gen_range(-0.1..0.1), 0.2, rng.gen_range(-0.1..0.1));
-                self.spawn_item(world, Vec3::new(pos.x, pos.y + 0.5, pos.z), stack, vel, 10);
-            }
-            if killer.is_some() && info.experience > 0 {
-                let xp = if info.category == "MONSTER" { info.experience } else { info.experience + rand::thread_rng().gen_range(0..3) };
-                let xp = if baby { (xp as f64 * 2.5) as i32 } else { xp };
-                self.award_experience(world, pos, xp);
-            }
+        for stack in drops {
+            let mut rng = rand::thread_rng();
+            let vel = Vec3::new(rng.gen_range(-0.1..0.1), 0.2, rng.gen_range(-0.1..0.1));
+            self.spawn_item(world, Vec3::new(pos.x, pos.y + 0.5, pos.z), stack, vel, 10);
+        }
+        if xp > 0 {
+            self.award_experience(world, pos, xp);
         }
         if let Some(k) = killer {
             if let Some(p) = self.players.get(&k) {

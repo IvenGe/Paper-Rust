@@ -40,6 +40,8 @@ pub struct SavedPlayer {
     pub effects: Vec<super::effects::ActiveEffect>,
     pub absorption: f32,
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
+    /// Bukkit's `bukkit.firstPlayed`, for offline players in the plugin API.
+    pub first_played: Option<i64>,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -203,6 +205,13 @@ impl Server {
                 ),
             );
         }
+        // Bukkit's and Paper's play times, for offline players in the plugin API.
+        let now = chrono::Utc::now().timestamp_millis();
+        let session = self.user_cache.session(player.uuid()).copied();
+        let first = session.map_or(now, |s| s.first_played);
+        let login = session.map_or(now, |s| s.last_login);
+        c.insert("bukkit", Tag::Compound(Compound::new().with("firstPlayed", Tag::Long(first)).with("lastPlayed", Tag::Long(now)).with("lastKnownName", Tag::String(player.name().to_owned()))));
+        c.insert("Paper", Tag::Compound(Compound::new().with("LastLogin", Tag::Long(login)).with("LastSeen", Tag::Long(now))));
         c
     }
 
@@ -283,6 +292,7 @@ impl Server {
                 let Some(Tag::IntArray(pos)) = r.get("pos") else { return None };
                 (pos.len() == 3).then(|| (world, paper_protocol::codec::BlockPos::new(pos[0], pos[1], pos[2])))
             }),
+            first_played: c.compound("bukkit").and_then(|b| b.i64("firstPlayed")),
         })
     }
 

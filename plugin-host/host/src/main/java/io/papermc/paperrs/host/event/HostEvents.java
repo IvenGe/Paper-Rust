@@ -61,13 +61,33 @@ public final class HostEvents {
         GATED.put("PlayerGameModeChangeEvent", PlayerGameModeChangeEvent.class);
         GATED.put("AsyncChatEvent", AsyncChatEvent.class);
         GATED.put("AsyncPlayerChatEvent", AsyncPlayerChatEvent.class);
+        GATED.put("InventoryOpenEvent", org.bukkit.event.inventory.InventoryOpenEvent.class);
+        GATED.put("InventoryClickEvent", org.bukkit.event.inventory.InventoryClickEvent.class);
+        GATED.put("InventoryDragEvent", org.bukkit.event.inventory.InventoryDragEvent.class);
+        GATED.put("InventoryCloseEvent", org.bukkit.event.inventory.InventoryCloseEvent.class);
+        GATED.put("CraftItemEvent", org.bukkit.event.inventory.CraftItemEvent.class);
+        GATED.put("EntityPickupItemEvent", org.bukkit.event.entity.EntityPickupItemEvent.class);
+        GATED.put("PlayerAttemptPickupItemEvent", org.bukkit.event.player.PlayerAttemptPickupItemEvent.class);
+        GATED.put("PlayerPickupItemEvent", org.bukkit.event.player.PlayerPickupItemEvent.class);
+        GATED.put("PlayerDropItemEvent", org.bukkit.event.player.PlayerDropItemEvent.class);
+        GATED.put("EntityDamageEvent", org.bukkit.event.entity.EntityDamageEvent.class);
+        GATED.put("EntityDamageByEntityEvent", org.bukkit.event.entity.EntityDamageByEntityEvent.class);
+        GATED.put("EntityDamageByBlockEvent", org.bukkit.event.entity.EntityDamageByBlockEvent.class);
+        GATED.put("EntityDeathEvent", org.bukkit.event.entity.EntityDeathEvent.class);
+        GATED.put("PlayerDeathEvent", org.bukkit.event.entity.PlayerDeathEvent.class);
+        GATED.put("PlayerRespawnEvent", org.bukkit.event.player.PlayerRespawnEvent.class);
+        GATED.put("CreatureSpawnEvent", org.bukkit.event.entity.CreatureSpawnEvent.class);
     }
 
     private final CraftServer server;
     private final Map<String, HandlerList> handlerLists = new LinkedHashMap<>();
+    private final InventoryEvents inventories;
+    private final EntityEvents entities;
 
     public HostEvents(final CraftServer server) {
         this.server = server;
+        this.inventories = new InventoryEvents(server);
+        this.entities = new EntityEvents(server);
         for (Map.Entry<String, Class<? extends Event>> e : GATED.entrySet()) {
             try {
                 this.handlerLists.put(e.getKey(), (HandlerList) e.getValue().getMethod("getHandlerList").invoke(null));
@@ -153,6 +173,16 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.chat" -> this.chat(args);
+            case "event.inventory_open" -> this.inventories.open(args);
+            case "event.inventory_click" -> this.inventories.click(args);
+            case "event.inventory_close" -> this.inventories.close(args);
+            case "event.pickup_item" -> this.inventories.pickup(args);
+            case "event.drop_item" -> this.inventories.drop(args);
+            case "event.entity_damage" -> this.entities.damage(args);
+            case "event.entity_death" -> this.entities.entityDeath(args);
+            case "event.player_death" -> this.entities.playerDeath(args);
+            case "event.respawn" -> this.entities.respawn(args);
+            case "event.creature_spawn" -> this.entities.creatureSpawn(args);
             case "event.server_list_ping" -> this.ping(args);
             case "event.pre_login" -> this.preLogin(args);
             default -> throw new IllegalArgumentException("unknown event " + method);

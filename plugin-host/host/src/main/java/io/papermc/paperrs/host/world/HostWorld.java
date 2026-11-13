@@ -1,12 +1,23 @@
 package io.papermc.paperrs.host.world;
 
 import io.papermc.paperrs.host.bridge.Values;
+import io.papermc.paperrs.host.entity.Entities;
+import io.papermc.paperrs.host.item.HostItemStack;
 import io.papermc.paperrs.host.stub.AbstractWorld;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Item;
+import org.bukkit.event.entity.CreatureSpawnEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.BoundingBox;
+import org.jetbrains.annotations.Nullable;
 import org.bukkit.Difficulty;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -175,14 +186,160 @@ public final class HostWorld extends AbstractWorld {
         return out;
     }
 
+    // --- entities -----------------------------------------------------------------------------
+
     @Override
     public List<Entity> getEntities() {
-        return new ArrayList<>(this.getPlayers());
+        final List<Entity> out = new ArrayList<>(this.getPlayers());
+        out.addAll(Entities.list(this.server, this, null));
+        return out;
     }
 
     @Override
     public List<LivingEntity> getLivingEntities() {
-        return new ArrayList<>(this.getPlayers());
+        final List<LivingEntity> out = new ArrayList<>();
+        for (Entity entity : this.getEntities()) {
+            if (entity instanceof LivingEntity living) {
+                out.add(living);
+            }
+        }
+        return out;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T extends Entity> Collection<T> getEntitiesByClass(final Class<T> type) {
+        final List<T> out = new ArrayList<>();
+        for (Entity entity : this.getEntities()) {
+            if (type.isInstance(entity)) {
+                out.add((T) entity);
+            }
+        }
+        return out;
+    }
+
+    @Override
+    @SafeVarargs
+    @SuppressWarnings("unchecked")
+    public final <T extends Entity> Collection<T> getEntitiesByClass(final Class<T>... types) {
+        return (Collection<T>) this.getEntitiesByClasses(types);
+    }
+
+    @Override
+    public Collection<Entity> getEntitiesByClasses(final Class<?>... types) {
+        final List<Entity> out = new ArrayList<>();
+        for (Entity entity : this.getEntities()) {
+            for (Class<?> type : types) {
+                if (type.isInstance(entity)) {
+                    out.add(entity);
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public @Nullable Entity getEntity(final UUID uuid) {
+        for (Entity entity : this.getEntities()) {
+            if (entity.getUniqueId().equals(uuid)) {
+                return entity;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Collection<Entity> getNearbyEntities(final Location location, final double x, final double y, final double z, final @Nullable Predicate<? super Entity> filter) {
+        return this.getNearbyEntities(new BoundingBox(location.getX() - x, location.getY() - y, location.getZ() - z, location.getX() + x, location.getY() + y, location.getZ() + z), filter);
+    }
+
+    @Override
+    public Collection<Entity> getNearbyEntities(final BoundingBox box, final @Nullable Predicate<? super Entity> filter) {
+        final List<Entity> out = new ArrayList<>();
+        for (Player player : this.getPlayers()) {
+            if (player.getBoundingBox().overlaps(box) && (filter == null || filter.test(player))) {
+                out.add(player);
+            }
+        }
+        for (Entity entity : Entities.list(this.server, this, new double[] {box.getMinX(), box.getMinY(), box.getMinZ(), box.getMaxX(), box.getMaxY(), box.getMaxZ()})) {
+            if (filter == null || filter.test(entity)) {
+                out.add(entity);
+            }
+        }
+        return out;
+    }
+
+    private Entity spawnState(final Location location, final EntityType type, final CreatureSpawnEvent.SpawnReason reason) {
+        if (type == EntityType.PLAYER || type == EntityType.UNKNOWN || type.getKey() == null) {
+            throw new IllegalArgumentException("Cannot spawn an entity of type " + type);
+        }
+        final Map<String, Object> state = Values.map(this.server.call("world.spawn_entity", Values.of("world", this.name, "type", type.getKey().toString(),
+            "x", location.getX(), "y", location.getY(), "z", location.getZ(), "yaw", (double) location.getYaw(), "pitch", (double) location.getPitch(),
+            "reason", reason.name())));
+        return Entities.fromState(this.server, state);
+    }
+
+    private static EntityType typeOf(final Class<? extends Entity> clazz) {
+        for (EntityType type : EntityType.values()) {
+            if (type.getEntityClass() == clazz) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Cannot spawn an entity for " + clazz.getName());
+    }
+
+    @Override
+    public Entity spawnEntity(final Location location, final EntityType type, final boolean randomizeData) {
+        return this.spawnState(location, type, CreatureSpawnEvent.SpawnReason.CUSTOM);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T extends Entity> T spawn(final Location location, final Class<T> clazz, final boolean randomizeData, final @Nullable Consumer<? super T> function) {
+        final T entity = (T) this.spawnState(location, typeOf(clazz), CreatureSpawnEvent.SpawnReason.CUSTOM);
+        if (function != null) {
+            function.accept(entity);
+        }
+        return entity;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T extends Entity> T spawn(final Location location, final Class<T> clazz, final @Nullable Consumer<? super T> function, final CreatureSpawnEvent.SpawnReason reason) {
+        final T entity = (T) this.spawnState(location, typeOf(clazz), reason);
+        if (function != null) {
+            function.accept(entity);
+        }
+        return entity;
+    }
+
+    @Override
+    public <T extends LivingEntity> T spawn(final Location location, final Class<T> clazz, final CreatureSpawnEvent.SpawnReason reason, final boolean randomizeData, final @Nullable Consumer<? super T> function) {
+        return this.spawn(location, clazz, function, reason);
+    }
+
+    private Item drop(final Location location, final ItemStack item, final boolean natural, final @Nullable Consumer<? super Item> function) {
+        if (item == null || item.isEmpty()) {
+            throw new IllegalArgumentException("Cannot drop air");
+        }
+        final Map<String, Object> state = Values.map(this.server.call("world.drop_item", Values.of("world", this.name, "x", location.getX(), "y", location.getY(),
+            "z", location.getZ(), "item", HostItemStack.toValue(item), "natural", natural)));
+        final Item entity = (Item) Entities.fromState(this.server, state);
+        if (function != null) {
+            function.accept(entity);
+        }
+        return entity;
+    }
+
+    @Override
+    public Item dropItem(final Location location, final ItemStack item, final @Nullable Consumer<? super Item> function) {
+        return this.drop(location, item, false, function);
+    }
+
+    @Override
+    public Item dropItemNaturally(final Location location, final ItemStack item, final @Nullable Consumer<? super Item> function) {
+        return this.drop(location, item, true, function);
     }
 
     @Override

@@ -30,7 +30,9 @@ pub mod player;
 pub(crate) mod playerdata;
 pub mod portals;
 pub mod recipes;
+pub mod scoreboard;
 pub mod survival;
+pub mod usercache;
 mod view;
 
 pub use join::info_entry as join_info_entry;
@@ -162,6 +164,11 @@ pub struct Server {
     pub plugin_list: Vec<crate::plugins::PluginInfo>,
     /// The last player state sent to the plugin host, per entity id.
     pub plugin_state_cache: HashMap<i32, paper_bridge::Value>,
+    // Paper-RS plugin API state (custom inventories, the launcher kept for `/reload`, ...),
+    // scoreboards and the name cache; see `plugins::PluginData`, `scoreboard` and `usercache`.
+    pub plugin_data: crate::plugins::PluginData,
+    pub scoreboards: scoreboard::Scoreboards,
+    pub user_cache: usercache::UserCache,
     workers: WorkerContext,
     /// Writes world data in the background; `None` when worlds are kept in memory only.
     io: Option<ChunkIo>,
@@ -330,6 +337,7 @@ impl Server {
             worlds.push(world);
         }
 
+        let user_cache = usercache::UserCache::load(&config.root);
         let server = Self {
             default_game_mode: props.gamemode,
             difficulty: props.difficulty,
@@ -349,6 +357,10 @@ impl Server {
             plugin_events: HashSet::new(),
             plugin_list: Vec::new(),
             plugin_state_cache: HashMap::new(),
+            // Plugin API state, scoreboards and the name cache (see the struct fields).
+            plugin_data: Default::default(),
+            scoreboards: scoreboard::Scoreboards::new(),
+            user_cache,
             workers,
             io,
             loot: loot::LootTables::new(vanilla.clone()),

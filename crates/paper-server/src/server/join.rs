@@ -22,6 +22,11 @@ impl Server {
 
         // Returning players continue where they left off.
         let saved = self.load_player_data(profile.uuid);
+        // The name cache and play times behind the plugin API's offline players.
+        let login = chrono::Utc::now().timestamp_millis();
+        self.user_cache.add(&profile.name, profile.uuid);
+        let session = super::usercache::Session { first_played: saved.as_ref().and_then(|s| s.first_played).unwrap_or(login), last_login: login, played_before: saved.is_some() };
+        self.user_cache.start_session(profile.uuid, session);
         let world_index = saved.as_ref().map_or(0, |s| s.world.min(self.worlds.len() - 1));
         let world = &self.worlds[world_index];
         let spawn = world.spawn;

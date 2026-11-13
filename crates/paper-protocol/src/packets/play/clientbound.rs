@@ -1735,6 +1735,23 @@ impl Encode for SetObjective {
     }
 }
 
+impl Decode for SetObjective {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let name = r.string(32767)?;
+        let mode = r.u8()?;
+        let (display_name, render_type) = if mode != 1 {
+            let display_name = r.component()?;
+            let render_type = r.varint()?;
+            // Number format: only "none" is ever sent.
+            let _has_format = r.bool()?;
+            (display_name, render_type)
+        } else {
+            (Component::text(""), 0)
+        };
+        Ok(Self { name, mode, display_name, render_type })
+    }
+}
+
 packet! {
     /// Shows an objective in a slot (0 list, 1 sidebar, 2 below name, 3-18 team sidebars).
     SetDisplayObjective = play::clientbound::SET_DISPLAY_OBJECTIVE {
@@ -1764,6 +1781,17 @@ impl Encode for SetScore {
     }
 }
 
+impl Decode for SetScore {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let owner = r.string(32767)?;
+        let objective = r.string(32767)?;
+        let value = r.varint()?;
+        let display_name = r.option(|r| r.component())?;
+        let _has_format = r.bool()?;
+        Ok(Self { owner, objective, value, display_name })
+    }
+}
+
 /// Removes a score (from one objective, or all when `objective` is `None`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResetScore {
@@ -1777,6 +1805,14 @@ impl Encode for ResetScore {
     fn encode(&self, w: &mut Vec<u8>) {
         w.put_string(&self.owner);
         w.put_option(self.objective.as_ref(), |w, o| w.put_string(o));
+    }
+}
+
+impl Decode for ResetScore {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let owner = r.string(32767)?;
+        let objective = r.option(|r| r.string(32767))?;
+        Ok(Self { owner, objective })
     }
 }
 
@@ -1832,5 +1868,27 @@ impl Encode for SetPlayerTeam {
         if self.method == 0 || self.method == 3 || self.method == 4 {
             w.put_list(&self.members, |w, m| w.put_string(m));
         }
+    }
+}
+
+impl Decode for SetPlayerTeam {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let name = r.string(32767)?;
+        let method = r.i8()?;
+        let parameters = if method == 0 || method == 2 {
+            Some(TeamParameters {
+                display_name: r.component()?,
+                prefix: r.component()?,
+                suffix: r.component()?,
+                nametag_visibility: r.varint()?,
+                collision_rule: r.varint()?,
+                color: r.option(|r| r.varint())?,
+                options: r.i8()?,
+            })
+        } else {
+            None
+        };
+        let members = if method == 0 || method == 3 || method == 4 { r.list(4096, |r| r.string(32767))? } else { Vec::new() };
+        Ok(Self { name, method, parameters, members })
     }
 }

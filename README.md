@@ -116,7 +116,7 @@ What works:
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
   difficulty gamerule summon kill effect seed setworldspawn tps mspt kick ban pardon ban-ip
-  pardon-ip banlist op deop whitelist save-all stop version plugins`.
+  pardon-ip banlist op deop whitelist save-all stop version plugins reload`.
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
   permissions, aliases and tab completion; Brigadier commands and `BasicCommand`), the
@@ -125,9 +125,26 @@ What works:
   `PlayerQuitEvent`, `AsyncChatEvent` and `AsyncPlayerChatEvent`,
   `PlayerCommandPreprocessEvent`, `ServerCommandEvent`, `PlayerCommandSendEvent`,
   `BlockBreakEvent`, `BlockPlaceEvent`, `PlayerMoveEvent`, `PlayerTeleportEvent` (for
-  teleports made by plugins), `PlayerGameModeChangeEvent`, `ServerLoadEvent`. Players, worlds and blocks can be read and
-  changed through the API (messages, titles, sounds, teleporting, health, flight, blocks,
-  time, spawn, ...).
+  teleports made by plugins), `PlayerGameModeChangeEvent`, `ServerLoadEvent`,
+  `InventoryOpenEvent`, `InventoryClickEvent`, `InventoryDragEvent`, `InventoryCloseEvent`,
+  `CraftItemEvent`, `PlayerAttemptPickupItemEvent`, `EntityPickupItemEvent`,
+  `PlayerDropItemEvent`, `EntityDamageEvent` (and its `ByEntity`/`ByBlock` forms),
+  `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`. Players,
+  worlds and blocks can be read and changed through the API (messages, titles, sounds,
+  teleporting, health, flight, blocks, time, spawn, ...), and so can:
+  * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
+    item flags, the persistent data container; other components are kept intact) and
+    inventories: the player inventory, ender chests, chests, barrels and furnaces (as block
+    states), custom inventories from `Bukkit.createInventory` opened with
+    `Player.openInventory`, open windows and the cursor;
+  * entities: listing, spawning and dropping items, and the basics of entities, living
+    entities, mobs, items, experience orbs, arrows and primed TNT (location, teleporting,
+    velocity, names, health, damage, equipment, targets, ...);
+  * offline players, from the player data files and the name cache (`usercache.json`);
+  * scoreboards: the main scoreboard and new ones, objectives, display slots, scores
+    (`health`, `food`, `air`, `armor`, `level` and `xp` follow the players), teams and
+    `Player.setScoreboard`;
+  * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload)).
 
 Not yet:
 
@@ -139,9 +156,14 @@ Not yet:
   crafters, observers of entities and brewing stands do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.
-* Plugin API: item stacks and inventories, offline players, entities other than players,
-  block data, scoreboards, boss bars, creating worlds, registry and tag lifecycle events,
-  `/reload`.
+* Plugin API: block data, boss bars, creating worlds, registry and tag lifecycle events,
+  potion effects and attributes, statistics, entity AI and passengers, the data component API
+  for components without plain values, most special item metas (skulls, potions, books,
+  banners, ...), inventories of other block types and anvils, enchanting or merchant views,
+  stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the
+  `/scoreboard` and `/team` commands, and vanilla-format item serialization
+  (`ItemStack.serialize` uses Paper-RS's own form). The persistent data containers of
+  entities other than players live only in the plugin host and are not saved with the entity.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them.
 

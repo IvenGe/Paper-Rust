@@ -28,7 +28,7 @@ public final class HostData {
     public record Property(String name, List<String> values) {
     }
 
-    public record ItemInfo(String name, int id, int maxStackSize, String block) {
+    public record ItemInfo(String name, int id, int maxStackSize, String block, int maxDamage) {
     }
 
     private static HostData instance;
@@ -81,10 +81,14 @@ public final class HostData {
             }
         }
 
+        JsonObject itemComponents = read("paper-rs-data/item_components.json").getAsJsonObject().getAsJsonObject("items");
         for (JsonElement el : read("paper-rs-data/items.json").getAsJsonObject().getAsJsonArray("items")) {
             JsonObject i = el.getAsJsonObject();
-            ItemInfo info = new ItemInfo(i.get("name").getAsString(), i.get("id").getAsInt(), i.get("max_stack_size").getAsInt(),
-                i.get("block").isJsonNull() ? null : i.get("block").getAsString());
+            String name = i.get("name").getAsString();
+            JsonObject components = itemComponents.getAsJsonObject(name);
+            int maxDamage = components != null && components.has("max_damage") ? components.get("max_damage").getAsInt() : 0;
+            ItemInfo info = new ItemInfo(name, i.get("id").getAsInt(), i.get("max_stack_size").getAsInt(),
+                i.get("block").isJsonNull() ? null : i.get("block").getAsString(), maxDamage);
             this.items.add(info);
             this.itemsByName.put(info.name(), info);
         }

@@ -19,9 +19,9 @@ paper-server     the server itself, and the `paper` binary
 | Module | Responsibility |
 | --- | --- |
 | `net` | the listener and one task per connection: handshake, status, login (authentication, encryption, compression), configuration; then a reader and a writer per player |
-| `server` | the main thread: the tick loop, players (`join`, `handlers`, `view`, `player`), chat, commands, player data |
+| `server` | the main thread: the tick loop, players (`join`, `handlers`, `view`, `player`), chat, commands, player data, scoreboards (`scoreboard`), the name cache (`usercache`) |
 | `world` | chunk storage, the chunk pipeline, generators, lighting, Anvil storage, block updates (fluids, redstone, block physics) and scheduled ticks |
-| `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use |
+| `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use (`api`, and `inventory`, `entity`, `scoreboard`, `offline` for those areas), `/reload` |
 | `config`, `access`, `logging` | `server.properties` and `config/paper-rs.toml`, ops/whitelist/bans, the console log |
 
 ## Threads
@@ -99,7 +99,10 @@ block update.
 * `<world>/level.dat`: seed, generator, spawn, time; `<world>/data/minecraft/game_rules.dat`:
   the game rules (older `level.dat` rules are imported).
 * `<world>/playerdata/<uuid>.dat`: position, dimension, game mode, health, food, effects,
-  experience, inventory, equipment and ender chest.
+  experience, inventory, equipment, ender chest and respawn point, and Bukkit's and Paper's
+  play times (`bukkit.firstPlayed`, `Paper.LastLogin`, ...).
+* `usercache.json` (in the server directory): names and UUIDs of players who joined, as
+  vanilla keeps it.
 * The Nether and the End are separate worlds in CraftBukkit's layout: `<world>_nether` with
   its regions in `DIM-1/`, `<world>_the_end` with `DIM1/`, each with its own `level.dat`.
   Player data only lives in the main world.

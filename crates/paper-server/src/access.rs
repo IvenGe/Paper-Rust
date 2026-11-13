@@ -187,6 +187,11 @@ impl AccessLists {
         changed
     }
 
+    /// The ban in force for a player, if any.
+    pub fn ban_of(&self, uuid: Uuid) -> Option<&BanEntry> {
+        self.banned_players.iter().find(|b| b.uuid == uuid && in_force(&b.expires))
+    }
+
     pub fn is_whitelisted(&self, uuid: Uuid) -> bool {
         self.whitelist.iter().any(|e| e.uuid == uuid)
     }

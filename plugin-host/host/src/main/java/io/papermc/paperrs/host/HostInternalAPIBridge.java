@@ -81,6 +81,37 @@ public final class HostInternalAPIBridge extends AbstractInternalAPIBridge {
     }
 
     @Override
+    public org.bukkit.damage.DamageSource.Builder createDamageSourceBuilder(final org.bukkit.damage.DamageType type) {
+        return new io.papermc.paperrs.host.entity.HostDamageSource.Builder(type);
+    }
+
+    @Override
+    public <C> io.papermc.paper.persistence.PersistentDataKey<C> createPersistentDataKey(final net.kyori.adventure.key.Key key, final org.bukkit.persistence.PersistentDataType<?, C> type) {
+        final org.bukkit.NamespacedKey namespaced = new org.bukkit.NamespacedKey(key.namespace(), key.value());
+        return new io.papermc.paper.persistence.PersistentDataKey<>() {
+            @Override
+            public org.bukkit.NamespacedKey key() {
+                return namespaced;
+            }
+
+            @Override
+            public org.bukkit.persistence.PersistentDataType<?, C> dataType() {
+                return type;
+            }
+        };
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack createEmptyStack() {
+        return io.papermc.paperrs.host.item.HostItemStack.empty();
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack deserializeItem(final byte[] bytes) {
+        return io.papermc.paperrs.host.item.HostItemStack.deserializeBytes(bytes);
+    }
+
+    @Override
     public String getTranslationKey(final EntityType type) {
         return "entity." + type.getKey().getNamespace() + "." + type.getKey().getKey();
     }

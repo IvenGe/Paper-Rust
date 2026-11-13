@@ -34,6 +34,9 @@ pub enum MenuKind {
     EnderChest,
     CraftingTable,
     Furnace { world: usize, pos: BlockPos, recipe_type: &'static str },
+    /// A custom inventory made by a plugin (`Bukkit.createInventory`); its slots are kept in
+    /// `Server::plugin_data` (see `plugins::inventory`) and clicks go to the plugin host.
+    Custom { id: u64 },
 }
 
 /// Which container a block is.
@@ -243,6 +246,20 @@ impl Server {
         }
     }
 
+    /// The container a block belongs to and the positions its window shows (both halves of a
+    /// double chest, top first), for the plugin API.
+    pub fn container_positions(&self, world: usize, pos: BlockPos) -> Option<(ContainerBlock, Vec<BlockPos>)> {
+        let state = self.worlds[world].block_at(pos.x, pos.y, pos.z)?;
+        let kind = container_block(state)?;
+        if kind == ContainerBlock::Chest {
+            if let Some(other) = self.double_chest_partner(world, pos, state) {
+                let top_first = blocks::property(state, "type") == Some("right");
+                return Some((kind, if top_first { vec![pos, other] } else { vec![other, pos] }));
+            }
+        }
+        Some((kind, vec![pos]))
+    }
+
     /// Opens the window of a container block. Returns false if it is not one.
     pub fn try_open_container(&mut self, id: i32, world: usize, pos: BlockPos) -> bool {
         let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return false };
@@ -290,26 +307,36 @@ impl Server {
                 (MenuKind::Furnace { world, pos, recipe_type }, menu, title)
             }
         };
-        if !crate::plugins::events::on_inventory_open(self, id, &menu_kind) {
+        let title = custom_name.unwrap_or_else(|| Component::translatable(title, vec![]));
+        if !self.open_menu(id, menu_kind, menu_name, title) {
             return true;
         }
-        self.close_menu(id, false);
+        if matches!(kind, ContainerBlock::EnderChest) {
+            self.block_event_and_sound(world, pos, 1, 1, "minecraft:block.ender_chest.open");
+        }
+        true
+    }
+
+    /// Opens a window for a player: fires `InventoryOpenEvent`, closes the window they have
+    /// open, and sends the new one with its contents. Used for container blocks and for
+    /// windows plugins open. Returns false if a plugin cancelled the event.
+    pub fn open_menu(&mut self, id: i32, menu_kind: MenuKind, menu_name: &str, title: Component) -> bool {
+        if !crate::plugins::events::on_inventory_open(self, id, &menu_kind) {
+            return false;
+        }
+        self.close_menu_with_reason(id, false, "OPEN_NEW");
         let Some(player) = self.players.get_mut(&id) else { return false };
         let window_id = player.next_window_id;
         player.next_window_id = player.next_window_id % 100 + 1;
         let craft_grid = if menu_kind == MenuKind::CraftingTable { vec![Slot::EMPTY; 10] } else { Vec::new() };
         player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid });
-        let title = custom_name.unwrap_or_else(|| Component::translatable(title, vec![]));
         player.conn.send(&play::OpenScreen { window_id: VarInt(window_id), menu_type: VarInt(menu_type(menu_name)), title });
         self.send_menu_contents(id);
         // Lid animation and sound.
-        if let MenuKind::Container { positions, .. } = &menu_kind {
-            self.container_viewers_changed(world, positions.clone(), true);
+        if let MenuKind::Container { world, positions } = &menu_kind {
+            self.container_viewers_changed(*world, positions.clone(), true);
         }
-        if matches!(kind, ContainerBlock::EnderChest) {
-            self.block_event_and_sound(world, pos, 1, 1, "minecraft:block.ender_chest.open");
-        }
-        if let MenuKind::Furnace { .. } = menu_kind {
+        if let MenuKind::Furnace { world, pos, .. } = menu_kind {
             self.send_furnace_data(world, pos);
         }
         true
@@ -317,6 +344,21 @@ impl Server {
 
     /// Closes the open window (the client closed it, or `notify` the server did).
     pub fn close_menu(&mut self, id: i32, notify: bool) {
+        self.close_menu_with_reason(id, notify, if notify { "UNKNOWN" } else { "PLAYER" });
+    }
+
+    /// Closes the open window, firing `InventoryCloseEvent` with a Bukkit close `reason`
+    /// (`OPEN_NEW` only fires it if another window was open).
+    pub fn close_menu_with_reason(&mut self, id: i32, notify: bool, reason: &str) {
+        let window = |s: &Self| s.players.get(&id).and_then(|p| p.open_menu.as_ref()).map(|m| m.window_id);
+        let before = window(self);
+        if reason != "OPEN_NEW" || before.is_some() {
+            crate::plugins::events::on_inventory_close(self, id, reason);
+            // A listener opened another window instead (the one closing is gone already).
+            if before.is_some() && window(self) != before {
+                return;
+            }
+        }
         let Some(player) = self.players.get_mut(&id) else { return };
         let Some(menu) = player.open_menu.take() else {
             // Closing the inventory returns the 2x2 grid and the cursor to the inventory.
@@ -338,6 +380,8 @@ impl Server {
                     self.play_sound_at(world, pos, "minecraft:block.ender_chest.close", 0.5);
                 }
             }
+            // A plugin inventory nobody refers to any more can go now.
+            MenuKind::Custom { .. } => crate::plugins::inventory::collect_released(self),
             _ => {}
         }
     }
@@ -425,7 +469,7 @@ impl Server {
     fn menu_layout(kind: Option<&MenuKind>, size: usize) -> Layout {
         match kind {
             None => Layout::player_inventory(),
-            Some(MenuKind::Container { .. } | MenuKind::EnderChest) => Layout::container(size),
+            Some(MenuKind::Container { .. } | MenuKind::EnderChest | MenuKind::Custom { .. }) => Layout::container(size),
             Some(MenuKind::CraftingTable) => Layout::crafting_table(),
             Some(MenuKind::Furnace { recipe_type, .. }) => Layout::furnace(recipe_type),
         }
@@ -440,6 +484,7 @@ impl Server {
             MenuKind::EnderChest => player.ender_items.clone(),
             MenuKind::CraftingTable => menu.craft_grid.clone(),
             MenuKind::Furnace { world, pos, .. } => self.container_items(*world, *pos),
+            MenuKind::Custom { id } => self.plugin_data.inventories.get(id).map(|i| i.items.clone()).unwrap_or_default(),
         };
         slots.extend(player.inventory[9..45].iter().cloned());
         Some((Some(menu.kind.clone()), slots))
@@ -471,6 +516,11 @@ impl Server {
                 }
             }
             MenuKind::Furnace { world, pos, .. } => self.set_container_items(*world, *pos, &slots[..3]),
+            MenuKind::Custom { id } => {
+                if let Some(custom) = self.plugin_data.inventories.get_mut(id) {
+                    custom.items.clone_from_slice(&slots[..container_len]);
+                }
+            }
         }
     }
 
@@ -509,12 +559,35 @@ impl Server {
         if click.slot >= 0 && click.slot as usize >= layout.len() {
             return;
         }
-        if !crate::plugins::events::on_inventory_click(self, id, &click, kind.as_ref()) {
+        // Clicks on a crafting result are CraftItemEvents; the result is only taken if no
+        // plugin cancels it. (The result is worked out as the click will see it.)
+        if layout.crafting.is_some() {
+            let recipes = self.recipes.clone();
+            let (mut carried, mut drag) = (Slot::EMPTY, super::menu::Drag::default());
+            let before = slots[0].clone();
+            Menu { layout: &layout, slots: &mut slots, carried: &mut carried, recipes: recipes.as_deref(), creative, drag: &mut drag }.update_result();
+            if slots[0] != before {
+                // Listeners read the result slot (CraftItemEvent#getCurrentItem).
+                self.store_menu_slots(id, kind.as_ref(), &slots);
+            }
+        }
+        let crafting = layout.crafting.as_ref().is_some_and(|(result, _, _)| click.slot >= 0 && click.slot as usize == *result) && !slots[0].is_empty() && click.mode != 5;
+        if !crate::plugins::events::on_inventory_click(self, id, &click, kind.as_ref(), crafting.then(|| slots[0].clone())) {
+            self.send_menu_contents(id);
+            return;
+        }
+        // Listeners may have changed the window (or closed it, or opened another one).
+        let open_window = self.players.get(&id).and_then(|p| p.open_menu.as_ref()).map_or(0, |m| m.window_id);
+        if open_window != click.window_id {
+            return;
+        }
+        let Some((kind, mut slots)) = self.menu_slots(id) else { return };
+        if slots.len() != layout.len() {
             self.send_menu_contents(id);
             return;
         }
         let before = slots.clone();
-        let player = self.players.get_mut(&id).unwrap();
+        let Some(player) = self.players.get_mut(&id) else { return };
         let mut carried = std::mem::take(&mut player.carried);
         let mut drag = std::mem::take(&mut player.drag);
         let recipes = self.recipes.clone();
@@ -531,9 +604,6 @@ impl Server {
         self.store_menu_slots(id, kind.as_ref(), &slots);
         for stack in result.dropped {
             self.player_drop(id, stack, true);
-        }
-        if !result.crafted.is_empty() {
-            crate::plugins::events::on_crafted(self, id, &result.crafted);
         }
 
         // Tell this client what changed (and correct what it guessed differently).
@@ -563,6 +633,15 @@ impl Server {
             let changed: Vec<usize> = (0..3).filter(|i| before[*i] != slots[*i]).collect();
             if !changed.is_empty() {
                 self.broadcast_container_slots(id, *world, &[*pos], &slots[..3], &changed);
+            }
+        }
+        if let Some(MenuKind::Custom { id: custom }) = &kind {
+            let size = slots.len() - 36;
+            if (0..size).any(|i| before[i] != slots[i]) {
+                let inv = crate::plugins::inventory::InvRef::Custom(*custom);
+                for viewer in inv.viewers(self).into_iter().filter(|v| *v != id) {
+                    self.send_menu_contents(viewer);
+                }
             }
         }
     }
