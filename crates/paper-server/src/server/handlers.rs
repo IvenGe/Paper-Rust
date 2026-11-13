@@ -296,7 +296,7 @@ impl Server {
     }
 
     /// Sends the real state of a block to a player, undoing a client-side prediction.
-    fn resend_block(&self, id: i32, pos: BlockPos) {
+    pub(super) fn resend_block(&self, id: i32, pos: BlockPos) {
         let Some(player) = self.players.get(&id) else { return };
         if let Some(state) = self.worlds[player.world].block_at(pos.x, pos.y, pos.z) {
             player.conn.send(&play::BlockUpdate { pos, state: VarInt(state as i32) });
@@ -316,19 +316,26 @@ impl Server {
             START_DESTROY_BLOCK | STOP_DESTROY_BLOCK => {
                 let world = player.world;
                 let state = self.worlds[world].block_at(action.pos.x, action.pos.y, action.pos.z).unwrap_or(blocks::AIR);
-                let instant = mode == GameMode::Creative || blocks::block_of_state(state).hardness == 0.0;
                 let finishing = action.status.0 == STOP_DESTROY_BLOCK;
                 let allowed = matches!(mode, GameMode::Creative | GameMode::Survival);
-                if allowed && (finishing || instant) {
-                    if !self.break_block(id, action.pos) {
+                if !allowed || !self.within_reach(id, action.pos) {
+                    self.resend_block(id, action.pos);
+                } else if mode == GameMode::Creative {
+                    if !finishing && !self.break_block(id, action.pos) {
                         self.resend_block(id, action.pos);
                     }
-                } else if !allowed {
+                } else if !finishing {
+                    // Survival: instant blocks break now, others start the clock.
+                    self.start_digging(id, action.pos, state);
+                } else if self.finish_digging(id, action.pos, state) == Some(false) {
                     self.resend_block(id, action.pos);
                 }
                 self.send(id, &play::BlockChangedAck { sequence: action.sequence });
             }
-            ABORT_DESTROY_BLOCK => self.send(id, &play::BlockChangedAck { sequence: action.sequence }),
+            ABORT_DESTROY_BLOCK => {
+                self.abort_digging(id);
+                self.send(id, &play::BlockChangedAck { sequence: action.sequence });
+            }
             DROP_ITEM | DROP_ALL_ITEMS => {
                 let slot = HOTBAR_START + player.held_slot as usize;
                 let Some(stack) = player.inventory[slot].0.clone() else { return };

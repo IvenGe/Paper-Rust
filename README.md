@@ -80,7 +80,8 @@ What works:
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
   experience, death messages) and respawning; attacking with the attack cooldown, critical
   hits, sweeping, knockback and weapon enchantments; tool and weapon wear; bows; explosions
-  that break blocks and hurt and push entities. Blocks drop their loot when broken. Status
+  that break blocks and hurt and push entities. Blocks take vanilla's mining time (tool
+  speeds, efficiency, haste, mining fatigue, water and air) and drop their loot. Status
   effects (`/effect`, golden apples, potions, poisonous food, milk, chorus fruit, poisonous
   mob bites): regeneration, poison, wither, hunger, saturation, instant health and damage,
   absorption, resistance, fire resistance, water breathing, strength, weakness, jump boost,

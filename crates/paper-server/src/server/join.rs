@@ -107,6 +107,9 @@ impl Server {
             won_game: false,
             effects: Vec::new(),
             absorption: 0.0,
+            digging: None,
+            delayed_break: None,
+            crack_stage: -1,
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {

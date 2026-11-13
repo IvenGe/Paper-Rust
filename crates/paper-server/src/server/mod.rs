@@ -18,6 +18,7 @@ mod handlers;
 mod join;
 mod combat;
 mod machines;
+mod mining;
 pub mod containers;
 pub mod effects;
 pub mod entities;
@@ -478,6 +479,7 @@ impl Server {
         self.tick_chunk_views();
         self.tick_players();
         self.tick_effects();
+        self.tick_digging();
         self.tick_entities();
         self.tick_spawning();
         self.tick_furnaces();

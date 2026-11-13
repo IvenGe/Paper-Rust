@@ -206,6 +206,12 @@ pub struct Player {
     pub effects: Vec<super::effects::ActiveEffect>,
     /// Extra hearts from the absorption effect.
     pub absorption: f32,
+    /// The block being broken and the tick it was started.
+    pub digging: Option<(paper_protocol::codec::BlockPos, u64)>,
+    /// A block reported broken early, broken when its time is up.
+    pub delayed_break: Option<(paper_protocol::codec::BlockPos, u64)>,
+    /// Crack stage last shown to others (-1 none).
+    pub crack_stage: i32,
 }
 
 impl Player {

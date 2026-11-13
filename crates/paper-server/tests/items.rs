@@ -50,3 +50,41 @@ fn broken_blocks_drop_items_that_players_pick_up() {
     assert_eq!(count, 1, "the thrown item exists on the server");
     server.stop();
 }
+
+#[test]
+fn blocks_take_their_mining_time() {
+    use paper_protocol::types::Slot;
+    let server = start_server(|c| c.properties.gamemode = paper_server::config::GameMode::Survival);
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    alice.find(TIMEOUT, |c: &play::LevelChunkWithLight| c.x == 0 && c.z == 0).expect("spawn chunk");
+    alice.drain(QUIET);
+    let id = alice.entity_id;
+    let stone = paper_data::blocks::default_state("minecraft:stone").unwrap();
+    let (a, b) = (BlockPos::new(10, -60, 8), BlockPos::new(10, -60, 9));
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_and_update(0, a, stone);
+            s.set_block_and_update(0, b, stone);
+        })
+        .unwrap();
+    // Standing on the ground (mining in the air is five times slower).
+    alice.move_to(8.5, -60.0, 8.5);
+    // A hacked client claiming to break stone by hand at once: the stone stays (by hand it
+    // takes seven and a half seconds).
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::START_DESTROY_BLOCK), pos: a, face: 1, sequence: VarInt(1) });
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::STOP_DESTROY_BLOCK), pos: a, face: 1, sequence: VarInt(2) });
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(server.handle.run(move |s| s.worlds[0].block_at(a.x, a.y, a.z)).unwrap(), Some(stone), "not broken yet");
+
+    // A diamond pickaxe needs about six ticks: the break goes through once they are over.
+    let pickaxe = paper_data::items::id("minecraft:diamond_pickaxe").unwrap() as i32;
+    server.handle.run(move |s| s.players.get_mut(&id).unwrap().inventory[36] = Slot::of(pickaxe, 1)).unwrap();
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::START_DESTROY_BLOCK), pos: b, face: 1, sequence: VarInt(3) });
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::STOP_DESTROY_BLOCK), pos: b, face: 1, sequence: VarInt(4) });
+    std::thread::sleep(Duration::from_millis(1000));
+    let broken = server.handle.run(move |s| s.worlds[0].block_at(b.x, b.y, b.z).map(paper_data::blocks::is_air)).unwrap();
+    assert_eq!(broken, Some(true), "broken with the pickaxe");
+    server.stop();
+}
