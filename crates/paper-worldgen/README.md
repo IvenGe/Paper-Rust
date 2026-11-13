@@ -85,7 +85,7 @@ solidity, collision) taken from Pumpkin's extracted `blocks.json`.
 | Surface rules, bedrock | matches the vanilla fixtures |
 | Carvers (caves, canyons, nether caves) | matches the vanilla fixtures |
 | Features | see below |
-| Structures (villages, mineshafts, ...) | not generated |
+| Structures (villages, mineshafts, ...) | not generated, nor the terrain adaptation ("beardifier") around them |
 | Initial world spawn | `find_spawn`, see below |
 
 Features follow vanilla's decoration driver (feature order across biomes, per feature
