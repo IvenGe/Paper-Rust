@@ -36,6 +36,12 @@ fn player_metadata(player: &Player) -> Vec<u8> {
     if player.fire_ticks > 0 {
         bits |= flags::ON_FIRE;
     }
+    if player.effects.iter().any(|e| e.name() == "minecraft:invisibility") {
+        bits |= flags::INVISIBLE;
+    }
+    if player.effects.iter().any(|e| e.name() == "minecraft:glowing") {
+        bits |= flags::GLOWING;
+    }
     if player.sneaking {
         bits |= flags::SNEAKING;
     }
@@ -61,6 +67,8 @@ fn player_metadata(player: &Player) -> Vec<u8> {
         .byte(index::HAND_STATES, hands)
         .float(index::HEALTH, player.health.max(0.0))
         .byte(index::SKIN_PARTS, player.settings.skin_parts as i8)
+        // `DATA_PLAYER_ABSORPTION_ID`
+        .float(17, player.absorption)
         .finish()
 }
 

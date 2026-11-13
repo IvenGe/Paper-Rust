@@ -540,3 +540,81 @@ pub mod game_rules {
         out
     }
 }
+
+/// Status effects (`minecraft:mob_effect`) and what potions give.
+pub mod effects {
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    pub struct EffectInfo {
+        pub name: String,
+        /// Protocol id in `minecraft:mob_effect`.
+        pub id: i32,
+        /// `BENEFICIAL`, `HARMFUL` or `NEUTRAL`.
+        pub category: String,
+        pub instantaneous: bool,
+        /// (attribute, operation, amount per level, modifier id). The amount is multiplied by
+        /// the amplifier plus one.
+        pub modifiers: Vec<(String, String, f64, String)>,
+    }
+
+    struct Tables {
+        effects: Vec<EffectInfo>,
+        potions: HashMap<String, Vec<(String, i32, i32)>>,
+    }
+
+    fn tables() -> &'static Tables {
+        static T: OnceLock<Tables> = OnceLock::new();
+        T.get_or_init(|| {
+            let e: Value = serde_json::from_str(include_str!("../../../data/26.3/effects.json")).expect("effects.json");
+            let p: Value = serde_json::from_str(include_str!("../../../data/26.3/potions.json")).expect("potions.json");
+            let mut effects: Vec<EffectInfo> = e["effects"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(name, v)| {
+                    let id = crate::registries::id("minecraft:mob_effect", name)? as i32;
+                    let modifiers = v["modifiers"]
+                        .as_array()
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|m| Some((m[0].as_str()?.to_owned(), m[1].as_str()?.to_owned(), m[2].as_f64()?, m[3].as_str()?.to_owned())))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(EffectInfo { name: name.clone(), id, category: v["category"].as_str().unwrap_or("NEUTRAL").to_owned(), instantaneous: v["instantaneous"].as_bool().unwrap_or(false), modifiers })
+                })
+                .collect();
+            effects.sort_by_key(|e| e.id);
+            let potions = p["potions"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(name, list)| {
+                    let effects = list.as_array().map(|l| l.iter().filter_map(|x| Some((x[0].as_str()?.to_owned(), x[1].as_i64()? as i32, x[2].as_i64()? as i32))).collect()).unwrap_or_default();
+                    (name.clone(), effects)
+                })
+                .collect();
+            Tables { effects, potions }
+        })
+    }
+
+    pub fn by_name(name: &str) -> Option<&'static EffectInfo> {
+        let name = normalize(name);
+        tables().effects.iter().find(|e| e.name == name.as_ref())
+    }
+
+    pub fn by_id(id: i32) -> Option<&'static EffectInfo> {
+        tables().effects.iter().find(|e| e.id == id)
+    }
+
+    pub fn all() -> &'static [EffectInfo] {
+        &tables().effects
+    }
+
+    /// The effects a potion gives: (effect, duration in ticks, amplifier).
+    pub fn potion(name: &str) -> &'static [(String, i32, i32)] {
+        let name = normalize(name);
+        tables().potions.get(name.as_ref()).map_or(&[], |v| v.as_slice())
+    }
+}

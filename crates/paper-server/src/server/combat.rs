@@ -120,6 +120,12 @@ impl Server {
         if level("minecraft:bane_of_arthropods") > 0 && entity_in_tag(target_type, "minecraft:sensitive_to_bane_of_arthropods") {
             enchant += 2.5 * level("minecraft:bane_of_arthropods") as f32;
         }
+        if let Some(level) = p.effects.iter().find(|e| e.name() == "minecraft:strength").map(|e| e.amplifier) {
+            base += 3.0 * (level + 1) as f32;
+        }
+        if let Some(level) = p.effects.iter().find(|e| e.name() == "minecraft:weakness").map(|e| e.amplifier) {
+            base = (base - 4.0 * (level + 1) as f32).max(0.0);
+        }
         base *= 0.2 + strength * strength * 0.8;
         enchant *= strength;
         let full = strength > 0.9;
@@ -306,6 +312,12 @@ impl Server {
         }
         if damage.is("is_fire") && e.info.fire_immune && !damage.is("bypasses_invulnerability") {
             return false;
+        }
+        if damage.is("is_fire") && !damage.is("bypasses_effects") && self.effect_level(world, id, "minecraft:fire_resistance").is_some() {
+            return false;
+        }
+        if let Some(level) = self.effect_level(world, id, "minecraft:resistance").filter(|_| !damage.is("bypasses_resistance")) {
+            amount = (amount * (25 - (level + 1) * 5) as f32 / 25.0).max(0.0);
         }
         if !crate::plugins::events::on_entity_damage(self, id, &damage, &mut amount) {
             return false;

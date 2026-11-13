@@ -105,6 +105,8 @@ impl Server {
             travel: None,
             seen_credits: false,
             won_game: false,
+            effects: Vec::new(),
+            absorption: 0.0,
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -127,6 +129,8 @@ impl Server {
             player.air = saved.air;
             player.fall_distance = saved.fall_distance;
             player.seen_credits = saved.seen_credits;
+            player.effects = saved.effects;
+            player.absorption = saved.absorption;
             player.apply_game_mode_abilities();
             player.flying = saved.flying && player.allow_flight;
         } else {
@@ -184,6 +188,11 @@ impl Server {
         player.conn.send(&play::ContainerSetContent { window_id: 0, state_id: player.inventory_state, slots: player.inventory.clone(), carried: Slot::EMPTY });
         player.conn.send(&play::SetHealth { health: player.health, food: VarInt(player.food), saturation: player.saturation });
         player.conn.send(&play::SetExperience { bar: player.xp_progress, level: VarInt(player.xp_level), total: VarInt(player.xp_total) });
+        for e in &player.effects {
+            let flags = (e.ambient as i8) | (e.particles as i8) << 1 | (e.icon as i8) << 2;
+            player.conn.send(&play::UpdateMobEffect { entity_id: VarInt(entity_id), effect: VarInt(e.id), amplifier: VarInt(e.amplifier), duration: VarInt(e.duration), flags });
+        }
+        let has_effects = !player.effects.is_empty();
 
         let name = player.name().to_owned();
         let uuid = player.uuid();
@@ -194,6 +203,9 @@ impl Server {
         self.shared.player_count.store(self.players.len(), Ordering::Relaxed);
         self.mark_status_dirty();
         self.refresh_chunk_view(entity_id);
+        if has_effects {
+            self.sync_effect_attributes(entity_id);
+        }
 
         let shown_address = if self.config.properties.log_ips { address.to_string() } else { "<ip address withheld>".to_owned() };
         log::info!("{name}[/{shown_address}] logged in with entity id {entity_id} at ([{}]{:.1}, {:.1}, {:.1})", self.worlds[world_index].name, loc.x, loc.y, loc.z);

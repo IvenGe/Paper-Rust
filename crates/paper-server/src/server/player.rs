@@ -202,6 +202,10 @@ pub struct Player {
     pub seen_credits: bool,
     /// Left the End and waits for the client to ask to respawn.
     pub won_game: bool,
+    /// Status effects.
+    pub effects: Vec<super::effects::ActiveEffect>,
+    /// Extra hearts from the absorption effect.
+    pub absorption: f32,
 }
 
 impl Player {

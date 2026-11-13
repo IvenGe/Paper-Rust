@@ -657,6 +657,7 @@ impl Server {
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let (pos, yaw, burning) = (e.pos, e.yaw, e.mob().is_some_and(|m| m.living.fire_ticks > 0));
         let is_zombie = e.info.name.contains("zombie") || e.info.name == "minecraft:husk" || e.info.name == "minecraft:drowned";
+        let name = e.info.name.clone();
         let knockback = e.info.attribute("attack_knockback").unwrap_or(0.0);
         let difficulty = self.difficulty as i32;
         if self.hurt_entity(world, target, Damage::by("minecraft:mob_attack", id, pos), amount) {
@@ -667,6 +668,22 @@ impl Server {
             // Burning zombies set their victims alight.
             if is_zombie && burning && rand::thread_rng().gen::<f32>() < difficulty as f32 * 0.3 {
                 self.set_on_fire(world, target, 40 * difficulty);
+            }
+            // Poisonous and withering bites (`CaveSpider`, `Husk`, `WitherSkeleton.doHurtTarget`).
+            let bite = match name.as_str() {
+                "minecraft:cave_spider" => match difficulty {
+                    2 => Some(("minecraft:poison", 7 * 20)),
+                    3 => Some(("minecraft:poison", 15 * 20)),
+                    _ => None,
+                },
+                "minecraft:husk" => Some(("minecraft:hunger", 140 * difficulty)),
+                "minecraft:wither_skeleton" => Some(("minecraft:wither", 200)),
+                _ => None,
+            };
+            if let Some((effect, ticks)) = bite.filter(|(_, t)| *t > 0) {
+                if let Some(e) = super::effects::ActiveEffect::new(effect, ticks, 0) {
+                    self.add_effect(world, target, e);
+                }
             }
         }
     }

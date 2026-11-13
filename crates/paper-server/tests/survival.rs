@@ -198,3 +198,76 @@ fn game_rules_can_turn_damage_off() {
     assert!(!rule);
     server.stop();
 }
+
+#[test]
+fn golden_apples_poison_and_milk() {
+    let server = survival_server();
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let apple = items::id("minecraft:golden_apple").unwrap() as i32;
+    let milk = items::id("minecraft:milk_bucket").unwrap() as i32;
+    server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&id).unwrap();
+            p.health = 10.0;
+            // Below 18 food (also after the apple's 4) there is no natural regeneration to
+            // mask the poison.
+            p.food = 10;
+            p.saturation = 0.0;
+            p.inventory[36] = Slot::of(apple, 1);
+            p.inventory[37] = Slot::of(milk, 1);
+            s.resync_inventory(id);
+        })
+        .unwrap();
+    alice.drain(QUIET);
+    alice.clear_backlog();
+
+    // A golden apple: regeneration II and absorption.
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(1), yaw: 0.0, pitch: 0.0 });
+    let regen_id = paper_data::effects::by_name("minecraft:regeneration").unwrap().id;
+    let absorption_id = paper_data::effects::by_name("minecraft:absorption").unwrap().id;
+    let regen: play::UpdateMobEffect = alice.find(TIMEOUT, |e: &play::UpdateMobEffect| e.effect.0 == regen_id).expect("regeneration");
+    assert_eq!((regen.entity_id.0, regen.amplifier.0, regen.duration.0), (id, 1, 100));
+    alice.find(TIMEOUT, |e: &play::UpdateMobEffect| e.effect.0 == absorption_id).expect("absorption");
+    let health: play::SetHealth = alice.find(TIMEOUT, |h: &play::SetHealth| h.health > 10.0).expect("regenerating");
+    assert!(health.health > 10.0);
+    assert_eq!(server.handle.run(move |s| s.players[&id].absorption).unwrap(), 4.0);
+
+    // Poison hurts down to half a heart, never further (one point every 12 ticks, as the
+    // invulnerability frames allow).
+    server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&id).unwrap();
+            p.health = 4.0;
+            p.absorption = 0.0;
+        })
+        .unwrap();
+    server.handle.console_command("effect clear Alice minecraft:regeneration");
+    server.handle.console_command("effect give Alice minecraft:poison 10 3");
+    let poison_id = paper_data::effects::by_name("minecraft:poison").unwrap().id;
+    alice.find(TIMEOUT, |e: &play::UpdateMobEffect| e.effect.0 == poison_id).expect("poisoned");
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    let mut lowest = 20.0f32;
+    while std::time::Instant::now() < deadline {
+        let health = server.handle.run(move |s| s.players[&id].health).unwrap();
+        assert!(health >= 1.0, "poison never kills: {health}");
+        lowest = lowest.min(health);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(lowest, 1.0, "poisoned down to half a heart");
+
+    // Milk takes every effect away.
+    server.handle.console_command("effect give Alice minecraft:speed 60");
+    let speed_id = paper_data::effects::by_name("minecraft:speed").unwrap().id;
+    alice.find(TIMEOUT, |e: &play::UpdateMobEffect| e.effect.0 == speed_id).expect("fast");
+    server.handle.run(move |s| s.players.get_mut(&id).unwrap().held_slot = 1).unwrap();
+    alice.send(&play::SetCarriedItem { slot: 1 });
+    alice.clear_backlog();
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(2), yaw: 0.0, pitch: 0.0 });
+    alice.find(TIMEOUT, |e: &play::RemoveMobEffect| e.effect.0 == speed_id).expect("milk cures");
+    let left = server.handle.run(move |s| (s.players[&id].effects.len(), s.players[&id].inventory[37].0.as_ref().map(|i| items::get(i.item as u32).unwrap().name))).unwrap();
+    assert_eq!(left, (0, Some("minecraft:bucket")));
+    server.stop();
+}

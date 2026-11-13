@@ -19,6 +19,7 @@ mod join;
 mod combat;
 mod machines;
 pub mod containers;
+pub mod effects;
 pub mod entities;
 pub mod loot;
 pub mod menu;
@@ -476,6 +477,7 @@ impl Server {
         self.tick_keep_alive();
         self.tick_chunk_views();
         self.tick_players();
+        self.tick_effects();
         self.tick_entities();
         self.tick_spawning();
         self.tick_furnaces();

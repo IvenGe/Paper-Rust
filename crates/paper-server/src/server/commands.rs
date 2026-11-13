@@ -72,6 +72,7 @@ impl CommandRegistry {
             Builtin { name: "setblock", aliases: &[], description: "Changes a block", usage: "/setblock <x> <y> <z> <block>", min_op: 2, handler: cmd_setblock, completer: complete_setblock },
             Builtin { name: "time", aliases: &[], description: "Changes or queries the world's time", usage: "/time <set|add|query> <value>", min_op: 2, handler: cmd_time, completer: complete_time },
             Builtin { name: "difficulty", aliases: &[], description: "Sets the difficulty", usage: "/difficulty [peaceful|easy|normal|hard]", min_op: 2, handler: cmd_difficulty, completer: complete_difficulty },
+            Builtin { name: "effect", aliases: &[], description: "Gives or removes status effects", usage: "/effect <give|clear> <targets> [effect] [seconds] [amplifier] [hideParticles]", min_op: 2, handler: cmd_effect, completer: complete_effect },
             Builtin { name: "gamerule", aliases: &[], description: "Sets or queries a game rule", usage: "/gamerule <rule> [value]", min_op: 2, handler: cmd_gamerule, completer: complete_gamerule },
             Builtin { name: "summon", aliases: &[], description: "Summons an entity", usage: "/summon <entity> [x y z]", min_op: 2, handler: cmd_summon, completer: complete_summon },
             Builtin { name: "kill", aliases: &[], description: "Kills entities", usage: "/kill [targets]", min_op: 2, handler: cmd_kill, completer: complete_kill },
@@ -140,7 +141,7 @@ impl Server {
         }
     }
 
-    fn fail(&self, source: &CommandSource, message: impl Into<String>) {
+    pub(super) fn fail(&self, source: &CommandSource, message: impl Into<String>) {
         self.feedback(source, Component::text(message.into()).color("red"));
     }
 
@@ -684,6 +685,23 @@ fn cmd_difficulty(server: &mut Server, source: &CommandSource, args: &[&str]) {
             server.broadcast(&play::ChangeDifficulty { difficulty: difficulty.id(), locked: false });
             server.feedback(source, Component::translatable("commands.difficulty.success", vec![Component::text(difficulty.name())]));
         }
+    }
+}
+
+fn cmd_effect(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    server.effect_command(source, args);
+}
+
+fn complete_effect(server: &Server, source: &CommandSource, args: &[&str]) -> Vec<String> {
+    match args.len() {
+        0 | 1 => vec!["give".into(), "clear".into()],
+        2 => {
+            let mut out: Vec<String> = vec!["@s".into(), "@a".into(), "@p".into()];
+            out.extend(complete_players(server, source, &args[1..]));
+            out
+        }
+        3 => paper_data::effects::all().iter().map(|e| e.name.clone()).collect(),
+        _ => Vec::new(),
     }
 }
 

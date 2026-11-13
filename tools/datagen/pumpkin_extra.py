@@ -171,6 +171,33 @@ def main():
             out_rules[ns(name)] = {"default": value["default"], "min": value["min"], "max": value["max"]}
     (out / "game_rules.json").write_text(json.dumps({"rules": out_rules}, sort_keys=True, separators=(",", ":")) + "\n")
 
+    # Status effects (category, instantaneous, attribute modifiers) and what each potion
+    # gives, checked against the minecraft:mob_effect and minecraft:potion registries.
+    effects = json.loads((pumpkin / "effect.json").read_text())
+    effect_names = registries.get("minecraft:mob_effect", [])
+    out_effects = {}
+    for name, e in effects.items():
+        full = ns(name)
+        if full not in effect_names or effect_names.index(full) != e["id"]:
+            errors.append(f"effect {full}: pumpkin id {e['id']} does not match the registry")
+            continue
+        out_effects[full] = {
+            "category": e["category"],
+            "instantaneous": e["instantaneous"],
+            "modifiers": [[ns(m["attribute"]), m["operation"].lower(), m["baseValue"], m["id"]] for m in e["attribute_modifiers"]],
+        }
+    (out / "effects.json").write_text(json.dumps({"effects": out_effects}, sort_keys=True, separators=(",", ":")) + "\n")
+    potions = json.loads((pumpkin / "potion.json").read_text())
+    potion_names = registries.get("minecraft:potion", [])
+    out_potions = {}
+    for name, p in potions.items():
+        full = ns(name)
+        if full not in potion_names or potion_names.index(full) != p["id"]:
+            errors.append(f"potion {full}: pumpkin id {p['id']} does not match the registry")
+            continue
+        out_potions[full] = [[ns(x["effect_type"]), x["duration"], x["amplifier"]] for x in p["effects"]]
+    (out / "potions.json").write_text(json.dumps({"potions": out_potions}, sort_keys=True, separators=(",", ":")) + "\n")
+
     if errors:
         print("\n".join(errors[:50]), file=sys.stderr)
         print(f"{len(errors)} mismatches", file=sys.stderr)

@@ -80,7 +80,11 @@ What works:
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
   experience, death messages) and respawning; attacking with the attack cooldown, critical
   hits, sweeping, knockback and weapon enchantments; tool and weapon wear; bows; explosions
-  that break blocks and hurt and push entities. Blocks drop their loot when broken.
+  that break blocks and hurt and push entities. Blocks drop their loot when broken. Status
+  effects (`/effect`, golden apples, potions, poisonous food, milk, chorus fruit, poisonous
+  mob bites): regeneration, poison, wither, hunger, saturation, instant health and damage,
+  absorption, resistance, fire resistance, water breathing, strength, weakness, jump boost,
+  slow falling, invisibility, and the attribute effects (speed, slowness, ...) for clients.
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
   that smelt over time, hoppers, droppers and dispensers; vanilla's click rules
@@ -107,7 +111,7 @@ What works:
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
-  difficulty gamerule summon kill seed setworldspawn tps mspt kick ban pardon ban-ip
+  difficulty gamerule summon kill effect seed setworldspawn tps mspt kick ban pardon ban-ip
   pardon-ip banlist op deop whitelist save-all stop version plugins`.
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
@@ -127,7 +131,7 @@ Not yet:
   cavern over a lava sea; the main End island with an open exit portal, no dragon fight, no
   outer islands or end cities).
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, breeding); status effects, beds, enchanting and anvils are missing. Tripwires,
+  trading, breeding); beds, enchanting, anvils and brewing are missing. Tripwires,
   crafters, observers of entities and brewing stands do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.

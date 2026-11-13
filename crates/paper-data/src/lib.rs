@@ -316,7 +316,7 @@ pub mod synced {
 }
 
 mod extra;
-pub use extra::{entity_types, game_rules, item_data};
+pub use extra::{effects, entity_types, game_rules, item_data};
 
 /// Per-state block physics that block updates, fluids and redstone need: which faces give
 /// support, vanilla's legacy "solid" flag, redstone conductors, comparator outputs, piston

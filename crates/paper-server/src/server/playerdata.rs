@@ -37,6 +37,8 @@ pub struct SavedPlayer {
     pub air: i32,
     pub fall_distance: f64,
     pub seen_credits: bool,
+    pub effects: Vec<super::effects::ActiveEffect>,
+    pub absorption: f32,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -168,6 +170,25 @@ impl Server {
         c.insert("Air", Tag::Short(player.air.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
         c.insert("fall_distance", Tag::Double(player.fall_distance));
         c.insert("seenCredits", Tag::Byte(player.seen_credits as i8));
+        let effects: Vec<Tag> = player
+            .effects
+            .iter()
+            .map(|e| {
+                Tag::Compound(
+                    Compound::new()
+                        .with("id", Tag::String(e.name().to_owned()))
+                        .with("amplifier", Tag::Byte(e.amplifier as i8))
+                        .with("duration", Tag::Int(e.duration))
+                        .with("ambient", Tag::Byte(e.ambient as i8))
+                        .with("show_particles", Tag::Byte(e.particles as i8))
+                        .with("show_icon", Tag::Byte(e.icon as i8)),
+                )
+            })
+            .collect();
+        if !effects.is_empty() {
+            c.insert("active_effects", Tag::List(effects));
+        }
+        c.insert("AbsorptionAmount", Tag::Float(player.absorption));
         c
     }
 
@@ -229,6 +250,20 @@ impl Server {
             air: c.i32("Air").unwrap_or(300),
             fall_distance: c.f64("fall_distance").unwrap_or(0.0),
             seen_credits: c.bool("seenCredits").unwrap_or(false),
+            effects: c
+                .list("active_effects")
+                .unwrap_or(&[])
+                .iter()
+                .filter_map(|t| t.as_compound())
+                .filter_map(|e| {
+                    let mut effect = super::effects::ActiveEffect::new(e.string("id")?, e.i32("duration").unwrap_or(0), e.i32("amplifier").unwrap_or(0))?;
+                    effect.ambient = e.bool("ambient").unwrap_or(false);
+                    effect.particles = e.bool("show_particles").unwrap_or(true);
+                    effect.icon = e.bool("show_icon").unwrap_or(true);
+                    Some(effect)
+                })
+                .collect(),
+            absorption: c.f64("AbsorptionAmount").map_or(0.0, |a| a as f32),
         })
     }
 

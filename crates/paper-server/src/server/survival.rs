@@ -481,7 +481,8 @@ impl Server {
         let drowning = self.worlds[world].rules.bool("drowning_damage");
         let Some(p) = self.players.get_mut(&id) else { return };
         let air_before = p.air;
-        if eye_in_water && !invulnerable {
+        let water_breathing = p.effects.iter().any(|e| e.name() == "minecraft:water_breathing" || e.name() == "minecraft:conduit_power");
+        if eye_in_water && !invulnerable && !water_breathing {
             let respiration = super::loot::enchantment_level(Some(&p.inventory[5]), "minecraft:respiration");
             if respiration == 0 || rand::thread_rng().gen_range(0..respiration + 1) == 0 {
                 p.air -= 1;
@@ -615,13 +616,14 @@ impl Server {
         let sprinting = p.sprinting;
         let moved = dx * dx + dy * dy + dz * dz > 1.0e-7;
 
+        let slow_falling = p.effects.iter().any(|e| e.name() == "minecraft:slow_falling");
         let p = self.players.get_mut(&id).unwrap();
         if moved {
             p.moved_this_tick = true;
         }
         // As vanilla's `checkFallDamage`: the drop of this move counts, then landing applies.
         let mut landed: Option<f64> = None;
-        if p.flying || in_water || climbing || slows_fall {
+        if p.flying || in_water || climbing || slows_fall || slow_falling && dy <= 0.0 {
             p.fall_distance = 0.0;
         } else {
             if dy < 0.0 {
@@ -665,8 +667,9 @@ impl Server {
     }
 
     fn cause_fall_damage(&mut self, id: i32, distance: f64, multiplier: f64) {
-        // safe_fall_distance is 3, fall_damage_multiplier 1.
-        let amount = ((distance - 3.0) * multiplier).ceil();
+        // safe_fall_distance is 3 (more with jump boost), fall_damage_multiplier 1.
+        let jump_boost = self.players.get(&id).and_then(|p| p.effects.iter().find(|e| e.name() == "minecraft:jump_boost")).map_or(0, |e| e.amplifier + 1);
+        let amount = ((distance - 3.0 - jump_boost as f64) * multiplier).ceil();
         if amount <= 0.0 {
             return;
         }
@@ -733,6 +736,10 @@ impl Server {
         if amount <= 0.0 {
             return false;
         }
+        if damage.is("is_fire") && !damage.is("bypasses_effects") && self.effect_level(world, id, "minecraft:fire_resistance").is_some() {
+            return false;
+        }
+        let resistance = if damage.is("bypasses_resistance") { None } else { self.effect_level(world, id, "minecraft:resistance") };
         if !crate::plugins::events::on_entity_damage(self, id, &damage, &mut amount) {
             return false;
         }
@@ -776,6 +783,10 @@ impl Server {
             p.equipment_dirty = true;
             amount = damage_after_armor(amount, points, toughness);
         }
+        // Resistance: 20% less per level.
+        if let Some(level) = resistance {
+            amount = (amount * (25 - (level + 1) * 5) as f32 / 25.0).max(0.0);
+        }
         if !damage.is("bypasses_enchantments") {
             let protection = enchantment_protection(&armor_refs, &damage);
             if protection > 0.0 {
@@ -783,6 +794,13 @@ impl Server {
             }
         }
         amount = amount.max(0.0);
+        // Absorption hearts go first.
+        let absorbed = amount.min(p.absorption);
+        if absorbed > 0.0 {
+            p.absorption -= absorbed;
+            amount -= absorbed;
+            p.metadata_dirty = true;
+        }
 
         p.health = (p.health - amount).max(0.0);
         if let Some(info) = &info {
@@ -894,8 +912,10 @@ impl Server {
         let rules = &self.worlds[world].rules;
         let (show, keep_inventory) = (rules.bool("show_death_messages"), rules.bool("keep_inventory"));
         self.close_menu(id, true);
+        self.clear_effects(world, id);
         let Some(p) = self.players.get_mut(&id) else { return };
         p.dead = true;
+        p.absorption = 0.0;
         p.health = 0.0;
         p.fire_ticks = 0;
         p.using_item = None;
@@ -1140,10 +1160,6 @@ impl Server {
             p.food = (p.food + food.nutrition).clamp(0, 20);
             p.saturation = (p.saturation + food.saturation).clamp(0.0, p.food as f32);
         }
-        let name = items::get(stack.item as u32).map_or("", |i| i.name);
-        if name == "minecraft:milk_bucket" {
-            p.fire_ticks = p.fire_ticks.min(p.fire_ticks);
-        }
         let (world, pos) = (p.world, Vec3::new(p.loc.x, p.loc.y, p.loc.z));
         if !creative {
             let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
@@ -1166,6 +1182,7 @@ impl Server {
             let pitch = rand::thread_rng().gen::<f32>() * 0.1 + 0.9;
             self.play_sound(world, pos, "minecraft:entity.player.burp", category::PLAYERS, 0.5, pitch, None);
         }
+        self.consume_effects(id, &stack);
         self.send_health_if_changed(id);
     }
 
