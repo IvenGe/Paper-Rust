@@ -133,7 +133,7 @@ impl InvRef {
                     (InvRef::Ender(id), Some(MenuKind::EnderChest)) => p.entity_id == *id,
                     (InvRef::Custom(id), Some(MenuKind::Custom { id: open })) => open == id,
                     (InvRef::Block { world, positions }, Some(MenuKind::Container { world: w, positions: open })) => w == world && positions.iter().any(|p| open.contains(p)),
-                    (InvRef::Block { world, positions }, Some(MenuKind::Furnace { world: w, pos, .. })) => w == world && positions.contains(pos),
+                    (InvRef::Block { world, positions }, Some(MenuKind::Furnace { world: w, pos, .. } | MenuKind::Brewing { world: w, pos })) => w == world && positions.contains(pos),
                     _ => false,
                 }
             })
@@ -342,6 +342,7 @@ pub fn menu_value(server: &Server, id: i32, kind: Option<&MenuKind>) -> Value {
         Some(MenuKind::CraftingTable) => ("WORKBENCH".to_owned(), 10, InvRef::Crafting(id), None),
         Some(MenuKind::Enchanting { .. }) => ("ENCHANTING".to_owned(), 2, InvRef::Crafting(id), None),
         Some(MenuKind::Anvil { .. }) => ("ANVIL".to_owned(), 3, InvRef::Crafting(id), None),
+        Some(MenuKind::Brewing { world, pos }) => ("BREWING".to_owned(), 5, InvRef::Block { world: *world, positions: vec![*pos] }, None),
         Some(MenuKind::Furnace { world, pos, recipe_type }) => {
             let ty = match *recipe_type {
                 "minecraft:smoking" => "SMOKER",
@@ -435,6 +436,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 ContainerBlock::Furnace(_) => ("FURNACE", 3),
                 ContainerBlock::Hopper => ("HOPPER", 5),
                 ContainerBlock::Dispenser => (block_inventory_type(block), 9),
+                ContainerBlock::BrewingStand => ("BREWING", 5),
                 ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => return Ok(Value::Null),
             };
             let inv = InvRef::Block { world, positions };

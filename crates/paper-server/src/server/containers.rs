@@ -39,6 +39,7 @@ pub enum MenuKind {
     Furnace { world: usize, pos: BlockPos, recipe_type: &'static str },
     Enchanting { world: usize, pos: BlockPos },
     Anvil { world: usize, pos: BlockPos },
+    Brewing { world: usize, pos: BlockPos },
     /// A custom inventory made by a plugin (`Bukkit.createInventory`); its slots are kept in
     /// `Server::plugin_data` (see `plugins::inventory`) and clicks go to the plugin host.
     Custom { id: u64 },
@@ -100,6 +101,7 @@ pub enum ContainerBlock {
     Dispenser,
     EnchantingTable,
     Anvil,
+    BrewingStand,
 }
 
 pub fn container_block(state: u32) -> Option<ContainerBlock> {
@@ -114,6 +116,7 @@ pub fn container_block(state: u32) -> Option<ContainerBlock> {
         "minecraft:hopper" => ContainerBlock::Hopper,
         "minecraft:dispenser" | "minecraft:dropper" => ContainerBlock::Dispenser,
         "minecraft:enchanting_table" => ContainerBlock::EnchantingTable,
+        "minecraft:brewing_stand" => ContainerBlock::BrewingStand,
         "minecraft:anvil" | "minecraft:chipped_anvil" | "minecraft:damaged_anvil" => ContainerBlock::Anvil,
         _ => return None,
     })
@@ -126,6 +129,7 @@ pub fn storage_size(state: u32) -> usize {
         Some(ContainerBlock::Furnace(_)) => 3,
         Some(ContainerBlock::Hopper) => 5,
         Some(ContainerBlock::Dispenser) => 9,
+        Some(ContainerBlock::BrewingStand) => 5,
         _ => 0,
     }
 }
@@ -315,7 +319,7 @@ impl Server {
     fn menu_shows(&self, menu: Option<&OpenMenu>, world: usize, pos: BlockPos) -> bool {
         match menu.map(|m| &m.kind) {
             Some(MenuKind::Container { world: w, positions }) => *w == world && positions.contains(&pos),
-            Some(MenuKind::Furnace { world: w, pos: p, .. }) => *w == world && *p == pos,
+            Some(MenuKind::Furnace { world: w, pos: p, .. } | MenuKind::Brewing { world: w, pos: p }) => *w == world && *p == pos,
             _ => false,
         }
     }
@@ -374,6 +378,7 @@ impl Server {
             ContainerBlock::CraftingTable => (MenuKind::CraftingTable, "minecraft:crafting", "container.crafting"),
             ContainerBlock::EnchantingTable => (MenuKind::Enchanting { world, pos }, "minecraft:enchantment", "container.enchant"),
             ContainerBlock::Anvil => (MenuKind::Anvil { world, pos }, "minecraft:anvil", "container.repair"),
+            ContainerBlock::BrewingStand => (MenuKind::Brewing { world, pos }, "minecraft:brewing_stand", "container.brewing"),
             ContainerBlock::Furnace(recipe_type) => {
                 let (menu, title) = match recipe_type {
                     "minecraft:smoking" => ("minecraft:smoker", "container.smoker"),
@@ -425,6 +430,7 @@ impl Server {
         match menu_kind {
             MenuKind::Furnace { world, pos, .. } => self.send_furnace_data(world, pos),
             MenuKind::Enchanting { .. } => self.update_enchanting_table(id),
+            MenuKind::Brewing { world, pos } => self.send_brewing_state(world, pos),
             _ => {}
         }
         true
@@ -566,6 +572,7 @@ impl Server {
             Some(MenuKind::CraftingTable) => Layout::crafting_table(),
             Some(MenuKind::Enchanting { .. }) => Layout::enchanting(),
             Some(MenuKind::Anvil { .. }) => Layout::anvil(),
+            Some(MenuKind::Brewing { .. }) => Layout::brewing(),
             Some(MenuKind::Furnace { recipe_type, .. }) => Layout::furnace(recipe_type),
         }
     }
@@ -578,7 +585,7 @@ impl Server {
             MenuKind::Container { world, positions } => positions.iter().flat_map(|p| self.container_items(*world, *p)).collect(),
             MenuKind::EnderChest => player.ender_items.clone(),
             MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => menu.craft_grid.clone(),
-            MenuKind::Furnace { world, pos, .. } => self.container_items(*world, *pos),
+            MenuKind::Furnace { world, pos, .. } | MenuKind::Brewing { world, pos } => self.container_items(*world, *pos),
             MenuKind::Custom { id } => self.plugin_data.inventories.get(id).map(|i| i.items.clone()).unwrap_or_default(),
         };
         slots.extend(player.inventory[9..45].iter().cloned());
@@ -612,6 +619,7 @@ impl Server {
                 }
             }
             MenuKind::Furnace { world, pos, .. } => self.set_container_items(*world, *pos, &slots[..3]),
+            MenuKind::Brewing { world, pos } => self.set_container_items(*world, *pos, &slots[..5]),
             MenuKind::Custom { id } => {
                 if let Some(custom) = self.plugin_data.inventories.get_mut(id) {
                     custom.items.clone_from_slice(&slots[..container_len]);
@@ -738,10 +746,11 @@ impl Server {
                 self.broadcast_container_slots(id, *world, positions, &slots[..size], &changed);
             }
         }
-        if let Some(MenuKind::Furnace { world, pos, .. }) = &kind {
-            let changed: Vec<usize> = (0..3).filter(|i| before[*i] != slots[*i]).collect();
+        if let Some(MenuKind::Furnace { world, pos, .. } | MenuKind::Brewing { world, pos }) = &kind {
+            let size = slots.len() - 36;
+            let changed: Vec<usize> = (0..size).filter(|i| before[*i] != slots[*i]).collect();
             if !changed.is_empty() {
-                self.broadcast_container_slots(id, *world, &[*pos], &slots[..3], &changed);
+                self.broadcast_container_slots(id, *world, &[*pos], &slots[..size], &changed);
             }
         }
         if let Some(MenuKind::Custom { id: custom }) = &kind {
@@ -764,7 +773,7 @@ impl Server {
             // A viewer of one half of a double chest sees it at a different offset.
             let offset = match &menu.kind {
                 MenuKind::Container { positions: theirs, .. } => theirs.iter().position(|p| *p == positions[0]).map(|i| i * 27),
-                MenuKind::Furnace { .. } => Some(0),
+                MenuKind::Furnace { .. } | MenuKind::Brewing { .. } => Some(0),
                 _ => None,
             };
             let Some(offset) = offset else { continue };

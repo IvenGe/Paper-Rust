@@ -470,3 +470,69 @@ fn anvils_repair_and_rename_for_levels() {
     assert!(components(&named).contains(&"minecraft:custom_name"));
     server.stop();
 }
+
+fn potion(name: &str) -> Slot {
+    use paper_protocol::codec::Encode;
+    let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:potion_contents").unwrap() as i32;
+    let id = paper_data::registries::id("minecraft:potion", name).unwrap() as i32;
+    let mut data = vec![1u8];
+    VarInt(id).encode(&mut data);
+    data.extend_from_slice(&[0, 0, 0]);
+    let mut stack = paper_protocol::types::ItemStack::new(item("minecraft:potion"), 1);
+    stack.added.push((ty, data));
+    Slot(Some(stack))
+}
+
+#[test]
+fn brewing_stands_brew_with_blaze_powder() {
+    let server = start_server(|_| {});
+    let _alice = join(&server, "Alice");
+    let stand = BlockPos::new(10, -60, 8);
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_and_update(0, stand, blocks::default_state("minecraft:brewing_stand").unwrap());
+            let water = potion("minecraft:water");
+            s.set_container_items(0, stand, &[water.clone(), water.clone(), water, Slot::of(item("minecraft:nether_wart"), 1), Slot::of(item("minecraft:blaze_powder"), 1)]);
+        })
+        .unwrap();
+    let brewing = |s: &mut paper_server::server::Server| s.block_entity_data(0, BlockPos::new(10, -60, 8)).and_then(|n| n.i32("BrewTime")).unwrap_or(0);
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while server.handle.run(brewing).unwrap() <= 0 {
+        assert!(std::time::Instant::now() < deadline, "brewing starts");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Skip most of the 20 seconds.
+    server
+        .handle
+        .run(move |s| {
+            let chunk = paper_server::world::chunk::ChunkPos::of_block(stand.x, stand.z);
+            let nbt = s.worlds[0].chunks.get_mut(&chunk).unwrap().block_entities.get_mut(&(stand.y, (stand.z & 15) as u8, (stand.x & 15) as u8)).unwrap();
+            nbt.insert("BrewTime", paper_nbt::Tag::Short(3));
+        })
+        .unwrap();
+    let awkward = potion("minecraft:awkward");
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        let items = server.handle.run(move |s| s.container_items(0, stand)).unwrap();
+        if items[0] == awkward {
+            assert_eq!(&items[..3], &[awkward.clone(), awkward.clone(), awkward.clone()]);
+            assert!(items[3].is_empty(), "the nether wart is used up");
+            assert!(items[4].is_empty(), "the blaze powder became fuel");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the potions brew: {items:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (fuel, bottles) = server
+        .handle
+        .run(move |s| {
+            let fuel = s.block_entity_data(0, stand).and_then(|n| n.i32("Fuel"));
+            let state = s.worlds[0].block_at(stand.x, stand.y, stand.z).unwrap();
+            (fuel, blocks::property(state, "has_bottle_1"))
+        })
+        .unwrap();
+    assert_eq!(fuel, Some(19));
+    assert_eq!(bottles, Some("true"));
+    server.stop();
+}

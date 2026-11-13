@@ -78,6 +78,9 @@ struct Inventory {
     /// The blocks holding the slots (two for a double chest).
     positions: Vec<BlockPos>,
     furnace: bool,
+    /// A brewing stand (`getSlotsForFace`: the ingredient from above, bottles and fuel from
+    /// the sides, bottles and ingredient below).
+    brewing: bool,
 }
 
 fn is_fuel(server: &Server, stack: &ItemStack) -> bool {
@@ -104,10 +107,11 @@ impl Server {
                         positions.insert(0, other);
                     }
                 }
-                Some(Inventory { positions, furnace: false })
+                Some(Inventory { positions, furnace: false, brewing: false })
             }
-            ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false }),
-            ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true }),
+            ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false, brewing: false }),
+            ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true, brewing: false }),
+            ContainerBlock::BrewingStand => Some(Inventory { positions: vec![pos], furnace: false, brewing: true }),
             ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => None,
         }
     }
@@ -135,6 +139,13 @@ impl Server {
 
     /// Slots reachable through a face (`WorldlyContainer.getSlotsForFace`).
     fn slots_for_face(inv: &Inventory, size: usize, face: Option<Face>) -> Vec<usize> {
+        if inv.brewing {
+            return match face {
+                Some(Face::Up) => vec![3],
+                Some(Face::Down) => vec![0, 1, 2, 3],
+                _ => vec![0, 1, 2, 4],
+            };
+        }
         if !inv.furnace {
             return (0..size).collect();
         }
@@ -146,6 +157,13 @@ impl Server {
     }
 
     fn can_place(&self, inv: &Inventory, slot: usize, stack: &ItemStack) -> bool {
+        if inv.brewing {
+            return match slot {
+                3 => super::brewing::is_ingredient(stack),
+                4 => super::brewing::is_fuel(stack),
+                _ => super::brewing::fits_bottle_slot(stack),
+            };
+        }
         if !inv.furnace {
             return true;
         }
@@ -157,8 +175,9 @@ impl Server {
     }
 
     fn can_take(inv: &Inventory, slot: usize, stack: &ItemStack, face: Face) -> bool {
-        // Only empty buckets come out of a furnace's fuel slot.
-        !(inv.furnace && face == Face::Down && slot == 1 && !matches!(item_name(stack), "minecraft:bucket" | "minecraft:water_bucket"))
+        // Only empty buckets come out of a furnace's fuel slot, only glass bottles out of a
+        // brewing stand's ingredient slot.
+        !(inv.furnace && face == Face::Down && slot == 1 && !matches!(item_name(stack), "minecraft:bucket" | "minecraft:water_bucket")) && !(inv.brewing && slot == 3 && item_name(stack) != "minecraft:glass_bottle")
     }
 
     /// Puts as much of `stack` as fits into `inv` through `face` (`HopperBlockEntity.addItem`);
@@ -231,7 +250,7 @@ impl Server {
         if blocks::property(state, "enabled") == Some("false") {
             return;
         }
-        let me = Inventory { positions: vec![pos], furnace: false };
+        let me = Inventory { positions: vec![pos], furnace: false, brewing: false };
         self.unpack_loot(world, pos);
         let items = self.container_items(world, pos);
         let mut moved = false;
@@ -435,7 +454,7 @@ impl Server {
                     return Some(filled);
                 }
                 // The filled bucket goes into the dispenser, or out of it when full.
-                let me = Inventory { positions: vec![pos], furnace: false };
+                let me = Inventory { positions: vec![pos], furnace: false, brewing: false };
                 let left = self.insert_into(world, &me, filled.clone(), None);
                 if left.count > 0 {
                     self.drop_from(world, pos, facing, filled);

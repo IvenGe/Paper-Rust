@@ -26,6 +26,12 @@ pub enum SlotKind {
     Single,
     /// Lapis lazuli only (the enchanting table).
     Lapis,
+    /// A brewing stand's bottle: potions and glass bottles, one at a time.
+    Bottle,
+    /// A brewing stand's ingredient.
+    BrewIngredient,
+    /// A brewing stand's fuel (blaze powder).
+    BrewFuel,
 }
 
 /// The shape of a menu.
@@ -54,6 +60,7 @@ pub enum MenuShape {
     Furnace,
     Enchanting,
     Anvil,
+    Brewing,
 }
 
 impl Layout {
@@ -101,6 +108,15 @@ impl Layout {
         kinds[0] = SlotKind::Single;
         kinds[1] = SlotKind::Lapis;
         Layout { kinds, main: 2..29, hotbar: 29..38, offhand: None, container: 0..2, crafting: None, furnace: None, kind: MenuShape::Enchanting }
+    }
+
+    /// The brewing stand: three bottles, the ingredient, the fuel.
+    pub fn brewing() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 41];
+        kinds[..3].fill(SlotKind::Bottle);
+        kinds[3] = SlotKind::BrewIngredient;
+        kinds[4] = SlotKind::BrewFuel;
+        Layout { kinds, main: 5..32, hotbar: 32..41, offhand: None, container: 0..5, crafting: None, furnace: None, kind: MenuShape::Brewing }
     }
 
     /// The anvil: two inputs and the result (taken only through `server::workstations`).
@@ -177,12 +193,15 @@ impl Menu<'_> {
             SlotKind::Fuel => self.recipes.is_none_or(|r| r.burn_time(item, false) > 0) || paper_data::items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:bucket"),
             SlotKind::Normal | SlotKind::Single => true,
             SlotKind::Lapis => paper_data::items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:lapis_lazuli"),
+            SlotKind::Bottle => super::brewing::fits_bottle_slot(stack),
+            SlotKind::BrewIngredient => super::brewing::is_ingredient(stack),
+            SlotKind::BrewFuel => super::brewing::is_fuel(stack),
         }
     }
 
     fn slot_limit(&self, index: usize, stack: &ItemStack) -> i32 {
         match self.layout.kinds[index] {
-            SlotKind::Armor(_) | SlotKind::Single => 1,
+            SlotKind::Armor(_) | SlotKind::Single | SlotKind::Bottle => 1,
             _ => max_stack(stack),
         }
     }
@@ -351,6 +370,24 @@ impl Menu<'_> {
                     }
                 } else {
                     return;
+                }
+            }
+            MenuShape::Brewing => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if super::brewing::is_fuel(&stack) {
+                    // Blaze powder fills the fuel slot first, else brews (strength).
+                    if !self.move_into(&mut item, 4..5, false) && super::brewing::is_ingredient(&stack) {
+                        self.move_into(&mut item, 3..4, false);
+                    }
+                } else if super::brewing::is_ingredient(&stack) {
+                    self.move_into(&mut item, 3..4, false);
+                } else if super::brewing::fits_bottle_slot(&stack) {
+                    self.move_into(&mut item, 0..3, false);
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
                 }
             }
             MenuShape::Anvil => {

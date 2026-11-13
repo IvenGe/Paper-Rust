@@ -33,6 +33,7 @@ pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
 mod animals;
+pub mod brewing;
 mod spawners;
 pub mod workstations;
 pub mod survival;
@@ -190,6 +191,8 @@ pub struct Server {
     pub damage_types: HashMap<String, survival::DamageTypeInfo>,
     /// Biome spawner lists by `biome|category`, read from the vanilla data on demand.
     pub spawner_cache: HashMap<String, Vec<mobs::SpawnerEntry>>,
+    /// What each brewing stand started brewing with (vanilla keeps it only in memory too).
+    pub brewing_ingredients: HashMap<(usize, paper_protocol::codec::BlockPos), i32>,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
 }
@@ -378,6 +381,7 @@ impl Server {
             recipes: vanilla.as_ref().map(|v| Arc::new(recipes::Recipes::load(v))),
             damage_types: survival::load_damage_types(vanilla.as_deref()),
             spawner_cache: HashMap::new(),
+            brewing_ingredients: HashMap::new(),
             vanilla,
             tasks,
             status_dirty: true,
@@ -540,6 +544,7 @@ impl Server {
         self.tick_spawning();
         self.tick_furnaces();
         self.tick_spawners();
+        self.tick_brewing_stands();
         self.tick_hoppers();
         self.tick_pressure_plates();
         self.tick_tracker();
