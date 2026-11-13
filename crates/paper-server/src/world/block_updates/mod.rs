@@ -103,8 +103,10 @@ pub struct UpdateSettings {
 }
 
 impl UpdateSettings {
+    /// Vanilla's defaults for a dimension type (`minecraft:overworld`, ...).
     pub fn for_dimension(dimension: &str) -> UpdateSettings {
-        UpdateSettings { fast_lava: dimension == "minecraft:the_nether", water_source_conversion: true, lava_source_conversion: false }
+        let fast_lava = paper_data::synced::dimension_type(dimension).is_some_and(|d| d.fast_lava);
+        UpdateSettings { fast_lava, water_source_conversion: true, lava_source_conversion: false }
     }
 }
 

@@ -278,12 +278,13 @@ fn gen_synced() {
     for (name, d) in dims.as_object().expect("dimension_types.json must be an object") {
         writeln!(
             s,
-            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {} }},",
+            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {} }},",
             d["min_y"].as_i64().expect("min_y"),
             d["height"].as_i64().expect("height"),
             d["logical_height"].as_i64().unwrap_or_else(|| d["height"].as_i64().unwrap()),
             d["has_skylight"].as_bool().unwrap_or(true),
             d["has_ceiling"].as_bool().unwrap_or(false),
+            d["attributes"]["minecraft:gameplay/fast_lava"].as_bool().unwrap_or(false),
         )
         .unwrap();
     }

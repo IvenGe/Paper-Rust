@@ -205,8 +205,10 @@ fn lava_spreads_less_and_slower_than_water_except_in_the_nether() {
     assert_eq!((level_at(&w, 1), level_at(&w, 2), level_at(&w, 3)), (2, 4, 6), "drop-off 2");
     assert_eq!(name(&w, p(4, Y, 0)), "air", "lava reaches 3 blocks in the overworld");
 
+    assert!(UpdateSettings::for_dimension("minecraft:the_nether").fast_lava, "the nether's dimension type has fast lava");
+    assert!(!UpdateSettings::for_dimension("minecraft:overworld").fast_lava);
     let mut nether = world();
-    nether.updates.settings.fast_lava = true;
+    nether.updates.settings = UpdateSettings::for_dimension("minecraft:the_nether");
     set(&mut nether, p(0, Y, 0), s("lava"));
     run(&mut nether, 10);
     assert_eq!(kind(get(&nether, p(1, Y, 0))), Kind::Lava, "nether lava ticks every 10 ticks");

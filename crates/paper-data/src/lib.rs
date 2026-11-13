@@ -51,6 +51,8 @@ pub struct DimensionTypeInfo {
     pub logical_height: i32,
     pub has_skylight: bool,
     pub has_ceiling: bool,
+    /// The `minecraft:gameplay/fast_lava` attribute: lava flows faster and further.
+    pub fast_lava: bool,
 }
 
 fn name_index(names: &'static [&'static str]) -> HashMap<&'static str, u32> {
