@@ -291,6 +291,35 @@ fn gen_synced() {
     out("synced.rs", &s);
 }
 
+/// `block_physics.json`: per-state support faces, physics flags, collision faces and note
+/// block instruments (see `tools/datagen/physics.py`).
+fn gen_physics() {
+    let mut s = String::new();
+    let names = ["support", "flags", "collision_faces", "instrument"];
+    if !exists("block_physics.json") {
+        writeln!(s, "pub const INSTRUMENTS: &[&str] = &[\"harp\"];").unwrap();
+        for name in names {
+            writeln!(s, "static {}: &[u8] = &[];", name.to_ascii_uppercase()).unwrap();
+        }
+        out("physics.rs", &s);
+        return;
+    }
+    let v = load("block_physics.json");
+    let states = load("blocks.json")["state_count"].as_u64().expect("blocks.json: state_count") as usize;
+    let instruments = str_array(v["instruments"].as_array().expect("block_physics.json: instruments"));
+    writeln!(s, "/// Note block instruments, in the order of `note_block`'s `instrument` property.").unwrap();
+    writeln!(s, "pub const INSTRUMENTS: &[&str] = &{instruments:?};").unwrap();
+    for name in names {
+        let arr = v[name].as_array().unwrap_or_else(|| panic!("block_physics.json: {name}"));
+        assert_eq!(arr.len(), states, "block_physics.json: {name} has the wrong length");
+        let bytes: Vec<u8> = arr.iter().map(|x| x.as_u64().expect("a number") as u8).collect();
+        let file = format!("physics_{name}.bin");
+        out_bytes(&file, &bytes);
+        writeln!(s, "static {}: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{file}\"));", name.to_ascii_uppercase()).unwrap();
+    }
+    out("physics.rs", &s);
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     gen_version();
@@ -299,4 +328,5 @@ fn main() {
     gen_blocks();
     gen_items();
     gen_synced();
+    gen_physics();
 }

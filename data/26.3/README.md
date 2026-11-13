@@ -14,6 +14,7 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `tags.json` | tags sent to clients, resolved to numeric ids |
 | `dimension_types.json` | the vanilla dimension type definitions |
 | `feature_flags.json` | feature flags enabled by default |
+| `block_physics.json` | per block state: sturdy faces, legacy solid, redstone conductor, comparator output, piston reaction, full collision faces, note block instrument |
 
 ## Provenance
 
@@ -31,6 +32,9 @@ exact inputs, the method and the full list of checks
   [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin). Pumpkin's code is
   GPL-3.0; its `assets/NOTICE.md` states that these extracted files are derived
   from Minecraft and are not covered by Pumpkin's licence.
+* `block_physics.json` is derived from the same Pumpkin file by
+  `tools/datagen/physics.py`, which first checks that Pumpkin's block list and
+  state id ranges are identical to `blocks.json`.
 * Synchronised registry entries, tags and dimension types are read from the
   `data/minecraft/**` files inside the jar.
 

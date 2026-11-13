@@ -177,6 +177,25 @@ Pumpkin's assets were confirmed to be for 26.3 before use: identical block
 names/order (1 286), state id ranges, default states, property names and value
 orders, 35 723 states, `packets.json` version 777.
 
+### `block_physics.json`
+
+Written by a separate script, `physics.py`, from Pumpkin's `assets/blocks.json`
+(same source and licence note as above) for block updates, fluids and redstone:
+
+```sh
+python3 -I tools/datagen/physics.py --pumpkin /home/user/upstream/pumpkin/assets --data data/26.3
+```
+
+It refuses to write anything unless Pumpkin's block names, block order and
+state id ranges equal `data/26.3/blocks.json`. Arrays indexed by state id:
+
+| value | meaning |
+|---|---|
+| `support` | Pumpkin `side_flags`: bits 0-5 `isFaceSturdy(dir, FULL)` for down, up, north, south, west, east; bits 6/7 `CENTER` support of the down/up face |
+| `flags` | bit 0 legacy `isSolid()`, bit 1 `isRedstoneConductor`, bit 2 `hasAnalogOutputSignal`, bits 3-4 push reaction (normal, destroy, block, push only) |
+| `collision_faces` | bits 0-5: the collision boxes touching that face cover all of it (computed from Pumpkin's collision boxes; what `Shapes.mergedFaceOccludes` needs) |
+| `instrument` | index into `instruments`, the values of `note_block[instrument]` |
+
 ## How the bytecode is analysed
 
 26.x jars are not obfuscated, but the registration code is no longer a flat list
