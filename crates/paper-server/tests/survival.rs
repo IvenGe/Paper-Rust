@@ -425,9 +425,12 @@ fn fed_animals_breed_and_cows_give_milk_and_sheep_wool() {
         })
         .unwrap();
     alice.send(&interact(b));
-    alice.drain(QUIET);
-    let milk = server.handle.run(move |s| s.players[&id].inventory[36].0.as_ref().map(|i| i.item)).unwrap();
-    assert_eq!(milk, items::id("minecraft:milk_bucket").map(|i| i as i32));
+    let milk_bucket = items::id("minecraft:milk_bucket").map(|i| i as i32);
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while server.handle.run(move |s| s.players[&id].inventory[36].0.as_ref().map(|i| i.item)).unwrap() != milk_bucket {
+        assert!(std::time::Instant::now() < deadline, "the bucket fills with milk");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     server
         .handle
         .run(move |s| {
@@ -441,7 +444,11 @@ fn fed_animals_breed_and_cows_give_milk_and_sheep_wool() {
         })
         .unwrap();
     alice.send(&interact(sheep));
-    alice.drain(QUIET);
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while !server.handle.run(move |s| s.worlds[0].entities[&sheep].mob().unwrap().sheared).unwrap() {
+        assert!(std::time::Instant::now() < deadline, "the sheep is sheared");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let (sheared, wool) = server
         .handle
         .run(move |s| {
