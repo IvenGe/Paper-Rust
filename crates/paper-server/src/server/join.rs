@@ -20,10 +20,15 @@ impl Server {
             self.kick(existing, &Component::translatable("multiplayer.disconnect.duplicate_login", vec![]));
         }
 
-        let world_index = 0;
+        // Returning players continue where they left off.
+        let saved = self.load_player_data(profile.uuid);
+        let world_index = saved.as_ref().map_or(0, |s| s.world.min(self.worlds.len() - 1));
         let world = &self.worlds[world_index];
         let spawn = world.spawn;
-        let loc = Location { x: spawn.x as f64 + 0.5, y: spawn.y as f64, z: spawn.z as f64 + 0.5, yaw: world.spawn_yaw, pitch: 0.0 };
+        let loc = match &saved {
+            Some(s) => s.loc,
+            None => Location { x: spawn.x as f64 + 0.5, y: spawn.y as f64, z: spawn.z as f64 + 0.5, yaw: world.spawn_yaw, pitch: 0.0 },
+        };
         let server_view = self.config.properties.view_distance;
         let op_level = self.shared.access.read().op_level(profile.uuid);
         let now = Instant::now();
@@ -73,7 +78,21 @@ impl Server {
             leaving: false,
         };
         player.view.radius = player.view_distance(server_view);
-        player.apply_game_mode_abilities();
+        if let Some(saved) = saved {
+            if let Some(mode) = saved.game_mode {
+                player.game_mode = mode;
+            }
+            player.previous_game_mode = saved.previous_game_mode;
+            player.health = saved.health;
+            player.food = saved.food;
+            player.saturation = saved.saturation;
+            player.held_slot = saved.held_slot;
+            player.inventory = saved.inventory;
+            player.apply_game_mode_abilities();
+            player.flying = saved.flying && player.allow_flight;
+        } else {
+            player.apply_game_mode_abilities();
+        }
 
         let world = &self.worlds[world_index];
         let props = &self.config.properties;
@@ -195,6 +214,9 @@ impl Server {
         // PlayerQuitEvent fires while the player is still in the game, as in Paper.
         let message = Component::translatable("multiplayer.player.left", vec![Component::text(name)]).color("yellow");
         let message = crate::plugins::events::on_quit(self, uuid, reason, message);
+        if let Some(player) = self.players.get(&entity_id) {
+            self.save_player_data(player);
+        }
         let Some(player) = self.players.remove(&entity_id) else { return };
         self.player_order.retain(|id| *id != entity_id);
         if self.by_uuid.get(&player.uuid()) == Some(&entity_id) {

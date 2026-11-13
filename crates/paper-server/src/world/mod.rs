@@ -12,10 +12,12 @@
 pub mod chunk;
 pub mod generator;
 pub mod light;
+pub mod storage;
 
 use chunk::{Chunk, ChunkPos, LightSection};
 use generator::Generator;
 use light::{ChangedSection, Terrain};
+use storage::{LevelData, SaveChunk, WorldStorage};
 use paper_data::blocks;
 use paper_protocol::codec::BlockPos;
 use paper_protocol::frame::frame_packet;
@@ -80,6 +82,8 @@ pub struct World {
     pub clock: Option<i32>,
     /// Size of the synchronised biome registry.
     pub biome_count: u32,
+    /// Where the world is saved; `None` keeps it in memory only.
+    pub storage: Option<Arc<WorldStorage>>,
     /// Players (or other holders) wanting each chunk loaded and lit.
     tickets: HashMap<ChunkPos, u32>,
     /// Ticketed chunks that are not lit yet, in request order.
@@ -123,6 +127,7 @@ impl World {
             daylight_cycle: true,
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
+            storage: None,
             tickets: HashMap::new(),
             wanted: VecDeque::new(),
             generating: HashSet::new(),
@@ -223,8 +228,21 @@ impl World {
                     terrain_ready = false;
                     if self.generating.insert(p) {
                         let (generator, min_y, height, index, notify) = (self.generator.clone(), self.min_y, self.height, self.index, ctx.notify.clone());
+                        let (storage, has_skylight) = (self.storage.clone(), self.has_skylight);
                         ctx.pool.spawn(move || {
-                            let chunk = generator.generate(p, min_y, height);
+                            // Saved chunks are loaded; missing ones are generated (and saved later).
+                            let loaded = storage.as_ref().and_then(|s| match s.load_chunk(p, min_y, height, has_skylight) {
+                                Ok(chunk) => chunk,
+                                Err(e) => {
+                                    log::error!("Could not load chunk {},{}; generating it again: {e:#}", p.x, p.z);
+                                    None
+                                }
+                            });
+                            let chunk = loaded.unwrap_or_else(|| {
+                                let mut chunk = generator.generate(p, min_y, height);
+                                chunk.dirty = storage.is_some();
+                                chunk
+                            });
                             notify(index, WorldEvent::Terrain(Box::new(chunk)));
                         });
                     }
@@ -315,21 +333,26 @@ impl World {
     }
 
     /// Drops chunks nobody needs: no ticket on the chunk or any neighbour (neighbours keep
-    /// terrain around for lighting) and nothing unsaved.
+    /// terrain around for lighting). Unsaved changes are saved first; without storage, chunks
+    /// with changes stay loaded.
     pub fn unload_unused(&mut self) -> usize {
         let before = self.chunks.len();
         let tickets = &self.tickets;
         let (generating, lighting) = (&self.generating, &self.lighting);
+        let (storage, has_skylight) = (&self.storage, self.has_skylight);
         self.chunks.retain(|pos, chunk| {
-            if chunk.dirty {
-                return true;
-            }
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     let p = ChunkPos::new(pos.x + dx, pos.z + dz);
                     if tickets.contains_key(&p) || lighting.contains_key(&p) || generating.contains(&p) {
                         return true;
                     }
+                }
+            }
+            if chunk.dirty {
+                match storage {
+                    Some(storage) => storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight }),
+                    None => return true,
                 }
             }
             false
@@ -367,6 +390,43 @@ impl World {
     pub fn top_y(&self, x: i32, z: i32) -> Option<i32> {
         let chunk = self.chunks.get(&ChunkPos::of_block(x, z))?;
         Some(chunk.top_y((x & 15) as usize, (z & 15) as usize))
+    }
+
+    /// Queues every changed chunk for saving. Returns how many were queued.
+    pub fn save_chunks(&mut self) -> usize {
+        let Some(storage) = &self.storage else { return 0 };
+        let mut saved = 0;
+        for chunk in self.chunks.values_mut().filter(|c| c.dirty) {
+            storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight });
+            chunk.dirty = false;
+            saved += 1;
+        }
+        saved
+    }
+
+    /// What `level.dat` records about this world.
+    pub fn level_data(&self, game_type: i32, hardcore: bool) -> LevelData {
+        LevelData {
+            name: self.name.clone(),
+            seed: self.seed,
+            generator: self.generator.name().to_owned(),
+            spawn: (self.spawn.x, self.spawn.y, self.spawn.z),
+            spawn_yaw: self.spawn_yaw,
+            age: self.age,
+            day_time: self.day_time,
+            daylight_cycle: self.daylight_cycle,
+            game_type,
+            hardcore,
+        }
+    }
+
+    /// Restores spawn and time from `level.dat`.
+    pub fn apply_level(&mut self, level: &LevelData) {
+        self.spawn = BlockPos::new(level.spawn.0, level.spawn.1, level.spawn.2);
+        self.spawn_yaw = level.spawn_yaw;
+        self.age = level.age;
+        self.day_time = level.day_time;
+        self.daylight_cycle = level.daylight_cycle;
     }
 
     /// Advances world time by one tick.

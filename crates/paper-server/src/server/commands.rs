@@ -875,7 +875,7 @@ fn cmd_save_all(server: &mut Server, source: &CommandSource, _: &[&str]) {
     if saved {
         server.feedback(source, Component::translatable("commands.save.success", vec![]));
     } else {
-        server.fail(source, "World persistence is not available in this build; changes are kept in memory only");
+        server.fail(source, "This server keeps its worlds in memory only (it has no server directory)");
     }
 }
 
@@ -930,9 +930,10 @@ impl Server {
         names
     }
 
-    /// Saves all worlds. Returns whether persistence is available.
+    /// Saves all worlds and waits until they are on disk. Returns whether persistence is
+    /// available.
     pub fn save_worlds(&mut self) -> bool {
-        false
+        self.save_all(true)
     }
 }
 

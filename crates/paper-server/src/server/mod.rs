@@ -16,6 +16,7 @@ pub mod commands;
 mod handlers;
 mod join;
 pub mod player;
+mod playerdata;
 mod view;
 
 pub use join::info_entry as join_info_entry;
@@ -24,6 +25,7 @@ use crate::access::AccessLists;
 use crate::config::{Config, GameMode};
 use crate::net::{auth, ConfigPackets, PlayerConn, Shared, StatusSnapshot};
 use crate::world::generator::{FlatGenerator, Generator, NoiseGenerator};
+use crate::world::storage::{ChunkIo, WorldStorage};
 use crate::world::{WorkerContext, World, WorldEvent};
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -147,6 +149,8 @@ pub struct Server {
     /// The last player state sent to the plugin host, per entity id.
     pub plugin_state_cache: HashMap<i32, paper_bridge::Value>,
     workers: WorkerContext,
+    /// Writes world data in the background; `None` when worlds are kept in memory only.
+    io: Option<ChunkIo>,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
 }
@@ -231,18 +235,37 @@ impl Server {
             compression_level: config.paper.network.compression_level,
         };
 
-        let seed = props.seed();
+        // Worlds are saved under the server directory; tests without one keep them in memory.
+        let io = if config.root.as_os_str().is_empty() { None } else { Some(ChunkIo::start()) };
+        let storage = match &io {
+            Some(io) => Some(WorldStorage::open(&config.root.join(&props.level_name), io.clone())?),
+            None => None,
+        };
+        let level = match &storage {
+            Some(storage) => storage.read_level().with_context(|| format!("reading {}", storage.dir.join("level.dat").display()))?,
+            None => None,
+        };
+        // An existing world keeps its seed and generator, whatever the configuration says now.
+        let seed = level.as_ref().map_or_else(|| props.seed(), |l| l.seed);
         let overworld_min_y = paper_data::synced::dimension_type("minecraft:overworld").map_or(-64, |d| d.min_y);
-        let flat = match config.paper.world.generator.as_str() {
-            "flat" => true,
-            "noise" => false,
-            _ => props.level_type.ends_with("flat"),
+        let flat = match &level {
+            Some(level) => level.generator == "flat",
+            None => match config.paper.world.generator.as_str() {
+                "flat" => true,
+                "noise" => false,
+                _ => props.level_type.ends_with("flat"),
+            },
         };
         let generator: Arc<dyn Generator> = if flat { Arc::new(FlatGenerator::new(overworld_min_y)) } else { Arc::new(NoiseGenerator::new(seed)) };
-        if !flat && props.level_type != "minecraft:flat" {
+        if !flat && level.is_none() && props.level_type != "minecraft:flat" {
             log::warn!("Vanilla world generation is not ported; '{}' worlds use the built-in '{}' terrain generator.", props.level_type, generator.name());
         }
-        let world = World::new(0, &props.level_name, "minecraft:overworld", seed, generator);
+        let mut world = World::new(0, &props.level_name, "minecraft:overworld", seed, generator);
+        if let Some(level) = &level {
+            world.apply_level(level);
+            log::info!("Loaded world '{}' (seed {}, {} terrain)", world.name, seed, world.generator.name());
+        }
+        world.storage = storage;
 
         let server = Self {
             default_game_mode: props.gamemode,
@@ -264,6 +287,7 @@ impl Server {
             plugin_list: Vec::new(),
             plugin_state_cache: HashMap::new(),
             workers,
+            io,
             tasks,
             status_dirty: true,
         };
@@ -357,6 +381,10 @@ impl Server {
             for world in &mut self.worlds {
                 world.unload_unused();
             }
+        }
+        let autosave = self.config.paper.world.autosave_interval_ticks;
+        if autosave > 0 && self.tick % autosave == 0 {
+            self.save_all(false);
         }
         if self.status_dirty {
             self.refresh_status();
@@ -455,6 +483,36 @@ impl Server {
         }
     }
 
+    /// Saves players, changed chunks and `level.dat` of every world. With `flush`, waits until
+    /// everything is on disk. Returns `false` if this server keeps worlds in memory only.
+    pub fn save_all(&mut self, flush: bool) -> bool {
+        if self.io.is_none() {
+            return false;
+        }
+        for player in self.player_order.iter().filter_map(|id| self.players.get(id)) {
+            self.save_player_data(player);
+        }
+        let (game_type, hardcore) = (self.default_game_mode.id(), self.config.properties.hardcore);
+        for world in &mut self.worlds {
+            let chunks = world.save_chunks();
+            if let Some(storage) = &world.storage {
+                if let Err(e) = storage.save_level(&world.level_data(game_type, hardcore)) {
+                    log::error!("Could not save level.dat of {}: {e:#}", world.name);
+                }
+            }
+            log::debug!("Queued {chunks} chunk(s) of '{}' for saving", world.name);
+        }
+        if flush {
+            if let Some(io) = &self.io {
+                io.flush();
+            }
+            for storage in self.worlds.iter().filter_map(|w| w.storage.as_ref()) {
+                storage.sync();
+            }
+        }
+        true
+    }
+
     pub fn mark_status_dirty(&mut self) {
         self.status_dirty = true;
     }
@@ -483,6 +541,14 @@ impl Server {
         for world in &self.worlds {
             log::info!("Saving chunks for level '{}'/{}", world.name, world.dimension);
         }
+        if self.save_all(true) {
+            log::info!("All worlds are saved");
+        }
+        // Release the world locks.
+        for world in &mut self.worlds {
+            world.storage = None;
+        }
+        self.io = None;
         log::logger().flush();
     }
 }
