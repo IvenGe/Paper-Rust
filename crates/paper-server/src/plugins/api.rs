@@ -437,13 +437,11 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             if server.worlds[world].block_at(x, y, z).is_none() {
                 bail!("the chunk at {x}, {z} is not loaded");
             }
-            match server.worlds[world].set_block(x, y, z, state) {
-                Some(change) => {
-                    server.publish_block_change(world, &change);
-                    Ok(Value::Bool(true))
-                }
-                None => Ok(Value::Bool(false)),
-            }
+            // Bukkit's applyPhysics (default true): neighbours react like for any other change;
+            // without physics nothing reacts, as in CraftBlock.
+            use crate::world::block_updates::flags;
+            let update = if args.bool("physics").unwrap_or(true) { flags::ALL } else { flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE };
+            Ok(Value::Bool(server.set_block_with_flags(world, paper_protocol::codec::BlockPos::new(x, y, z), state, update)))
         }
         "world.highest_block_y" => {
             let world = world_index(server, args)?;

@@ -625,13 +625,12 @@ fn cmd_setblock(server: &mut Server, source: &CommandSource, args: &[&str]) {
     if server.worlds[world].block_at(x, y, z).is_none() || !server.worlds[world].in_bounds(y) {
         return server.fail(source, "That position is not loaded");
     }
-    match server.worlds[world].set_block(x, y, z, state) {
-        Some(change) => {
-            server.publish_block_change(world, &change);
+    match server.set_block_and_update(world, paper_protocol::codec::BlockPos::new(x, y, z), state) {
+        true => {
             let c = |v: i32| Component::text(v.to_string());
             server.feedback(source, Component::translatable("commands.setblock.success", vec![c(x), c(y), c(z)]));
         }
-        None => server.feedback(source, Component::translatable("commands.setblock.failed", vec![]).color("red")),
+        false => server.feedback(source, Component::translatable("commands.setblock.failed", vec![]).color("red")),
     }
 }
 

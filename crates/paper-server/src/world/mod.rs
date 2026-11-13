@@ -9,12 +9,14 @@
 //!                                                         packet requested ──► encode job
 //! ```
 
+pub mod block_updates;
 pub mod chunk;
 pub mod entity;
 pub mod generator;
 pub mod light;
 pub mod rules;
 pub mod storage;
+pub mod ticks;
 
 use chunk::{Chunk, ChunkPos, LightSection};
 use generator::Generator;
@@ -94,6 +96,9 @@ pub struct World {
     /// Block entities removed by block changes since the server last looked (position, old
     /// block state, data).
     pub removed_block_entities: Vec<(BlockPos, u32, paper_nbt::Compound)>,
+    /// Block updates: scheduled tick bookkeeping, block events and what clients must be told
+    /// (see `world::block_updates`).
+    pub updates: block_updates::BlockUpdateState,
     /// Players (or other holders) wanting each chunk loaded and lit.
     tickets: HashMap<ChunkPos, u32>,
     /// Ticketed chunks that are not lit yet, in request order.
@@ -142,6 +147,7 @@ impl World {
             entities: HashMap::new(),
             entity_chunks: HashMap::new(),
             removed_block_entities: Vec::new(),
+            updates: block_updates::BlockUpdateState::new(dimension, seed),
             tickets: HashMap::new(),
             wanted: VecDeque::new(),
             generating: HashSet::new(),
@@ -292,7 +298,10 @@ impl World {
             WorldEvent::Terrain(chunk) => {
                 self.generating.remove(&chunk.pos);
                 // A chunk that appeared meanwhile (e.g. loaded another way) wins.
-                self.chunks.entry(chunk.pos).or_insert(*chunk);
+                let pos = chunk.pos;
+                self.chunks.entry(pos).or_insert(*chunk);
+                // Block updates: saved ticks and moving pistons continue.
+                block_updates::chunk_loaded(self, pos);
                 None
             }
             WorldEvent::Light { pos, stamp, sky, block } => {
@@ -354,7 +363,7 @@ impl World {
         let before = self.chunks.len();
         let tickets = &self.tickets;
         let (generating, lighting) = (&self.generating, &self.lighting);
-        let (storage, has_skylight) = (&self.storage, self.has_skylight);
+        let (storage, has_skylight, age) = (&self.storage, self.has_skylight, self.age);
         self.chunks.retain(|pos, chunk| {
             for dz in -1..=1 {
                 for dx in -1..=1 {
@@ -366,7 +375,7 @@ impl World {
             }
             if chunk.dirty {
                 match storage {
-                    Some(storage) => storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight }),
+                    Some(storage) => storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age) }),
                     None => return true,
                 }
             }
@@ -405,6 +414,15 @@ impl World {
         }
         let light = if chunk.lit { light::update_after_block_change(&mut self.chunks, self.has_skylight, x, y, z, old, state) } else { HashSet::new() };
         Some(BlockChange { pos: BlockPos::new(x, y, z), old, new: state, light })
+    }
+
+    /// Copies the game rules block updates depend on into their settings (after loading
+    /// the rules or changing one).
+    pub fn sync_rule_settings(&mut self) {
+        let s = &mut self.updates.settings;
+        s.water_source_conversion = self.rules.bool("water_source_conversion");
+        s.lava_source_conversion = self.rules.bool("lava_source_conversion");
+        s.tnt_explodes = self.rules.bool("tnt_explodes");
     }
 
     /// Y of the first free block above the highest motion-blocking block of a column.
@@ -474,7 +492,7 @@ impl World {
         let Some(storage) = &self.storage else { return 0 };
         let mut saved = 0;
         for chunk in self.chunks.values_mut().filter(|c| c.dirty) {
-            storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight });
+            storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight: self.has_skylight, ticks: chunk.ticks.save(self.age) });
             chunk.dirty = false;
             saved += 1;
         }

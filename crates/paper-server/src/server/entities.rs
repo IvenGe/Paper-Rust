@@ -305,8 +305,7 @@ impl Server {
     fn land_falling_block(&mut self, world: usize, pos: BlockPos, state: u32) {
         let here = self.worlds[world].block_at(pos.x, pos.y, pos.z);
         if here.is_some_and(blocks::is_replaceable) {
-            if let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, state) {
-                self.publish_block_change(world, &change);
+            if self.set_block_and_update(world, pos, state) {
                 return;
             }
         }

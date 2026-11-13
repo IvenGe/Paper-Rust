@@ -73,6 +73,18 @@ packet! {
     }
 }
 
+packet! {
+    /// A block action the client animates or plays: note block notes, piston moves, chest
+    /// lids, bells (vanilla's `ClientboundBlockEventPacket`).
+    BlockEvent = play::clientbound::BLOCK_EVENT {
+        pos: BlockPos,
+        action: u8,
+        param: u8,
+        /// Protocol id in `minecraft:block`.
+        block: VarInt,
+    }
+}
+
 /// Several block changes within one chunk section.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SectionBlocksUpdate {
@@ -1529,32 +1541,6 @@ packet! {
     }
 }
 
-/// A block action: chest lid, note block, piston, bell...
-#[derive(Clone, Debug, PartialEq)]
-pub struct BlockEvent {
-    pub pos: BlockPos,
-    pub action: u8,
-    pub param: u8,
-    /// Block registry id.
-    pub block: i32,
-}
-
-packet_id!(BlockEvent = play::clientbound::BLOCK_EVENT);
-
-impl Encode for BlockEvent {
-    fn encode(&self, w: &mut Vec<u8>) {
-        self.pos.encode(w);
-        w.put_u8(self.action);
-        w.put_u8(self.param);
-        w.put_varint(self.block);
-    }
-}
-
-impl Decode for BlockEvent {
-    fn decode(r: &mut Reader<'_>) -> Result<Self> {
-        Ok(Self { pos: BlockPos::decode(r)?, action: r.u8()?, param: r.u8()?, block: r.varint()? })
-    }
-}
 
 /// A container property, such as a furnace's progress.
 #[derive(Clone, Debug, PartialEq)]

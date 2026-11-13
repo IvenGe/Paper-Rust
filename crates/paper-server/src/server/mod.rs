@@ -11,6 +11,7 @@
 //! * **Worker pool** (rayon): chunk generation, lighting, chunk packet encoding and
 //!   compression. Jobs are pure functions over snapshots and report back with a task.
 
+pub mod block_updates;
 mod chat;
 pub mod commands;
 mod handlers;
@@ -299,6 +300,7 @@ impl Server {
             }
         }
         world.daylight_cycle = world.rules.bool("advance_time");
+        world.sync_rule_settings();
         world.storage = storage;
 
         let server = Self {
@@ -406,6 +408,8 @@ impl Server {
             world.tick_time();
             world.pump(&workers);
         }
+        // Scheduled block and fluid ticks and block events (see `block_updates`).
+        self.tick_block_updates();
         // Clients run their own clock; resynchronise once a second like vanilla.
         if self.tick % 20 == 0 {
             for index in 0..self.worlds.len() {
@@ -570,6 +574,7 @@ impl Server {
         if !w.rules.set(name, value) {
             return;
         }
+        w.sync_rule_settings();
         match paper_data::game_rules::get(name).map(|r| r.name.as_str()) {
             Some("minecraft:advance_time") => {
                 w.daylight_cycle = value.as_bool();

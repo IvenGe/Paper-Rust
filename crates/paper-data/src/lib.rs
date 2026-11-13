@@ -51,6 +51,8 @@ pub struct DimensionTypeInfo {
     pub logical_height: i32,
     pub has_skylight: bool,
     pub has_ceiling: bool,
+    /// The `minecraft:gameplay/fast_lava` attribute: lava flows faster and further.
+    pub fast_lava: bool,
 }
 
 fn name_index(names: &'static [&'static str]) -> HashMap<&'static str, u32> {
@@ -308,11 +310,119 @@ pub mod synced {
 }
 
 mod extra;
-pub use extra::{entity_types, game_rules, item_data, physics};
+pub use extra::{entity_types, game_rules, item_data};
+
+/// Per-state block physics that block updates, fluids and redstone need: which faces give
+/// support, vanilla's legacy "solid" flag, redstone conductors, comparator outputs, piston
+/// push reactions, full collision faces and note block instruments.
+///
+/// Faces are numbered like vanilla's `Direction`: 0 down, 1 up, 2 north, 3 south, 4 west,
+/// 5 east. Generated from `data/<version>/block_physics.json` (see `tools/datagen/physics.py`).
+pub mod physics {
+    include!(concat!(env!("OUT_DIR"), "/physics.rs"));
+
+    // Collision shapes, behaviour flags, friction and loot tables per block (derived from
+    // Pumpkin's extracted assets; see `extra.rs`).
+    pub use crate::extra::physics::*;
+
+    /// How a block reacts to a piston (`PushReaction`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PushReaction {
+        Normal,
+        /// Broken (and dropped) when pushed.
+        Destroy,
+        /// Cannot be moved and stops the piston.
+        Block,
+        /// Can be pushed but not pulled.
+        PushOnly,
+    }
+
+    #[inline]
+    fn byte(table: &[u8], state: u32) -> u8 {
+        table.get(state as usize).copied().unwrap_or(0)
+    }
+
+    /// `isFaceSturdy(face, SupportType.FULL)`: the face can hold wall torches, levers, wire...
+    #[inline]
+    pub fn is_face_sturdy(state: u32, face: usize) -> bool {
+        byte(SUPPORT, state) & (1 << face) != 0
+    }
+
+    /// `isFaceSturdy(face, SupportType.CENTER)` for the up and down faces (torches on top,
+    /// lanterns below); other faces fall back to full support.
+    #[inline]
+    pub fn has_center_support(state: u32, face: usize) -> bool {
+        let support = byte(SUPPORT, state);
+        support & (1 << face) != 0 || (face < 2 && support & (1 << (6 + face)) != 0)
+    }
+
+    /// Vanilla's legacy `isSolid()`: a large enough collision shape. Fluids form sources on
+    /// it and cannot flow into it (via `blocksMotion`).
+    #[inline]
+    pub fn is_solid(state: u32) -> bool {
+        byte(FLAGS, state) & 1 != 0
+    }
+
+    /// `isRedstoneConductor`: the block can be powered and passes power on to components.
+    #[inline]
+    pub fn is_redstone_conductor(state: u32) -> bool {
+        byte(FLAGS, state) & 2 != 0
+    }
+
+    /// `hasAnalogOutputSignal`: a comparator reads a value from the block.
+    #[inline]
+    pub fn has_analog_output(state: u32) -> bool {
+        byte(FLAGS, state) & 4 != 0
+    }
+
+    pub fn push_reaction(state: u32) -> PushReaction {
+        match (byte(FLAGS, state) >> 3) & 3 {
+            0 => PushReaction::Normal,
+            1 => PushReaction::Destroy,
+            2 => PushReaction::Block,
+            _ => PushReaction::PushOnly,
+        }
+    }
+
+    /// Whether the collision shape covers the whole face (used for fluid flow between
+    /// partial blocks).
+    #[inline]
+    pub fn collision_face_full(state: u32, face: usize) -> bool {
+        byte(COLLISION_FACES, state) & (1 << face) != 0
+    }
+
+    /// The note block instrument the block gives (a value of `note_block[instrument]`).
+    pub fn instrument(state: u32) -> &'static str {
+        INSTRUMENTS.get(byte(INSTRUMENT, state) as usize).copied().unwrap_or("harp")
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn physics_tables() {
+        let state = |name: &str| blocks::parse_state(name).unwrap();
+        let stone = state("stone");
+        assert!((0..6).all(|f| physics::is_face_sturdy(stone, f) && physics::collision_face_full(stone, f)));
+        assert!(physics::is_redstone_conductor(stone) && physics::is_solid(stone));
+        let glass = state("glass");
+        assert!(!physics::is_redstone_conductor(glass) && physics::is_face_sturdy(glass, 1));
+        assert!(!physics::is_redstone_conductor(state("redstone_block")));
+        assert!(physics::is_redstone_conductor(state("soul_sand")));
+        let slab = state("stone_slab[type=bottom]");
+        assert!(physics::is_face_sturdy(slab, 0) && !physics::is_face_sturdy(slab, 1));
+        assert!(physics::collision_face_full(slab, 0) && !physics::collision_face_full(slab, 2));
+        let fence = state("oak_fence");
+        assert!(physics::has_center_support(fence, 1) && !physics::is_face_sturdy(fence, 1));
+        assert!(physics::has_analog_output(state("chest")));
+        assert_eq!(physics::push_reaction(state("obsidian")), physics::PushReaction::Block);
+        assert_eq!(physics::push_reaction(state("redstone_wire")), physics::PushReaction::Destroy);
+        assert_eq!(physics::instrument(stone), "basedrum");
+        assert_eq!(physics::instrument(state("glass")), "hat");
+        assert_eq!(physics::instrument(state("zombie_head")), "zombie");
+    }
 
     #[test]
     fn version_constants() {

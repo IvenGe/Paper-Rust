@@ -182,9 +182,7 @@ impl Server {
                 }
                 if self.double_chest_partner(world, other, s).is_none() {
                     if let Some(single) = blocks::with_property(s, "type", "single") {
-                        if let Some(change) = self.worlds[world].set_block(other.x, other.y, other.z, single) {
-                            self.publish_block_change(world, &change);
-                        }
+                        self.set_block_and_update(world, other, single);
                     }
                 }
             }
@@ -360,15 +358,13 @@ impl Server {
             match container_block(state) {
                 Some(ContainerBlock::Chest) => {
                     let block = blocks::block_id_of_state(state) as i32;
-                    self.broadcast_to_chunk_viewers(world, ChunkPos::of_block(pos.x, pos.z), &play::BlockEvent { pos: *pos, action: 1, param: viewers.min(255) as u8, block });
+                    self.broadcast_to_chunk_viewers(world, ChunkPos::of_block(pos.x, pos.z), &play::BlockEvent { pos: *pos, action: 1, param: viewers.min(255) as u8, block: VarInt(block) });
                 }
                 Some(ContainerBlock::Barrel) => {
                     let open = viewers > 0;
                     if blocks::property(state, "open") != Some(if open { "true" } else { "false" }) {
                         if let Some(s) = blocks::with_property(state, "open", if open { "true" } else { "false" }) {
-                            if let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, s) {
-                                self.publish_block_change(world, &change);
-                            }
+                            self.set_block_and_update(world, *pos, s);
                         }
                     }
                 }
@@ -392,7 +388,7 @@ impl Server {
     fn block_event_and_sound(&mut self, world: usize, pos: BlockPos, action: u8, param: u8, sound: &str) {
         if let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) {
             let block = blocks::block_id_of_state(state) as i32;
-            self.broadcast_to_chunk_viewers(world, ChunkPos::of_block(pos.x, pos.z), &play::BlockEvent { pos, action, param, block });
+            self.broadcast_to_chunk_viewers(world, ChunkPos::of_block(pos.x, pos.z), &play::BlockEvent { pos, action, param, block: VarInt(block) });
         }
         self.play_sound_at(world, pos, sound, 0.5);
     }
@@ -661,9 +657,7 @@ impl Server {
         }
         if was_lit != (lit > 0) {
             if let Some(s) = blocks::with_property(state, "lit", if lit > 0 { "true" } else { "false" }) {
-                if let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, s) {
-                    self.publish_block_change(world, &change);
-                }
+                self.set_block_and_update(world, pos, s);
             }
         }
         self.send_furnace_data(world, pos);

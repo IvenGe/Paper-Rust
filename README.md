@@ -9,9 +9,10 @@ bootstrappers and Brigadier commands.
 The game server is Rust. Java plugins run in a separate JVM, the *plugin host*, which talks
 to the server over a local socket ("separate mode"). Without plugins no JVM is started.
 
-> This is an early port. The protocol, worlds, players and the plugin bridge work end to end
-> (see [Status](#status)), but most of vanilla's game logic (mobs, survival mechanics,
-> redstone, vanilla world generation) is not ported yet.
+> This is an early port. The protocol, worlds, players, survival gameplay (mobs, damage,
+> hunger, containers, crafting, redstone, fluids) and the plugin bridge work end to end (see
+> [Status](#status)); vanilla world generation, the Nether and the End and parts of the
+> plugin API are still missing.
 
 Running
 -------
@@ -61,13 +62,36 @@ What works:
 * **Worlds**: a flat generator and a built-in noise terrain generator, sky and block light,
   chunk streaming with the client's flow control, block breaking and placing (with
   orientation for stairs, logs, slabs, doors, beds, ...), world time.
+* **Block updates**: neighbour and shape updates (wire, fence, pane and stair connections,
+  blocks that lose their support break, doors and beds break together), scheduled block and
+  fluid ticks (saved with the chunk), water and lava (flowing, falling, infinite water,
+  waterlogged blocks, obsidian, cobblestone, stone and basalt), redstone (wire, torches,
+  levers, buttons, repeaters, comparators, observers, lamps, note blocks, redstone blocks,
+  doors, trapdoors and fence gates, pistons and sticky pistons), and using levers, buttons,
+  doors, repeaters and comparators by hand.
+* **Entities**: dropped items (pickup, merging, despawning), experience orbs, arrows, falling
+  blocks and primed TNT, and mobs: animals wander, look at players and panic when hurt;
+  zombies, spiders and other monsters chase and hit players; skeletons shoot arrows;
+  creepers explode; undead burn in daylight. Mobs use A* pathfinding and vanilla's walking
+  physics, spawn naturally from the biomes' spawner lists (animals also when a chunk is
+  generated), despawn far from players, and drop loot (vanilla loot tables) and experience.
+* **Survival**: damage from falls, the void, lava, fire, drowning, suffocation, cacti and
+  magma, with armour, protection enchantments, difficulty scaling and invulnerability frames;
+  hunger, saturation and natural regeneration; eating; death (dropped inventory and
+  experience, death messages) and respawning; attacking with the attack cooldown, critical
+  hits, sweeping, knockback and weapon enchantments; tool and weapon wear; bows; explosions
+  that break blocks and hurt and push entities. Blocks drop their loot when broken.
+* **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
+  and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
+  that smelt over time; vanilla's click rules (shift-clicks, drags, number keys).
+* **Game rules**: all 26.3 rules with `/gamerule`, saved in `data/minecraft/game_rules.dat`.
 * **Saving**: chunks in region files, `level.dat` and player data in vanilla's layout,
   autosave, `/save-all`, saving on shutdown.
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
-  difficulty seed setworldspawn tps mspt kick ban pardon ban-ip pardon-ip banlist op deop
-  whitelist save-all stop version plugins`.
+  difficulty gamerule summon kill seed setworldspawn tps mspt kick ban pardon ban-ip
+  pardon-ip banlist op deop whitelist save-all stop version plugins`.
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
   permissions, aliases and tab completion; Brigadier commands and `BasicCommand`), the
@@ -82,9 +106,10 @@ What works:
 
 Not yet:
 
-* Vanilla world generation, the Nether and the End, entities other than players (mobs,
-  dropped items, projectiles), damage and survival mechanics, containers and crafting,
-  redstone, fluids and block physics, block entities.
+* Vanilla world generation, the Nether and the End. Mobs are not saved with the world yet,
+  status effects, breeding, villagers and trading, beds, enchanting and anvils are missing.
+  Pressure plates, tripwires, dispensers, droppers and hoppers do not react yet, and
+  pistons do not push entities.
 * Plugin API: item stacks and inventories, offline players, entities other than players,
   block data, scoreboards, boss bars, creating worlds, registry and tag lifecycle events,
   `/reload`.

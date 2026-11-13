@@ -16,6 +16,7 @@
 //! that is unloaded and requested again straight away never comes back stale.
 
 use super::chunk::{BiomeStorage, BlockStorage, Chunk, ChunkPos, ChunkSnapshot, LightSection, Section};
+use super::ticks::{ticks_from_nbt, ticks_to_nbt, ChunkTicks, SavedTicks, TickKind};
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 use flate2::read::{GzDecoder, ZlibDecoder};
@@ -415,6 +416,8 @@ pub struct SaveChunk {
     pub snapshot: ChunkSnapshot,
     pub lit: bool,
     pub has_skylight: bool,
+    /// Scheduled block and fluid ticks, relative to the time of saving.
+    pub ticks: SavedTicks,
 }
 
 impl SaveChunk {
@@ -434,6 +437,7 @@ impl SaveChunk {
             dirty: false,
             revision: 0,
             fresh: false,
+            ticks: ChunkTicks::from_saved(self.ticks.clone()),
         }
     }
 }
@@ -490,8 +494,8 @@ pub fn chunk_to_nbt(save: &SaveChunk) -> Compound {
         .with("sections", Tag::List(sections))
         .with("Heightmaps", Tag::Compound(Compound::new().with("MOTION_BLOCKING", heightmap(&s.motion_blocking)).with("WORLD_SURFACE", heightmap(&s.world_surface))))
         .with("block_entities", Tag::List(block_entities))
-        .with("block_ticks", Tag::List(Vec::new()))
-        .with("fluid_ticks", Tag::List(Vec::new()))
+        .with("block_ticks", ticks_to_nbt(&save.ticks.blocks, TickKind::Block))
+        .with("fluid_ticks", ticks_to_nbt(&save.ticks.fluids, TickKind::Fluid))
         .with("structures", Tag::Compound(Compound::new().with("References", Tag::Compound(Compound::new())).with("starts", Tag::Compound(Compound::new()))))
 }
 
@@ -551,6 +555,11 @@ pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, ha
         }
         chunk.block_entities.insert((y, (z & 15) as u8, (x & 15) as u8), data);
     }
+    let saved_ticks = SavedTicks {
+        blocks: ticks_from_nbt(nbt.list("block_ticks").unwrap_or(&[]), TickKind::Block, pos),
+        fluids: ticks_from_nbt(nbt.list("fluid_ticks").unwrap_or(&[]), TickKind::Fluid, pos),
+    };
+    chunk.ticks = ChunkTicks::from_saved(saved_ticks);
     chunk.recompute_derived();
     // Stored light is used only if it is complete; otherwise it is computed again.
     chunk.lit = nbt.bool("isLightOn").unwrap_or(false) && (!has_skylight || sky_present.iter().all(|p| *p));
@@ -993,7 +1002,7 @@ mod tests {
         chunk.block_light[7] = Arc::new(lamp);
         chunk.lit = true;
 
-        let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true };
+        let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true, ticks: SavedTicks::default() };
         let nbt = chunk_to_nbt(&save);
         let mut bytes = Vec::new();
         paper_nbt::write_named(&mut bytes, "", &nbt);
@@ -1026,7 +1035,7 @@ mod tests {
         let pos = ChunkPos::new(-40, 70);
         let mut chunk = generator.generate(pos, -64, 384);
         chunk.set_block(3, -60, 3, blocks::default_state("minecraft:gold_block").unwrap()).unwrap();
-        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true });
+        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: SavedTicks::default() });
         // Readable at once, whether or not the write has happened yet.
         let loaded = storage.load_chunk(pos, -64, 384, true).unwrap().unwrap();
         assert_eq!(loaded.get_block(3, -60, 3), blocks::default_state("minecraft:gold_block").unwrap());

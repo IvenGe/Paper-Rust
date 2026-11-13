@@ -360,8 +360,10 @@ impl Server {
         if !crate::plugins::events::on_block_break(self, id, world, pos, old) {
             return false;
         }
-        let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, blocks::AIR) else { return false };
-        self.publish_block_change(world, &change);
+        // Block updates: neighbours react, a waterlogged block leaves its water.
+        if !self.player_destroy_block(world, pos, id) {
+            return false;
+        }
         self.after_player_broke_block(id, world, pos, old);
         // Break particles and sound for everyone else; the breaker's client plays its own.
         let effect = play::LevelEvent { event: 2001, pos, data: old as i32, global: false };
@@ -389,7 +391,9 @@ impl Server {
                 return;
             }
         }
-        let placed = self.try_place_block(id, &use_on);
+        // Levers, buttons, doors, repeaters... react to the click instead of a block being placed.
+        let used = self.within_reach(id, use_on.pos) && self.use_block(id, &use_on);
+        let placed = used || self.try_place_block(id, &use_on);
         if !placed {
             // Undo whatever the client predicted at the clicked block and beside it.
             self.resend_block(id, use_on.pos);
@@ -410,7 +414,7 @@ impl Server {
         let slot = if use_on.hand.0 == 1 { OFFHAND_SLOT } else { HOTBAR_START + player.held_slot as usize };
         let Some(stack) = player.inventory[slot].0.clone() else { return false };
         let Some(mut block) = items::get(stack.item as u32).and_then(|item| item.block).and_then(blocks::by_name) else { return false };
-        let (yaw, pitch, mode) = (player.loc.yaw, player.loc.pitch, player.game_mode);
+        let (yaw, pitch, mode, sneaking) = (player.loc.yaw, player.loc.pitch, player.game_mode, player.sneaking);
 
         let w = &self.worlds[world];
         let Some(clicked) = w.block_at(use_on.pos.x, use_on.pos.y, use_on.pos.z) else { return false };
@@ -425,10 +429,12 @@ impl Server {
                 block = wall;
             }
         }
-        let mut state = placement_state(block, face, use_on.cursor_y, yaw, pitch);
+        let state = placement_state(block, face, use_on.cursor_y, yaw, pitch);
+        // Vanilla's placement rules (wire shapes, waterlogging, powered doors...) and survival.
+        let Some(mut state) = self.placement_state(world, target, state, id, use_on) else { return false };
         // A chest beside a single chest facing the same way joins it.
         let mut neighbour: Option<(BlockPos, u32)> = None;
-        if !player.sneaking {
+        if !sneaking {
             if let Some((joined, other)) = self.chest_placement(world, target, state) {
                 state = joined;
                 neighbour = Some(other);
@@ -468,13 +474,13 @@ impl Server {
         if !crate::plugins::events::on_block_place(self, id, world, target, state, replaced, use_on.pos, use_on.hand.0 == 1) {
             return false;
         }
-        let Some(change) = self.worlds[world].set_block(target.x, target.y, target.z, state) else { return false };
-        self.publish_block_change(world, &change);
-        if let Some((pos, second_state)) = second.or(neighbour) {
-            if let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, second_state) {
-                self.publish_block_change(world, &change);
-            }
+        if !self.set_block_with_flags(world, target, state, crate::world::block_updates::flags::ALL_IMMEDIATE) {
+            return false;
         }
+        if let Some((pos, second_state)) = second.or(neighbour) {
+            self.set_block_and_update(world, pos, second_state);
+        }
+        self.block_placed(world, target, state);
         if mode == GameMode::Survival {
             if let Some(player) = self.players.get_mut(&id) {
                 let remaining = stack.count - 1;

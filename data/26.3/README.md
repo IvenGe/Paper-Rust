@@ -14,6 +14,12 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `tags.json` | tags sent to clients, resolved to numeric ids |
 | `dimension_types.json` | the vanilla dimension type definitions |
 | `feature_flags.json` | feature flags enabled by default |
+| `block_behaviour.json` | per block state: sturdy faces, legacy solid, redstone conductor, comparator output, piston reaction, full collision faces, note block instrument |
+| `block_physics.json` | per block state: collision shapes and behaviour flags; per block: loot table, friction, speed and jump factors; block entity types |
+| `item_components.json` | default components of items that behave differently (durability, food, tools, weapons, attributes, equipment slots, fuel) |
+| `entities.json` | entity types: size, eye height, category, attributes, health, experience, spawn rules, sounds |
+| `entity_data.json` | the entity metadata layout (field index and serializer) of each entity type |
+| `game_rules.json` | game rules with their defaults (and bounds for integer rules) |
 
 ## Provenance
 
@@ -31,6 +37,15 @@ exact inputs, the method and the full list of checks
   [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin). Pumpkin's code is
   GPL-3.0; its `assets/NOTICE.md` states that these extracted files are derived
   from Minecraft and are not covered by Pumpkin's licence.
+* `block_behaviour.json` is derived from the same Pumpkin file by
+  `tools/datagen/physics.py`, which first checks that Pumpkin's block list and
+  state id ranges are identical to `blocks.json`.
+* `block_physics.json`, `item_components.json`, `entities.json`,
+  `entity_data.json` and `game_rules.json` are derived from Pumpkin's
+  `assets/` (`blocks.json`, `items.json`, `entities.json`, `tracked_data.json`,
+  `game_rules.json`) by `tools/datagen/pumpkin_extra.py`, which checks item ids
+  and block state ids against `items.json` / `blocks.json` and game rule names
+  against the `minecraft:game_rule` registry. The same licence note applies.
 * Synchronised registry entries, tags and dimension types are read from the
   `data/minecraft/**` files inside the jar.
 

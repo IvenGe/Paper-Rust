@@ -773,18 +773,17 @@ impl Server {
                 }
                 let pos = BlockPos::new(x, y, z);
                 if blocks::block_of_state(state).name == "minecraft:tnt" {
-                    if let Some(change) = self.worlds[world].set_block(x, y, z, blocks::AIR) {
-                        self.publish_block_change(world, &change);
+                    self.set_block_and_update(world, pos, blocks::AIR);
+                    if self.worlds[world].rules.bool("tnt_explodes") {
+                        self.prime_tnt(world, pos, rng.gen_range(10..30), source);
                     }
-                    self.prime_tnt(world, pos, rng.gen_range(10..30), source);
                     broken += 1;
                     continue;
                 }
                 if drops {
                     self.drop_block_loot(world, pos, state, None, if decay { Some(radius) } else { None });
                 }
-                if let Some(change) = self.worlds[world].set_block(x, y, z, blocks::AIR) {
-                    self.publish_block_change(world, &change);
+                if self.set_block_and_update(world, pos, blocks::AIR) {
                     broken += 1;
                 }
             }

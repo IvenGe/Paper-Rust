@@ -278,17 +278,47 @@ fn gen_synced() {
     for (name, d) in dims.as_object().expect("dimension_types.json must be an object") {
         writeln!(
             s,
-            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {} }},",
+            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {} }},",
             d["min_y"].as_i64().expect("min_y"),
             d["height"].as_i64().expect("height"),
             d["logical_height"].as_i64().unwrap_or_else(|| d["height"].as_i64().unwrap()),
             d["has_skylight"].as_bool().unwrap_or(true),
             d["has_ceiling"].as_bool().unwrap_or(false),
+            d["attributes"]["minecraft:gameplay/fast_lava"].as_bool().unwrap_or(false),
         )
         .unwrap();
     }
     writeln!(s, "];").unwrap();
     out("synced.rs", &s);
+}
+
+/// `block_behaviour.json`: per-state support faces, physics flags, collision faces and note
+/// block instruments (see `tools/datagen/physics.py`).
+fn gen_physics() {
+    let mut s = String::new();
+    let names = ["support", "flags", "collision_faces", "instrument"];
+    if !exists("block_behaviour.json") {
+        writeln!(s, "pub const INSTRUMENTS: &[&str] = &[\"harp\"];").unwrap();
+        for name in names {
+            writeln!(s, "static {}: &[u8] = &[];", name.to_ascii_uppercase()).unwrap();
+        }
+        out("physics.rs", &s);
+        return;
+    }
+    let v = load("block_behaviour.json");
+    let states = load("blocks.json")["state_count"].as_u64().expect("blocks.json: state_count") as usize;
+    let instruments = str_array(v["instruments"].as_array().expect("block_behaviour.json: instruments"));
+    writeln!(s, "/// Note block instruments, in the order of `note_block`'s `instrument` property.").unwrap();
+    writeln!(s, "pub const INSTRUMENTS: &[&str] = &{instruments:?};").unwrap();
+    for name in names {
+        let arr = v[name].as_array().unwrap_or_else(|| panic!("block_behaviour.json: {name}"));
+        assert_eq!(arr.len(), states, "block_behaviour.json: {name} has the wrong length");
+        let bytes: Vec<u8> = arr.iter().map(|x| x.as_u64().expect("a number") as u8).collect();
+        let file = format!("physics_{name}.bin");
+        out_bytes(&file, &bytes);
+        writeln!(s, "static {}: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{file}\"));", name.to_ascii_uppercase()).unwrap();
+    }
+    out("physics.rs", &s);
 }
 
 fn main() {
@@ -299,4 +329,5 @@ fn main() {
     gen_blocks();
     gen_items();
     gen_synced();
+    gen_physics();
 }

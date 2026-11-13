@@ -247,6 +247,8 @@ pub struct Chunk {
     pub revision: u64,
     /// Freshly generated (not loaded from disk): creatures are placed once it is ready.
     pub fresh: bool,
+    /// Scheduled block and fluid ticks (block updates; see `world::ticks`).
+    pub ticks: super::ticks::ChunkTicks,
 }
 
 fn motion_blocking(state: u32) -> bool {
@@ -270,6 +272,7 @@ impl Chunk {
             dirty: false,
             revision: 0,
             fresh: false,
+            ticks: Default::default(),
         }
     }
 
