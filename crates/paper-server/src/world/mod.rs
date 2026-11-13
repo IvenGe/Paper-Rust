@@ -283,9 +283,10 @@ impl World {
             WorldEvent::Terrain(chunk) => {
                 self.generating.remove(&chunk.pos);
                 // A chunk that appeared meanwhile (e.g. loaded another way) wins.
-                let chunk = self.chunks.entry(chunk.pos).or_insert(*chunk);
-                // Block updates: ticks saved with the chunk count from now.
-                chunk.ticks.unpack(self.age);
+                let pos = chunk.pos;
+                self.chunks.entry(pos).or_insert(*chunk);
+                // Block updates: saved ticks and moving pistons continue.
+                block_updates::chunk_loaded(self, pos);
                 None
             }
             WorldEvent::Light { pos, stamp, sky, block } => {

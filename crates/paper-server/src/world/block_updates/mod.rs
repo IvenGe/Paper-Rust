@@ -22,6 +22,7 @@
 
 pub mod doors;
 pub mod fluid;
+pub mod piston;
 pub mod redstone;
 pub mod state;
 pub mod support;
@@ -129,6 +130,10 @@ pub struct BlockUpdateState {
     /// Waiting to be published by the server.
     pub effects: Vec<Effect>,
     random: u64,
+    /// Positions of moving piston blocks, in the order they started moving.
+    pub(crate) moving_pistons: Vec<BlockPos>,
+    /// Scheduled ticks are running (vanilla's `isHandlingTick`).
+    pub(crate) handling_tick: bool,
 }
 
 impl BlockUpdateState {
@@ -142,6 +147,8 @@ impl BlockUpdateState {
             queued_events: HashSet::new(),
             effects: Vec::new(),
             random: (seed as u64) ^ 0x5DEE_CE66_D1CE_4E5B,
+            moving_pistons: Vec::new(),
+            handling_tick: false,
         }
     }
 
@@ -556,8 +563,15 @@ impl<'w> Level<'w> {
                 continue;
             }
             let state = self.state(event.pos);
-            if block_id(state) == event.block && self.trigger_event(state, event.pos, event.action, event.param) {
-                self.world.updates.effects.push(Effect::BlockEvent { pos: event.pos, block: event.block, action: event.action, param: event.param });
+            if block_id(state) != event.block {
+                continue;
+            }
+            // Clients get the event before the block changes it causes (vanilla sends block
+            // changes at the end of the tick), so they can animate piston moves.
+            let index = self.world.updates.effects.len();
+            self.world.updates.effects.push(Effect::BlockEvent { pos: event.pos, block: event.block, action: event.action, param: event.param });
+            if !self.trigger_event(state, event.pos, event.action, event.param) {
+                self.world.updates.effects.remove(index);
             }
         }
         for event in later {
@@ -671,6 +685,7 @@ impl<'w> Level<'w> {
                 redstone::diode_on_place(self, state, pos);
             }
             Kind::Observer => redstone::observer_on_place(self, state, pos, old),
+            Kind::Piston { .. } => piston::on_place(self, state, pos, old),
             _ => {}
         }
         let _ = moved;
@@ -684,6 +699,7 @@ impl<'w> Level<'w> {
             Kind::Lever | Kind::Button { .. } if !moved && state::get_bool(old, "powered") => redstone::attached_update_neighbours(self, old, pos),
             Kind::Repeater | Kind::Comparator if !moved => redstone::diode_update_in_front(self, old, pos),
             Kind::Observer => redstone::observer_after_removal(self, old, pos),
+            Kind::PistonHead => piston::head_after_removal(self, old, pos),
             _ => {}
         }
     }
@@ -701,6 +717,8 @@ impl<'w> Level<'w> {
             Kind::Door { .. } => doors::door_neighbor_changed(self, state, pos, source_block),
             Kind::Trapdoor { .. } => doors::trapdoor_neighbor_changed(self, state, pos),
             Kind::FenceGate => doors::fence_gate_neighbor_changed(self, state, pos),
+            Kind::Piston { .. } => piston::check_if_extend(self, state, pos),
+            Kind::PistonHead => piston::head_neighbor_changed(self, state, pos, source_block),
             _ => {}
         }
     }
@@ -722,6 +740,7 @@ impl<'w> Level<'w> {
             Kind::Door { .. } => doors::door_update_shape(self, state, pos, dir, neighbor_state),
             Kind::FenceGate => doors::fence_gate_update_shape(self, state, pos, dir, neighbor_state),
             Kind::Bed => doors::bed_update_shape(state, dir, neighbor_state),
+            Kind::PistonHead => piston::head_update_shape(self, state, pos, dir),
             _ => support::update_shape(self, state, pos, dir, neighbor_pos, neighbor_state),
         }
     }
@@ -751,6 +770,7 @@ impl<'w> Level<'w> {
         match kind(state) {
             Kind::NoteBlock => redstone::note_trigger(self, state, pos),
             Kind::Comparator => true,
+            Kind::Piston { .. } => piston::trigger_event(self, state, pos, action, param),
             _ => {
                 let _ = (action, param);
                 false
@@ -801,6 +821,9 @@ impl<'w> Level<'w> {
     pub fn player_will_destroy(&mut self, state: u32, pos: BlockPos, creative: bool) {
         if creative {
             support::prevent_drop_from_bottom_part(self, state, pos);
+            if kind(state) == Kind::PistonHead {
+                piston::head_player_will_destroy(self, state, pos);
+            }
         }
     }
 }
@@ -825,6 +848,7 @@ pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
             continue;
         }
         world.updates.running[index] = due.iter().map(|t| (t.pos, t.ty)).collect();
+        world.updates.handling_tick = true;
         let mut level = Level::new(world);
         for t in &due {
             level.world.updates.running[index].remove(&(t.pos, t.ty));
@@ -834,9 +858,14 @@ pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
             }
         }
         world.updates.running[index].clear();
+        world.updates.handling_tick = false;
     }
     if !world.updates.block_events.is_empty() {
         Level::new(world).run_block_events(ticking);
+    }
+    // Block entities tick last: moving pistons.
+    if !world.updates.moving_pistons.is_empty() {
+        piston::tick_moving(&mut Level::new(world));
     }
     // Forget torch turn-offs older than the burnout window.
     while world.updates.torch_toggles.front().is_some_and(|(_, when)| now - *when > redstone::TORCH_TOGGLE_WINDOW) {
@@ -862,6 +891,18 @@ pub fn java_hash_order(positions: &[BlockPos]) -> Vec<BlockPos> {
         }
     }
     out
+}
+
+/// A chunk entered the world (loaded or generated): its saved ticks count from now and its
+/// moving pistons continue.
+pub fn chunk_loaded(world: &mut World, pos: ChunkPos) {
+    let age = world.age;
+    if let Some(chunk) = world.chunks.get_mut(&pos) {
+        chunk.ticks.unpack(age);
+        if !chunk.block_entities.is_empty() {
+            piston::chunk_loaded(world, pos);
+        }
+    }
 }
 
 impl World {

@@ -40,6 +40,7 @@ pub fn can_survive(level: &Level, state: u32, pos: BlockPos) -> bool {
             redstone::diode_can_survive_on(below) || center_support_up(below)
         }
         Kind::Vegetation => vegetation_on(level.state(pos.below())),
+        Kind::PistonHead => super::piston::head_can_survive(level, state, pos),
         Kind::TallPlant => {
             if prop(state, "half") == Some("upper") {
                 let below = level.state(pos.below());
@@ -202,6 +203,7 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
         }
         Kind::Stairs => s = with(s, "shape", stairs_shape(level, s, pos)),
         Kind::SnowyDirt => s = set_bool(s, "snowy", in_tag!(level.state(pos.above()), "snow")),
+        Kind::Piston { .. } => s = set_bool(set_dir(s, "facing", ctx.looking.opposite()), "extended", false),
         _ => {}
     }
     if !can_survive(level, s, pos) {
@@ -214,5 +216,8 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
 pub fn placed(level: &mut Level, state: u32, pos: BlockPos) {
     if redstone::is_diode(state) {
         redstone::diode_placed(level, state, pos);
+    }
+    if matches!(super::kind(state), Kind::Piston { .. }) {
+        super::piston::check_if_extend(level, state, pos);
     }
 }

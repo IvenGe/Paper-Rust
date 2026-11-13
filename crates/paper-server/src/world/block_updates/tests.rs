@@ -629,3 +629,92 @@ fn scheduled_ticks_are_saved_and_loaded_with_their_chunk() {
     drop(storage);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// --- pistons ------------------------------------------------------------------------------
+
+#[test]
+fn piston_pushes_and_retracts() {
+    let mut w = world();
+    set(&mut w, p(0, Y, 0), s("piston[facing=east]"));
+    set(&mut w, p(1, Y, 0), s("stone"));
+    w.updates.effects.clear();
+    set(&mut w, p(0, Y, -1), s("redstone_block"));
+    run(&mut w, 1);
+    assert!(get_bool(get(&w, p(0, Y, 0)), "extended"), "extends in the block event of the next tick");
+    assert_eq!(name(&w, p(2, Y, 0)), "moving_piston", "the stone is on its way");
+    assert_eq!(name(&w, p(1, Y, 0)), "moving_piston", "so is the head");
+    let first_event = w.updates.effects.iter().position(|e| matches!(e, Effect::BlockEvent { action: 0, .. })).expect("block event");
+    let first_move = w.updates.effects.iter().position(|e| matches!(e, Effect::Block(c) if c.pos == p(2, Y, 0))).expect("move");
+    assert!(first_event < first_move, "clients hear of the move before they see moved blocks");
+    run(&mut w, 2);
+    assert_eq!(name(&w, p(2, Y, 0)), "stone", "the move ends two ticks later");
+    assert_eq!(name(&w, p(1, Y, 0)), "piston_head");
+    assert_eq!(prop(get(&w, p(1, Y, 0)), "facing"), Some("east"));
+
+    set(&mut w, p(0, Y, -1), blocks::AIR);
+    run(&mut w, 1);
+    assert_eq!(name(&w, p(0, Y, 0)), "moving_piston", "the base retracts");
+    assert_eq!(name(&w, p(1, Y, 0)), "air", "a normal piston leaves the block");
+    run(&mut w, 2);
+    assert_eq!(name(&w, p(0, Y, 0)), "piston");
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "extended"));
+    assert_eq!(name(&w, p(2, Y, 0)), "stone");
+}
+
+#[test]
+fn sticky_piston_pulls_back() {
+    let mut w = world();
+    set(&mut w, p(0, Y, 0), s("sticky_piston[facing=east]"));
+    set(&mut w, p(1, Y, 0), s("gold_block"));
+    set(&mut w, p(0, Y, -1), s("redstone_block"));
+    run(&mut w, 4);
+    assert_eq!(name(&w, p(2, Y, 0)), "gold_block");
+    assert_eq!(prop(get(&w, p(1, Y, 0)), "type"), Some("sticky"));
+    set(&mut w, p(0, Y, -1), blocks::AIR);
+    run(&mut w, 4);
+    assert_eq!(name(&w, p(1, Y, 0)), "gold_block", "pulled back");
+    assert_eq!(name(&w, p(2, Y, 0)), "air");
+    assert_eq!(name(&w, p(0, Y, 0)), "sticky_piston");
+}
+
+#[test]
+fn piston_push_limit_and_immovable_blocks() {
+    let push = |count: i32, last: &str| {
+        let mut w = world();
+        set(&mut w, p(0, Y, 0), s("piston[facing=east]"));
+        for x in 1..=count {
+            set(&mut w, p(x, Y, 0), s("stone"));
+        }
+        set(&mut w, p(count + 1, Y, 0), s(last));
+        set(&mut w, p(0, Y, -1), s("redstone_block"));
+        run(&mut w, 4);
+        get_bool(get(&w, p(0, Y, 0)), "extended")
+    };
+    assert!(push(11, "stone"), "twelve blocks move");
+    assert!(!push(12, "stone"), "thirteen do not");
+    assert!(!push(2, "obsidian"), "obsidian stops the piston");
+    assert!(push(2, "torch"), "a torch in the way breaks");
+
+    let mut w = world();
+    set(&mut w, p(0, Y, 0), s("piston[facing=east]"));
+    set(&mut w, p(1, Y, 0), s("torch"));
+    set(&mut w, p(0, Y, -1), s("redstone_block"));
+    run(&mut w, 4);
+    assert_eq!(name(&w, p(1, Y, 0)), "piston_head");
+    assert!(w.updates.effects.iter().any(|e| matches!(e, Effect::Drops { state, .. } if blocks::block_of_state(*state).name == "minecraft:torch")));
+}
+
+#[test]
+fn slime_blocks_drag_their_neighbours() {
+    let mut w = world();
+    set(&mut w, p(0, Y, 0), s("piston[facing=up]"));
+    set(&mut w, p(0, Y + 1, 0), s("slime_block"));
+    set(&mut w, p(1, Y + 1, 0), s("stone"));
+    set(&mut w, p(0, Y + 1, 1), s("honey_block"));
+    set(&mut w, p(-1, Y, 0), s("redstone_block"));
+    run(&mut w, 4);
+    assert_eq!(name(&w, p(0, Y + 2, 0)), "slime_block");
+    assert_eq!(name(&w, p(1, Y + 2, 0)), "stone", "stuck to the slime");
+    assert_eq!(name(&w, p(1, Y + 1, 0)), "air");
+    assert_eq!(name(&w, p(0, Y + 1, 1)), "honey_block", "honey and slime do not stick together");
+}
