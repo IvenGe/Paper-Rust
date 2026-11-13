@@ -125,6 +125,8 @@ pub struct Shared {
     /// The port the listener is actually bound to (differs from the configured one when
     /// that is 0).
     pub bound_port: AtomicI32,
+    /// The plugin host, for events fired from network threads (status ping, pre-login).
+    pub plugin_host: RwLock<Option<Arc<crate::plugins::HostConnection>>>,
 }
 
 /// A message for a player's writer task.

@@ -353,6 +353,7 @@ impl Server {
         player.next_teleport_id = player.next_teleport_id.wrapping_add(1).max(1);
         player.pending_teleport = Some((id, target));
         player.loc = target;
+        player.last_move_event = target;
         player.force_position_sync = true;
         player.conn.send(&play::PlayerPosition {
             teleport_id: VarInt(id),

@@ -148,7 +148,7 @@ impl Server {
                 }
                 self.update_view_distance(id);
             }
-            Serverbound::Chat(p) => self.handle_chat(id, &p.message),
+            Serverbound::Chat(p) => self.handle_player_chat(id, &p.message),
             Serverbound::ChatCommand(p) => self.handle_player_command(id, &p.command),
             Serverbound::ChatCommandSigned(p) => self.handle_player_command(id, &p.command),
             Serverbound::CommandSuggestion(p) => self.handle_suggestion_request(id, p.transaction_id.0, &p.text),
@@ -246,7 +246,28 @@ impl Server {
         }
         player.on_ground = move_flags & play::move_flags::ON_GROUND != 0;
         player.last_action = Instant::now();
-        if player.loc.chunk() != old_chunk {
+
+        // PlayerMoveEvent, rate-limited like Paper: a pixel of movement or ten degrees of turn.
+        let (from, to) = (player.last_move_event, player.loc);
+        let delta = from.distance_squared(&to);
+        let turn = (from.yaw - to.yaw).abs() + (from.pitch - to.pitch).abs();
+        if (delta > 1.0 / 256.0 || turn > 10.0) && self.plugin_events.contains("PlayerMoveEvent") {
+            player.last_move_event = to;
+            match crate::plugins::events::on_move(self, id, from, to) {
+                crate::plugins::events::MoveOutcome::Allow => {}
+                crate::plugins::events::MoveOutcome::Cancel => {
+                    self.teleport(id, from);
+                    return;
+                }
+                crate::plugins::events::MoveOutcome::Redirect(target) => {
+                    self.teleport(id, target);
+                    return;
+                }
+            }
+        } else if delta > 1.0 / 256.0 || turn > 10.0 {
+            player.last_move_event = to;
+        }
+        if self.players.get(&id).is_some_and(|p| p.loc.chunk() != old_chunk) {
             self.refresh_chunk_view(id);
         }
     }
@@ -310,6 +331,9 @@ impl Server {
         }
         let Some(old) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return false };
         if blocks::is_air(old) || blocks::block_of_state(old).hardness < 0.0 && self.players[&id].game_mode != GameMode::Creative {
+            return false;
+        }
+        if !crate::plugins::events::on_block_break(self, id, world, pos, old) {
             return false;
         }
         let Some(change) = self.worlds[world].set_block(pos.x, pos.y, pos.z, blocks::AIR) else { return false };
@@ -392,6 +416,10 @@ impl Server {
             }
         }
 
+        let replaced = self.worlds[world].block_at(target.x, target.y, target.z).unwrap_or(blocks::AIR);
+        if !crate::plugins::events::on_block_place(self, id, world, target, state, replaced, use_on.pos, use_on.hand.0 == 1) {
+            return false;
+        }
         let Some(change) = self.worlds[world].set_block(target.x, target.y, target.z, state) else { return false };
         self.publish_block_change(world, &change);
         if let Some((pos, second_state)) = second {
@@ -524,8 +552,15 @@ impl Server {
 
     /// Changes a player's game mode and informs everyone who needs to know.
     pub fn set_game_mode(&mut self, id: i32, mode: GameMode) {
+        if self.players.get(&id).is_none_or(|p| p.game_mode == mode) {
+            return;
+        }
+        if !crate::plugins::events::on_game_mode_change(self, id, mode) {
+            return;
+        }
         let Some(player) = self.players.get_mut(&id) else { return };
         if player.game_mode == mode {
+            // A listener already changed it.
             return;
         }
         player.previous_game_mode = Some(player.game_mode);
@@ -537,10 +572,12 @@ impl Server {
         self.broadcast(&play::PlayerInfoUpdate { actions: play::player_info::UPDATE_GAME_MODE, entries: vec![entry] });
     }
 
-    fn handle_player_command(&mut self, id: i32, command: &str) {
+    /// A command typed by a player (without the slash).
+    pub fn handle_player_command(&mut self, id: i32, command: &str) {
         let Some(player) = self.players.get(&id) else { return };
         log::info!("{} issued server command: /{command}", player.name());
-        self.dispatch_command(&CommandSource::Player(id), command);
+        let Some(command) = crate::plugins::events::on_command_preprocess(self, id, command) else { return };
+        self.dispatch_command(&CommandSource::Player(id), &command);
     }
 }
 

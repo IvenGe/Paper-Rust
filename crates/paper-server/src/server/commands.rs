@@ -141,41 +141,85 @@ impl Server {
         self.feedback(source, Component::text(message.into()).color("red"));
     }
 
-    /// Parses and runs a command line (with or without the leading slash).
+    /// Parses and runs a command line (with or without the leading slash), like Bukkit's
+    /// `Server#dispatchCommand`: plugin commands take precedence over built-in commands of
+    /// the same name, which stay reachable as `minecraft:<name>`.
     pub fn dispatch_command(&mut self, source: &CommandSource, line: &str) {
         let line = line.trim();
         let line = line.strip_prefix('/').unwrap_or(line);
+        let Some(label) = line.split_whitespace().next() else { return };
+        if crate::plugins::events::is_plugin_command(self, label) && crate::plugins::events::run_plugin_command(self, source, line) {
+            return;
+        }
+        if !self.dispatch_builtin_command(source, line) {
+            self.unknown_command(source, line);
+        }
+    }
+
+    /// Runs a built-in command. Returns `false` if there is no built-in command by that name
+    /// that the source may use.
+    pub fn dispatch_builtin_command(&mut self, source: &CommandSource, line: &str) -> bool {
+        let line = line.trim();
+        let line = line.strip_prefix('/').unwrap_or(line);
         let mut parts = line.split_whitespace();
-        let Some(label) = parts.next() else { return };
+        let Some(label) = parts.next() else { return false };
         let args: Vec<&str> = parts.collect();
         let op = self.source_op_level(source);
-        let command = self.commands.find(label).filter(|c| op >= c.min_op).map(|c| c.handler);
-        match command {
-            Some(handler) => handler(self, source, &args),
-            None => match source {
+        let Some(handler) = self.commands.find(label).filter(|c| op >= c.min_op).map(|c| c.handler) else { return false };
+        handler(self, source, &args);
+        true
+    }
+
+    fn unknown_command(&self, source: &CommandSource, line: &str) {
+        {
+            match source {
                 CommandSource::Console => log::info!("Unknown command. Type \"help\" for help."),
                 CommandSource::Player(_) => {
                     self.feedback(source, Component::translatable("command.unknown.command", vec![]).color("red"));
                     let context = Component::text(line.to_owned()).color("red").underlined(true).append(Component::translatable("command.context.here", vec![]).color("red").italic(true).underlined(false));
                     self.feedback(source, context);
                 }
-            },
+            }
         }
     }
 
-    /// The command graph for a client with the given operator level. Every command is a
-    /// literal followed by one greedy argument whose completions come from the server.
+    /// The command graph for a client with the given operator level, built-in commands
+    /// only. Every command is a literal followed by one greedy argument whose completions
+    /// come from the server.
     pub fn command_tree(&self, op_level: u8) -> Commands {
+        Self::build_command_tree(self.commands.builtins().iter().filter(|b| op_level >= b.min_op).flat_map(|b| std::iter::once(b.name).chain(b.aliases.iter().copied())).map(str::to_owned))
+    }
+
+    /// The command graph for one player: the built-in commands their operator level allows
+    /// plus the plugin commands they have permission for.
+    pub fn command_tree_for(&mut self, id: i32, op_level: u8) -> Commands {
+        let plugin_labels = crate::plugins::events::visible_plugin_commands(self, id);
+        let overridden: std::collections::HashSet<&str> = plugin_labels.iter().map(String::as_str).collect();
+        let builtins = self
+            .commands
+            .builtins()
+            .iter()
+            .filter(|b| op_level >= b.min_op)
+            .flat_map(|b| std::iter::once(b.name).chain(b.aliases.iter().copied()))
+            .filter(|label| !overridden.contains(label))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        Self::build_command_tree(builtins.into_iter().chain(plugin_labels.iter().cloned()))
+    }
+
+    fn build_command_tree(labels: impl Iterator<Item = String>) -> Commands {
         let mut nodes = vec![CommandNode::root()];
-        for builtin in self.commands.builtins().iter().filter(|b| op_level >= b.min_op) {
-            for label in std::iter::once(&builtin.name).chain(builtin.aliases) {
-                let literal = nodes.len() as i32;
-                let mut node = CommandNode::literal(*label).executable();
-                node.children.push(literal + 1);
-                nodes.push(node);
-                nodes.push(CommandNode::argument("args", Parser::greedy_string()).executable().ask_server());
-                nodes[0].children.push(literal);
+        let mut seen = std::collections::HashSet::new();
+        for label in labels {
+            if !seen.insert(label.clone()) {
+                continue;
             }
+            let literal = nodes.len() as i32;
+            let mut node = CommandNode::literal(&label).executable();
+            node.children.push(literal + 1);
+            nodes.push(node);
+            nodes.push(CommandNode::argument("args", Parser::greedy_string()).executable().ask_server());
+            nodes[0].children.push(literal);
         }
         Commands { nodes, root_index: 0 }
     }
@@ -185,6 +229,12 @@ impl Server {
         let source = CommandSource::Player(id);
         let body = text.strip_prefix('/').unwrap_or(text);
         let Some((label, rest)) = body.split_once(' ') else { return };
+        if crate::plugins::events::is_plugin_command(self, label) {
+            if let Some((start, length, matches)) = crate::plugins::events::plugin_suggestions(self, &source, text) {
+                self.send(id, &play::CommandSuggestions { transaction_id, start, length, matches });
+                return;
+            }
+        }
         let op = self.source_op_level(&source);
         let Some(command) = self.commands.find(label).filter(|c| op >= c.min_op) else { return };
         // The last argument is the word being typed (empty right after a space).
@@ -841,19 +891,26 @@ fn cmd_version(server: &mut Server, source: &CommandSource, _: &[&str]) {
     );
 }
 
+/// Lists plugins like Paper's `/plugins`: Paper plugins and Bukkit plugins separately.
 fn cmd_plugins(server: &mut Server, source: &CommandSource, _: &[&str]) {
-    let plugins = server.plugin_names();
-    if plugins.is_empty() {
-        return server.feedback(source, Component::text("Server Plugins (0):"));
-    }
-    let mut message = Component::text(format!("Server Plugins ({}): ", plugins.len()));
-    for (i, (name, enabled)) in plugins.iter().enumerate() {
-        if i > 0 {
-            message = message.append(Component::text(", "));
+    let mut plugins = server.plugin_list.clone();
+    plugins.sort_by_key(|p| p.name.to_ascii_lowercase());
+    server.feedback(source, Component::text(format!("\u{2139} Server Plugins ({}):", plugins.len())).color("white"));
+    for (kind, title) in [("paper", "Paper Plugins:"), ("bukkit", "Bukkit Plugins:")] {
+        let group: Vec<_> = plugins.iter().filter(|p| p.kind == kind).collect();
+        if group.is_empty() {
+            continue;
         }
-        message = message.append(Component::text(name.clone()).color(if *enabled { "green" } else { "red" }));
+        server.feedback(source, Component::text(title).color("#0288D1"));
+        let mut line = Component::text(" - ").color("dark_gray");
+        for (i, plugin) in group.iter().enumerate() {
+            if i > 0 {
+                line = line.append(Component::text(", ").color("white"));
+            }
+            line = line.append(Component::text(plugin.name.clone()).color(if plugin.enabled { "green" } else { "red" }).hover_text(Component::text(format!("{} {}", plugin.name, plugin.version))));
+        }
+        server.feedback(source, line);
     }
-    server.feedback(source, message);
 }
 
 impl Server {
@@ -862,13 +919,15 @@ impl Server {
         let Some(player) = self.players.get_mut(&id) else { return };
         player.op_level = level;
         player.conn.send(&play::EntityEvent { entity_id: id, status: 24 + level.min(4) as i8 });
-        let tree = self.command_tree(level);
+        let tree = self.command_tree_for(id, level);
         self.send(id, &tree);
     }
 
     /// Names of the loaded plugins and whether each is enabled.
     pub fn plugin_names(&self) -> Vec<(String, bool)> {
-        Vec::new()
+        let mut names: Vec<(String, bool)> = self.plugin_list.iter().map(|p| (p.name.clone(), p.enabled)).collect();
+        names.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+        names
     }
 
     /// Saves all worlds. Returns whether persistence is available.

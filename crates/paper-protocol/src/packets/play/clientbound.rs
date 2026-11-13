@@ -435,6 +435,63 @@ impl Encode for Commands {
     }
 }
 
+impl Parser {
+    /// Reads a parser id and its properties; the property layout depends on the parser.
+    fn decode(r: &mut Reader<'_>) -> Result<Parser> {
+        let id = r.varint()?;
+        let before = r.peek();
+        let name = paper_data::registries::name("minecraft:command_argument_type", id as u32).unwrap_or("");
+        match name {
+            "brigadier:string" => {
+                r.varint()?;
+            }
+            "brigadier:integer" | "brigadier:float" | "brigadier:long" | "brigadier:double" => {
+                let flags = r.u8()?;
+                let width = if matches!(name, "brigadier:integer" | "brigadier:float") { 4 } else { 8 };
+                for bit in [1, 2] {
+                    if flags & bit != 0 {
+                        r.take(width)?;
+                    }
+                }
+            }
+            "minecraft:entity" | "minecraft:score_holder" => {
+                r.u8()?;
+            }
+            "minecraft:time" => {
+                r.i32()?;
+            }
+            "minecraft:resource" | "minecraft:resource_key" | "minecraft:resource_or_tag" | "minecraft:resource_or_tag_key" | "minecraft:resource_selector" => {
+                r.string(32767)?;
+            }
+            _ => {}
+        }
+        let used = before.len() - r.remaining();
+        Ok(Parser { id, properties: before[..used].to_vec() })
+    }
+}
+
+impl Decode for Commands {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let nodes = r.list(1 << 20, |r| {
+            let flags = r.u8()?;
+            let children = r.list(1 << 20, |r| r.varint())?;
+            let redirect = if flags & 0x08 != 0 { Some(r.varint()?) } else { None };
+            let kind = match flags & 0x03 {
+                0 => NodeKind::Root,
+                1 => NodeKind::Literal(r.string(32767)?),
+                _ => {
+                    let name = r.string(32767)?;
+                    let parser = Parser::decode(r)?;
+                    let suggestions = if flags & 0x10 != 0 { Some(r.string(32767)?) } else { None };
+                    NodeKind::Argument { name, parser, suggestions }
+                }
+            };
+            Ok(CommandNode { kind, executable: flags & 0x04 != 0, restricted: flags & 0x20 != 0, children, redirect })
+        })?;
+        Ok(Self { nodes, root_index: r.varint()? })
+    }
+}
+
 packet! {
     ContainerClose = play::clientbound::CONTAINER_CLOSE {
         window_id: VarInt,

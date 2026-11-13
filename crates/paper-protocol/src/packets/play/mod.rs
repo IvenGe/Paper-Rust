@@ -73,6 +73,29 @@ mod tests {
         round(MoveEntityPosRot { entity_id: 3, dx: 1, dy: 2, dz: 3, yaw: 90.0, pitch: 0.0, on_ground: false });
         round(SectionBlocksUpdate { section_x: -3, section_y: -4, section_z: 1_000_000, blocks: vec![(0, 15, 7, 12345), (15, 0, 1, 0)] });
         round(ForgetLevelChunk { x: -1, z: 2 });
+        let mut root = CommandNode::root();
+        root.children = vec![1, 3];
+        let mut tp = CommandNode::literal("tp").executable();
+        tp.children = vec![2];
+        let mut give = CommandNode::literal("give");
+        give.children = vec![4];
+        let mut count = CommandNode::argument("count", Parser::integer(Some(1), None)).executable();
+        count.children = vec![5];
+        round(Commands {
+            nodes: vec![
+                root,
+                tp,
+                CommandNode::argument("args", Parser::greedy_string()).executable().ask_server(),
+                give,
+                count,
+                CommandNode::argument("target", Parser::entity(true, true)),
+                CommandNode::argument("d", Parser::double(Some(-1.0), Some(1.0))),
+                CommandNode::argument("item", Parser::registry("minecraft:resource", "minecraft:item")),
+                CommandNode::argument("p", Parser::simple("minecraft:game_profile")),
+                CommandNode { redirect: Some(1), ..CommandNode::literal("teleport") },
+            ],
+            root_index: 0,
+        });
         round(PlayerInfoUpdate {
             actions: player_info::ADD_PLAYER | player_info::UPDATE_GAME_MODE | player_info::UPDATE_LISTED | player_info::UPDATE_LATENCY | player_info::UPDATE_DISPLAY_NAME,
             entries: vec![PlayerInfoEntry {

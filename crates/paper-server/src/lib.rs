@@ -7,6 +7,7 @@ pub mod access;
 pub mod config;
 pub mod logging;
 pub mod net;
+pub mod plugins;
 pub mod server;
 pub mod world;
 
@@ -49,6 +50,12 @@ impl RunningServer {
 
 /// Starts a server with the given configuration.
 pub fn start(config: Config) -> Result<RunningServer> {
+    start_with_plugin_launcher(config, plugins::java_launcher())
+}
+
+/// Starts a server whose plugin host is started by `launcher` instead of the standard
+/// `java -jar` command (used by tests and by setups that run the host elsewhere).
+pub fn start_with_plugin_launcher(config: Config, launcher: plugins::Launcher) -> Result<RunningServer> {
     let started = Instant::now();
     log::info!("Starting Paper-RS {} for Minecraft {} (protocol {})", env!("CARGO_PKG_VERSION"), paper_data::VERSION_NAME, paper_data::PROTOCOL_VERSION);
     let io_threads = config.io_threads();
@@ -60,8 +67,25 @@ pub fn start(config: Config) -> Result<RunningServer> {
         log::warn!("To change this, set \"online-mode\" to \"true\" in the server.properties file.");
     }
 
+    let plugins_enabled = config.paper.plugins.enabled;
     let (mut server, handle) = Server::new(config)?;
     log::info!("Using {io_threads} network I/O thread(s) and {worker_threads} worker thread(s)");
+
+    // Java plugins load and enable before the server accepts players, as on Paper.
+    if plugins_enabled {
+        match plugins::start(&mut server, launcher) {
+            Ok(()) => {
+                plugins::post_world(&mut server);
+                *handle.shared.plugin_host.write() = server.plugins.clone();
+            }
+            Err(e) => {
+                log::error!("Java plugins are unavailable: {e:#}");
+                if let Some(conn) = server.plugins.take() {
+                    conn.kill();
+                }
+            }
+        }
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(io_threads).thread_name("Network IO").enable_all().build().context("creating the network runtime")?;
     let bind_ip = if props.server_ip.is_empty() { "0.0.0.0".to_owned() } else { props.server_ip.clone() };

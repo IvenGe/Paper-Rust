@@ -69,6 +69,8 @@ impl Server {
             joined_at: now,
             last_action: now,
             virtual_host,
+            last_move_event: loc,
+            leaving: false,
         };
         player.view.radius = player.view_distance(server_view);
         player.apply_game_mode_abilities();
@@ -94,7 +96,6 @@ impl Server {
         player.conn.send(&play::SetHeldSlot { slot: VarInt(player.held_slot as i32) });
         // Entity status 24-28 tells the client its operator permission level (0-4).
         player.conn.send(&play::EntityEvent { entity_id, status: 24 + player.op_level.min(4) as i8 });
-        player.conn.send(&self.command_tree(player.op_level));
 
         // Place the player; the client confirms the teleport before its movement counts.
         let teleport_id = player.next_teleport_id;
@@ -139,8 +140,17 @@ impl Server {
         let shown_address = if self.config.properties.log_ips { address.to_string() } else { "<ip address withheld>".to_owned() };
         log::info!("{name}[/{shown_address}] logged in with entity id {entity_id} at ([{}]{:.1}, {:.1}, {:.1})", self.worlds[world_index].name, loc.x, loc.y, loc.z);
 
+        // Plugins see the player from here on (PlayerJoinEvent), so the command tree, which
+        // depends on their permissions, is sent afterwards.
         let message = Component::translatable("multiplayer.player.joined", vec![Component::text(name)]).color("yellow");
-        self.broadcast_message(&message);
+        let message = crate::plugins::events::on_join(self, entity_id, message);
+        if let Some(message) = message {
+            self.broadcast_message(&message);
+        }
+        if let Some(level) = self.players.get(&entity_id).map(|p| p.op_level) {
+            let tree = self.command_tree_for(entity_id, level);
+            self.send(entity_id, &tree);
+        }
     }
 
     /// The world description sent in Login and Respawn packets.
@@ -175,6 +185,16 @@ impl Server {
 
     /// Removes a player from the game and tells everyone else. Idempotent.
     pub(super) fn remove_player(&mut self, entity_id: i32, reason: &str) {
+        let Some(player) = self.players.get_mut(&entity_id) else { return };
+        if player.leaving {
+            // A quit listener kicked the player that is already leaving.
+            return;
+        }
+        player.leaving = true;
+        let (uuid, name) = (player.uuid(), player.name().to_owned());
+        // PlayerQuitEvent fires while the player is still in the game, as in Paper.
+        let message = Component::translatable("multiplayer.player.left", vec![Component::text(name)]).color("yellow");
+        let message = crate::plugins::events::on_quit(self, uuid, reason, message);
         let Some(player) = self.players.remove(&entity_id) else { return };
         self.player_order.retain(|id| *id != entity_id);
         if self.by_uuid.get(&player.uuid()) == Some(&entity_id) {
@@ -206,13 +226,14 @@ impl Server {
         self.broadcast(&play::PlayerInfoRemove { uuids: vec![player.uuid()] });
 
         log::info!("{} lost connection: {reason}", player.name());
-        let message = Component::translatable("multiplayer.player.left", vec![Component::text(player.name().to_owned())]).color("yellow");
-        self.broadcast_message(&message);
+        if let Some(message) = message {
+            self.broadcast_message(&message);
+        }
     }
 }
 
 /// The player list entry describing `player`.
-pub(super) fn info_entry(player: &Player) -> play::PlayerInfoEntry {
+pub fn info_entry(player: &Player) -> play::PlayerInfoEntry {
     play::PlayerInfoEntry {
         uuid: player.uuid(),
         name: player.name().to_owned(),

@@ -150,7 +150,22 @@ async fn status_flow(conn: &mut Connection, shared: &Arc<Shared>) -> Result<Fini
     while let Some(frame) = conn.read_frame().await? {
         match packet_id(&frame)? {
             id if id == status::StatusRequest::ID => {
-                let json = shared.status.read().to_json();
+                let snapshot = shared.status.read().clone();
+                let host = shared.plugin_host.read().clone();
+                let json = match host {
+                    // PaperServerListPingEvent; the host call blocks, so it runs off the I/O threads.
+                    Some(host) => {
+                        let address = conn.addr.ip().to_string();
+                        let snap = snapshot.clone();
+                        let result = tokio::task::spawn_blocking(move || crate::plugins::events::on_server_list_ping(&host, &address, &snap)).await.ok().flatten();
+                        match result {
+                            Some(r) if r.bool("cancelled") == Some(true) => return Ok(Finished::Done),
+                            Some(r) => crate::plugins::events::server_list_ping_json(&snapshot, &r),
+                            None => snapshot.to_json(),
+                        }
+                    }
+                    None => snapshot.to_json(),
+                };
                 conn.send(&status::StatusResponse { json }).await?;
             }
             id if id == status::PingRequest::ID => {
@@ -196,6 +211,18 @@ async fn login_flow(conn: &mut Connection, shared: &Arc<Shared>, intention: Inte
     } else {
         GameProfile { uuid: auth::offline_uuid(&hello.name), name: hello.name.clone(), properties: Vec::new() }
     };
+
+    // --- plugins may refuse the player (AsyncPlayerPreLoginEvent) ---
+    let host = shared.plugin_host.read().clone();
+    if let Some(host) = host {
+        let (name, uuid, address) = (profile.name.clone(), profile.uuid, conn.addr.ip().to_string());
+        let refused = tokio::task::spawn_blocking(move || crate::plugins::events::on_pre_login(&host, &name, uuid, &address)).await.ok().flatten();
+        if let Some(reason) = refused {
+            log::info!("Disconnecting {} ({}): {}", profile.name, conn.addr, reason.to_plain());
+            conn.login_disconnect(reason).await?;
+            return Ok(None);
+        }
+    }
 
     // --- may this player join? ---
     let verdict = shared.access.read().check_login(&profile, conn.addr.ip(), shared.player_count.load(Ordering::Relaxed), props);

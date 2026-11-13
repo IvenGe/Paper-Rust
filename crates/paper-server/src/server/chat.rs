@@ -15,7 +15,8 @@ fn normalize(message: &str) -> String {
 }
 
 impl Server {
-    pub(super) fn handle_chat(&mut self, id: i32, message: &str) {
+    /// A chat message from a player (typed, or sent for them by a plugin).
+    pub fn handle_player_chat(&mut self, id: i32, message: &str) {
         let Some(player) = self.players.get(&id) else { return };
         if !message.chars().all(is_allowed_chat_char) {
             self.kick(id, &Component::translatable("multiplayer.disconnect.illegal_characters", vec![]));
@@ -33,6 +34,10 @@ impl Server {
         let name = player.name().to_owned();
         let sender = player.chat_name().insertion(&name).click_suggest_command(&format!("/tell {name} "));
         let line = Component::translatable("chat.type.text", vec![sender, Component::text(message.clone())]);
+        // With chat listeners the plugins decide who sees what (AsyncChatEvent).
+        if crate::plugins::events::on_chat(self, id, &message, line.clone()) {
+            return;
+        }
         log::info!("<{name}> {message}");
         // Player chat only reaches clients that have chat fully enabled.
         let packet = play::SystemChat { content: line, overlay: false };

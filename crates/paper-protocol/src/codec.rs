@@ -282,6 +282,11 @@ impl<'a> Reader<'a> {
         Ok(head)
     }
 
+    /// The unread bytes, without consuming them.
+    pub fn peek(&self) -> &'a [u8] {
+        self.buf
+    }
+
     /// Everything that is left.
     pub fn rest(&mut self) -> &'a [u8] {
         std::mem::take(&mut self.buf)

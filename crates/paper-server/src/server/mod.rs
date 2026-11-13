@@ -18,6 +18,8 @@ mod join;
 pub mod player;
 mod view;
 
+pub use join::info_entry as join_info_entry;
+
 use crate::access::AccessLists;
 use crate::config::{Config, GameMode};
 use crate::net::{auth, ConfigPackets, PlayerConn, Shared, StatusSnapshot};
@@ -33,7 +35,7 @@ use paper_protocol::text::Component;
 use paper_protocol::types::GameProfile;
 use parking_lot::RwLock;
 use player::Player;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -61,6 +63,10 @@ pub enum MainTask {
     ConsoleCommand(String),
     /// Runs an arbitrary closure on the main thread.
     Run(Box<dyn FnOnce(&mut Server) + Send>),
+    /// The plugin host made a call that is part of a nested call chain.
+    PluginWake,
+    /// The plugin host process went away.
+    PluginHostDied(String),
     Shutdown,
 }
 
@@ -131,6 +137,15 @@ pub struct Server {
     pub default_game_mode: GameMode,
     pub difficulty: crate::config::Difficulty,
     pub start_time: Instant,
+    /// The plugin host, when Java plugins are enabled and it is running.
+    pub plugins: Option<Arc<crate::plugins::HostConnection>>,
+    /// Command labels (lower case, with and without namespace) owned by plugins.
+    pub plugin_commands: HashSet<String>,
+    /// Bukkit event classes (simple names) that have plugin listeners.
+    pub plugin_events: HashSet<String>,
+    pub plugin_list: Vec<crate::plugins::PluginInfo>,
+    /// The last player state sent to the plugin host, per entity id.
+    pub plugin_state_cache: HashMap<i32, paper_bridge::Value>,
     workers: WorkerContext,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
@@ -198,6 +213,7 @@ impl Server {
             player_count: AtomicUsize::new(0),
             stopping: AtomicBool::new(false),
             bound_port: AtomicI32::new(0),
+            plugin_host: RwLock::new(None),
         });
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -242,6 +258,11 @@ impl Server {
             stats: TickStats::new(),
             commands: commands::CommandRegistry::with_builtins(),
             start_time: Instant::now(),
+            plugins: None,
+            plugin_commands: HashSet::new(),
+            plugin_events: HashSet::new(),
+            plugin_list: Vec::new(),
+            plugin_state_cache: HashMap::new(),
             workers,
             tasks,
             status_dirty: true,
@@ -295,14 +316,22 @@ impl Server {
                     w.handle_event(event);
                 }
             }
-            MainTask::ConsoleCommand(line) => self.dispatch_command(&commands::CommandSource::Console, &line),
+            MainTask::ConsoleCommand(line) => {
+                if let Some(line) = crate::plugins::events::on_server_command(self, &line) {
+                    self.dispatch_command(&commands::CommandSource::Console, &line);
+                }
+            }
             MainTask::Run(f) => f(self),
+            MainTask::PluginWake => crate::plugins::service_idle(self),
+            MainTask::PluginHostDied(reason) => crate::plugins::host_died(self, &reason),
             MainTask::Shutdown => self.running = false,
         }
     }
 
     fn tick(&mut self) {
         self.tick += 1;
+        // Plugin scheduler tasks run at the start of the tick, as in Paper.
+        crate::plugins::events::tick(self);
 
         let workers = self.workers.clone();
         for world in &mut self.worlds {
@@ -401,6 +430,31 @@ impl Server {
         Bytes::from(encode_packet(&play::SetTime { world_age: w.age, clocks }))
     }
 
+    /// Resends the world time to everyone in a world.
+    pub fn resend_time(&self, world: usize) {
+        let payload = self.time_payload(world);
+        self.broadcast_payload_in_world(world, payload);
+    }
+
+    /// Moves a world's spawn point and tells its players.
+    pub fn set_world_spawn(&mut self, world: usize, pos: paper_protocol::codec::BlockPos, yaw: f32) {
+        let w = &mut self.worlds[world];
+        w.spawn = pos;
+        w.spawn_yaw = yaw;
+        let packet = play::SetDefaultSpawnPosition { dimension: w.dimension.clone(), pos, yaw, pitch: 0.0 };
+        let payload = Bytes::from(encode_packet(&packet));
+        self.broadcast_payload_in_world(world, payload);
+    }
+
+    /// Sends every player a fresh command tree (after plugin commands changed).
+    pub fn resend_command_trees(&mut self) {
+        for id in self.player_order.clone() {
+            let Some(level) = self.players.get(&id).map(|p| p.op_level) else { continue };
+            let tree = self.command_tree_for(id, level);
+            self.send(id, &tree);
+        }
+    }
+
     pub fn mark_status_dirty(&mut self) {
         self.status_dirty = true;
     }
@@ -417,6 +471,9 @@ impl Server {
     fn shutdown(&mut self) {
         log::info!("Stopping server");
         self.shared.stopping.store(true, Ordering::Relaxed);
+        // Plugins are disabled before players are disconnected, as in Paper.
+        *self.shared.plugin_host.write() = None;
+        crate::plugins::shutdown(self);
         let reason = Component::translatable("multiplayer.disconnect.server_shutdown", vec![]);
         let ids: Vec<i32> = self.player_order.clone();
         for id in ids {

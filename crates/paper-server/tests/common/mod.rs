@@ -15,13 +15,27 @@ use std::time::{Duration, Instant};
 
 /// Starts a server on an ephemeral port with the test configuration, after `tweak`.
 pub fn start_server(tweak: impl FnOnce(&mut Config)) -> RunningServer {
+    paper_server::start(test_config(tweak)).expect("server starts")
+}
+
+/// Starts a server with plugins enabled, whose plugin host is started by `launcher`.
+pub fn start_server_with_host(tweak: impl FnOnce(&mut Config), launcher: paper_server::plugins::Launcher) -> RunningServer {
+    let config = test_config(|c| {
+        c.paper.plugins.enabled = true;
+        c.paper.plugins.startup_timeout_seconds = 20;
+        tweak(c);
+    });
+    paper_server::start_with_plugin_launcher(config, launcher).expect("server starts")
+}
+
+fn test_config(tweak: impl FnOnce(&mut Config)) -> Config {
     // Server logs go to the real stdout, which the test harness cannot capture; keep them
     // quiet unless asked for with PAPER_TEST_LOG=info (or debug, warn, ...).
     let level = std::env::var("PAPER_TEST_LOG").ok().and_then(|l| l.parse().ok()).unwrap_or(log::LevelFilter::Error);
     paper_server::logging::init(None, level);
     let mut config = Config::for_tests(std::path::Path::new(""));
     tweak(&mut config);
-    paper_server::start(config).expect("server starts")
+    config
 }
 
 pub const TIMEOUT: Duration = Duration::from_secs(20);

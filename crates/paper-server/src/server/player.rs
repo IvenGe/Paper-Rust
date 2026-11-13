@@ -149,6 +149,11 @@ pub struct Player {
     pub last_action: Instant,
     /// The address the client connected to (as it claims).
     pub virtual_host: String,
+    /// Where the last `PlayerMoveEvent` left the player (Paper only fires the event once the
+    /// player moved a pixel or turned ten degrees from there).
+    pub last_move_event: Location,
+    /// The player is being removed; events and kicks must not start a second removal.
+    pub leaving: bool,
 }
 
 impl Player {
