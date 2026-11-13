@@ -20,7 +20,7 @@ paper-server     the server itself, and the `paper` binary
 | --- | --- |
 | `net` | the listener and one task per connection: handshake, status, login (authentication, encryption, compression), configuration; then a reader and a writer per player |
 | `server` | the main thread: the tick loop, players (`join`, `handlers`, `view`, `player`), chat, commands, player data |
-| `world` | chunk storage, the chunk pipeline, generators, lighting, Anvil storage |
+| `world` | chunk storage, the chunk pipeline, generators, lighting, Anvil storage, block updates (fluids, redstone, block physics) and scheduled ticks |
 | `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use |
 | `config`, `access`, `logging` | `server.properties` and `config/paper-rs.toml`, ops/whitelist/bans, the console log |
 
@@ -103,6 +103,31 @@ Generated chunks are saved too, so explored terrain does not depend on the gener
 the same. Changed chunks are saved when they are unloaded, on autosave
 (`world.autosave-interval-ticks`, 6000 by default), on `/save-all` and at shutdown.
 `session.lock` is locked while a server uses a world.
+
+## Block updates
+
+`World::set_block` only stores a block (and repairs light). Everything vanilla does around a
+block change lives in `world::block_updates` and `world::ticks`, and game code reaches it
+through the server:
+
+* `Server::set_block_and_update(world, pos, state)` is the entry point for changing a block
+  (`set_block_with_flags` takes vanilla's `Block.UPDATE_*` flags, `destroy_block` breaks a
+  block with its effect and drops, `player_destroy_block` is a player breaking a block). The
+  old block reacts to its removal, the new one to its placement, the six neighbours are told
+  (west, east, down, up, north, south) and re-check their shape, and blocks schedule ticks.
+  Updates go through a queue like vanilla's `CollectingNeighborUpdater`.
+* Scheduled block and fluid ticks live in each chunk (`Chunk::ticks`), are saved as
+  `block_ticks` / `fluid_ticks`, and run in `Server::tick_block_updates` once per tick (due
+  time, priority, scheduling order; 65536 per kind per tick) for chunks players keep loaded,
+  followed by block events (note blocks, pistons) and moving pistons.
+* What clients must see (block and light changes, sounds, world and block events) and blocks
+  that drop items are collected as `Effect`s in `World::updates` and published by
+  `Server::publish_block_updates`.
+
+Hooks for other systems: `Server::drop_block_items` receives every block that block physics
+destroy with drops (washed away, lost support, broken by a piston); `block_updates::redstone::
+container_signal` is what comparators read from containers; `Server::use_block` and
+`Server::placement_state` are the right-click and placement rules.
 
 ## Plugins
 

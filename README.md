@@ -61,6 +61,13 @@ What works:
 * **Worlds**: a flat generator and a built-in noise terrain generator, sky and block light,
   chunk streaming with the client's flow control, block breaking and placing (with
   orientation for stairs, logs, slabs, doors, beds, ...), world time.
+* **Block updates**: neighbour and shape updates (wire, fence, pane and stair connections,
+  blocks that lose their support break, doors and beds break together), scheduled block and
+  fluid ticks (saved with the chunk), water and lava (flowing, falling, infinite water,
+  waterlogged blocks, obsidian, cobblestone, stone and basalt), redstone (wire, torches,
+  levers, buttons, repeaters, comparators, observers, lamps, note blocks, redstone blocks,
+  doors, trapdoors and fence gates, pistons and sticky pistons), and using levers, buttons,
+  doors, repeaters and comparators by hand.
 * **Saving**: chunks in region files, `level.dat` and player data in vanilla's layout,
   autosave, `/save-all`, saving on shutdown.
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
@@ -84,7 +91,8 @@ Not yet:
 
 * Vanilla world generation, the Nether and the End, entities other than players (mobs,
   dropped items, projectiles), damage and survival mechanics, containers and crafting,
-  redstone, fluids and block physics, block entities.
+  block entities. Blocks that need entities (pressure plates, tripwires, TNT, dispensers,
+  hoppers, falling sand) do not react yet, and pistons do not push entities.
 * Plugin API: item stacks and inventories, offline players, entities other than players,
   block data, scoreboards, boss bars, creating worlds, registry and tag lifecycle events,
   `/reload`.

@@ -718,3 +718,55 @@ fn slime_blocks_drag_their_neighbours() {
     assert_eq!(name(&w, p(1, Y + 1, 0)), "air");
     assert_eq!(name(&w, p(0, Y + 1, 1)), "honey_block", "honey and slime do not stick together");
 }
+
+// --- shapes and support -------------------------------------------------------------------
+
+#[test]
+fn fences_panes_and_stairs_follow_their_neighbours() {
+    let mut w = world();
+    set(&mut w, p(1, Y, 0), s("stone"));
+    place(&mut w, p(0, Y, 0), s("oak_fence"));
+    assert!(get_bool(get(&w, p(0, Y, 0)), "east"), "a fence attaches to a solid face");
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "west"));
+    place(&mut w, p(-1, Y, 0), s("spruce_fence"));
+    assert!(get_bool(get(&w, p(0, Y, 0)), "west"), "wooden fences connect");
+    assert!(get_bool(get(&w, p(-1, Y, 0)), "east"));
+    place(&mut w, p(0, Y, 1), s("nether_brick_fence"));
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "south"), "nether brick and wooden fences do not");
+    set(&mut w, p(1, Y, 0), blocks::AIR);
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "east"), "the connection goes with the block");
+
+    place(&mut w, p(5, Y, 0), s("glass_pane"));
+    place(&mut w, p(6, Y, 0), s("iron_bars"));
+    assert!(get_bool(get(&w, p(5, Y, 0)), "east") && get_bool(get(&w, p(6, Y, 0)), "west"), "panes and bars connect");
+
+    // Stairs facing north with stairs facing east behind them form an outer corner.
+    place(&mut w, p(10, Y, -1), s("oak_stairs[facing=east]"));
+    place(&mut w, p(10, Y, 0), s("oak_stairs[facing=north]"));
+    assert_eq!(prop(get(&w, p(10, Y, 0)), "shape"), Some("outer_right"));
+    set(&mut w, p(10, Y, -1), blocks::AIR);
+    assert_eq!(prop(get(&w, p(10, Y, 0)), "shape"), Some("straight"));
+}
+
+#[test]
+fn plants_need_ground_and_grass_gets_snowy() {
+    let mut w = world();
+    place(&mut w, p(0, Y, 0), s("poppy"));
+    place(&mut w, p(1, Y, 0), s("tall_grass[half=lower]"));
+    set(&mut w, p(1, Y + 1, 0), s("tall_grass[half=upper]"));
+    w.updates.effects.clear();
+    set(&mut w, p(0, Y - 1, 0), s("stone"));
+    assert_eq!(name(&w, p(0, Y, 0)), "air", "a flower on stone breaks");
+    set(&mut w, p(1, Y, 0), blocks::AIR);
+    assert_eq!(name(&w, p(1, Y + 1, 0)), "air", "the top of tall grass goes with the bottom");
+    let dropped = w.updates.effects.iter().filter(|e| matches!(e, Effect::Drops { .. })).count();
+    assert_eq!(dropped, 2);
+    // A flower cannot be planted on stone either.
+    let level = Level::new(&mut w);
+    assert!(support::placement_state(&level, s("poppy"), p(0, Y, 0), support::PlaceContext { facing: Dir::North, looking: Dir::North, replaced: blocks::AIR, click: (0.5, 0.5, 0.5) }).is_none());
+
+    set(&mut w, p(4, Y, 4), s("snow"));
+    assert!(get_bool(get(&w, p(4, Y - 1, 4)), "snowy"));
+    set(&mut w, p(4, Y, 4), blocks::AIR);
+    assert!(!get_bool(get(&w, p(4, Y - 1, 4)), "snowy"));
+}
