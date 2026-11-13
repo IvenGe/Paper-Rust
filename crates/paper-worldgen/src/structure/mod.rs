@@ -15,6 +15,7 @@ pub(crate) mod placement;
 pub mod transform;
 
 mod fortress;
+mod mineshaft;
 mod stronghold;
 
 pub use bbox::BoundingBox;
@@ -484,6 +485,10 @@ impl Structures {
         let generator: Option<Box<dyn StructureGen>> = match kind.as_str() {
             "stronghold" => Some(Box::new(stronghold::Stronghold)),
             "fortress" => Some(Box::new(fortress::Fortress)),
+            "mineshaft" => Some(Box::new(mineshaft::Mineshaft {
+                mesa: json.get("mineshaft_type").and_then(Value::as_str) == Some("mesa"),
+                blocking: l.biome_set(&Value::String("#minecraft:mineshaft_blocking".into()))?,
+            })),
             _ => None,
         };
         let supported = generator.is_some();
