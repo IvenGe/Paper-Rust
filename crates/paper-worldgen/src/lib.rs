@@ -35,5 +35,5 @@ pub mod surface;
 
 pub use chunk::{Heightmap, ProtoChunk};
 pub use data::DataSource;
-pub use feature::{BlockEntity, Region, RegionAccess};
+pub use feature::{BlockEntity, Entity, Region, RegionAccess};
 pub use generator::{Dimension, Stage, WorldGenerator};

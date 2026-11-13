@@ -37,6 +37,16 @@ pub enum BlockEntity {
     Loot { table: String, seed: i64 },
     /// A bee nest or beehive with the given number of bees (each with its ticks in the hive).
     Beehive { occupants: Vec<i32> },
+    /// An end gateway and its exit (`exact`: teleport to the exit itself rather than to a
+    /// safe spot near it).
+    EndGateway { exit: Option<(i32, i32, i32)>, exact: bool },
+}
+
+/// An entity a feature spawned.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Entity {
+    /// The end crystal on top of an end spike.
+    EndCrystal { x: f64, y: f64, z: f64, yaw: f32, beam_target: Option<(i32, i32, i32)>, invulnerable: bool },
 }
 
 /// The chunks a decoration step may read and write: the chunk being decorated and its
@@ -48,15 +58,19 @@ pub trait RegionAccess {
     fn chunk_mut(&mut self, chunk_x: i32, chunk_z: i32) -> Option<&mut ProtoChunk>;
     /// Called for the block entities features create. Ignored by default.
     fn add_block_entity(&mut self, _x: i32, _y: i32, _z: i32, _entity: BlockEntity) {}
+    /// Called for the entities features spawn (end crystals). Ignored by default.
+    fn add_entity(&mut self, _entity: Entity) {}
 }
 
-/// A ready-made [`RegionAccess`]: nine chunks around a center, collecting block entities.
+/// A ready-made [`RegionAccess`]: nine chunks around a center, collecting block entities
+/// and entities.
 pub struct Region {
     pub center_x: i32,
     pub center_z: i32,
     /// Row-major over `dz` then `dx` (`(dz + 1) * 3 + dx + 1`).
     pub chunks: Vec<ProtoChunk>,
     pub block_entities: Vec<((i32, i32, i32), BlockEntity)>,
+    pub entities: Vec<Entity>,
 }
 
 impl Region {
@@ -69,7 +83,7 @@ impl Region {
             slots[((dz + 1) * 3 + dx + 1) as usize] = Some(c);
         }
         let chunks = slots.into_iter().map(|c| c.expect("a region needs all nine chunks")).collect();
-        Self { center_x, center_z, chunks, block_entities: Vec::new() }
+        Self { center_x, center_z, chunks, block_entities: Vec::new(), entities: Vec::new() }
     }
 
     fn index(&self, chunk_x: i32, chunk_z: i32) -> Option<usize> {
@@ -97,6 +111,10 @@ impl RegionAccess for Region {
 
     fn add_block_entity(&mut self, x: i32, y: i32, z: i32, entity: BlockEntity) {
         self.block_entities.push(((x, y, z), entity));
+    }
+
+    fn add_entity(&mut self, entity: Entity) {
+        self.entities.push(entity);
     }
 }
 

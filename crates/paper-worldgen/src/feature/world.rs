@@ -11,7 +11,7 @@ use crate::generator::WorldGenerator;
 use std::cell::RefCell;
 
 use super::blockinfo::Blocks;
-use super::{BlockEntity, RegionAccess};
+use super::{BlockEntity, Entity, RegionAccess};
 
 /// A block position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -349,6 +349,11 @@ impl<'a> World<'a> {
         if self.can_write(p) && !self.out_of_height(p.y) {
             self.region.add_block_entity(p.x, p.y, p.z, entity);
         }
+    }
+
+    /// `addFreshEntity`.
+    pub fn add_entity(&mut self, entity: Entity) {
+        self.region.add_entity(entity);
     }
 
     #[inline]

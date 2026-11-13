@@ -111,6 +111,60 @@ fn end_features() {
     assert!(failures.is_empty(), "{}", failures.join("; "));
 }
 
+/// Chunks outside the fixtures with features the fixtures do not cover, against Pumpkin
+/// (commit e9dc12e9) with structures disabled. Not vanilla references: they pin the ported
+/// behaviour down.
+const PUMPKIN_CROSS_CHECK: &[(Dimension, i32, i32, &str)] = &[
+    // End spikes (one per pillar), the arrival platform, a return gateway, chorus plants,
+    // small end islands and the main island's center.
+    (Dimension::End, 2, 0, "9a2c34045976591f60fce7788111e2a6a8f40aa32925692e3c0a672fd23a83f4"),
+    (Dimension::End, 2, 1, "ac32db594c9e02ae07d6c7a0e5d2c87c496b1f8d17128d8e2d34e6d0a3e72a5b"),
+    (Dimension::End, 0, 2, "cc8bb1e2347f03812aacb82b5a298b91103cc6d2ccf38e498d2002f6a4c841a5"),
+    (Dimension::End, -1, 2, "51ae48a4452ef40fa943b00aef88042ad0cde71bbd3ee148cd93d678c7fd8d14"),
+    (Dimension::End, -3, 1, "521ffe4c535398e614308bf84ca70b1f58da17a10b7ce735bdd6bbbff03bd40e"),
+    (Dimension::End, -3, -1, "8853509fa73b787ecf6b10b38f08f9b0828eac1c67fcb5fc3d1df764a1da8980"),
+    (Dimension::End, -3, -2, "d8e3610c8a8bd5e69b0d5e3d7e43e460917d93348fdeb1a5cc595eb03a377fba"),
+    (Dimension::End, -1, -3, "0362cbb32c45746918ea3cd28fddc0556a6063e56930a52c46ed821472b728b7"),
+    (Dimension::End, 0, -3, "7d47b08457b9f8f967400bc7325b82d5814f2f5ee579a872e1bd717ef691901a"),
+    (Dimension::End, 2, -2, "a7f76996308749b949dd60c96e8385bdd2c23f1bfe7326ac65a914e462098007"),
+    (Dimension::End, 6, 0, "3669dbd3755ee3cbc6ed951728270f0ab974498063b6f0de837e6ab4275e011f"),
+    (Dimension::End, 68, -5, "cf2f9a5d99446eb826be8cddc630a566fee7e80539b761a31efb760cad3133e8"),
+    (Dimension::End, -76, 0, "bef4f108fdedddab7d48877ce4739ae666ac72af33af00cbb1a04990978d3ef1"),
+    (Dimension::End, -67, -80, "ae46ffeca9580b8770238c8e60cb741027cd9ebba194613872ffd0204121e52f"),
+    (Dimension::End, -63, -80, "bb20c7761deae20497b9b04496f0d1b8a14c86c3f2aa7f526e865b1334c5f7b2"),
+    (Dimension::End, -59, -80, "efd5b5b40d9cc6f49b586d419c0b53b883803da603c2a2e818809b9a505d780c"),
+    (Dimension::End, 0, 0, "9d6a6e3bbd379cfb1b1030fb35954292239196f6ab3f210f916e92ba35a0b248"),
+];
+
+#[test]
+fn pumpkin_cross_check() {
+    let mut failures = Vec::new();
+    for &(dimension, cx, cz, expected) in PUMPKIN_CROSS_CHECK {
+        let Some(chunk) = decorated(dimension, cx, cz) else { return };
+        let (sha, _) = hashes(&chunk);
+        if sha != expected {
+            failures.push(format!("{dimension:?} ({cx}, {cz})"));
+        }
+    }
+    assert!(failures.is_empty(), "differ from Pumpkin: {}", failures.join(", "));
+}
+
+#[test]
+fn end_spike_crystals() {
+    let Some(g) = generator(Dimension::End, 0) else { return };
+    let mut chunks = Vec::new();
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            chunks.push(g.generate_terrain(2 + dx, dz));
+        }
+    }
+    let mut region = Region::new(2, 0, chunks);
+    g.decorate(2, 0, &mut region);
+    assert_eq!(region.entities.len(), 1, "{:?}", region.entities);
+    let paper_worldgen::Entity::EndCrystal { x, z, .. } = region.entities[0];
+    assert_eq!((x, z), (42.5, 0.5));
+}
+
 #[test]
 fn decoration_changes_blocks() {
     let Some(g) = generator(Dimension::Overworld, 0) else { return };
