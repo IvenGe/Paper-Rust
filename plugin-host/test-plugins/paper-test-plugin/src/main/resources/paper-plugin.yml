@@ -1,0 +1,6 @@
+name: PaperTestPlugin
+version: 1.0.0
+main: io.papermc.paperrs.test.paper.PaperTestPlugin
+bootstrapper: io.papermc.paperrs.test.paper.PaperTestBootstrap
+api-version: '26.3'
+description: A paper-plugin.yml plugin with a bootstrapper and Brigadier commands.

@@ -1,0 +1,19 @@
+name: BukkitTestPlugin
+version: 1.0.0
+main: io.papermc.paperrs.test.bukkit.BukkitTestPlugin
+api-version: '26.3'
+description: A plugin.yml plugin exercising the classic Bukkit API on Paper-RS.
+commands:
+  greet:
+    description: Greets someone
+    usage: /greet [name]
+    aliases: [hi]
+    permission: bukkittest.greet
+  secret:
+    description: Only for operators
+    permission: bukkittest.secret
+permissions:
+  bukkittest.greet:
+    default: true
+  bukkittest.secret:
+    default: op

@@ -119,6 +119,8 @@ impl HostConnection {
         self.send(&Frame::Call { id, flags: FLAG_SYNC, method: method.into(), args })?;
         let started = Instant::now();
         let mut warned = false;
+        // Loading and enabling plugins legitimately takes a while.
+        let slow_call = if method == "host.load" || method == "host.post_world" { self.slow_call.max(Duration::from_secs(30)) } else { self.slow_call };
         loop {
             match self.main_rx.recv_timeout(Duration::from_millis(250)) {
                 Ok(Inbound::Return { id: rid, ok, value }) if rid == id => {
@@ -140,7 +142,7 @@ impl HostConnection {
                     if self.is_closed() {
                         return Err(CallError::Disconnected);
                     }
-                    if !warned && started.elapsed() > self.slow_call {
+                    if !warned && started.elapsed() > slow_call {
                         warned = true;
                         log::warn!("The plugin host has been handling {method} for {:.1}s; the server is waiting", started.elapsed().as_secs_f64());
                     }
