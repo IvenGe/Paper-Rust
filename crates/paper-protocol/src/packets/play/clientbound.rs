@@ -691,6 +691,18 @@ impl Decode for LevelChunkWithLight {
 }
 
 packet! {
+    /// A world event: sounds and particle effects tied to a block position.
+    /// Event 2001 is "block broken" with the block state id as data.
+    LevelEvent = play::clientbound::LEVEL_EVENT {
+        event: i32,
+        pos: BlockPos,
+        data: i32,
+        /// Play at full volume regardless of distance.
+        global: bool,
+    }
+}
+
+packet! {
     /// Replaces the light of the listed sections of a loaded chunk.
     LightUpdate = play::clientbound::LIGHT_UPDATE {
         x: VarInt,

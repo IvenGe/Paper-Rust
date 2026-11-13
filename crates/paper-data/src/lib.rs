@@ -82,9 +82,11 @@ pub mod registries {
         indexes().get(normalize(registry).as_ref()).map(|(names, _)| *names)
     }
 
-    /// Protocol id of `name` in `registry`.
+    /// Protocol id of `name` in `registry`. Names without a namespace are tried as given
+    /// first (pseudo-registries use bare names) and then in the `minecraft` namespace.
     pub fn id(registry: &str, name: &str) -> Option<u32> {
-        indexes().get(normalize(registry).as_ref())?.1.get(normalize(name).as_ref()).copied()
+        let (_, index) = indexes().get(normalize(registry).as_ref())?;
+        index.get(name).or_else(|| index.get(normalize(name).as_ref())).copied()
     }
 
     /// Name of the entry with protocol id `id` in `registry`.

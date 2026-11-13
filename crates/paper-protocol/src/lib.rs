@@ -10,6 +10,7 @@
 pub mod codec;
 pub mod crypto;
 pub mod frame;
+pub mod metadata;
 pub mod packets;
 pub mod text;
 pub mod types;
