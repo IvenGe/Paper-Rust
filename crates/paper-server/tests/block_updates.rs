@@ -136,3 +136,50 @@ fn note_blocks_send_block_events() {
     alice.find(TIMEOUT, |s: &play::Sound| s.sound == play::SoundRef::Id(harp)).expect("the note");
     server.stop();
 }
+
+#[test]
+fn players_open_doors_and_set_repeaters_by_hand() {
+    let server = start_server(|_| {});
+    let mut alice = join(server.port());
+    let stone = paper_data::items::id("minecraft:stone").unwrap() as i32;
+    alice.send(&play::SetCreativeModeSlot { slot: 36, item: Slot::of(stone, 64) });
+    for command in [
+        "setblock 10 -60 6 minecraft:oak_door[half=lower]",
+        "setblock 10 -59 6 minecraft:oak_door[half=upper]",
+        "setblock 6 -60 6 minecraft:iron_door[half=lower]",
+        "setblock 6 -59 6 minecraft:iron_door[half=upper]",
+        "setblock 8 -60 11 minecraft:repeater",
+    ] {
+        server.handle.console_command(command);
+    }
+    update_at(&mut alice, BlockPos::new(8, -60, 11), |_| true);
+    alice.clear_backlog();
+
+    // Holding stone, a click on the wooden door opens it (both halves); nothing is placed.
+    use_on(&mut alice, BlockPos::new(10, -59, 6), 2, 10);
+    let upper = update_at(&mut alice, BlockPos::new(10, -59, 6), |_| true);
+    assert_eq!(prop(upper, "open"), Some("true"));
+    let lower = update_at(&mut alice, BlockPos::new(10, -60, 6), |_| true);
+    assert_eq!(prop(lower, "open"), Some("true"));
+    alice.find(TIMEOUT, |a: &play::BlockChangedAck| a.sequence.0 == 10).expect("ack");
+    assert_eq!(server.handle.run(|s| s.worlds[0].block_at(10, -59, 5)), Some(Some(blocks::AIR)), "no stone placed");
+
+    // An iron door ignores the click: the stone is placed against it instead.
+    use_on(&mut alice, BlockPos::new(6, -60, 6), 2, 11);
+    alice.find(TIMEOUT, |a: &play::BlockChangedAck| a.sequence.0 == 11).expect("ack");
+    let iron = server.handle.run(|s| s.worlds[0].block_at(6, -60, 6)).unwrap().unwrap();
+    assert_eq!(prop(iron as i32, "open"), Some("false"));
+    assert_eq!(server.handle.run(|s| s.worlds[0].block_at(6, -60, 5)), Some(Some(blocks::default_state("minecraft:stone").unwrap())));
+
+    // Clicking a repeater cycles its delay; sneaking with an item in hand places instead.
+    use_on(&mut alice, BlockPos::new(8, -60, 11), 1, 12);
+    let repeater = update_at(&mut alice, BlockPos::new(8, -60, 11), |_| true);
+    assert_eq!(prop(repeater, "delay"), Some("2"));
+    alice.send(&play::PlayerInput { flags: play::input_flags::SNEAK });
+    use_on(&mut alice, BlockPos::new(8, -60, 11), 1, 13);
+    alice.find(TIMEOUT, |a: &play::BlockChangedAck| a.sequence.0 == 13).expect("ack");
+    let (repeater, above) = server.handle.run(|s| (s.worlds[0].block_at(8, -60, 11), s.worlds[0].block_at(8, -59, 11))).unwrap();
+    assert_eq!(prop(repeater.unwrap() as i32, "delay"), Some("2"), "sneaking does not use the repeater");
+    assert_eq!(above, Some(blocks::default_state("minecraft:stone").unwrap()));
+    server.stop();
+}
