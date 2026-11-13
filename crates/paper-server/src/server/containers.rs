@@ -530,14 +530,24 @@ impl Server {
             return;
         }
         let creative = player.game_mode == crate::config::GameMode::Creative;
-        let Some((kind, slots)) = self.menu_slots(id) else { return };
+        let Some((kind, mut slots)) = self.menu_slots(id) else { return };
         let layout = Self::menu_layout(kind.as_ref(), slots.len() - 36);
         if click.slot >= 0 && click.slot as usize >= layout.len() {
             return;
         }
         // Clicks on a crafting result are CraftItemEvents; the result is only taken if no
-        // plugin cancels it.
-        let crafting = layout.crafting.as_ref().is_some_and(|(result, _, _)| click.slot as usize == *result && click.slot >= 0) && !slots[0].is_empty() && click.mode != 5;
+        // plugin cancels it. (The result is worked out as the click will see it.)
+        if layout.crafting.is_some() {
+            let recipes = self.recipes.clone();
+            let (mut carried, mut drag) = (Slot::EMPTY, super::menu::Drag::default());
+            let before = slots[0].clone();
+            Menu { layout: &layout, slots: &mut slots, carried: &mut carried, recipes: recipes.as_deref(), creative, drag: &mut drag }.update_result();
+            if slots[0] != before {
+                // Listeners read the result slot (CraftItemEvent#getCurrentItem).
+                self.store_menu_slots(id, kind.as_ref(), &slots);
+            }
+        }
+        let crafting = layout.crafting.as_ref().is_some_and(|(result, _, _)| click.slot >= 0 && click.slot as usize == *result) && !slots[0].is_empty() && click.mode != 5;
         if !crate::plugins::events::on_inventory_click(self, id, &click, kind.as_ref(), crafting.then(|| slots[0].clone())) {
             self.send_menu_contents(id);
             return;

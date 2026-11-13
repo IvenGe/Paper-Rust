@@ -233,6 +233,18 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     @EventHandler
+    public void onCraft(final org.bukkit.event.inventory.CraftItemEvent event) {
+        final ItemStack result = event.getRecipe().getResult();
+        event.getWhoClicked().sendMessage("crafted " + result.getType().getKey().getKey() + " x" + result.getAmount() + " in " + event.getInventory().getType()
+            + " (" + event.getClick() + ", " + event.getAction() + ")");
+    }
+
+    @EventHandler
+    public void onDrag(final org.bukkit.event.inventory.InventoryDragEvent event) {
+        event.getWhoClicked().sendMessage("dragged over " + event.getRawSlots().size() + " slots (" + event.getType() + ")");
+    }
+
+    @EventHandler
     public void onDrop(final PlayerDropItemEvent event) {
         if (event.getItemDrop().getItemStack().getType() == Material.DIRT) {
             event.setCancelled(true);

@@ -125,7 +125,7 @@ impl FakeHost {
                 "commands" => Value::List(vec!["hello".into(), "fakeplugin:hello".into(), "crash".into(), "api".into()]),
                 "events" => Value::List(vec![
                     "PlayerCommandPreprocessEvent".into(), "BlockBreakEvent".into(), "AsyncChatEvent".into(), "PlayerMoveEvent".into(), "ServerCommandEvent".into(),
-                    "InventoryOpenEvent".into(), "InventoryClickEvent".into(), "InventoryCloseEvent".into(),
+                    "InventoryOpenEvent".into(), "InventoryClickEvent".into(), "InventoryCloseEvent".into(), "InventoryDragEvent".into(),
                 ]),
             },
             "host.post_world" => bmap! { "plugins" => Self::plugin_list(true) },
@@ -496,6 +496,42 @@ fn plugin_api_inventories_scoreboards_entities_offline_players_and_reload() {
         assert_eq!((click.i64("slot"), click.i64("button"), click.i64("mode")), (Some(4), Some(0), Some(0)));
         assert_eq!(click.get("inventory").get("top").str("kind"), Some("custom"));
         assert_eq!(events[2].1.str("reason"), Some("PLAYER"));
+    }
+
+    // Taking a crafting result is a CraftItemEvent (when the game data has recipes); a drag is
+    // one InventoryDragEvent when it ends.
+    seen.inventory_events.lock().unwrap().clear();
+    let has_recipes = server
+        .handle
+        .run(|s| {
+            let id = s.player_by_name("Alice").unwrap().entity_id;
+            s.set_inventory_slot(id, 1, Slot::of(paper_data::items::id("minecraft:oak_log").unwrap() as i32, 1));
+            s.recipes.is_some()
+        })
+        .unwrap();
+    let click = |slot: i16, button: i8, mode: i32| play::ContainerClick { window_id: 0, state_id: 0, slot, button, mode, changed_slots: Vec::new(), carried: HashedSlot(None) };
+    if has_recipes {
+        alice.send(&click(0, 0, 0));
+        alice.drain(QUIET);
+        let events = seen.inventory_events.lock().unwrap().clone();
+        let craft = events.iter().find(|(m, a)| m == "event.inventory_click" && a.i64("slot") == Some(0)).map(|(_, a)| a.clone()).expect("craft click");
+        assert_eq!(craft.get("craft").str("item"), Some("minecraft:oak_planks"), "{craft:?}");
+        assert_eq!(craft.get("inventory").str("type"), Some("CRAFTING"));
+        let carried = server.handle.run(|s| s.player_by_name("Alice").unwrap().carried.clone()).unwrap();
+        assert_eq!(carried, Slot::of(item("minecraft:oak_planks"), 4), "the uncancelled craft took the result");
+        seen.inventory_events.lock().unwrap().clear();
+        for (slot, button) in [(-999, 0), (9, 1), (10, 1), (-999, 2)] {
+            alice.send(&click(slot, button, 5));
+        }
+        alice.drain(QUIET);
+        let events = seen.inventory_events.lock().unwrap().clone();
+        assert_eq!(events.len(), 1, "one event for the whole drag: {events:?}");
+        let drag = &events[0].1;
+        assert_eq!(drag.i64("mode"), Some(5));
+        assert_eq!(drag.list("drag_slots").map(|l| l.iter().filter_map(Value::as_i64).collect::<Vec<_>>()), Some(vec![9, 10]));
+        assert_eq!(drag.get("cursor").i64("count"), Some(4));
+        let spread = server.handle.run(|s| { let p = s.player_by_name("Alice").unwrap(); (p.inventory[9].clone(), p.inventory[10].clone()) }).unwrap();
+        assert_eq!(spread, (Slot::of(item("minecraft:oak_planks"), 2), Slot::of(item("minecraft:oak_planks"), 2)));
     }
 
     // Scoreboards: the packets follow the plugin's calls.

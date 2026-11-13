@@ -314,6 +314,27 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let held = server.handle.run(move |s| s.container_items(0, chest)[0].clone()).unwrap();
     assert_eq!(held, Slot::of(item("minecraft:diamond"), 3));
 
+    // --- crafting (CraftItemEvent) and dragging (InventoryDragEvent) in the own inventory -----
+    let has_recipes = server
+        .handle
+        .run(|s| {
+            let id = s.player_by_name("Alice").unwrap().entity_id;
+            s.set_inventory_slot(id, 1, Slot::of(paper_data::items::id("minecraft:oak_log").unwrap() as i32, 1));
+            s.recipes.is_some()
+        })
+        .unwrap();
+    if has_recipes {
+        let click = |slot: i16, button: i8, mode: i32| play::ContainerClick { window_id: 0, state_id: 0, slot, button, mode, changed_slots: Vec::new(), carried: HashedSlot(None) };
+        alice.send(&click(0, 0, 0));
+        expect_line(&mut alice, "crafted oak_planks x4 in CRAFTING (LEFT, PICKUP_ALL)");
+        for (slot, button) in [(-999, 0), (9, 1), (10, 1), (-999, 2)] {
+            alice.send(&click(slot, button, 5));
+        }
+        expect_line(&mut alice, "dragged over 2 slots (EVEN)");
+        let spread = server.handle.run(|s| s.player_by_name("Alice").unwrap().inventory[9].clone()).unwrap();
+        assert_eq!(spread, Slot::of(item("minecraft:oak_planks"), 2));
+    }
+
     // --- entities: spawning, state, damage and their events --------------------------------
     alice.command("apitest entities");
     expect_line(&mut alice, "spawned zombie");
