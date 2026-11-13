@@ -83,6 +83,8 @@ pub struct WorldGenerator {
     pub(crate) surface: SurfaceSystem,
     pub(crate) carvers: crate::carver::Carvers,
     pub(crate) decoration: crate::feature::Decoration,
+    pub(crate) spawn_targets: Vec<crate::spawn::SpawnTarget>,
+    pub(crate) has_ceiling: bool,
 }
 
 impl WorldGenerator {
@@ -184,6 +186,7 @@ impl WorldGenerator {
         };
         let carvers = crate::carver::Carvers::load(data, &biomes, &possible)?;
         let decoration = crate::feature::Decoration::load(data, &biomes, dimension, &possible).context("loading features")?;
+        let spawn_targets = crate::spawn::parse_spawn_targets(&settings).context("reading spawn targets")?;
 
         Ok(Self {
             dimension,
@@ -213,6 +216,8 @@ impl WorldGenerator {
             surface,
             carvers,
             decoration,
+            spawn_targets,
+            has_ceiling: dim_type.bool_or("has_ceiling", false),
         })
     }
 

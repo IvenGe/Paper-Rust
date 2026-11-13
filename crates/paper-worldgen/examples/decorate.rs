@@ -70,6 +70,12 @@ fn main() -> anyhow::Result<()> {
     if std::env::var_os("SECTIONS").is_some() {
         println!("section hashes: {sections:?}");
     }
+    if std::env::var_os("BIOMES").is_some() {
+        let mut names: Vec<&str> = center.biomes.iter().map(|b| g.biome_name(*b)).collect();
+        names.sort();
+        names.dedup();
+        println!("biomes: {names:?}");
+    }
     if let Some(dir) = std::env::var_os("DUMP") {
         // The center chunk's state ids as little-endian u16, y-major then z then x.
         let mut out = Vec::new();
