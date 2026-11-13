@@ -4,13 +4,14 @@
 //! generator/mod}.rs` of Pumpkin (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0.
 
 use crate::aquifer::{Aquifer, AquiferFunctions, FluidPicker};
+use crate::biome::{obfuscate_seed, BiomeSource, Biomes};
 use crate::blocks::BlockFlags;
 use crate::chunk::ProtoChunk;
 use crate::data::{parse_block_state, DataReader, DataSource, JsonExt};
 use crate::density::{build_stack, prepare_all, SeededNoises, SeededStack};
 use crate::noise::DensityVolume;
 use crate::random::{LegacyRandom, PositionalRandom, Xoroshiro};
-use crate::router::{ChunkRouter, SurfaceEstimator};
+use crate::router::{ChunkRouter, ClimateSampler, SurfaceEstimator};
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
@@ -73,6 +74,10 @@ pub struct WorldGenerator {
     pub(crate) ore_random: PositionalRandom,
     water: u32,
     lava: u32,
+    pub(crate) biomes: Biomes,
+    pub(crate) biome_source: BiomeSource,
+    /// `BiomeManager`'s obfuscated seed for the fuzzy biome lookup.
+    pub(crate) biome_zoom_seed: i64,
 }
 
 impl WorldGenerator {
@@ -129,6 +134,9 @@ impl WorldGenerator {
             aquifer: AquiferFunctions { barrier: terrain.root(1), floodedness: terrain.root(2), spread: terrain.root(3), lava: terrain.root(4), exclusion: terrain.root(5) },
         };
 
+        let biomes = Biomes::load(data)?;
+        let biome_source = BiomeSource::from_json(generator.field("biome_source")?, data, &biomes)?;
+
         Ok(Self {
             dimension,
             seed,
@@ -151,6 +159,9 @@ impl WorldGenerator {
             ore_random,
             water: crate::blocks::state("minecraft:water"),
             lava: crate::blocks::state("minecraft:lava"),
+            biomes,
+            biome_source,
+            biome_zoom_seed: obfuscate_seed(seed),
         })
     }
 
@@ -189,10 +200,57 @@ impl WorldGenerator {
     pub fn generate_until(&self, chunk_x: i32, chunk_z: i32, last: Stage) -> ProtoChunk {
         let mut chunk = ProtoChunk::new(chunk_x, chunk_z, self.min_y, self.height);
         let mut estimator = self.surface_estimator();
+        self.generate_biomes(&mut chunk);
         if last >= Stage::Noise {
             self.generate_noise(&mut chunk, &mut estimator);
         }
         chunk
+    }
+
+    /// The biome stage: one biome per 4x4x4 cell.
+    pub fn generate_biomes(&self, chunk: &mut ProtoChunk) {
+        let mut climate = ClimateSampler::new(&self.climate);
+        let (qx, qz) = (chunk.chunk_x << 2, chunk.chunk_z << 2);
+        match &self.biome_source {
+            BiomeSource::Fixed(b) => chunk.biomes.fill(*b),
+            BiomeSource::End { .. } => {
+                let b = self.biome_source.biome(qx, 0, qz, &mut climate);
+                chunk.biomes.fill(b);
+            }
+            BiomeSource::MultiNoise(_) => {
+                climate.fill_volume(DensityVolume::new(4, (self.height >> 2) as usize, 4, chunk.start_x(), self.min_y, chunk.start_z(), 4, 4, 4));
+                for section in (self.min_y >> 4)..=((self.min_y + self.height - 1) >> 4) {
+                    let qy = section << 2;
+                    for x in 0..4 {
+                        for y in 0..4 {
+                            for z in 0..4 {
+                                let b = self.biome_source.biome(qx + x, qy + y, qz + z, &mut climate);
+                                chunk.set_biome(qx + x, qy + y, qz + z, b);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The biome at a quart position, computed directly from the climate (vanilla's
+    /// "uncached" noise biome). Used for cells of chunks that are not generated yet.
+    pub fn biome_at_quart(&self, qx: i32, qy: i32, qz: i32) -> u8 {
+        let mut climate = ClimateSampler::new(&self.climate);
+        let bottom = self.min_y >> 2;
+        let top = bottom + (self.height >> 2) - 1;
+        self.biome_source.biome(qx, qy.clamp(bottom, top), qz, &mut climate)
+    }
+
+    /// A sampler of the six climate parameters (the multi-noise biome inputs).
+    pub fn climate_sampler(&self) -> ClimateSampler<'_> {
+        ClimateSampler::new(&self.climate)
+    }
+
+    /// The name of a biome network id.
+    pub fn biome_name(&self, id: u8) -> &str {
+        &self.biomes.get(id).name
     }
 
     /// The noise stage: terrain shape, aquifers and the default fluid.

@@ -14,6 +14,7 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `tags.json` | tags sent to clients, resolved to numeric ids |
 | `dimension_types.json` | the vanilla dimension type definitions |
 | `feature_flags.json` | feature flags enabled by default |
+| `worldgen/multi_noise_biome_tree.json.gz` | the multi-noise biome parameter R-trees of the `overworld` and `nether` presets (embedded by `paper-worldgen`) |
 
 ## Provenance
 
@@ -33,6 +34,13 @@ exact inputs, the method and the full list of checks
   from Minecraft and are not covered by Pumpkin's licence.
 * Synchronised registry entries, tags and dimension types are read from the
   `data/minecraft/**` files inside the jar.
+* `worldgen/multi_noise_biome_tree.json.gz` is `assets/multi_noise_biome_tree.json` of
+  [Pumpkin-MC/Pumpkin](https://github.com/Pumpkin-MC/Pumpkin) at commit e9dc12e9, gzipped
+  (uncompressed SHA-256 `a2e45033…c8a595`). Vanilla builds these trees in code
+  (`OverworldBiomeBuilder`, the nether preset), not from data; Pumpkin extracted them from
+  26.3 in vanilla's own R-tree layout, so searching them visits leaves in vanilla's order.
+  Pumpkin's `assets/NOTICE.md` treats data extracted from Minecraft as Mojang's, not covered
+  by Pumpkin's licence.
 
 Every registry was checked for an identical name set against mcmeta, and every
 order that an independent source covers (packets, block states, 22 registries)

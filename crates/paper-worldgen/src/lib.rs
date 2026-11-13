@@ -18,6 +18,7 @@
 //! which reproduces vanilla's output; see the crate README.
 
 pub mod aquifer;
+pub mod biome;
 pub mod blocks;
 pub mod chunk;
 pub mod data;
