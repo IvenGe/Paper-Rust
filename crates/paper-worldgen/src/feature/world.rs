@@ -81,6 +81,61 @@ impl Pos {
     }
 }
 
+/// `BlockPos.withinBoxByManhattanDistance`: the positions of a box, ordered by Manhattan
+/// distance from `origin` (within one distance: x, then y ascending, z positive before its
+/// mirror).
+pub fn within_manhattan(origin: Pos, rx: i32, ry: i32, rz: i32) -> WithinManhattan {
+    WithinManhattan { origin, reach: (rx, ry, rz), max_depth: rx + ry + rz, depth: 0, max_x: 0, max_y: 0, x: 0, y: 0, mirror: false, cursor: origin }
+}
+
+pub struct WithinManhattan {
+    origin: Pos,
+    reach: (i32, i32, i32),
+    max_depth: i32,
+    depth: i32,
+    max_x: i32,
+    max_y: i32,
+    x: i32,
+    y: i32,
+    mirror: bool,
+    cursor: Pos,
+}
+
+impl Iterator for WithinManhattan {
+    type Item = Pos;
+
+    fn next(&mut self) -> Option<Pos> {
+        if self.mirror {
+            self.mirror = false;
+            self.cursor.z = self.origin.z - (self.cursor.z - self.origin.z);
+            return Some(self.cursor);
+        }
+        loop {
+            if self.y > self.max_y {
+                self.x += 1;
+                if self.x > self.max_x {
+                    self.depth += 1;
+                    if self.depth > self.max_depth {
+                        return None;
+                    }
+                    self.max_x = self.reach.0.min(self.depth);
+                    self.x = -self.max_x;
+                }
+                self.max_y = self.reach.1.min(self.depth - self.x.abs());
+                self.y = -self.max_y;
+            }
+            let (dx, dy) = (self.x, self.y);
+            let dz = self.depth - dx.abs() - dy.abs();
+            self.y += 1;
+            if dz <= self.reach.2 {
+                self.mirror = dz != 0;
+                self.cursor = self.origin.add(dx, dy, dz);
+                return Some(self.cursor);
+            }
+        }
+    }
+}
+
 /// `Direction`, in vanilla's declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Dir {
