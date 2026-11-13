@@ -92,8 +92,17 @@ block update.
 * `<world>/region/r.<x>.<z>.mca`: chunks as zlib-compressed NBT with paletted block states
   and biomes, light arrays, heightmaps and block entities. Oversized chunks go to `.mcc`
   files, as in vanilla.
-* `<world>/level.dat`: seed, generator, spawn, time.
-* `<world>/playerdata/<uuid>.dat`: position, game mode, health, food, inventory, equipment.
+* `<world>/entities/r.<x>.<z>.mca`: the mobs, dropped items, arrows, ... of each chunk
+  (`Entities` with `id`, `Pos`, `Motion`, `Rotation`, `UUID`, `Health`, `equipment`, ...),
+  loaded with their chunk on the worker and brought back to life on the main thread; saved
+  on autosave and when their chunk unloads, which also drops them from memory.
+* `<world>/level.dat`: seed, generator, spawn, time; `<world>/data/minecraft/game_rules.dat`:
+  the game rules (older `level.dat` rules are imported).
+* `<world>/playerdata/<uuid>.dat`: position, dimension, game mode, health, food, effects,
+  experience, inventory, equipment and ender chest.
+* The Nether and the End are separate worlds in CraftBukkit's layout: `<world>_nether` with
+  its regions in `DIM-1/`, `<world>_the_end` with `DIM1/`, each with its own `level.dat`.
+  Player data only lives in the main world.
 
 Loading is part of the load-or-generate job on the workers. Every write goes through the
 chunk I/O thread. Until a chunk or player file is written it stays in a pending table that
@@ -128,6 +137,54 @@ Hooks for other systems: `Server::drop_block_items` receives every block that bl
 destroy with drops (washed away, lost support, broken by a piston); `block_updates::redstone::
 container_signal` is what comparators read from containers; `Server::use_block` and
 `Server::placement_state` are the right-click and placement rules.
+
+## Entities
+
+Entities other than players live in `World::entities`, indexed by chunk
+(`World::entity_chunks`) for area queries. `world::entity` has the shared parts: boxes,
+movement with collisions and step-up (vanilla's axis order), and the kinds (`Item`, `Mob`,
+`Arrow`, `FallingBlock`, `ExperienceOrb`, `Tnt`). Each tick `Server::tick_entities` runs the
+entities within simulation distance of a player: items fall, float and merge, players pick
+them up; arrows fly and stick; mobs run `server::mobs` (environment damage, the behaviour
+picked from the entity type, A* pathfinding over walkable blocks, vanilla's walking physics);
+then removed entities are dropped and `track_entities` sends spawns, moves, metadata and
+equipment to the players in tracking range.
+
+`server::mobs` also does natural spawning (biome spawner lists from the vanilla data, the
+mob caps, vanilla's light rules), animals for newly generated chunks, and despawning.
+
+## Survival
+
+`server::survival` is the player side of vanilla's `LivingEntity`, `Player` and `FoodData`:
+the damage pipeline (`Server::hurt_player`: invulnerability, game rules, difficulty scaling
+from the damage type, armour, protection enchantments, resistance, absorption), environmental
+damage each tick, fall damage from movement packets, hunger and natural regeneration,
+eating, experience, death and respawn. `server::combat` is fighting (`Player.attack` with the
+cooldown, criticals, sweeps, knockback and enchantments; damage to mobs and their deaths with
+loot tables and experience; bows and arrows; explosions). `server::effects` keeps status
+effects on players and mobs; `server::mining` checks how long blocks take to break.
+Damage types, recipes and loot tables are read from the vanilla server jar at startup
+(`vanilla.rs`).
+
+## Containers
+
+Container contents live in the chunk's block entities (`Items`, as vanilla saves them). A
+window is a `server::containers::OpenMenu`; clicks run through `server::menu`, a port of
+vanilla's `AbstractContainerMenu.doClick` and the menus' `quickMoveStack`, on a copy of the
+slots that is written back and sent to every viewer. Crafting uses `server::recipes`
+(shaped, shapeless and transmute recipes from the vanilla data); furnaces, hoppers, droppers
+and dispensers tick in `server::containers` and `server::machines`. When a block entity is
+removed, `World::set_block` hands it to the server, which drops a container's contents.
+
+## Dimensions
+
+`server::portals` moves players between worlds: Nether portals (frames and lighting in
+`world::portal` and `world::block_updates::fire`, the wait in the portal, coordinates scaled
+by the dimension types, the exit portal found nearby or built like vanilla's
+`PortalForcer`), End portals (frames filled with eyes, the obsidian platform, the exit
+portal and the credits). A trip first loads the destination chunks with tickets; then
+`Server::change_dimension` releases the old world, sends the Respawn packet and everything
+the client needs again, and starts the view in the new world.
 
 ## Plugins
 
