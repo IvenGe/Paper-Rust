@@ -3,7 +3,7 @@
 //! The Rust server and the JVM plugin host exchange length-prefixed frames over a local
 //! stream socket. Everything the two sides say to each other is one of five frame kinds
 //! carrying dynamically typed [`Value`]s, so new API calls and events need no schema change.
-//! The Java mirror of this file is `plugin-host/.../bridge/BridgeCodec.java`; the two share
+//! The Java mirror of this file is `plugin-host/host/src/main/java/io/papermc/paperrs/host/bridge/Codec.java`; the two share
 //! the golden test vector in [`tests::golden_vector`].
 //!
 //! ```text

@@ -49,7 +49,17 @@ impl RunningServer {
 }
 
 /// Starts a server with the given configuration.
-pub fn start(config: Config) -> Result<RunningServer> {
+pub fn start(mut config: Config) -> Result<RunningServer> {
+    // No plugin jars, no JVM.
+    if config.paper.plugins.enabled {
+        let dir = config.resolve(&config.paper.plugins.plugins_dir);
+        let has_jars = std::fs::read_dir(&dir).map(|entries| entries.flatten().any(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("jar")))).unwrap_or(false);
+        if !has_jars {
+            log::info!("No plugins in {}; not starting the Java plugin host", dir.display());
+            let _ = std::fs::create_dir_all(&dir);
+            config.paper.plugins.enabled = false;
+        }
+    }
     start_with_plugin_launcher(config, plugins::java_launcher())
 }
 

@@ -1,101 +1,127 @@
-Paper [![Version](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Fartifactory.papermc.io%2Fartifactory%2Funiverse%2Fio%2Fpapermc%2Fpaper%2Fpaper-api%2Fmaven-metadata.xml&strategy=highestVersion&filter=26.3.*&label=version&color=%23344ceb
-)](https://papermc.io/downloads/paper)
-[![Paper Build Status](https://img.shields.io/github/actions/workflow/status/PaperMC/Paper/release-26.3.yaml?branch=main)](https://github.com/PaperMC/Paper/actions)
-[![Discord](https://img.shields.io/discord/289587909051416579.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/papermc)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/papermc?label=GitHub%20Sponsors)](https://github.com/sponsors/PaperMC)
-[![Open Collective](https://img.shields.io/opencollective/all/papermc?label=OpenCollective%20Sponsors)](https://opencollective.com/papermc)
-===========
+Paper-RS
+========
 
-The most widely used, high-performance Minecraft server that aims to fix gameplay and mechanics inconsistencies.
+A rewrite of the [Paper](https://github.com/PaperMC/Paper) Minecraft server in Rust, for
+Minecraft Java Edition 26.3 (protocol 777), that still runs unmodified Java plugins: both
+classic `plugin.yml` (Bukkit/Spigot) plugins and `paper-plugin.yml` plugins with
+bootstrappers and Brigadier commands.
 
+The game server is Rust. Java plugins run in a separate JVM, the *plugin host*, which talks
+to the server over a local socket ("separate mode"). Without plugins no JVM is started.
 
-**Support and Project Discussion:**
-- [Our forums](https://forums.papermc.io/) or [Discord](https://discord.gg/papermc)
+> This is an early port. The protocol, worlds, players and the plugin bridge work end to end
+> (see [Status](#status)), but most of vanilla's game logic (mobs, survival mechanics,
+> redstone, vanilla world generation) is not ported yet.
 
-How To (Server Admins)
-------
-Paperclip is a jar file that you can download and run just like a normal jar file.
+Running
+-------
 
-Download Paper from our [downloads page](https://papermc.io/downloads/paper).
+You need Rust 1.89 or newer. For Java plugins you also need JDK 25 and Maven.
 
-Run the Paperclip jar directly from your server. Just like old times.
-
-* Documentation on using Paper: [docs.papermc.io](https://docs.papermc.io)
-* For a sneak peek at upcoming features, [see here](https://github.com/PaperMC/Paper/projects)
-
-How To (Plugin Developers)
-------
-* See our API [here](paper-api)
-* See upcoming, pending, and recently added API [here](https://github.com/orgs/PaperMC/projects/2/views/4)
-* Paper API javadocs here: [papermc.io/javadocs](https://papermc.io/javadocs/)
-#### Repository (for paper-api)
-See [the docs](https://docs.papermc.io/paper/dev/project-setup/#adding-paper-as-a-dependency) for more details.
-##### Gradle
-```kotlin
-repositories {
-    maven {
-        url = uri("https://repo.papermc.io/repository/maven-public/")
-    }
-}
-
-dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.3.build.+")
-}
-
-java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
-}
-```
-##### Maven
-
-```xml
-<repository>
-    <id>papermc</id>
-    <url>https://repo.papermc.io/repository/maven-public/</url>
-</repository>
+```bash
+cargo build --release
 ```
 
-```xml
-<dependency>
-    <groupId>io.papermc.paper</groupId>
-    <artifactId>paper-api</artifactId>
-    <version>[26.3.build,)</version>
-    <scope>provided</scope>
-</dependency>
+```bash
+./target/release/paper --root my-server
 ```
 
-How To (Compiling Jar From Source)
+The first start creates `my-server/server.properties` (the vanilla settings) and
+`my-server/config/paper-rs.toml` (threads, network, world and plugin settings). The world is
+saved in vanilla's Anvil format under `my-server/<level-name>/`.
+
+### Java plugins
+
+Build the plugin host once:
+
+```bash
+cd plugin-host && mvn package
+```
+
+Then either copy `plugin-host/host/target/paper-rs-plugin-host.jar` into
+`my-server/plugin-host/`, or point `host-dir` in `config/paper-rs.toml` at
+`plugin-host/host/target`. Put plugin jars in `my-server/plugins/` as usual.
+
+```toml
+[plugins]
+enabled = true
+java = "java"            # a Java 25 runtime
+host-dir = "plugin-host"
+jvm-args = ["-Xmx1G"]
+on-host-crash = "shutdown"   # or "continue" to keep running without plugins
+```
+
+Status
 ------
-To compile Paper, you need JDK 25 and an internet connection.
 
-Clone this repo, run `./gradlew applyPatches`, then `./gradlew createPaperclipJar` from your terminal. You can find the compiled jar in the `paper-server/build/libs` directory.
+What works:
 
-To get a full list of tasks, run `./gradlew tasks`.
+* **Networking**: server list ping, online (Mojang authentication, encryption) and offline
+  login, compression, the configuration phase, keep-alive.
+* **Worlds**: a flat generator and a built-in noise terrain generator, sky and block light,
+  chunk streaming with the client's flow control, block breaking and placing (with
+  orientation for stairs, logs, slabs, doors, beds, ...), world time.
+* **Saving**: chunks in region files, `level.dat` and player data in vanilla's layout,
+  autosave, `/save-all`, saving on shutdown.
+* **Players**: movement and seeing each other, chat, game modes, creative inventory,
+  operators, whitelist and bans, the player list.
+* **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
+  difficulty seed setworldspawn tps mspt kick ban pardon ban-ip pardon-ip banlist op deop
+  whitelist save-all stop version plugins`.
+* **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
+  bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
+  permissions, aliases and tab completion; Brigadier commands and `BasicCommand`), the
+  Bukkit, async and global-region schedulers, configuration files, permissions, and these
+  events: `AsyncPlayerPreLoginEvent`, `PaperServerListPingEvent`, `PlayerJoinEvent`,
+  `PlayerQuitEvent`, `AsyncChatEvent` and `AsyncPlayerChatEvent`,
+  `PlayerCommandPreprocessEvent`, `ServerCommandEvent`, `PlayerCommandSendEvent`,
+  `BlockBreakEvent`, `BlockPlaceEvent`, `PlayerMoveEvent`, `PlayerTeleportEvent` (for
+  teleports made by plugins), `PlayerGameModeChangeEvent`, `ServerLoadEvent`. Players, worlds and blocks can be read and
+  changed through the API (messages, titles, sounds, teleporting, health, flight, blocks,
+  time, spawn, ...).
 
-How To (Pull Request)
+Not yet:
+
+* Vanilla world generation, the Nether and the End, entities other than players (mobs,
+  dropped items, projectiles), damage and survival mechanics, containers and crafting,
+  redstone, fluids and block physics, block entities.
+* Plugin API: item stacks and inventories, offline players, entities other than players,
+  block data, scoreboards, boss bars, creating worlds, registry and tag lifecycle events,
+  `/reload`.
+  Methods that are not implemented throw an `UnsupportedOperationException` that names
+  them.
+
+Layout
 ------
-See [Contributing](CONTRIBUTING.md)
 
-Old Versions (1.21.3 and below)
-------
-For branches of versions 1.8-1.21.3, please see our [archive repository](https://github.com/PaperMC/Paper-archive).
+| Path | What |
+| --- | --- |
+| `crates/paper-nbt` | NBT reading and writing, SNBT, modified UTF-8 |
+| `crates/paper-protocol` | packet framing, compression, encryption, text components, packets |
+| `crates/paper-data` | block, item, registry and tag tables for 26.3 (built from `data/26.3`) |
+| `crates/paper-bridge` | the wire format shared with the plugin host |
+| `crates/paper-server` | the server: networking, tick loop, players, worlds, storage, plugin bridge |
+| `plugin-host/` | the plugin host (Java), plus two small test plugins |
+| `data/26.3` | the version data tables, see its README |
+| `docs/` | [architecture](docs/architecture.md) and the [plugin bridge](docs/plugin-bridge.md) |
 
-Support Us
-------
-First of all, thank you for considering helping out, we really appreciate that!
+The Java sources of upstream Paper (`paper-api`, `paper-server`, ...) are still in the tree as
+the reference for the port; the plugin host builds against the published Paper API.
 
-PaperMC has various recurring expenses, mostly related to infrastructure. Paper uses [Open Collective](https://opencollective.com/) via the [Open Source Collective fiscal host](https://opencollective.com/opensource) to manage expenses. Open Collective allows us to be extremely transparent, so you can always see how your donations are used. You can read more about financially supporting PaperMC [on our website](https://papermc.io/sponsors).
+Testing
+-------
 
-You can find our collective [here](https://opencollective.com/papermc), or you can donate via GitHub Sponsors [here](https://github.com/sponsors/PaperMC), which will also go towards the collective.
+```bash
+cargo test
+```
 
-Special Thanks To:
--------------
+The tests include protocol clients that join a real server over TCP. The Java plugin test
+(`crates/paper-server/tests/java_plugins.rs`) runs the real plugin host with the two test
+plugins when Java 25 and the built jars are available (run `mvn package` in `plugin-host/`
+first, and set `PAPER_RS_TEST_JAVA` if Java 25 is not found automatically); otherwise it
+skips itself.
 
-[![CI powered by namespace badge](https://assets.papermc.io/sponsors/namespace-oss-badge.svg)](https://namespace.so/github-actions/?utm_source=oss&utm_campaign=papermc)
+License
+-------
 
-[![YourKit-Logo](https://www.yourkit.com/images/yklogo.png)](https://www.yourkit.com/)
-
-[YourKit](https://www.yourkit.com/), makers of the outstanding java profiler, support open source projects of all kinds with their full featured [Java](https://www.yourkit.com/java/profiler) and [.NET](https://www.yourkit.com/.net/profiler) application profilers. We thank them for granting Paper an OSS license so that we can make our software the best it can be.
-
-All our sponsors!  
-[![Sponsor Image](https://raw.githubusercontent.com/PaperMC/papermc.io/data/sponsors.png)](https://papermc.io/sponsors)
+Like Paper, this project is licensed under the GPLv3; see [LICENSE.md](LICENSE.md).
