@@ -72,6 +72,10 @@ public final class Host implements Bridge.Handler {
 
     @Override
     public Object call(final String method, final Map<String, Object> args) throws Exception {
+        if (this.server != null) {
+            // The server ran in between: cached entity states are stale.
+            this.server.advanceEpoch();
+        }
         final Object result = switch (method) {
             case "host.load" -> this.load();
             case "host.post_world" -> this.postWorld();

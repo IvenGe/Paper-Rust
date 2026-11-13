@@ -19,9 +19,9 @@ paper-server     the server itself, and the `paper` binary
 | Module | Responsibility |
 | --- | --- |
 | `net` | the listener and one task per connection: handshake, status, login (authentication, encryption, compression), configuration; then a reader and a writer per player |
-| `server` | the main thread: the tick loop, players (`join`, `handlers`, `view`, `player`), chat, commands, player data |
+| `server` | the main thread: the tick loop, players (`join`, `handlers`, `view`, `player`), chat, commands, player data, scoreboards (`scoreboard`), the name cache (`usercache`) |
 | `world` | chunk storage, the chunk pipeline, generators, lighting, Anvil storage, block updates (fluids, redstone, block physics) and scheduled ticks |
-| `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use |
+| `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use (`api`, and `inventory`, `entity`, `scoreboard`, `offline` for those areas), `/reload` |
 | `config`, `access`, `logging` | `server.properties` and `config/paper-rs.toml`, ops/whitelist/bans, the console log |
 
 ## Threads
@@ -93,7 +93,9 @@ block update.
   and biomes, light arrays, heightmaps and block entities. Oversized chunks go to `.mcc`
   files, as in vanilla.
 * `<world>/level.dat`: seed, generator, spawn, time.
-* `<world>/playerdata/<uuid>.dat`: position, game mode, health, food, inventory, equipment.
+* `<world>/playerdata/<uuid>.dat`: position, game mode, health, food, inventory, equipment,
+  the ender chest, and Bukkit's and Paper's play times (`bukkit.firstPlayed`, `Paper.LastLogin`, ...).
+* `usercache.json` (in the server directory): names and UUIDs of players who joined, as vanilla keeps it.
 
 Loading is part of the load-or-generate job on the workers. Every write goes through the
 chunk I/O thread. Until a chunk or player file is written it stays in a pending table that
