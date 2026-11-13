@@ -8,7 +8,7 @@
 
 pub mod terrain;
 
-use crate::biome::{fuzzy_quart, Biomes};
+use crate::biome::Biomes;
 use crate::blocks::BlockFlags;
 use crate::chunk::ProtoChunk;
 use crate::data::{parse_block_state, DataReader, JsonExt};
@@ -19,7 +19,6 @@ use crate::random::{PositionalRandom, Random};
 use crate::router::{ChunkRouter, SurfaceEstimator};
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A y coordinate relative to the generation range (`VerticalAnchor`).
@@ -224,26 +223,38 @@ pub struct SurfaceSystem {
 /// computed directly from the climate.
 pub struct BiomeLookup<'g> {
     gen: &'g crate::WorldGenerator,
-    neighbours: HashMap<(i32, i32, i32), u8>,
+    neighbours: crate::math::FxMap<(i32, i32, i32), u8>,
+    climate: Option<crate::router::ClimateSampler<'g>>,
+    zoom: crate::biome::FuzzyZoom,
 }
 
 impl<'g> BiomeLookup<'g> {
     pub fn new(gen: &'g crate::WorldGenerator) -> Self {
-        Self { gen, neighbours: HashMap::new() }
+        Self { gen, neighbours: Default::default(), climate: None, zoom: crate::biome::FuzzyZoom::new(gen.biome_zoom_seed, gen.min_y, gen.height) }
+    }
+
+    /// Whether the fuzzy lookup of every block in the column stays inside the chunk.
+    pub fn interior(x: i32, z: i32) -> bool {
+        (2..=13).contains(&(x & 15)) && (2..=13).contains(&(z & 15))
     }
 
     pub fn quart(&mut self, chunk: &ProtoChunk, qx: i32, qy: i32, qz: i32) -> u8 {
         if qx >> 2 == chunk.chunk_x && qz >> 2 == chunk.chunk_z {
             return chunk.biome(qx, qy, qz);
         }
+        if let Some(b) = self.neighbours.get(&(qx, qy, qz)) {
+            return *b;
+        }
         let gen = self.gen;
-        *self.neighbours.entry((qx, qy, qz)).or_insert_with(|| gen.biome_at_quart(qx, qy, qz))
+        let climate = self.climate.get_or_insert_with(|| gen.climate_sampler());
+        let b = gen.biome_at_quart_with(climate, qx, qy, qz);
+        self.neighbours.insert((qx, qy, qz), b);
+        b
     }
 
     /// The biome a block uses (vanilla's fuzzy `BiomeManager.getBiome`).
     pub fn block(&mut self, chunk: &ProtoChunk, x: i32, y: i32, z: i32) -> u8 {
-        let g = self.gen;
-        let (qx, qy, qz) = fuzzy_quart(g.biome_zoom_seed, x, y, z, g.min_y, g.height);
+        let (qx, qy, qz) = self.zoom.quart(x, y, z);
         self.quart(chunk, qx, qy, qz)
     }
 }
@@ -253,19 +264,21 @@ struct VeinState<'a> {
     router: ChunkRouter<'a>,
     stack: &'a crate::density::SeededStack,
     volume: DensityVolume,
-    buffers: HashMap<usize, Vec<f32>>,
+    buffers: Vec<Option<Vec<f32>>>,
 }
 
 impl VeinState<'_> {
     fn value(&mut self, function: usize, x: i32, y: i32, z: i32) -> Option<f32> {
         let index = self.volume.index_of(x, y, z)?;
-        let root = self.stack.root(function);
-        if !self.buffers.contains_key(&function) {
-            let mut buf = vec![0.0f32; self.volume.size()];
-            self.router.sample_volume(root, &mut buf, &self.volume);
-            self.buffers.insert(function, buf);
+        if self.buffers.len() <= function {
+            self.buffers.resize(function + 1, None);
         }
-        Some(self.buffers[&function][index])
+        if self.buffers[function].is_none() {
+            let mut buf = vec![0.0f32; self.volume.size()];
+            self.router.sample_volume(self.stack.root(function), &mut buf, &self.volume);
+            self.buffers[function] = Some(buf);
+        }
+        self.buffers[function].as_ref().map(|b| b[index])
     }
 
     fn point(&mut self, function: usize, x: i32, y: i32, z: i32) -> f32 {
@@ -297,6 +310,10 @@ pub struct RuleContext<'a> {
     surface_corners: [i32; 4],
     surface_min_y: i32,
     veins: Option<VeinState<'a>>,
+    /// 2D noise threshold values of the current column, per noise (column id, value).
+    thresholds: Vec<(i64, f64)>,
+    /// Biomes present in the chunk itself (bit set over network ids).
+    own_biomes: u128,
 }
 
 impl<'a> RuleContext<'a> {
@@ -310,7 +327,7 @@ impl<'a> RuleContext<'a> {
                 router: ChunkRouter::terrain(stack),
                 stack,
                 volume: DensityVolume::blocks(16, (max_y - min_y).max(0) as usize, 16, chunk.start_x(), min_y, chunk.start_z()),
-                buffers: HashMap::new(),
+                buffers: Vec::new(),
             }
         });
         Self {
@@ -335,7 +352,24 @@ impl<'a> RuleContext<'a> {
             surface_corners: [0; 4],
             surface_min_y: 0,
             veins,
+            thresholds: vec![(i64::MIN, 0.0); system.noises.len()],
+            own_biomes: chunk.biomes.iter().fold(0u128, |m, b| m | 1u128 << b),
         }
+    }
+
+    /// A context for restoring top materials under carved blocks: no ore veins.
+    pub fn for_carver(gen: &'a crate::WorldGenerator, system: &'a SurfaceSystem, chunk: &ProtoChunk) -> Self {
+        let mut c = Self::new(gen, system, chunk);
+        c.veins = None;
+        c
+    }
+
+    /// `CarvingContext.topMaterial`: the material rule result for a single block with stone
+    /// depth 1 above and below.
+    pub fn top_material(&mut self, chunk: &ProtoChunk, estimator: &mut SurfaceEstimator, x: i32, y: i32, z: i32, under_fluid: bool) -> Option<u32> {
+        self.init_horizontal(x, z);
+        self.init_vertical(1, 1, y, if under_fluid { y + 1 } else { i32::MIN });
+        self.apply(&self.system.rule, chunk, estimator)
     }
 
     fn init_horizontal(&mut self, x: i32, z: i32) {
@@ -416,10 +450,22 @@ impl<'a> RuleContext<'a> {
 
     fn test(&mut self, c: &Condition, chunk: &ProtoChunk, estimator: &mut SurfaceEstimator) -> bool {
         match c {
-            Condition::Biome(mask) => mask & (1u128 << self.biome(chunk)) != 0,
+            Condition::Biome(mask) => {
+                if self.biome.is_none() && mask & self.own_biomes == 0 && BiomeLookup::interior(self.x, self.z) {
+                    return false;
+                }
+                mask & (1u128 << self.biome(chunk)) != 0
+            }
             Condition::NoiseThreshold { noise, min, max, is_3d } => {
-                let y = if *is_3d { self.y as f64 } else { 0.0 };
-                let v = self.system.noises[*noise].get(self.x as f64, y, self.z as f64) as f64;
+                let v = if *is_3d {
+                    self.system.noises[*noise].get(self.x as f64, self.y as f64, self.z as f64) as f64
+                } else if self.thresholds[*noise].0 == self.column {
+                    self.thresholds[*noise].1
+                } else {
+                    let v = self.system.noises[*noise].get(self.x as f64, 0.0, self.z as f64) as f64;
+                    self.thresholds[*noise] = (self.column, v);
+                    v
+                };
                 v >= *min && v <= *max
             }
             Condition::VerticalGradient { random, true_at, false_at } => {

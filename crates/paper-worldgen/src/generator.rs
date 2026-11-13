@@ -67,7 +67,7 @@ pub struct WorldGenerator {
     pub(crate) aquifers_enabled: bool,
     pub(crate) legacy_random: bool,
     pub(crate) flags: BlockFlags,
-    terrain: SeededStack,
+    pub(crate) terrain: SeededStack,
     terrain_fns: TerrainFunctions,
     surface_stack: SeededStack,
     pub(crate) climate: SeededStack,
@@ -81,6 +81,7 @@ pub struct WorldGenerator {
     /// `BiomeManager`'s obfuscated seed for the fuzzy biome lookup.
     pub(crate) biome_zoom_seed: i64,
     pub(crate) surface: SurfaceSystem,
+    pub(crate) carvers: crate::carver::Carvers,
 }
 
 impl WorldGenerator {
@@ -180,6 +181,7 @@ impl WorldGenerator {
             eroded_badlands,
             frozen_oceans,
         };
+        let carvers = crate::carver::Carvers::load(data, &biomes, &possible)?;
 
         Ok(Self {
             dimension,
@@ -207,6 +209,7 @@ impl WorldGenerator {
             biome_source,
             biome_zoom_seed: obfuscate_seed(seed),
             surface,
+            carvers,
         })
     }
 
@@ -246,13 +249,27 @@ impl WorldGenerator {
         let mut chunk = ProtoChunk::new(chunk_x, chunk_z, self.min_y, self.height);
         let mut estimator = self.surface_estimator();
         self.generate_biomes(&mut chunk);
-        if last >= Stage::Noise {
-            self.generate_noise(&mut chunk, &mut estimator);
+        if last < Stage::Noise {
+            return chunk;
         }
-        if last >= Stage::Surface {
-            crate::surface::build_surface(self, &self.surface, &mut chunk, &mut estimator);
+        let mut aquifer = self.generate_noise(&mut chunk, &mut estimator);
+        if last < Stage::Surface {
+            return chunk;
         }
+        crate::surface::build_surface(self, &self.surface, &mut chunk, &mut estimator);
+        if last < Stage::Carvers {
+            return chunk;
+        }
+        crate::carver::carve(self, &mut chunk, aquifer.as_mut(), &mut estimator);
+        chunk.prime_heightmaps(&self.flags);
+        chunk.snapshot_wg_heightmaps();
         chunk
+    }
+
+    /// Runs the terrain stages (biomes, noise, surface, carvers) of one chunk. The result
+    /// does not depend on any other chunk.
+    pub fn generate_terrain(&self, chunk_x: i32, chunk_z: i32) -> ProtoChunk {
+        self.generate_until(chunk_x, chunk_z, Stage::Carvers)
     }
 
     /// The biome stage: one biome per 4x4x4 cell.
@@ -285,10 +302,14 @@ impl WorldGenerator {
     /// The biome at a quart position, computed directly from the climate (vanilla's
     /// "uncached" noise biome). Used for cells of chunks that are not generated yet.
     pub fn biome_at_quart(&self, qx: i32, qy: i32, qz: i32) -> u8 {
-        let mut climate = ClimateSampler::new(&self.climate);
+        self.biome_at_quart_with(&mut ClimateSampler::new(&self.climate), qx, qy, qz)
+    }
+
+    /// [`WorldGenerator::biome_at_quart`] with a caller-provided climate sampler.
+    pub fn biome_at_quart_with(&self, climate: &mut ClimateSampler, qx: i32, qy: i32, qz: i32) -> u8 {
         let bottom = self.min_y >> 2;
         let top = bottom + (self.height >> 2) - 1;
-        self.biome_source.biome(qx, qy.clamp(bottom, top), qz, &mut climate)
+        self.biome_source.biome(qx, qy.clamp(bottom, top), qz, climate)
     }
 
     /// A sampler of the six climate parameters (the multi-noise biome inputs).
@@ -301,8 +322,9 @@ impl WorldGenerator {
         &self.biomes.get(id).name
     }
 
-    /// The noise stage: terrain shape, aquifers and the default fluid.
-    pub fn generate_noise(&self, chunk: &mut ProtoChunk, estimator: &mut SurfaceEstimator) {
+    /// The noise stage: terrain shape, aquifers and the default fluid. Returns the aquifer,
+    /// which the carver stage reuses.
+    pub(crate) fn generate_noise(&self, chunk: &mut ProtoChunk, estimator: &mut SurfaceEstimator) -> Option<Aquifer> {
         let volume = DensityVolume::blocks(16, self.gen_height as usize, 16, chunk.start_x(), self.gen_min_y, chunk.start_z());
         let mut router = ChunkRouter::terrain(&self.terrain);
         let mut density = vec![0.0f32; volume.size()];
@@ -326,5 +348,6 @@ impl WorldGenerator {
                 }
             }
         }
+        aquifer
     }
 }

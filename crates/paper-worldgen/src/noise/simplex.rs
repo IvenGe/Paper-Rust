@@ -3,6 +3,7 @@
 //! Derived from `pumpkin-util/src/noise/simplex.rs` of Pumpkin
 //! (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0.
 
+use crate::math::floor_i32;
 use crate::random::{LegacyRandom, Random};
 
 const GRADIENTS: [[f64; 3]; 16] = [
@@ -75,8 +76,8 @@ impl SimplexNoise {
 
     pub fn get_2d(&self, x: f64, y: f64) -> f64 {
         let d = (x + y) * F2;
-        let i = (x + d).floor() as i32;
-        let j = (y + d).floor() as i32;
+        let i = floor_i32(x + d);
+        let j = floor_i32(y + d);
         let e = i.wrapping_add(j) as f64 * G2;
         let h = x - (i as f64 - e);
         let k = y - (j as f64 - e);
@@ -99,9 +100,9 @@ impl SimplexNoise {
     #[allow(clippy::many_single_char_names)]
     pub fn get_3d(&self, x: f64, y: f64, z: f64) -> f64 {
         let e = (x + y + z) * 0.3333333333333333;
-        let i = (x + e).floor() as i32;
-        let j = (y + e).floor() as i32;
-        let k = (z + e).floor() as i32;
+        let i = floor_i32(x + e);
+        let j = floor_i32(y + e);
+        let k = floor_i32(z + e);
         let g = i.wrapping_add(j).wrapping_add(k) as f64 * 0.16666666666666666;
         let n = x - (i as f64 - g);
         let o = y - (j as f64 - g);

@@ -98,6 +98,24 @@ fn surface_end() {
     check(Dimension::End, 0, 7, 4, Stage::Surface, "end_surface_no_blend_no_beard_7_4", 0);
 }
 
+#[test]
+fn carvers_overworld() {
+    check(Dimension::Overworld, 0, 0, 0, Stage::Carvers, "no_blend_no_beard_carvers_0_0", 0);
+}
+
+/// Like the surface dump of the same chunk, this one differs from vanilla's stage hashes
+/// in a few border blocks; Pumpkin shows the same 9 differences.
+#[test]
+fn carvers_overworld_border_dump() {
+    check(Dimension::Overworld, 0, 7, 4, Stage::Carvers, "no_blend_no_beard_carvers_7_4", 9);
+}
+
+#[test]
+fn carvers_nether() {
+    check(Dimension::Nether, 0, 0, 0, Stage::Carvers, "nether_carvers_no_blend_no_beard_0_0", 0);
+    check(Dimension::Nether, 0, 7, 4, Stage::Carvers, "nether_carvers_no_blend_no_beard_7_4", 0);
+}
+
 /// `[{x, z, data: [[quart x, quart y, quart z, biome network id], ...]}, ...]`
 fn biome_points(name: &str, dimension: Dimension, seed: i64) {
     let Some(g) = generator(dimension, seed) else { return };

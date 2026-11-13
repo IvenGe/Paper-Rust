@@ -8,7 +8,7 @@ use crate::density::chunk::{build_chunk_stack, sample, sample_volume, Buf, Chunk
 use crate::density::stack::{Dependent, ProtoKind};
 use crate::density::SeededStack;
 use crate::noise::DensityVolume;
-use std::collections::HashMap;
+use crate::math::FxMap;
 
 /// A chunk-level evaluator over a seeded stack.
 pub struct ChunkRouter<'a> {
@@ -46,12 +46,12 @@ pub struct SurfaceEstimator<'a> {
     router: ChunkRouter<'a>,
     root: usize,
     min_y: i32,
-    cache: HashMap<(i32, i32), i32>,
+    cache: FxMap<(i32, i32), i32>,
 }
 
 impl<'a> SurfaceEstimator<'a> {
     pub fn new(stack: &'a SeededStack, min_y: i32) -> Self {
-        Self { router: ChunkRouter::flat(stack), root: stack.root(0), min_y, cache: HashMap::new() }
+        Self { router: ChunkRouter::flat(stack), root: stack.root(0), min_y, cache: FxMap::default() }
     }
 
     pub fn estimate_height(&mut self, x: i32, z: i32) -> i32 {

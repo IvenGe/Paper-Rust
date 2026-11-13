@@ -94,6 +94,21 @@ fn overworld_surface() {
 }
 
 #[test]
+fn overworld_carvers() {
+    check_stage("stage_hashes", Dimension::Overworld, Stage::Carvers, "minecraft:carvers");
+}
+
+#[test]
+fn nether_carvers() {
+    check_stage("nether_stage_hashes", Dimension::Nether, Stage::Carvers, "minecraft:carvers");
+}
+
+#[test]
+fn end_carvers() {
+    check_stage("end_stage_hashes", Dimension::End, Stage::Carvers, "minecraft:carvers");
+}
+
+#[test]
 fn nether_noise() {
     check_stage("nether_stage_hashes", Dimension::Nether, Stage::Noise, "minecraft:noise");
 }

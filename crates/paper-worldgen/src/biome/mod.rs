@@ -378,31 +378,71 @@ fn corner_offset(seed: i64, x: i32, y: i32, z: i32) -> [f64; 3] {
 /// `BiomeManager.getBiome`'s fuzzy lookup: the quart position whose biome a block uses.
 /// The quart y is clamped to the dimension.
 pub fn fuzzy_quart(seed: i64, x: i32, y: i32, z: i32, min_y: i32, height: i32) -> (i32, i32, i32) {
-    let (ox, oy, oz) = (x - 2, y - 2, z - 2);
-    let (bx, by, bz) = (ox >> 2, oy >> 2, oz >> 2);
-    let fx = (ox & 3) as f64 * 0.25;
-    let fy = (oy & 3) as f64 * 0.25;
-    let fz = (oz & 3) as f64 * 0.25;
-    let mut best = 0;
-    let mut best_score = f64::INFINITY;
-    for p in 0..8 {
-        let cx = if p & 4 == 0 { bx } else { bx + 1 };
-        let cy = if p & 2 == 0 { by } else { by + 1 };
-        let cz = if p & 1 == 0 { bz } else { bz + 1 };
-        let sx = if p & 4 == 0 { fx } else { fx - 1.0 };
-        let sy = if p & 2 == 0 { fy } else { fy - 1.0 };
-        let sz = if p & 1 == 0 { fz } else { fz - 1.0 };
-        let o = corner_offset(seed, cx, cy, cz);
-        let score = (sz + o[2]) * (sz + o[2]) + (sy + o[1]) * (sy + o[1]) + (sx + o[0]) * (sx + o[0]);
-        if best_score > score {
-            best_score = score;
-            best = p;
-        }
+    FuzzyZoom::new(seed, min_y, height).quart(x, y, z)
+}
+
+/// The fuzzy lookup with the corner offsets of the last cell kept (columns are scanned
+/// top-down, so consecutive blocks mostly share a cell or its upper neighbour).
+pub struct FuzzyZoom {
+    seed: i64,
+    min_y: i32,
+    height: i32,
+    last: Option<((i32, i32, i32), [[f64; 3]; 8])>,
+}
+
+impl FuzzyZoom {
+    pub fn new(seed: i64, min_y: i32, height: i32) -> Self {
+        Self { seed, min_y, height, last: None }
     }
-    let qx = if best & 4 == 0 { bx } else { bx + 1 };
-    let qy = if best & 2 == 0 { by } else { by + 1 };
-    let qz = if best & 1 == 0 { bz } else { bz + 1 };
-    let bottom = min_y >> 2;
-    let top = bottom + (height >> 2) - 1;
-    (qx, qy.clamp(bottom, top), qz)
+
+    fn offsets(&mut self, bx: i32, by: i32, bz: i32) -> [[f64; 3]; 8] {
+        let seed = self.seed;
+        let mut out = [[0.0; 3]; 8];
+        match self.last {
+            Some((key, prev)) if key == (bx, by, bz) => return prev,
+            Some((key, prev)) if key == (bx, by + 1, bz) => {
+                for (p, o) in out.iter_mut().enumerate() {
+                    *o = if p & 2 != 0 {
+                        prev[p & !2]
+                    } else {
+                        corner_offset(seed, if p & 4 == 0 { bx } else { bx + 1 }, by, if p & 1 == 0 { bz } else { bz + 1 })
+                    };
+                }
+            }
+            _ => {
+                for (p, o) in out.iter_mut().enumerate() {
+                    *o = corner_offset(seed, if p & 4 == 0 { bx } else { bx + 1 }, if p & 2 == 0 { by } else { by + 1 }, if p & 1 == 0 { bz } else { bz + 1 });
+                }
+            }
+        }
+        self.last = Some(((bx, by, bz), out));
+        out
+    }
+
+    pub fn quart(&mut self, x: i32, y: i32, z: i32) -> (i32, i32, i32) {
+        let (ox, oy, oz) = (x - 2, y - 2, z - 2);
+        let (bx, by, bz) = (ox >> 2, oy >> 2, oz >> 2);
+        let fx = (ox & 3) as f64 * 0.25;
+        let fy = (oy & 3) as f64 * 0.25;
+        let fz = (oz & 3) as f64 * 0.25;
+        let offsets = self.offsets(bx, by, bz);
+        let mut best = 0;
+        let mut best_score = f64::INFINITY;
+        for (p, o) in offsets.iter().enumerate() {
+            let sx = if p & 4 == 0 { fx } else { fx - 1.0 };
+            let sy = if p & 2 == 0 { fy } else { fy - 1.0 };
+            let sz = if p & 1 == 0 { fz } else { fz - 1.0 };
+            let score = (sz + o[2]) * (sz + o[2]) + (sy + o[1]) * (sy + o[1]) + (sx + o[0]) * (sx + o[0]);
+            if best_score > score {
+                best_score = score;
+                best = p;
+            }
+        }
+        let qx = if best & 4 == 0 { bx } else { bx + 1 };
+        let qy = if best & 2 == 0 { by } else { by + 1 };
+        let qz = if best & 1 == 0 { bz } else { bz + 1 };
+        let bottom = self.min_y >> 2;
+        let top = bottom + (self.height >> 2) - 1;
+        (qx, qy.clamp(bottom, top), qz)
+    }
 }

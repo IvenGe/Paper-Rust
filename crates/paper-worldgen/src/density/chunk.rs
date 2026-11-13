@@ -19,14 +19,18 @@ thread_local! {
     static POOL: RefCell<Vec<Vec<f32>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// A temporary `f32` buffer borrowed from a thread-local pool.
+/// A temporary `f32` buffer borrowed from a thread-local pool. Its contents are
+/// unspecified: every user overwrites it completely before reading.
 pub struct Buf(Vec<f32>);
 
 impl Buf {
     pub fn new(len: usize) -> Self {
         let mut v = POOL.with(|p| p.borrow_mut().pop()).unwrap_or_default();
-        v.clear();
-        v.resize(len, 0.0);
+        if v.len() >= len {
+            v.truncate(len);
+        } else {
+            v.resize(len, 0.0);
+        }
         Buf(v)
     }
 
@@ -201,7 +205,8 @@ pub fn sample_volume(stack: &mut [ChunkComp], buffer: &mut [f32], volume: &Densi
         ChunkComp::Proto(p) => sample_volume_proto(p, rest, buffer, volume),
         ChunkComp::Cache(c) => {
             if c.volume.as_ref() != Some(volume) {
-                let mut cached = vec![0.0f32; volume.size()];
+                let mut cached = std::mem::take(&mut c.buffer);
+                cached.resize(volume.size(), 0.0);
                 sample_volume(&mut rest[..=c.input], &mut cached, volume);
                 c.volume = Some(*volume);
                 c.buffer = cached;

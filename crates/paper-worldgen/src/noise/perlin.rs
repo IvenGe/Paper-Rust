@@ -6,7 +6,7 @@
 //! (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0.
 
 use super::volume::DensityVolume;
-use crate::math::{lerp3, smoothstep};
+use crate::math::{floor_i32, lerp3, smoothstep};
 use crate::random::{PositionalRandom, Random, RandomSource};
 
 const GRADIENTS: [[f32; 3]; 16] = [
@@ -193,9 +193,9 @@ impl Noise for PerlinNoise {
         let x = wrap(x) + self.offset_x;
         let y = wrap(y) + self.offset_y;
         let z = wrap(z) + self.offset_z;
-        let fx = x.floor() as i32;
-        let fy = y.floor() as i32;
-        let fz = z.floor() as i32;
+        let fx = floor_i32(x);
+        let fy = floor_i32(y);
+        let fz = floor_i32(z);
         let rx = (x - fx as f64) as f32;
         let ry = (y - fy as f64) as f32;
         let rz = (z - fz as f64) as f32;
@@ -206,18 +206,18 @@ impl Noise for PerlinNoise {
         let mut c = Corners::default();
         if y_scale == 0.0 && volume.size_y > 1 {
             let y = self.offset_y;
-            let fy = y.floor() as i32;
+            let fy = floor_i32(y);
             let ry = (y - fy as f64) as f32;
             let ay = smoothstep(ry);
             let mut index = 0;
             for iz in 0..volume.size_z {
                 let z = wrap(volume.block_z(iz) as f64 * xz_scale) + self.offset_z;
-                let fz = z.floor() as i32;
+                let fz = floor_i32(z);
                 let rz = (z - fz as f64) as f32;
                 let az = smoothstep(rz);
                 for ix in 0..volume.size_x {
                     let x = wrap(volume.block_x(ix) as f64 * xz_scale) + self.offset_x;
-                    let fx = x.floor() as i32;
+                    let fx = floor_i32(x);
                     let rx = (x - fx as f64) as f32;
                     let x0 = self.p(fx);
                     let x1 = self.p(fx + 1);
@@ -235,12 +235,12 @@ impl Noise for PerlinNoise {
         let mut index = 0;
         for iz in 0..volume.size_z {
             let z = wrap(volume.block_z(iz) as f64 * xz_scale) + self.offset_z;
-            let fz = z.floor() as i32;
+            let fz = floor_i32(z);
             let rz = (z - fz as f64) as f32;
             let az = smoothstep(rz);
             for ix in 0..volume.size_x {
                 let x = wrap(volume.block_x(ix) as f64 * xz_scale) + self.offset_x;
-                let fx = x.floor() as i32;
+                let fx = floor_i32(x);
                 let rx = (x - fx as f64) as f32;
                 let x0 = self.p(fx);
                 let x1 = self.p(fx + 1);
@@ -248,7 +248,7 @@ impl Noise for PerlinNoise {
                 let mut last_fy = i32::MIN;
                 for iy in 0..volume.size_y {
                     let y = wrap(volume.block_y(iy) as f64 * y_scale) + self.offset_y;
-                    let fy = y.floor() as i32;
+                    let fy = floor_i32(y);
                     let ry = (y - fy as f64) as f32;
                     let ay = smoothstep(ry);
                     if last_fy != fy {
@@ -287,9 +287,9 @@ impl Noise for SmearedPerlinNoise {
         let x = wrap(x) + self.noise.offset_x;
         let y = wrap(original_y) + self.noise.offset_y;
         let z = wrap(z) + self.noise.offset_z;
-        let fx = x.floor() as i32;
-        let fy = y.floor() as i32;
-        let fz = z.floor() as i32;
+        let fx = floor_i32(x);
+        let fy = floor_i32(y);
+        let fz = floor_i32(z);
         let rx = (x - fx as f64) as f32;
         let ry = y - fy as f64;
         let rz = (z - fz as f64) as f32;
@@ -302,12 +302,12 @@ impl Noise for SmearedPerlinNoise {
         let mut index = 0;
         for iz in 0..volume.size_z {
             let z = wrap(volume.block_z(iz) as f64 * xz_scale) + self.noise.offset_z;
-            let fz = z.floor() as i32;
+            let fz = floor_i32(z);
             let rz = (z - fz as f64) as f32;
             let az = smoothstep(rz);
             for ix in 0..volume.size_x {
                 let x = wrap(volume.block_x(ix) as f64 * xz_scale) + self.noise.offset_x;
-                let fx = x.floor() as i32;
+                let fx = floor_i32(x);
                 let rx = (x - fx as f64) as f32;
                 let x0 = self.noise.p(fx);
                 let x1 = self.noise.p(fx + 1);
@@ -316,7 +316,7 @@ impl Noise for SmearedPerlinNoise {
                 for iy in 0..volume.size_y {
                     let original_y = volume.block_y(iy) as f64 * y_scale;
                     let y = wrap(original_y) + self.noise.offset_y;
-                    let fy = y.floor() as i32;
+                    let fy = floor_i32(y);
                     let ry = y - fy as f64;
                     let ay = smoothstep(ry as f32);
                     if last_fy != fy {

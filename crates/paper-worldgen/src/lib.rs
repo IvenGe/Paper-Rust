@@ -20,12 +20,14 @@
 pub mod aquifer;
 pub mod biome;
 pub mod blocks;
+pub mod carver;
 pub mod chunk;
 pub mod data;
 pub mod density;
 mod generator;
 pub mod math;
 pub mod noise;
+pub mod providers;
 pub mod random;
 pub mod router;
 pub mod surface;

@@ -101,7 +101,19 @@ pub fn floor_mod(a: i32, b: i32) -> i32 {
 /// `Mth.floor(double)`.
 #[inline]
 pub fn floor(v: f64) -> i32 {
-    v.floor() as i32
+    floor_i32(v)
+}
+
+/// `v.floor() as i32` without a libm call (the default x86-64 target has no `roundsd`).
+/// Saturates like the cast, and maps NaN to 0.
+#[inline(always)]
+pub fn floor_i32(v: f64) -> i32 {
+    let i = v as i32;
+    if (i as f64) > v {
+        i.saturating_sub(1)
+    } else {
+        i
+    }
 }
 
 /// `Math.round(double)`: rounds half up.
@@ -115,6 +127,54 @@ pub fn java_round(v: f64) -> i64 {
 pub fn java_round_f32(v: f32) -> i32 {
     (v + 0.5).floor() as i32
 }
+
+/// A fast non-cryptographic hasher for small integer keys (the "Fx" hash).
+#[derive(Default, Clone, Copy)]
+pub struct FxHasher(u64);
+
+const FX_SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+impl FxHasher {
+    #[inline]
+    fn add(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(FX_SEED);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.add(*b as u64);
+        }
+    }
+    #[inline]
+    fn write_u32(&mut self, v: u32) {
+        self.add(v as u64);
+    }
+    #[inline]
+    fn write_i32(&mut self, v: i32) {
+        self.add(v as u32 as u64);
+    }
+    #[inline]
+    fn write_u64(&mut self, v: u64) {
+        self.add(v);
+    }
+    #[inline]
+    fn write_i64(&mut self, v: i64) {
+        self.add(v as u64);
+    }
+    #[inline]
+    fn write_usize(&mut self, v: usize) {
+        self.add(v as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// A `HashMap` with [`FxHasher`].
+pub type FxMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<FxHasher>>;
 
 /// The sine table of `Mth.sin`.
 fn sin_table() -> &'static [f32; 65536] {
