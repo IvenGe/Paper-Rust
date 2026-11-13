@@ -33,6 +33,7 @@ pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
 mod spawners;
+pub mod workstations;
 pub mod survival;
 pub mod usercache;
 mod view;

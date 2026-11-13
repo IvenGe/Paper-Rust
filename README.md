@@ -100,7 +100,10 @@ What works:
   that smelt over time, hoppers, droppers and dispensers; vanilla's click rules
   (shift-clicks, drags, number keys). Containers with a loot table (dungeon chests) are
   filled when first opened, reached by a hopper or broken, with vanilla's loot modifiers
-  (counts, random enchantments, enchanting with levels, damage, potions).
+  (counts, random enchantments, enchanting with levels, damage, potions). Enchanting tables
+  offer vanilla's three enchantments from the bookshelves around them for lapis and levels;
+  anvils repair with materials, combine items and enchanted books, rename, add the prior
+  work penalty and wear out.
 * **Redstone with items and entities**: hoppers move items between containers (furnace
   sides included), pick up dropped items and lock when powered; droppers and dispensers
   fire on a rising signal (also from above), droppers into containers in front of them,
@@ -161,7 +164,7 @@ Not yet:
   patches; there is no dragon fight (the End's exit portal is open from the start).
   End gateways do not teleport yet.
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, breeding); enchanting, anvils and brewing are missing. Tripwires,
+  trading, breeding); brewing is missing. Tripwires,
   crafters, observers of entities and brewing stands do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.

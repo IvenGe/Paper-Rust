@@ -212,6 +212,8 @@ impl Server {
                 }
             }
             Serverbound::ContainerClick(p) => self.handle_container_click(id, p),
+            Serverbound::ContainerButtonClick(p) => self.handle_enchant_button(id, p.window_id.0, p.button_id.0),
+            Serverbound::RenameItem(p) => self.handle_rename(id, p.name),
             Serverbound::PickItemFromBlock(p) => self.handle_pick_block(id, p.pos),
             Serverbound::ChangeGameMode(p) => {
                 if player.op_level >= 2 {

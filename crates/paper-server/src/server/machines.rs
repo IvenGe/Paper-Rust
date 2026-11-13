@@ -108,7 +108,7 @@ impl Server {
             }
             ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false }),
             ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true }),
-            ContainerBlock::EnderChest | ContainerBlock::CraftingTable => None,
+            ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => None,
         }
     }
 

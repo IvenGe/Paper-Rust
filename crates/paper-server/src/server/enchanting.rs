@@ -16,6 +16,8 @@ pub struct EnchantmentDef {
     pub id: i32,
     pub max_level: i32,
     pub weight: i32,
+    /// Levels per enchantment level an anvil charges for adding it.
+    pub anvil_cost: i32,
     /// `base` and `per_level_above_first` of the cost bounds.
     pub min_cost: (i32, i32),
     pub max_cost: (i32, i32),
@@ -77,6 +79,7 @@ impl Enchantments {
                     id,
                     max_level: v["max_level"].as_i64().unwrap_or(1) as i32,
                     weight: v["weight"].as_i64().unwrap_or(1) as i32,
+                    anvil_cost: v["anvil_cost"].as_i64().unwrap_or(1) as i32,
                     min_cost: cost("min_cost"),
                     max_cost: cost("max_cost"),
                     supported: item_set(&v["supported_items"]),

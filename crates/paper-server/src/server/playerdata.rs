@@ -42,6 +42,7 @@ pub struct SavedPlayer {
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// Bukkit's `bukkit.firstPlayed`, for offline players in the plugin API.
     pub first_played: Option<i64>,
+    pub enchantment_seed: Option<i32>,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -167,6 +168,7 @@ impl Server {
         c.insert("XpLevel", Tag::Int(player.xp_level));
         c.insert("XpP", Tag::Float(player.xp_progress));
         c.insert("XpTotal", Tag::Int(player.xp_total));
+        c.insert("XpSeed", Tag::Int(player.enchantment_seed));
         c.insert("foodExhaustionLevel", Tag::Float(player.exhaustion));
         c.insert("foodTickTimer", Tag::Int(player.food_timer));
         c.insert("Fire", Tag::Short(player.fire_ticks.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
@@ -293,6 +295,7 @@ impl Server {
                 (pos.len() == 3).then(|| (world, paper_protocol::codec::BlockPos::new(pos[0], pos[1], pos[2])))
             }),
             first_played: c.compound("bukkit").and_then(|b| b.i64("firstPlayed")),
+            enchantment_seed: c.i32("XpSeed"),
         })
     }
 

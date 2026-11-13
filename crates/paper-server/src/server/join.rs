@@ -117,6 +117,7 @@ impl Server {
             crack_stage: -1,
             sleeping: None,
             sleep_ticks: 0,
+            enchantment_seed: rand::random(),
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -142,6 +143,9 @@ impl Server {
             player.effects = saved.effects;
             player.absorption = saved.absorption;
             player.respawn = saved.respawn;
+            if let Some(seed) = saved.enchantment_seed {
+                player.enchantment_seed = seed;
+            }
             player.apply_game_mode_abilities();
             player.flying = saved.flying && player.allow_flight;
         } else {

@@ -23,8 +23,11 @@ pub struct OpenMenu {
     pub window_id: i32,
     pub kind: MenuKind,
     pub state_id: i32,
-    /// Crafting table grid (result first).
+    /// Crafting table grid (result first); the enchanting table's item and lapis; the
+    /// anvil's inputs and result.
     pub craft_grid: Vec<Slot>,
+    /// What an open anvil has worked out.
+    pub anvil: super::workstations::AnvilState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +37,8 @@ pub enum MenuKind {
     EnderChest,
     CraftingTable,
     Furnace { world: usize, pos: BlockPos, recipe_type: &'static str },
+    Enchanting { world: usize, pos: BlockPos },
+    Anvil { world: usize, pos: BlockPos },
     /// A custom inventory made by a plugin (`Bukkit.createInventory`); its slots are kept in
     /// `Server::plugin_data` (see `plugins::inventory`) and clicks go to the plugin host.
     Custom { id: u64 },
@@ -93,6 +98,8 @@ pub enum ContainerBlock {
     Hopper,
     /// Dispensers and droppers (nine slots).
     Dispenser,
+    EnchantingTable,
+    Anvil,
 }
 
 pub fn container_block(state: u32) -> Option<ContainerBlock> {
@@ -106,6 +113,8 @@ pub fn container_block(state: u32) -> Option<ContainerBlock> {
         "minecraft:blast_furnace" => ContainerBlock::Furnace("minecraft:blasting"),
         "minecraft:hopper" => ContainerBlock::Hopper,
         "minecraft:dispenser" | "minecraft:dropper" => ContainerBlock::Dispenser,
+        "minecraft:enchanting_table" => ContainerBlock::EnchantingTable,
+        "minecraft:anvil" | "minecraft:chipped_anvil" | "minecraft:damaged_anvil" => ContainerBlock::Anvil,
         _ => return None,
     })
 }
@@ -363,6 +372,8 @@ impl Server {
             }
             ContainerBlock::EnderChest => (MenuKind::EnderChest, "minecraft:generic_9x3", "container.enderchest"),
             ContainerBlock::CraftingTable => (MenuKind::CraftingTable, "minecraft:crafting", "container.crafting"),
+            ContainerBlock::EnchantingTable => (MenuKind::Enchanting { world, pos }, "minecraft:enchantment", "container.enchant"),
+            ContainerBlock::Anvil => (MenuKind::Anvil { world, pos }, "minecraft:anvil", "container.repair"),
             ContainerBlock::Furnace(recipe_type) => {
                 let (menu, title) = match recipe_type {
                     "minecraft:smoking" => ("minecraft:smoker", "container.smoker"),
@@ -398,16 +409,23 @@ impl Server {
         let Some(player) = self.players.get_mut(&id) else { return false };
         let window_id = player.next_window_id;
         player.next_window_id = player.next_window_id % 100 + 1;
-        let craft_grid = if menu_kind == MenuKind::CraftingTable { vec![Slot::EMPTY; 10] } else { Vec::new() };
-        player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid });
+        let craft_grid = match menu_kind {
+            MenuKind::CraftingTable => vec![Slot::EMPTY; 10],
+            MenuKind::Enchanting { .. } => vec![Slot::EMPTY; 2],
+            MenuKind::Anvil { .. } => vec![Slot::EMPTY; 3],
+            _ => Vec::new(),
+        };
+        player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid, anvil: Default::default() });
         player.conn.send(&play::OpenScreen { window_id: VarInt(window_id), menu_type: VarInt(menu_type(menu_name)), title });
         self.send_menu_contents(id);
         // Lid animation and sound.
         if let MenuKind::Container { world, positions } = &menu_kind {
             self.container_viewers_changed(*world, positions.clone(), true);
         }
-        if let MenuKind::Furnace { world, pos, .. } = menu_kind {
-            self.send_furnace_data(world, pos);
+        match menu_kind {
+            MenuKind::Furnace { world, pos, .. } => self.send_furnace_data(world, pos),
+            MenuKind::Enchanting { .. } => self.update_enchanting_table(id),
+            _ => {}
         }
         true
     }
@@ -438,7 +456,12 @@ impl Server {
         if notify {
             player.conn.send(&play::ContainerClose { window_id: VarInt(menu.window_id) });
         }
-        let leftovers: Vec<Slot> = menu.craft_grid.iter().skip(1).filter(|s| !s.is_empty()).cloned().collect();
+        // What the player put in goes back (not results).
+        let inputs = match menu.kind {
+            MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => &menu.craft_grid[..2],
+            _ => menu.craft_grid.get(1..).unwrap_or(&[]),
+        };
+        let leftovers: Vec<Slot> = inputs.iter().filter(|s| !s.is_empty()).cloned().collect();
         self.return_grid_and_cursor(id, leftovers);
         match &menu.kind {
             MenuKind::Container { world, positions } => self.container_viewers_changed(*world, positions.clone(), false),
@@ -541,6 +564,8 @@ impl Server {
             None => Layout::player_inventory(),
             Some(MenuKind::Container { .. } | MenuKind::EnderChest | MenuKind::Custom { .. }) => Layout::container(size),
             Some(MenuKind::CraftingTable) => Layout::crafting_table(),
+            Some(MenuKind::Enchanting { .. }) => Layout::enchanting(),
+            Some(MenuKind::Anvil { .. }) => Layout::anvil(),
             Some(MenuKind::Furnace { recipe_type, .. }) => Layout::furnace(recipe_type),
         }
     }
@@ -552,7 +577,7 @@ impl Server {
         let mut slots = match &menu.kind {
             MenuKind::Container { world, positions } => positions.iter().flat_map(|p| self.container_items(*world, *p)).collect(),
             MenuKind::EnderChest => player.ender_items.clone(),
-            MenuKind::CraftingTable => menu.craft_grid.clone(),
+            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => menu.craft_grid.clone(),
             MenuKind::Furnace { world, pos, .. } => self.container_items(*world, *pos),
             MenuKind::Custom { id } => self.plugin_data.inventories.get(id).map(|i| i.items.clone()).unwrap_or_default(),
         };
@@ -580,9 +605,10 @@ impl Server {
                 }
             }
             MenuKind::EnderChest => player.ender_items.clone_from_slice(&slots[..27]),
-            MenuKind::CraftingTable => {
+            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => {
                 if let Some(menu) = player.open_menu.as_mut() {
-                    menu.craft_grid.clone_from_slice(&slots[..10]);
+                    let n = menu.craft_grid.len();
+                    menu.craft_grid.clone_from_slice(&slots[..n]);
                 }
             }
             MenuKind::Furnace { world, pos, .. } => self.set_container_items(*world, *pos, &slots[..3]),
@@ -627,6 +653,12 @@ impl Server {
         let Some((kind, mut slots)) = self.menu_slots(id) else { return };
         let layout = Self::menu_layout(kind.as_ref(), slots.len() - 36);
         if click.slot >= 0 && click.slot as usize >= layout.len() {
+            return;
+        }
+        // The anvil's result is only for those who can pay for it.
+        let anvil = matches!(kind, Some(MenuKind::Anvil { .. }));
+        if anvil && click.slot == 2 && !slots[2].is_empty() && !self.may_take_anvil_result(id) {
+            self.send_menu_contents(id);
             return;
         }
         // Clicks on a crafting result are CraftItemEvents; the result is only taken if no
@@ -690,6 +722,13 @@ impl Server {
         }
         if !hashed_matches(&click.carried, &player.carried) {
             player.conn.send(&play::SetCursorItem { item: player.carried.clone() });
+        }
+        // Enchanting tables and anvils work out their offers and results again.
+        match &kind {
+            Some(MenuKind::Enchanting { .. }) if before[..2] != slots[..2] => self.update_enchanting_table(id),
+            Some(MenuKind::Anvil { .. }) if !before[2].is_empty() && slots[2].is_empty() => self.took_anvil_result(id),
+            Some(MenuKind::Anvil { .. }) if before[..2] != slots[..2] => self.update_anvil(id),
+            _ => {}
         }
         // Others looking into the same container see its slots change.
         if let Some(MenuKind::Container { world, positions }) = &kind {

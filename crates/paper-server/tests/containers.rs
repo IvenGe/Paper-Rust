@@ -336,3 +336,137 @@ fn loot_chests_fill_when_opened_and_drop_their_loot_when_broken() {
     assert!(dropped >= 2, "loot dropped: {dropped}");
     server.stop();
 }
+
+/// A stack with a `minecraft:damage` component.
+fn damaged(name: &str, damage: i32) -> Slot {
+    use paper_protocol::codec::Encode;
+    let mut data = Vec::new();
+    VarInt(damage).encode(&mut data);
+    let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:damage").unwrap() as i32;
+    let mut stack = paper_protocol::types::ItemStack::new(item(name), 1);
+    stack.added.push((ty, data));
+    Slot(Some(stack))
+}
+
+fn components(slot: &Slot) -> Vec<&'static str> {
+    slot.0.as_ref().map_or(Vec::new(), |s| s.added.iter().filter_map(|(t, _)| paper_data::registries::name("minecraft:data_component_type", *t as u32)).collect())
+}
+
+#[test]
+fn enchanting_tables_enchant_for_levels_and_lapis() {
+    if paper_server::vanilla::test_jar().is_none() {
+        eprintln!("skipping: no vanilla jar");
+        return;
+    }
+    let server = start_server(|c| c.properties.gamemode = paper_server::config::GameMode::Survival);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let table = BlockPos::new(10, -60, 8);
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_and_update(0, table, blocks::default_state("minecraft:enchanting_table").unwrap());
+            // Fifteen bookshelves in the ring two blocks out.
+            let shelf = blocks::default_state("minecraft:bookshelf").unwrap();
+            let mut placed = 0;
+            for dy in 0..=1 {
+                for dz in -2i32..=2 {
+                    for dx in -2i32..=2 {
+                        if (dx.abs() == 2 || dz.abs() == 2) && placed < 15 && !(dx == -2 && dz == 0) {
+                            s.set_block_and_update(0, table.offset(dx, dy, dz), shelf);
+                            placed += 1;
+                        }
+                    }
+                }
+            }
+            let p = s.players.get_mut(&id).unwrap();
+            p.inventory[36] = Slot::of(item("minecraft:diamond_sword"), 1);
+            p.inventory[37] = Slot::of(item("minecraft:lapis_lazuli"), 5);
+            p.xp_level = 30;
+        })
+        .unwrap();
+    assert_eq!(server.handle.run(move |s| s.bookshelves(0, table)).unwrap(), 15);
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: table, face: VarInt(1), cursor_x: 0.5, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(1) });
+    let screen: play::OpenScreen = alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("the table opens");
+    assert_eq!(screen.menu_type.0, menu("minecraft:enchantment"));
+    let w = screen.window_id.0;
+    // The sword into slot 0, the lapis into slot 1 (hotbar 0 and 1 are window slots 29, 30).
+    for (from, to) in [(29, 0), (30, 1)] {
+        alice.send(&click(w, from, 0, 0));
+        alice.send(&click(w, to, 0, 0));
+    }
+    // The best offer with fifteen shelves costs 30 levels.
+    let offer: play::ContainerSetData = alice.find(TIMEOUT, |d: &play::ContainerSetData| d.property == 2 && d.value > 0).expect("three offers");
+    assert_eq!(offer.value, 30);
+    alice.send(&play::ContainerButtonClick { window_id: VarInt(w), button_id: VarInt(2) });
+    alice.drain(QUIET);
+    let (sword, lapis, level) = server
+        .handle
+        .run(move |s| {
+            let p = &s.players[&id];
+            let m = p.open_menu.as_ref().unwrap();
+            (m.craft_grid[0].clone(), m.craft_grid[1].clone(), p.xp_level)
+        })
+        .unwrap();
+    assert!(components(&sword).contains(&"minecraft:enchantments"), "the sword is enchanted: {sword:?}");
+    assert_eq!(lapis, Slot::of(item("minecraft:lapis_lazuli"), 2), "three lapis used");
+    assert_eq!(level, 27, "three levels paid");
+    server.stop();
+}
+
+#[test]
+fn anvils_repair_and_rename_for_levels() {
+    let server = start_server(|c| c.properties.gamemode = paper_server::config::GameMode::Survival);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let anvil = BlockPos::new(10, -60, 8);
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_and_update(0, anvil, blocks::default_state("minecraft:anvil").unwrap());
+            let p = s.players.get_mut(&id).unwrap();
+            p.inventory[36] = damaged("minecraft:diamond_sword", 1000);
+            p.inventory[37] = Slot::of(item("minecraft:diamond"), 3);
+            p.xp_level = 10;
+        })
+        .unwrap();
+    alice.send(&use_on(anvil, 1, 1));
+    let screen: play::OpenScreen = alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("the anvil opens");
+    assert_eq!(screen.menu_type.0, menu("minecraft:anvil"));
+    let w = screen.window_id.0;
+    // The sword left, the diamonds right (hotbar 0 and 1 are window slots 30, 31).
+    for (from, to) in [(30, 0), (31, 1)] {
+        alice.send(&click(w, from, 0, 0));
+        alice.send(&click(w, to, 0, 0));
+    }
+    // Three diamonds repair 1000 damage fully, for three levels.
+    let cost: play::ContainerSetData = alice.find(TIMEOUT, |d: &play::ContainerSetData| d.property == 0 && d.value > 0).expect("a cost");
+    assert_eq!(cost.value, 3);
+    // Taking the result pays for it and uses up the inputs.
+    alice.send(&click(w, 2, 0, 0));
+    alice.drain(QUIET);
+    let (carried, inputs, level) = server
+        .handle
+        .run(move |s| {
+            let p = &s.players[&id];
+            let m = p.open_menu.as_ref().unwrap();
+            (p.carried.clone(), (m.craft_grid[0].clone(), m.craft_grid[1].clone()), p.xp_level)
+        })
+        .unwrap();
+    assert_eq!(level, 7);
+    assert_eq!(inputs, (Slot::EMPTY, Slot::EMPTY));
+    let damage_left = carried.0.as_ref().and_then(|st| {
+        let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:damage").unwrap() as i32;
+        st.added.iter().find(|(t, _)| *t == ty).map(|(_, d)| paper_protocol::codec::Reader::new(d).varint().unwrap())
+    });
+    assert_eq!(damage_left, Some(0), "fully repaired");
+
+    // Renaming alone costs one level.
+    alice.send(&click(w, 0, 0, 0));
+    alice.send(&play::RenameItem { name: "Excalibur".into() });
+    let cost: play::ContainerSetData = alice.find(TIMEOUT, |d: &play::ContainerSetData| d.property == 0 && d.value > 0).expect("a rename cost");
+    assert_eq!(cost.value, 1 + 1, "one for the name, plus the repair penalty of the first use");
+    let named = server.handle.run(move |s| s.players[&id].open_menu.as_ref().unwrap().craft_grid[2].clone()).unwrap();
+    assert!(components(&named).contains(&"minecraft:custom_name"));
+    server.stop();
+}

@@ -215,6 +215,8 @@ pub struct Player {
     /// The head of the bed the player sleeps in.
     pub sleeping: Option<paper_protocol::codec::BlockPos>,
     pub sleep_ticks: i32,
+    /// Seed of the enchanting table offers (`XpSeed`); changes with every enchantment.
+    pub enchantment_seed: i32,
 }
 
 impl Player {

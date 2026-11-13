@@ -22,6 +22,10 @@ pub enum SlotKind {
     Armor(&'static str),
     /// Furnace fuel.
     Fuel,
+    /// One item at a time (the enchanting table's item slot).
+    Single,
+    /// Lapis lazuli only (the enchanting table).
+    Lapis,
 }
 
 /// The shape of a menu.
@@ -48,6 +52,8 @@ pub enum MenuShape {
     Container,
     CraftingTable,
     Furnace,
+    Enchanting,
+    Anvil,
 }
 
 impl Layout {
@@ -87,6 +93,21 @@ impl Layout {
         kinds[1] = SlotKind::Fuel;
         kinds[2] = SlotKind::Output;
         Layout { kinds, main: 3..30, hotbar: 30..39, offhand: None, container: 0..3, crafting: None, furnace: Some((0, 1, recipe_type)), kind: MenuShape::Furnace }
+    }
+
+    /// The enchanting table: the item, the lapis, then the player's inventory.
+    pub fn enchanting() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 38];
+        kinds[0] = SlotKind::Single;
+        kinds[1] = SlotKind::Lapis;
+        Layout { kinds, main: 2..29, hotbar: 29..38, offhand: None, container: 0..2, crafting: None, furnace: None, kind: MenuShape::Enchanting }
+    }
+
+    /// The anvil: two inputs and the result (taken only through `server::workstations`).
+    pub fn anvil() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 39];
+        kinds[2] = SlotKind::Output;
+        Layout { kinds, main: 3..30, hotbar: 30..39, offhand: None, container: 0..3, crafting: None, furnace: None, kind: MenuShape::Anvil }
     }
 
     pub fn len(&self) -> usize {
@@ -154,13 +175,14 @@ impl Menu<'_> {
             SlotKind::CraftResult | SlotKind::Output => false,
             SlotKind::Armor(slot) => paper_data::item_data::by_id(stack.item as u32).equip_slot.as_deref() == Some(slot),
             SlotKind::Fuel => self.recipes.is_none_or(|r| r.burn_time(item, false) > 0) || paper_data::items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:bucket"),
-            SlotKind::Normal => true,
+            SlotKind::Normal | SlotKind::Single => true,
+            SlotKind::Lapis => paper_data::items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:lapis_lazuli"),
         }
     }
 
     fn slot_limit(&self, index: usize, stack: &ItemStack) -> i32 {
         match self.layout.kinds[index] {
-            SlotKind::Armor(_) => 1,
+            SlotKind::Armor(_) | SlotKind::Single => 1,
             _ => max_stack(stack),
         }
     }
@@ -312,6 +334,37 @@ impl Menu<'_> {
                     }
                 } else {
                     self.move_into(&mut item, player.clone(), false);
+                }
+            }
+            MenuShape::Enchanting => {
+                let lapis = paper_data::items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:lapis_lazuli");
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if lapis {
+                    self.move_into(&mut item, 1..2, true);
+                } else if self.slots[0].is_empty() {
+                    // One item goes into the table.
+                    let mut one = Slot(Some(stack.with_count(1)));
+                    self.move_into(&mut one, 0..1, false);
+                    if one.is_empty() {
+                        item = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
+                    }
+                } else {
+                    return;
+                }
+            }
+            MenuShape::Anvil => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), index == 2);
+                } else {
+                    let first = if self.slots[0].is_empty() { 0 } else { 1 };
+                    if !self.move_into(&mut item, first..2, false) {
+                        if l.main.contains(&index) {
+                            self.move_into(&mut item, l.hotbar.clone(), false);
+                        } else {
+                            self.move_into(&mut item, l.main.clone(), false);
+                        }
+                    }
                 }
             }
             MenuShape::Furnace => {

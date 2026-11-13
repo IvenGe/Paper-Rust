@@ -224,6 +224,21 @@ packet! {
 }
 
 packet! {
+    /// A button in a window: the three enchantments of an enchanting table, ...
+    ContainerButtonClick = play::serverbound::CONTAINER_BUTTON_CLICK {
+        window_id: VarInt,
+        button_id: VarInt,
+    }
+}
+
+packet! {
+    /// The name typed into an anvil.
+    RenameItem = play::serverbound::RENAME_ITEM {
+        name: String,
+    }
+}
+
+packet! {
     /// Right-click on an entity.
     Interact = play::serverbound::INTERACT {
         entity_id: VarInt,
@@ -440,8 +455,10 @@ pub enum Serverbound {
     ClientInformation(ClientInformation),
     CommandSuggestion(CommandSuggestion),
     ConfigurationAcknowledged,
+    ContainerButtonClick(ContainerButtonClick),
     ContainerClick(ContainerClick),
     ContainerClose(ServerboundContainerClose),
+    RenameItem(RenameItem),
     CookieResponse(CookieResponse),
     CustomPayload(ServerboundCustomPayload),
     Interact(Interact),
@@ -494,7 +511,9 @@ impl Serverbound {
             id::CLIENT_INFORMATION => d!(ClientInformation),
             id::COMMAND_SUGGESTION => d!(CommandSuggestion),
             id::CONFIGURATION_ACKNOWLEDGED => Serverbound::ConfigurationAcknowledged,
+            id::CONTAINER_BUTTON_CLICK => d!(ContainerButtonClick),
             id::CONTAINER_CLICK => d!(ContainerClick),
+            id::RENAME_ITEM => d!(RenameItem),
             id::CONTAINER_CLOSE => d!(ContainerClose),
             id::COOKIE_RESPONSE => d!(CookieResponse),
             id::CUSTOM_PAYLOAD => d!(CustomPayload),
