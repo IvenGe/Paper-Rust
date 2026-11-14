@@ -203,3 +203,10 @@ fn template_features_are_placed() {
     eprintln!("bone blocks: {bones}");
     assert!(bones > 0);
 }
+
+#[test]
+fn generator_and_starts_are_send_and_sync() {
+    fn check<T: Send + Sync>() {}
+    check::<paper_worldgen::WorldGenerator>();
+    check::<paper_worldgen::structure::StructureStart>();
+}
