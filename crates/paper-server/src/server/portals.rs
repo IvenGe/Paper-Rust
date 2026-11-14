@@ -457,6 +457,7 @@ impl Server {
         p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
         // The portal travel sound.
         p.conn.send(&play::LevelEvent { event: 1032, pos: BlockPos::new(0, 0, 0), data: 0, global: false });
+        self.send_weather(id);
         self.teleport(id, target);
         self.resync_inventory(id);
         self.send_experience(id);

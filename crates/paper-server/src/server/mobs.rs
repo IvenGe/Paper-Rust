@@ -93,7 +93,10 @@ pub fn sky_darken(world: &World) -> i32 {
     let e = 0.5 - (d * std::f64::consts::PI).cos() / 2.0;
     let time = (d * 2.0 + e) / 3.0;
     let f = 0.5 + 2.0 * (time * std::f64::consts::TAU).cos().clamp(-0.25, 0.25);
-    ((1.0 - f) * 11.0) as i32
+    // Rain and thunder darken the sky too.
+    let rain = 1.0 - world.weather.rain_level as f64 * 5.0 / 16.0;
+    let thunder = 1.0 - (world.weather.thunder_level * world.weather.rain_level) as f64 * 5.0 / 16.0;
+    ((1.0 - f * rain * thunder) * 11.0) as i32
 }
 
 fn sky_light(world: &World, x: i32, y: i32, z: i32) -> i32 {
@@ -386,7 +389,7 @@ impl Server {
         let below_world = pos.y < (w.min_y - 64) as f64;
         let breathes_water = matches!(behavior(name, &info.category), Behavior::Swimmer) || matches!(name, "minecraft:drowned" | "minecraft:axolotl" | "minecraft:turtle" | "minecraft:frog") || name.ends_with("skeleton") || name.ends_with("_golem") || name == "minecraft:stray" || name == "minecraft:bogged" || name == "minecraft:wither";
         // Daylight: undead without a helmet catch fire under the open sky.
-        let sunburn = burns_in_daylight(name) && !in_water && {
+        let sunburn = burns_in_daylight(name) && !in_water && !w.rain_at(eye.x.floor() as i32, eye.y.floor() as i32, eye.z.floor() as i32) && {
             let (x, y, z) = (eye.x.floor() as i32, eye.y.floor() as i32, eye.z.floor() as i32);
             sky_darken(w) < 4 && w.has_skylight && sky_light(w, x, y, z) >= 15 && raw_brightness(w, x, y, z) > 11 && rand::thread_rng().gen::<f32>() * 30.0 < (raw_brightness(w, x, y, z) as f32 / 15.0 - 0.4) * 2.0
         };

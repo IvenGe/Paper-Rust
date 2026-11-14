@@ -197,6 +197,12 @@ impl Server {
         self.broadcast(&play::PlayerInfoUpdate { actions, entries: vec![own_entry] });
 
         player.conn.send_payload(self.time_payload(world_index));
+        let rain = &self.worlds[world_index].weather;
+        if rain.is_raining() {
+            player.conn.send(&play::GameEvent { event: play::game_event::START_RAINING, value: 0.0 });
+            player.conn.send(&play::GameEvent { event: play::game_event::RAIN_LEVEL_CHANGE, value: rain.rain_level });
+            player.conn.send(&play::GameEvent { event: play::game_event::THUNDER_LEVEL_CHANGE, value: rain.thunder_level });
+        }
         player.conn.send(&play::SetDefaultSpawnPosition { dimension: world.dimension.clone(), pos: world.spawn, yaw: world.spawn_yaw, pitch: 0.0 });
         player.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         player.conn.send(&play::SetChunkCacheCenter { x: VarInt(player.view.center.x), z: VarInt(player.view.center.z) });

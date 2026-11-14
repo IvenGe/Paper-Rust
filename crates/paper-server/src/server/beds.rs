@@ -210,6 +210,10 @@ impl Server {
                 w.day_time = next - next.rem_euclid(24000);
                 let payload = self.time_payload(world);
                 self.broadcast_payload_in_world(world, payload);
+                // Sleeping also clears rain and thunder.
+                if self.worlds[world].rules.bool("advance_weather") {
+                    self.reset_weather_cycle(world);
+                }
                 for id in sleepers {
                     self.wake_up(id);
                 }

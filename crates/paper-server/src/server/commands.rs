@@ -71,6 +71,7 @@ impl CommandRegistry {
             Builtin { name: "clear", aliases: &[], description: "Clears a player's inventory", usage: "/clear [player]", min_op: 2, handler: cmd_clear, completer: complete_players },
             Builtin { name: "setblock", aliases: &[], description: "Changes a block", usage: "/setblock <x> <y> <z> <block>", min_op: 2, handler: cmd_setblock, completer: complete_setblock },
             Builtin { name: "time", aliases: &[], description: "Changes or queries the world's time", usage: "/time <set|add|query> <value>", min_op: 2, handler: cmd_time, completer: complete_time },
+            Builtin { name: "weather", aliases: &[], description: "Sets the weather", usage: "/weather <clear|rain|thunder> [duration]", min_op: 2, handler: cmd_weather, completer: complete_weather },
             Builtin { name: "difficulty", aliases: &[], description: "Sets the difficulty", usage: "/difficulty [peaceful|easy|normal|hard]", min_op: 2, handler: cmd_difficulty, completer: complete_difficulty },
             Builtin { name: "effect", aliases: &[], description: "Gives or removes status effects", usage: "/effect <give|clear> <targets> [effect] [seconds] [amplifier] [hideParticles]", min_op: 2, handler: cmd_effect, completer: complete_effect },
             Builtin { name: "gamerule", aliases: &[], description: "Sets or queries a game rule", usage: "/gamerule <rule> [value]", min_op: 2, handler: cmd_gamerule, completer: complete_gamerule },
@@ -294,7 +295,7 @@ impl Server {
         Some(found)
     }
 
-    fn source_location(&self, source: &CommandSource) -> Option<(usize, Location)> {
+    pub(super) fn source_location(&self, source: &CommandSource) -> Option<(usize, Location)> {
         match source {
             CommandSource::Player(id) => self.players.get(id).map(|p| (p.world, p.loc)),
             CommandSource::Console => None,
@@ -332,6 +333,18 @@ fn complete_gamemode(server: &Server, _: &CommandSource, args: &[&str]) -> Vec<S
 fn complete_difficulty(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {
     if args.len() <= 1 {
         ["peaceful", "easy", "normal", "hard"].map(String::from).to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
+fn cmd_weather(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    server.weather_command(source, args);
+}
+
+fn complete_weather(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {
+    if args.len() <= 1 {
+        ["clear", "rain", "thunder"].map(String::from).to_vec()
     } else {
         Vec::new()
     }

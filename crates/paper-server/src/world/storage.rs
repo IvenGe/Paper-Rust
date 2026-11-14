@@ -671,6 +671,8 @@ pub struct LevelData {
     pub daylight_cycle: bool,
     pub game_type: i32,
     pub hardcore: bool,
+    /// Rain and thunder with their timers (the levels follow `raining` and `thundering`).
+    pub weather: super::Weather,
 }
 
 impl LevelData {
@@ -734,11 +736,11 @@ impl LevelData {
             .with("DataPacks", Tag::Compound(Compound::new().with("Enabled", Tag::List(vec![Tag::String("vanilla".into())])).with("Disabled", Tag::List(Vec::new()))))
             .with("ServerBrands", Tag::List(vec![Tag::String(crate::net::BRAND.into())]))
             .with("WasModded", Tag::Byte(0))
-            .with("raining", Tag::Byte(0))
-            .with("thundering", Tag::Byte(0))
-            .with("rainTime", Tag::Int(0))
-            .with("thunderTime", Tag::Int(0))
-            .with("clearWeatherTime", Tag::Int(0))
+            .with("raining", Tag::Byte(self.weather.raining as i8))
+            .with("thundering", Tag::Byte(self.weather.thundering as i8))
+            .with("rainTime", Tag::Int(self.weather.rain_time))
+            .with("thunderTime", Tag::Int(self.weather.thunder_time))
+            .with("clearWeatherTime", Tag::Int(self.weather.clear_time))
             .with("paper-rs", Tag::Compound(Compound::new().with("generator", Tag::String(self.generator.clone())).with("daylight_cycle", Tag::Byte(self.daylight_cycle as i8))));
         Compound::new().with("Data", Tag::Compound(data))
     }
@@ -781,6 +783,18 @@ impl LevelData {
             daylight_cycle,
             game_type: data.i32("GameType").unwrap_or(0),
             hardcore: data.bool("hardcore").unwrap_or(false),
+            weather: {
+                let (raining, thundering) = (data.bool("raining").unwrap_or(false), data.bool("thundering").unwrap_or(false));
+                super::Weather {
+                    raining,
+                    thundering,
+                    rain_time: data.i32("rainTime").unwrap_or(0),
+                    thunder_time: data.i32("thunderTime").unwrap_or(0),
+                    clear_time: data.i32("clearWeatherTime").unwrap_or(0),
+                    rain_level: if raining { 1.0 } else { 0.0 },
+                    thunder_level: if thundering { 1.0 } else { 0.0 },
+                }
+            },
         })
     }
 }
@@ -1210,7 +1224,8 @@ mod tests {
         assert!(!loaded.lit, "unlit chunks are lit again after loading");
         assert!(storage.load_chunk(ChunkPos::new(0, 0), -64, 384, true).unwrap().is_none());
 
-        let level = LevelData { name: "world".into(), seed: -99, generator: "flat".into(), spawn: (1, 2, 3), spawn_yaw: 90.0, age: 1234, day_time: 6000, daylight_cycle: false, game_type: 1, hardcore: false };
+        let weather = crate::world::Weather { raining: true, thundering: false, rain_time: 500, thunder_time: 12000, clear_time: 0, rain_level: 1.0, thunder_level: 0.0 };
+        let level = LevelData { name: "world".into(), seed: -99, generator: "flat".into(), spawn: (1, 2, 3), spawn_yaw: 90.0, age: 1234, day_time: 6000, daylight_cycle: false, game_type: 1, hardcore: false, weather };
         storage.save_level(&level).unwrap();
         io.flush();
         assert_eq!(storage.read_level().unwrap().unwrap(), level);

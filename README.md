@@ -130,6 +130,11 @@ What works:
   arrive on the obsidian platform, and the exit portal shows the credits and brings them
   home. Fire burns, spreads and lights portals; buckets scoop up and pour water and lava
   (water boils away in the Nether).
+* **Weather**: vanilla's rain and thunder cycle (`advance_weather`) with `/weather`, saved in
+  `level.dat`: clients see rain and thunder fade in and out, storms darken the sky (enough to
+  sleep in a thunderstorm), rain puts out fires, keeps farmland wet and protects undead from
+  the sun, lightning strikes in thunderstorms (fire, damage), still water freezes and snow
+  piles up in cold biomes, and sleeping through the night clears the weather.
 * **Game rules**: all 26.3 rules with `/gamerule`, saved in `data/minecraft/game_rules.dat`.
 * **Saving**: chunks in region files, entities (mobs, items, arrows, ...) in
   `entities/` region files, `level.dat`, game rules and player data (inventory, ender chest,
@@ -137,7 +142,7 @@ What works:
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
-  difficulty gamerule summon kill effect seed setworldspawn tps mspt kick ban pardon ban-ip
+  weather difficulty gamerule summon kill effect seed setworldspawn tps mspt kick ban pardon ban-ip
   pardon-ip banlist op deop whitelist save-all stop version plugins reload`.
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with

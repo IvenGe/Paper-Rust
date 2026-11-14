@@ -280,7 +280,8 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
         }
         Kind::Farmland => {
             let moisture = get_int(state, "moisture");
-            if !near_water(level, pos) {
+            let above = pos.above();
+            if !near_water(level, pos) && !level.world.rain_at(above.x, above.y, above.z) {
                 if moisture > 0 {
                     level.set_block(pos, set_int(state, "moisture", moisture - 1), flags::CLIENTS);
                 } else if !in_tag!(level.state(pos.above()), "maintains_farmland") {

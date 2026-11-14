@@ -350,7 +350,12 @@ impl Server {
                     e.removed = true;
                 }
             }
-            EntityKind::Other => {}
+            EntityKind::Other => {
+                // A lightning bolt flashes for a few ticks.
+                if e.info.name == "minecraft:lightning_bolt" && e.age > 8 {
+                    e.removed = true;
+                }
+            }
         }
         self.worlds[world].entities.insert(id, e);
         self.worlds[world].reindex_entity(id);

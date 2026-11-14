@@ -112,6 +112,14 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
     let below = level.state(at(pos, Dir::Down));
     let infiniburn = in_tag(below, level.world_infiniburn());
     let age: i32 = blocks::property(state, "age").and_then(|a| a.parse().ok()).unwrap_or(0);
+    let near_rain = [Dir::Up, Dir::North, Dir::South, Dir::West, Dir::East].iter().any(|d| {
+        let p = if *d == Dir::Up { pos } else { at(pos, *d) };
+        level.world.rain_at(p.x, p.y, p.z)
+    });
+    if !infiniburn && near_rain && level.random_float() < 0.2 + age as f32 * 0.03 {
+        level.remove_block(pos, false);
+        return;
+    }
     let grown = (age + (level.random() % 3) as i32 / 2).min(15);
     if grown != age {
         if let Some(s) = blocks::with_property(state, "age", &grown.to_string()) {

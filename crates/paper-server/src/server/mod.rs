@@ -33,6 +33,7 @@ pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
 mod animals;
+mod weather;
 mod farming;
 pub mod brewing;
 mod spawners;
@@ -525,6 +526,8 @@ impl Server {
             world.tick_time();
             world.pump(&workers);
         }
+        // Rain, thunder and what they do (see `weather`).
+        self.tick_weather();
         // Scheduled block and fluid ticks and block events (see `block_updates`).
         self.tick_block_updates();
         // Clients run their own clock; resynchronise once a second like vanilla.

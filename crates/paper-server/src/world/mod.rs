@@ -94,6 +94,7 @@ pub struct World {
     /// Time of the world's clock in ticks (0 = sunrise).
     pub day_time: i64,
     pub daylight_cycle: bool,
+    pub weather: Weather,
     pub rules: rules::GameRules,
     /// Network id of the world's clock in `minecraft:world_clock`, if it has one.
     pub clock: Option<i32>,
@@ -133,6 +134,34 @@ pub struct World {
     save_on_return: HashSet<ChunkPos>,
 }
 
+/// A world's weather (vanilla's `ServerLevelData` weather and the levels it fades in and
+/// out with, 0.01 a tick).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Weather {
+    pub raining: bool,
+    pub thundering: bool,
+    /// Ticks until rain starts or stops.
+    pub rain_time: i32,
+    /// Ticks until thunder starts or stops.
+    pub thunder_time: i32,
+    /// Ticks of clear weather set by `/weather clear`.
+    pub clear_time: i32,
+    pub rain_level: f32,
+    pub thunder_level: f32,
+}
+
+impl Weather {
+    /// `Level.isRaining`.
+    pub fn is_raining(&self) -> bool {
+        self.rain_level > 0.2
+    }
+
+    /// `Level.isThundering`.
+    pub fn is_thundering(&self) -> bool {
+        self.thunder_level * self.rain_level > 0.9
+    }
+}
+
 /// Maximum worker jobs a world keeps in flight per worker thread.
 const JOBS_PER_WORKER: usize = 6;
 
@@ -162,6 +191,7 @@ impl World {
             age: 0,
             day_time: 0,
             daylight_cycle: true,
+            weather: Weather::default(),
             rules: rules::GameRules::default(),
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
@@ -661,6 +691,12 @@ impl World {
         s.fire_spreads = self.rules.int("fire_spread_radius_around_player") != 0;
     }
 
+    /// Whether it rains on a block (`isRainingAt`, without the biome's temperature): rain
+    /// falls and nothing above stops it.
+    pub fn rain_at(&self, x: i32, y: i32, z: i32) -> bool {
+        self.weather.is_raining() && self.has_skylight && self.top_y(x, z).is_some_and(|top| y >= top)
+    }
+
     /// Y of the first free block above the highest motion-blocking block of a column.
     pub fn top_y(&self, x: i32, z: i32) -> Option<i32> {
         let chunk = self.chunks.get(&ChunkPos::of_block(x, z))?;
@@ -775,6 +811,7 @@ impl World {
             daylight_cycle: self.daylight_cycle,
             game_type,
             hardcore,
+            weather: self.weather.clone(),
         }
     }
 
@@ -785,6 +822,7 @@ impl World {
         self.age = level.age;
         self.day_time = level.day_time;
         self.daylight_cycle = level.daylight_cycle;
+        self.weather = level.weather.clone();
     }
 
     /// Advances world time by one tick.
