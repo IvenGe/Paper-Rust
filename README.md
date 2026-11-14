@@ -287,9 +287,9 @@ Not yet:
 * World generation: sculk sensors, shriekers and catalysts from world generation have no
   block entities on the server.
 * The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
-  portal, and its fireballs cannot be hit back.
+  portal.
 * Gameplay: boats and minecarts cannot be ridden, parrots do not ride on shoulders, cats do not sleep on
-  beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
+  beds or bring gifts, wild wolves do not hunt, and ghasts and blazes do not shoot fireballs. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Dispensers do not place shulker boxes, build golems or withers, or launch
