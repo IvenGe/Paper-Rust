@@ -168,12 +168,15 @@ pub trait WriteExt {
         self.put_varint(v.len() as i32);
         self.put_slice(v);
     }
-    /// `BitSet`: VarInt count of longs, then the longs.
+    /// `BitSet` as 26.3 sends it: `BitSet.toByteArray()` (the bits in little-endian bytes,
+    /// without trailing zero bytes) behind a VarInt length. Up to 26.2 it was a VarInt count
+    /// of longs, then the longs.
     fn put_bitset(&mut self, longs: &[u64]) {
-        self.put_varint(longs.len() as i32);
-        for l in longs {
-            self.put_u64(*l);
+        let mut bytes: Vec<u8> = longs.iter().flat_map(|l| l.to_le_bytes()).collect();
+        while bytes.last() == Some(&0) {
+            bytes.pop();
         }
+        self.put_byte_array(&bytes);
     }
     /// Boolean presence flag followed by the value when present.
     fn put_option<T>(&mut self, v: Option<&T>, f: impl FnOnce(&mut Self, &T)) {
@@ -399,9 +402,17 @@ impl<'a> Reader<'a> {
         self.take(n)
     }
 
+    /// A `BitSet` in the 26.3 form (see `put_bitset`), as longs.
     pub fn bitset(&mut self) -> Result<Vec<u64>> {
-        let n = self.len(self.remaining() / 8)?;
-        (0..n).map(|_| self.u64()).collect()
+        let bytes = self.byte_array(self.remaining())?;
+        Ok(bytes
+            .chunks(8)
+            .map(|c| {
+                let mut long = [0u8; 8];
+                long[..c.len()].copy_from_slice(c);
+                u64::from_le_bytes(long)
+            })
+            .collect())
     }
 
     pub fn option<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<Option<T>> {
