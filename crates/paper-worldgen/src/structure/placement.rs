@@ -233,10 +233,6 @@ impl Rings {
         })
     }
 
-    pub fn resolved(&self, i: usize) -> Option<(i32, i32)> {
-        self.resolved[i].get().copied()
-    }
-
     /// Ring positions within `range` chunks (Chebyshev) of a chunk, resolving only the ring
     /// positions whose search area can reach it.
     pub fn near(&self, chunk_x: i32, chunk_z: i32, range: i32, biome_at_quart: &mut dyn FnMut(i32, i32, i32) -> u8) -> Vec<(i32, i32)> {
@@ -379,7 +375,7 @@ mod tests {
         assert_eq!(order.len(), 4);
         assert_eq!(order[0], 0);
         let mut slots: Vec<(usize, i64)> = keys.iter().filter(|k| **k != 0).map(|k| ((mix(*k) as usize) & 31, *k)).collect();
-        slots.sort_by(|a, b| b.0.cmp(&a.0));
+        slots.sort_by_key(|s| std::cmp::Reverse(s.0));
         assert_eq!(order[1..].to_vec(), slots.iter().map(|s| s.1).collect::<Vec<_>>());
     }
 

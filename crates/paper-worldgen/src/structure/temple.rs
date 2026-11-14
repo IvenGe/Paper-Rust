@@ -39,6 +39,7 @@ struct Scattered {
 }
 
 impl Scattered {
+    #[allow(clippy::too_many_arguments)]
     fn new(kind_id: &'static str, x: i32, y: i32, z: i32, width: i32, height: i32, depth: i32, dir: Dir, kind: Kind) -> Self {
         let base = PieceBase::new(kind_id, 0, BoundingBox::make(x, y, z, dir, width, height, depth)).with_orientation(Some(dir));
         Self { base, settled: Mutex::new(None), kind }
@@ -313,9 +314,9 @@ fn jungle_temple(b: &PieceBase, ctx: &mut PlaceCtx, flags: &JungleFlags) {
         b.place_block(ctx, x_z, 4, 4, 5);
         b.place_block(ctx, z2, 7, 4, 5);
         for i in 0..4 {
-            b.place_block(ctx, south_stairs, 5, (0 - i), (6 + i));
-            b.place_block(ctx, south_stairs, 6, (0 - i), (6 + i));
-            b.generate_air_box(ctx, 5, (0 - i), (7 + i), 6, (0 - i), (9 + i));
+            b.place_block(ctx, south_stairs, 5, 0 - i, 6 + i);
+            b.place_block(ctx, south_stairs, 6, 0 - i, 6 + i);
+            b.generate_air_box(ctx, 5, 0 - i, 7 + i, 6, 0 - i, 9 + i);
         }
         b.generate_air_box(ctx, 1, -3, 12, 10, -1, 13);
         b.generate_air_box(ctx, 1, -3, 1, 3, -1, 13);
@@ -403,8 +404,8 @@ fn desert_pyramid(b: &PieceBase, ctx: &mut PlaceCtx, chests: &[AtomicBool; 4]) {
     let orange = st("minecraft:orange_terracotta");
         b.generate_box(ctx, 0, -4, 0, 20, 0, 20, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
         for n in 1..=9 {
-            b.generate_box(ctx, n, n, n, (20 - n), n, (20 - n), st("minecraft:sandstone"), st("minecraft:sandstone"), false);
-            b.generate_box(ctx, (n + 1), n, (n + 1), (19 - n), n, (19 - n), st("minecraft:air"), st("minecraft:air"), false);
+            b.generate_box(ctx, n, n, n, 20 - n, n, 20 - n, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+            b.generate_box(ctx, n + 1, n, n + 1, 19 - n, n, 19 - n, st("minecraft:air"), st("minecraft:air"), false);
         }
         for n in 0..21 {
             for s in 0..21 {
@@ -522,28 +523,28 @@ fn desert_pyramid(b: &PieceBase, ctx: &mut PlaceCtx, chests: &[AtomicBool; 4]) {
         }
         let mut x_z = 2;
         while x_z <= 18 {
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 2, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z - 1, 2, 0);
             b.place_block(ctx, orange, x_z, 2, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 2, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 3, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z + 1, 2, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z - 1, 3, 0);
             b.place_block(ctx, orange, x_z, 3, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 3, 0);
-            b.place_block(ctx, orange, (x_z - 1), 4, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z + 1, 3, 0);
+            b.place_block(ctx, orange, x_z - 1, 4, 0);
             b.place_block(ctx, st("minecraft:chiseled_sandstone"), x_z, 4, 0);
-            b.place_block(ctx, orange, (x_z + 1), 4, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 5, 0);
+            b.place_block(ctx, orange, x_z + 1, 4, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z - 1, 5, 0);
             b.place_block(ctx, orange, x_z, 5, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 5, 0);
-            b.place_block(ctx, orange, (x_z - 1), 6, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z + 1, 5, 0);
+            b.place_block(ctx, orange, x_z - 1, 6, 0);
             b.place_block(ctx, st("minecraft:chiseled_sandstone"), x_z, 6, 0);
-            b.place_block(ctx, orange, (x_z + 1), 6, 0);
-            b.place_block(ctx, orange, (x_z - 1), 7, 0);
+            b.place_block(ctx, orange, x_z + 1, 6, 0);
+            b.place_block(ctx, orange, x_z - 1, 7, 0);
             b.place_block(ctx, orange, x_z, 7, 0);
-            b.place_block(ctx, orange, (x_z + 1), 7, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 8, 0);
+            b.place_block(ctx, orange, x_z + 1, 7, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z - 1, 8, 0);
             b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 8, 0);
-            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 8, 0);
-            x_z += (18 - 2);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z + 1, 8, 0);
+            x_z += 18 - 2;
         }
         b.generate_box(ctx, 8, 4, 0, 12, 6, 0, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
         b.place_block(ctx, st("minecraft:air"), 8, 6, 0);
@@ -613,46 +614,46 @@ fn cellar_stairs(b: &PieceBase, ctx: &mut PlaceCtx) {
 /// `addCellarRoom`.
 fn cellar_room(b: &PieceBase, ctx: &mut PlaceCtx) {
     let (x, y, z) = CELLAR;
-    let cut = st("minecraft:cut_sandstone");
-    let chiseled = st("minecraft:chiseled_sandstone");
+    let _cut = st("minecraft:cut_sandstone");
+    let _chiseled = st("minecraft:chiseled_sandstone");
     let orange = st("minecraft:orange_terracotta");
-    let blue = st("minecraft:blue_terracotta");
+    let _blue = st("minecraft:blue_terracotta");
         let cut = st("minecraft:cut_sandstone");
         let chiseled = st("minecraft:chiseled_sandstone");
-        b.generate_box(ctx, (x - 3), (y + 1), (z - 3), (x - 3), (y + 1), (z + 2), cut, cut, true);
-        b.generate_box(ctx, (x + 3), (y + 1), (z - 3), (x + 3), (y + 1), (z + 2), cut, cut, true);
-        b.generate_box(ctx, (x - 3), (y + 1), (z - 3), (x + 3), (y + 1), (z - 2), cut, cut, true);
-        b.generate_box(ctx, (x - 3), (y + 1), (z + 3), (x + 3), (y + 1), (z + 3), cut, cut, true);
-        b.generate_box(ctx, (x - 3), (y + 2), (z - 3), (x - 3), (y + 2), (z + 2), chiseled, chiseled, true);
-        b.generate_box(ctx, (x + 3), (y + 2), (z - 3), (x + 3), (y + 2), (z + 2), chiseled, chiseled, true);
-        b.generate_box(ctx, (x - 3), (y + 2), (z - 3), (x + 3), (y + 2), (z - 2), chiseled, chiseled, true);
-        b.generate_box(ctx, (x - 3), (y + 2), (z + 3), (x + 3), (y + 2), (z + 3), chiseled, chiseled, true);
-        b.generate_box(ctx, (x - 3), -1, (z - 3), (x - 3), -1, (z + 2), cut, cut, true);
-        b.generate_box(ctx, (x + 3), -1, (z - 3), (x + 3), -1, (z + 2), cut, cut, true);
-        b.generate_box(ctx, (x - 3), -1, (z - 3), (x + 3), -1, (z - 2), cut, cut, true);
-        b.generate_box(ctx, (x - 3), -1, (z + 3), (x + 3), -1, (z + 3), cut, cut, true);
+        b.generate_box(ctx, x - 3, y + 1, z - 3, x - 3, y + 1, z + 2, cut, cut, true);
+        b.generate_box(ctx, x + 3, y + 1, z - 3, x + 3, y + 1, z + 2, cut, cut, true);
+        b.generate_box(ctx, x - 3, y + 1, z - 3, x + 3, y + 1, z - 2, cut, cut, true);
+        b.generate_box(ctx, x - 3, y + 1, z + 3, x + 3, y + 1, z + 3, cut, cut, true);
+        b.generate_box(ctx, x - 3, y + 2, z - 3, x - 3, y + 2, z + 2, chiseled, chiseled, true);
+        b.generate_box(ctx, x + 3, y + 2, z - 3, x + 3, y + 2, z + 2, chiseled, chiseled, true);
+        b.generate_box(ctx, x - 3, y + 2, z - 3, x + 3, y + 2, z - 2, chiseled, chiseled, true);
+        b.generate_box(ctx, x - 3, y + 2, z + 3, x + 3, y + 2, z + 3, chiseled, chiseled, true);
+        b.generate_box(ctx, x - 3, -1, z - 3, x - 3, -1, z + 2, cut, cut, true);
+        b.generate_box(ctx, x + 3, -1, z - 3, x + 3, -1, z + 2, cut, cut, true);
+        b.generate_box(ctx, x - 3, -1, z - 3, x + 3, -1, z - 2, cut, cut, true);
+        b.generate_box(ctx, x - 3, -1, z + 3, x + 3, -1, z + 3, cut, cut, true);
         // The sand box and collapsed roof (`placeSandBox`, `placeCollapsedRoof`).
         collapsed_roof(b, ctx, x - 2, y + 4, z - 2, x + 2, z + 2);
                 let blue = st("minecraft:blue_terracotta");
         b.place_block(ctx, blue, x, y, z);
-        b.place_block(ctx, orange, (x + 1), y, (z - 1));
-        b.place_block(ctx, orange, (x + 1), y, (z + 1));
-        b.place_block(ctx, orange, (x - 1), y, (z - 1));
-        b.place_block(ctx, orange, (x - 1), y, (z + 1));
-        b.place_block(ctx, orange, (x + 2), y, z);
-        b.place_block(ctx, orange, (x - 2), y, z);
-        b.place_block(ctx, orange, x, y, (z + 2));
-        b.place_block(ctx, orange, x, y, (z - 2));
-        b.place_block(ctx, orange, (x + 3), y, z);
-        b.place_block(ctx, cut, (x + 4), (y + 1), z);
-        b.place_block(ctx, chiseled, (x + 4), (y + 2), z);
-        b.place_block(ctx, orange, (x - 3), y, z);
-        b.place_block(ctx, cut, (x - 4), (y + 1), z);
-        b.place_block(ctx, chiseled, (x - 4), (y + 2), z);
-        b.place_block(ctx, orange, x, y, (z + 3));
-        b.place_block(ctx, orange, x, y, (z - 3));
-        b.place_block(ctx, cut, x, (y + 1), (z - 4));
-        b.place_block(ctx, chiseled, x, -2, (z - 4));
+        b.place_block(ctx, orange, x + 1, y, z - 1);
+        b.place_block(ctx, orange, x + 1, y, z + 1);
+        b.place_block(ctx, orange, x - 1, y, z - 1);
+        b.place_block(ctx, orange, x - 1, y, z + 1);
+        b.place_block(ctx, orange, x + 2, y, z);
+        b.place_block(ctx, orange, x - 2, y, z);
+        b.place_block(ctx, orange, x, y, z + 2);
+        b.place_block(ctx, orange, x, y, z - 2);
+        b.place_block(ctx, orange, x + 3, y, z);
+        b.place_block(ctx, cut, x + 4, y + 1, z);
+        b.place_block(ctx, chiseled, x + 4, y + 2, z);
+        b.place_block(ctx, orange, x - 3, y, z);
+        b.place_block(ctx, cut, x - 4, y + 1, z);
+        b.place_block(ctx, chiseled, x - 4, y + 2, z);
+        b.place_block(ctx, orange, x, y, z + 3);
+        b.place_block(ctx, orange, x, y, z - 3);
+        b.place_block(ctx, cut, x, y + 1, z - 4);
+        b.place_block(ctx, chiseled, x, -2, z - 4);
 }
 
 /// `placeCollapsedRoof`: sandstone or sand from the region's random.

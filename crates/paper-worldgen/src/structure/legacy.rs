@@ -99,6 +99,7 @@ pub(crate) struct TemplatePiece {
 }
 
 impl TemplatePiece {
+    #[allow(clippy::too_many_arguments)]
     fn new(kind_id: &'static str, template: Arc<Template>, position: Pos, rotation: Rotation, mirror: Mirror, pivot: Pos, processors: Vec<Arc<Processor>>, kind: TemplateKind) -> Self {
         let bbox = template.bounding_box(position, rotation, pivot, mirror);
         let base = PieceBase::new(kind_id, 0, bbox).with_orientation(Some(Dir::North));
@@ -879,10 +880,13 @@ impl StructureGen for RuinedPortal {
         } else {
             &self.setups[0]
         };
-        let air_pocket = match setup.air_pocket_probability {
-            p if p == 0.0 => false,
-            p if p == 1.0 => true,
-            p => r.next_f32() < p,
+        let p = setup.air_pocket_probability;
+        let air_pocket = if p == 0.0 {
+            false
+        } else if p == 1.0 {
+            true
+        } else {
+            r.next_f32() < p
         };
         let template = if r.next_f32() < 0.05 { pick(&self.giant, r) } else { pick(&self.portals, r) }.clone();
         let rotation = Rotation::random(r);

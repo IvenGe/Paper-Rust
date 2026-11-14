@@ -1,7 +1,8 @@
 # paper-worldgen
 
 Vanilla Minecraft 26.3 world generation for paper-rs: the overworld, the nether and the
-end, block for block as vanilla generates them, minus structures.
+end, block for block as vanilla generates them, structures included (except ocean monuments
+and woodland mansions).
 
 ## Usage
 
@@ -23,13 +24,13 @@ impl DataSource for Jar {
 }
 
 fn example(jar: &Jar, seed: i64) -> anyhow::Result<()> {
-    // Built once per dimension and seed (about 0.1 s); `Send + Sync`, share it between
-    // worker threads.
+    // Built once per dimension and seed (about 0.6 s for the overworld, most of it parsing
+    // the structure templates); `Send + Sync`, share it between worker threads.
     let gen = WorldGenerator::new(jar, Dimension::Overworld, seed)?;
     let (min_y, height, sea_level) = (gen.min_y(), gen.height(), gen.sea_level());
 
-    // Terrain: biomes, noise (shape, aquifers, ore veins), surface and bedrock, carvers.
-    // Depends on nothing but the chunk position.
+    // Terrain: biomes, noise (shape, aquifers, ore veins, the terrain adaptation around
+    // structures), surface and bedrock, carvers. Depends on nothing but the chunk position.
     let chunk = gen.generate_terrain(3, -7);
     let state: u32 = chunk.get(5, 64, 9); // block state id (the protocol's global palette)
 
@@ -45,11 +46,20 @@ fn example(jar: &Jar, seed: i64) -> anyhow::Result<()> {
     let mut region = Region::new(cx, cz, chunks);
     gen.decorate(cx, cz, &mut region);
     for ((x, y, z), block_entity) in &region.block_entities { /* spawners, chests, ... */ }
+    for ((x, y, z), nbt) in &region.block_entity_nbt { /* other block entities, as NBT */ }
     for entity in &region.entities { /* end crystals */ }
+    for nbt in &region.entity_nbt { /* structure mobs, item frames, ... as entity NBT */ }
     let chunks = region.into_chunks(); // the 3x3 chunks, `(dz + 1) * 3 + dx + 1`
 
     // Where vanilla would put the world spawn for this seed.
     let (x, y, z) = gen.find_spawn();
+
+    // Structures: the starts in a chunk, `/locate`, the stronghold rings.
+    for start in gen.structure_starts(cx, cz) { let (id, pieces) = (start.id(), start.pieces()); }
+    if let Some(found) = gen.locate("minecraft:village_plains", 0, 0, 100) {
+        let (x, z) = (found.x, found.z);
+    }
+    let rings: Vec<(i32, i32)> = gen.ring_positions("minecraft:stronghold");
     Ok(())
 }
 ```
@@ -85,7 +95,7 @@ solidity, collision) taken from Pumpkin's extracted `blocks.json`.
 | Surface rules, bedrock | matches the vanilla fixtures |
 | Carvers (caves, canyons, nether caves) | matches the vanilla fixtures |
 | Features | see below |
-| Structures (villages, mineshafts, ...) | not generated, nor the terrain adaptation ("beardifier") around them |
+| Structures | see below |
 | Initial world spawn | `find_spawn`, see below |
 
 Features follow vanilla's decoration driver (feature order across biomes, per feature
@@ -101,22 +111,63 @@ their clusters, large dripstone; in the nether huge fungi, deltas, blob replacem
 columns and pillars, glowstone, vines; in the end spikes with their crystals, return
 gateways, small end islands, the arrival platform and chorus plants.
 
+Template features (desert wells, sulfur springs) and fossils place their structure
+templates as vanilla does.
+
 Not implemented (they place nothing; `WorldGenerator::unsupported_features` lists them):
 
-* `template` features, which place structure template NBT files: desert wells and the
-  templates of sulfur springs.
-* `fossil`, also template based.
-* `sculk_patch` (deep dark sculk patches).
+* `sculk_patch` (deep dark sculk patches, also the ones ancient cities place).
 * Where one of these is part of a `sequence`, the features after it are skipped as
   well, as vanilla does when a step of a sequence places nothing.
 * Mobs spawned during generation, lighting.
 
+### Structures
+
+Structure sets and placements (random spread with its spread types, exclusion zones and
+frequency reducers, concentric rings for strongholds), structure starts with their biome
+checks and noise-only heights, and placement during decoration at each structure's step
+before that step's features, every piece clipped to the chunk, as
+`ChunkGenerator.applyBiomeDecoration` does. Starts are computed once per (set, chunk) and
+shared between threads. Generated:
+
+* strongholds, nether fortresses, mineshafts (both kinds);
+* jigsaw structures (villages, pillager outposts, bastions, ancient cities, trail ruins,
+  trial chambers, abandoned camps): template pools, pool aliases, the jigsaw assembly with
+  priorities and the expansion hack, all 26.3 processors, and terrain adaptation (beard
+  thin, beard box, bury, encapsulate) in the noise stage;
+* shipwrecks, ocean ruins, ruined portals, buried treasure, desert pyramids, jungle temples,
+  swamp huts, igloos, end cities and nether fossils.
+
+Not generated (they never start; `unsupported_structures` lists them): ocean monuments and
+woodland mansions.
+
+Block entities come out typed where `BlockEntity` can express them (containers with a
+loot table and seed, spawners) and as vanilla block entity NBT otherwise
+(`RegionAccess::add_block_entity_nbt`, e.g. trial spawners, vaults, decorated pots, signs);
+template entities and mobs structures spawn (villagers, witches, drowned, shulkers, the end
+city's elytra item frame) come out as entity NBT (`RegionAccess::add_entity_nbt`), without
+vanilla's `finalizeSpawn`, which the server should run. Not done: the neighbour shape
+updates vanilla runs after placing non-jigsaw templates and post-processing of placed
+blocks (vanilla's `markPosForPostprocessing`). Pieces that settle their height when first
+placed (shipwrecks, swamp huts, jungle temples, desert pyramids) keep it in the shared
+start for the generator's lifetime (vanilla also saves it with the chunk); like vanilla,
+the settled height depends on which chunk is decorated first.
+
 ### Verification
 
-* All fixture chunks from Pumpkin's vanilla 26.3 dumps match after the features stage:
-  5 overworld, 4 nether and 4 end chunks. Fixture chunks that contain structure pieces in
-  vanilla are compared with Pumpkin with structures turned off instead (4 overworld, 1
-  nether); everything else in them matches vanilla.
+* All fixture chunks from Pumpkin's vanilla 26.3 dumps match vanilla after every stage,
+  structures included: 5 overworld, 4 nether and 4 end chunks, among them a trial chambers
+  chunk (encapsulating beardifier, templates, processors), three mineshaft chunks and a
+  nether fortress chunk. With structures turned off the same chunks match Pumpkin with
+  structures disabled.
+* `tests/fixtures/structure_starts.json.gz` (vanilla's starts in 2000 chunks per dimension,
+  from Pumpkin's `assets/tests/`) is matched piece for piece (type, generation depth,
+  orientation, bounding box; jigsaw pieces also their template, position, rotation, ground
+  level delta and junctions): 2 abandoned camps, 2 bastions, 2 buried treasures, 3 end
+  cities, 4 fortresses, 38 mineshafts, 96 nether fossils, 10 ocean ruins, 6 ruined portals,
+  4 shipwrecks, 1 stronghold, 1 trail ruins, 5 trial chambers and 1 plains village.
+* Desert pyramids, jungle temples, swamp huts, igloos, fossils and the other jigsaw
+  structures have no reference here; tests check that they are found and place blocks.
 * Feature types the fixtures do not exercise are checked against Pumpkin (structures off)
   on 25 more chunks with end spikes, gateways, chorus, end islands, ice spikes, icebergs,
   forest rocks, huge mushrooms and corals (`tests/features.rs`). Where Pumpkin departs from
@@ -145,11 +196,14 @@ On the 4 vCPU development container (release build, seed 12345, 144 chunks):
 
 | | build | terrain, 1 thread | terrain, 4 threads | decoration, 1 thread |
 | --- | --- | --- | --- | --- |
-| Overworld | 91 ms | 8.8 ms/chunk | 2.4 ms/chunk | 2.1 ms/chunk |
-| Nether | 55 ms | 2.6 ms/chunk | 1.1 ms/chunk | 0.5 ms/chunk |
-| End | 9 ms | 0.9 ms/chunk | 0.4 ms/chunk | 0.01 ms/chunk |
+| Overworld | 587 ms | 9.3 ms/chunk (7.7 without structures) | 3.4 ms/chunk (2.4) | 2.3 ms/chunk (2.3) |
+| Nether | 291 ms | 2.7 ms/chunk (2.0) | 1.1 ms/chunk (1.1) | 0.4 ms/chunk (0.5) |
+| End | 27 ms | 0.7 ms/chunk (0.5) | 0.3 ms/chunk (0.2) | 0.01 ms/chunk (0.01) |
 
-`cargo run --release -p paper-worldgen --example bench` reproduces these.
+The terrain times include generating the structure starts the chunks need and the
+beardifier; building the generator parses the structure templates the dimension's
+structures can use (about 1300 in the overworld). `cargo run --release -p paper-worldgen
+--example bench` reproduces these (each dimension with structures on and off).
 
 ## Provenance
 
@@ -158,7 +212,9 @@ The algorithms are ported from [Pumpkin](https://github.com/Pumpkin-MC/Pumpkin)
 and adapted to build everything from the jar's data at runtime instead of Pumpkin's
 build-time code generation. Each file derived from Pumpkin names its source files in its
 header. Where Pumpkin's feature code differs from vanilla 26.3 or is missing, the code was
-written to vanilla's behaviour; such files say so in their header.
+written to vanilla's behaviour; such files say so in their header. The structure code
+(`src/structure/`, `src/feature/kinds/template.rs`) is not from Pumpkin: it is written to
+vanilla 26.3's behaviour, and each file names the vanilla classes it follows.
 
 The reference outputs in `tests/fixtures/` are vanilla 26.3 dumps from Pumpkin's
 `assets/tests/` (converted to gzip-compressed little-endian `u16` arrays or gzipped JSON).

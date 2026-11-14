@@ -26,10 +26,11 @@ fn main() -> anyhow::Result<()> {
     });
     let side: i32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(12);
     let jar = Jar(Mutex::new(zip::ZipArchive::new(std::fs::File::open(&path)?)?));
-    for dim in [Dimension::Overworld, Dimension::Nether, Dimension::End] {
+    for (dim, structures) in [Dimension::Overworld, Dimension::Nether, Dimension::End].into_iter().flat_map(|d| [(d, true), (d, false)]) {
         let t = Instant::now();
-        let g = WorldGenerator::new(&jar, dim, 12345)?;
+        let mut g = WorldGenerator::new(&jar, dim, 12345)?;
         let build = t.elapsed();
+        g.set_structures_enabled(structures);
         // Warm up thread-local pools.
         g.generate_terrain(1000, 1000);
         let t = Instant::now();
@@ -72,7 +73,8 @@ fn main() -> anyhow::Result<()> {
         }
         let decoration = t.elapsed() / (side * side) as u32;
         println!(
-            "{dim:?}: build {build:?}; terrain {single:?}/chunk single-threaded; {} chunks on {threads} threads in {multi:?} ({:?}/chunk); decoration {decoration:?}/chunk single-threaded",
+            "{dim:?} (structures {}): build {build:?}; terrain {single:?}/chunk single-threaded; {} chunks on {threads} threads in {multi:?} ({:?}/chunk); decoration {decoration:?}/chunk single-threaded",
+            if structures { "on" } else { "off" },
             side * side,
             multi / (side * side) as u32
         );

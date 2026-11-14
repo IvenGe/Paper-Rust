@@ -30,10 +30,6 @@ impl<'a> Columns<'a> {
         Self { gen, router: ChunkRouter::terrain(&gen.terrain), estimator: gen.surface_estimator(), aquifers: FxMap::default(), columns: FxMap::default(), density: Vec::new(), climate: gen.climate_sampler() }
     }
 
-    pub fn gen(&self) -> &'a WorldGenerator {
-        self.gen
-    }
-
     /// The block states of the column at `(x, z)` from the generation bottom up
     /// (`getBaseColumn`).
     pub fn column(&mut self, x: i32, z: i32) -> Arc<[u16]> {

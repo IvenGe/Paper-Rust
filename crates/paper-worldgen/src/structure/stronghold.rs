@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) struct Stronghold;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 enum Door {
     Opening,
     WoodDoor,
@@ -236,7 +237,7 @@ impl Builder {
 
     /// `generatePieceFromSmallDoor`.
     #[allow(clippy::too_many_arguments)]
-    fn from_small_door(&mut self, r: &mut WorldgenRandom, x: i32, y: i32, z: i32, d: Dir, depth: i32) -> Option<ShPiece> {
+    fn small_door_piece(&mut self, r: &mut WorldgenRandom, x: i32, y: i32, z: i32, d: Dir, depth: i32) -> Option<ShPiece> {
         if !self.update_piece_weight() {
             return None;
         }
@@ -298,7 +299,7 @@ impl Builder {
         if (x - sb.min_x).abs() > 112 || (z - sb.min_z).abs() > 112 {
             return;
         }
-        if let Some(p) = self.from_small_door(r, x, y, z, d, depth + 1) {
+        if let Some(p) = self.small_door_piece(r, x, y, z, d, depth + 1) {
             self.pieces.push(p);
             self.pending.push(self.pieces.len() - 1);
         }

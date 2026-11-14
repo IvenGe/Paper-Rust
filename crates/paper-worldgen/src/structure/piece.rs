@@ -7,9 +7,8 @@
 use super::bbox::BoundingBox;
 use super::transform::{self, Mirror, Rotation};
 use crate::chunk::Heightmap;
-use crate::feature::blockinfo::Fluid;
 use crate::feature::world::{Dir, Pos, World};
-use crate::feature::{BlockEntity, Entity};
+use crate::feature::BlockEntity;
 use crate::random::{Random, WorldgenRandom};
 use paper_data::blocks;
 use paper_nbt::Compound;
@@ -50,8 +49,6 @@ pub struct PlaceCtx<'c, 'w> {
     pub r: &'c mut WorldgenRandom,
     /// The blocks the piece may write (`getWritableArea` of the chunk).
     pub chunk_box: BoundingBox,
-    pub chunk_x: i32,
-    pub chunk_z: i32,
     /// The center of the first piece at its bottom (`StructureStart.placeInChunk`).
     pub reference: Pos,
 }
@@ -72,10 +69,6 @@ impl PlaceCtx<'_, '_> {
         self.w.b.is_air(self.get(p))
     }
 
-    pub fn fluid(&self, p: Pos) -> Fluid {
-        self.w.b.fluid(self.get(p))
-    }
-
     /// `level.getHeight(heightmap, x, z)`.
     pub fn height(&self, hm: Heightmap, x: i32, z: i32) -> i32 {
         self.w.height_at(hm, x, z)
@@ -87,15 +80,6 @@ impl PlaceCtx<'_, '_> {
 
     pub fn add_block_entity(&mut self, p: Pos, be: BlockEntity) {
         self.w.add_block_entity(p, be);
-    }
-
-    /// Block entity data as NBT (from templates).
-    pub fn add_block_entity_nbt(&mut self, p: Pos, nbt: Compound) {
-        self.w.add_block_entity_nbt(p, nbt);
-    }
-
-    pub fn add_entity(&mut self, e: Entity) {
-        self.w.add_entity(e);
     }
 
     pub fn add_entity_nbt(&mut self, nbt: Compound) {
@@ -200,12 +184,6 @@ impl PieceBase {
         Pos::new(self.world_x(x, z), self.world_y(y), self.world_z(x, z))
     }
 
-    /// `isCloseToChunk`.
-    pub fn is_close_to_chunk(&self, chunk_x: i32, chunk_z: i32, distance: i32) -> bool {
-        let (cx, cz) = (chunk_x << 4, chunk_z << 4);
-        self.bbox.intersects_xz(cx - distance, cz - distance, cx + 15 + distance, cz + 15 + distance)
-    }
-
     fn can_be_replaced(&self, ctx: &PlaceCtx, x: i32, y: i32, z: i32) -> bool {
         match self.protect {
             None => true,
@@ -242,6 +220,7 @@ impl PieceBase {
         ctx.chunk_box.is_inside(p) && p.y < ctx.height(Heightmap::OceanFloorWg, p.x, p.z)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_air_box(&self, ctx: &mut PlaceCtx, x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32) {
         for y in y0..=y1 {
             for x in x0..=x1 {
@@ -265,10 +244,6 @@ impl PieceBase {
                 }
             }
         }
-    }
-
-    pub fn generate_box_bb(&self, ctx: &mut PlaceCtx, b: BoundingBox, edge: u32, fill: u32, skip_air: bool) {
-        self.generate_box(ctx, b.min_x, b.min_y, b.min_z, b.max_x, b.max_y, b.max_z, edge, fill, skip_air);
     }
 
     /// `generateBox` with a block selector (which draws for every position of the box).
@@ -426,12 +401,4 @@ pub fn reorient(ctx: &PlaceCtx, p: Pos, state: u32) -> u32 {
         lock = lock.opposite();
     }
     with_dir(state, "facing", lock)
-}
-
-/// `StructurePiece.findCollisionPiece`.
-pub fn find_collision<'a, P: AsRef<PieceBase> + ?Sized>(pieces: impl IntoIterator<Item = &'a P>, b: &BoundingBox) -> Option<&'a P>
-where
-    P: 'a,
-{
-    pieces.into_iter().find(|p| p.as_ref().bbox.intersects(b))
 }

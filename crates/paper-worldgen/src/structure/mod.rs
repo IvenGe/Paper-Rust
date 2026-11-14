@@ -196,10 +196,6 @@ impl<'a> GenCtx<'a> {
         self.gen.min_y + self.gen.height - 1
     }
 
-    pub fn sea_level(&self) -> i32 {
-        self.gen.sea_level
-    }
-
     /// `isValidBiome`: the structure's biomes contain the biome at the stub position.
     pub fn valid_biome(&mut self, p: Pos) -> bool {
         let b = self.cols.biome_at(p);
@@ -262,7 +258,6 @@ pub(crate) struct StructureDef {
 
 /// A structure set (`worldgen/structure_set`).
 pub(crate) struct SetDef {
-    pub id: String,
     /// (structure index, weight)
     pub entries: Vec<(usize, i32)>,
     pub placement: Placement,
@@ -292,7 +287,7 @@ impl StructureStart {
         let c = fb.center();
         let reference = Pos::new(c.x, fb.min_y, c.z);
         let chunk_box = BoundingBox::writable_area(chunk_x, chunk_z, w.min_y, w.max_y());
-        let mut ctx = PlaceCtx { w, r, chunk_box, chunk_x, chunk_z, reference };
+        let mut ctx = PlaceCtx { w, r, chunk_box, reference };
         for p in &self.pieces {
             if p.bbox().intersects(&chunk_box) {
                 p.post_process(&mut ctx);
@@ -370,10 +365,11 @@ impl StructureStart {
 }
 
 type StartCell = Arc<OnceLock<Option<Arc<StructureStart>>>>;
+type StartShard = Mutex<HashMap<(u16, i32, i32), StartCell>>;
 
 /// Structure starts by (set, chunk), computed once.
 struct StartCache {
-    shards: Vec<Mutex<HashMap<(u16, i32, i32), StartCell>>>,
+    shards: Vec<StartShard>,
 }
 
 impl StartCache {
@@ -527,7 +523,7 @@ impl Structures {
             }
             let possible = entries.iter().any(|(s, _)| defs[*s].biomes & possible_bits != 0);
             let adapts_terrain = entries.iter().any(|(s, _)| defs[*s].adaptation != TerrainAdjustment::None);
-            sets.push(SetDef { id: id.clone(), entries, placement, possible, adapts_terrain });
+            sets.push(SetDef { entries, placement, possible, adapts_terrain });
         }
         let rings = sets
             .iter()

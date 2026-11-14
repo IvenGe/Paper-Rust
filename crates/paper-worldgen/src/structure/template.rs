@@ -550,7 +550,4 @@ impl Templates {
         Ok(t)
     }
 
-    pub fn len(&self) -> usize {
-        self.map.len()
-    }
 }
