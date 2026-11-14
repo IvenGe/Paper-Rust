@@ -100,9 +100,50 @@ fn check_starts(dimension: Dimension, key: &str) -> BTreeMap<String, usize> {
     matched
 }
 
+/// Compares the structure references of every chunk of `structure_references.json.gz` (the
+/// references vanilla recorded in the chunks of the same dump that have any, extracted from
+/// Pumpkin's `assets/tests/structure_starts.json`) for the structures this crate generates.
+fn check_references(dimension: Dimension, key: &str) -> usize {
+    let Some(g) = generator(dimension, 0) else { return 0 };
+    let data = common::json_fixture("structure_references");
+    let supported = g.supported_structures();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for row in data[key].as_array().unwrap() {
+        let (x, z) = (row[0].as_i64().unwrap() as i32, row[1].as_i64().unwrap() as i32);
+        let mut theirs: BTreeMap<String, Vec<(i32, i32)>> = BTreeMap::new();
+        for (id, starts) in row[2].as_object().unwrap() {
+            if supported.contains(&id.as_str()) {
+                let mut v: Vec<(i32, i32)> = starts.as_array().unwrap().iter().map(|s| (s[0].as_i64().unwrap() as i32, s[1].as_i64().unwrap() as i32)).collect();
+                v.sort();
+                theirs.insert(id.clone(), v);
+            }
+        }
+        let mut ours: BTreeMap<String, Vec<(i32, i32)>> = BTreeMap::new();
+        for (id, mut starts) in g.structure_references(x, z) {
+            starts.sort();
+            ours.insert(id, starts);
+        }
+        if ours != theirs {
+            failures.push(format!("chunk ({x}, {z}): ours {ours:?}, vanilla {theirs:?}"));
+        }
+        checked += theirs.values().map(Vec::len).sum::<usize>();
+    }
+    eprintln!("{dimension:?}: {checked} references checked");
+    assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures[..failures.len().min(20)].join("\n"));
+    checked
+}
+
 #[test]
 fn overworld_starts() {
     check_starts(Dimension::Overworld, "overworld");
+}
+
+#[test]
+fn references_match_vanilla() {
+    check_references(Dimension::Overworld, "overworld");
+    check_references(Dimension::Nether, "the_nether");
+    check_references(Dimension::End, "the_end");
 }
 
 #[test]
@@ -204,9 +245,130 @@ fn template_features_are_placed() {
     assert!(bones > 0);
 }
 
+/// A world of generated chunks that decorates chunks the way a server does (each chunk
+/// once, its neighbours generated on demand) and collects the entities structures spawn.
+struct TestWorld {
+    gen: &'static paper_worldgen::WorldGenerator,
+    chunks: std::collections::HashMap<(i32, i32), paper_worldgen::ProtoChunk>,
+    entities: Vec<paper_nbt::Compound>,
+    block_entities: Vec<((i32, i32, i32), paper_worldgen::BlockEntity)>,
+    block_entity_nbt: Vec<((i32, i32, i32), paper_nbt::Compound)>,
+}
+
+impl paper_worldgen::RegionAccess for TestWorld {
+    fn chunk(&self, x: i32, z: i32) -> Option<&paper_worldgen::ProtoChunk> {
+        self.chunks.get(&(x, z))
+    }
+
+    fn chunk_mut(&mut self, x: i32, z: i32) -> Option<&mut paper_worldgen::ProtoChunk> {
+        self.chunks.get_mut(&(x, z))
+    }
+
+    fn add_block_entity(&mut self, x: i32, y: i32, z: i32, entity: paper_worldgen::BlockEntity) {
+        self.block_entities.push(((x, y, z), entity));
+    }
+
+    fn add_block_entity_nbt(&mut self, x: i32, y: i32, z: i32, nbt: paper_nbt::Compound) {
+        match paper_worldgen::BlockEntity::from_nbt(&nbt) {
+            Some(be) => self.block_entities.push(((x, y, z), be)),
+            None => self.block_entity_nbt.push(((x, y, z), nbt)),
+        }
+    }
+
+    fn add_entity_nbt(&mut self, nbt: paper_nbt::Compound) {
+        self.entities.push(nbt);
+    }
+}
+
+impl TestWorld {
+    fn new(gen: &'static paper_worldgen::WorldGenerator) -> Self {
+        Self { gen, chunks: Default::default(), entities: Vec::new(), block_entities: Vec::new(), block_entity_nbt: Vec::new() }
+    }
+
+    /// Decorates every chunk of the box, row by row.
+    fn decorate_box(&mut self, min_cx: i32, min_cz: i32, max_cx: i32, max_cz: i32) {
+        for cz in min_cz..=max_cz {
+            for cx in min_cx..=max_cx {
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        let gen = self.gen;
+                        self.chunks.entry((cx + dx, cz + dz)).or_insert_with(|| gen.generate_terrain(cx + dx, cz + dz));
+                    }
+                }
+                self.gen.decorate(cx, cz, self);
+            }
+        }
+    }
+
+    fn block(&self, x: i32, y: i32, z: i32) -> String {
+        common::block_name(self.chunks[&(x >> 4, z >> 4)].get(x, y, z))
+    }
+
+    fn name(&self, x: i32, y: i32, z: i32) -> &'static str {
+        paper_data::blocks::block_of_state(self.chunks[&(x >> 4, z >> 4)].get(x, y, z)).name
+    }
+}
+
+#[test]
+fn ocean_monument_is_placed() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    // The vanilla start of the fixture.
+    let start = g.structure_starts(-71, -15).into_iter().find(|s| s.id() == "minecraft:monument").expect("monument start");
+    let b = start.bbox;
+    let mut w = TestWorld::new(g);
+    w.decorate_box(b.min_x >> 4, b.min_z >> 4, b.max_x >> 4, b.max_z >> 4);
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let allowed = [
+        "minecraft:prismarine", "minecraft:prismarine_bricks", "minecraft:dark_prismarine", "minecraft:sea_lantern", "minecraft:gold_block",
+        "minecraft:wet_sponge", "minecraft:water", "minecraft:air", "minecraft:ice", "minecraft:packed_ice", "minecraft:blue_ice",
+        "minecraft:seagrass", "minecraft:tall_seagrass", "minecraft:kelp", "minecraft:kelp_plant", "minecraft:sea_pickle",
+    ];
+    let mut stray = Vec::new();
+    for x in b.min_x..=b.max_x {
+        for z in b.min_z..=b.max_z {
+            for y in b.min_y..=64 {
+                let name = w.name(x, y, z);
+                *counts.entry(name).or_default() += 1;
+                if !allowed.contains(&name) {
+                    stray.push(format!("{} at ({x}, {y}, {z})", w.block(x, y, z)));
+                }
+            }
+        }
+    }
+    eprintln!("monument blocks: {counts:?}");
+    assert!(stray.is_empty(), "{} blocks the monument should have carved away, e.g. {:?}", stray.len(), &stray[..stray.len().min(10)]);
+    assert_eq!(counts.get("minecraft:gold_block"), Some(&8), "the core's gold");
+    assert!(counts.get("minecraft:prismarine_bricks").copied().unwrap_or(0) > 5000);
+    assert!(counts.get("minecraft:sea_lantern").copied().unwrap_or(0) > 50);
+    let elders: Vec<_> = w.entities.iter().filter(|e| e.string("id") == Some("minecraft:elder_guardian")).collect();
+    assert_eq!(elders.len(), 3, "two wing rooms and the penthouse each spawn an elder guardian");
+    for e in elders {
+        let pos = e.list("Pos").unwrap();
+        let (x, y, z) = (pos[0].as_f64().unwrap(), pos[1].as_f64().unwrap(), pos[2].as_f64().unwrap());
+        assert!(b.contains(x.floor() as i32, y as i32, z.floor() as i32), "elder guardian at ({x}, {y}, {z}) outside {b:?}");
+        assert_eq!(e.bool("PersistenceRequired"), Some(true));
+    }
+}
+
+#[test]
+fn ocean_monuments_spawn_guardians() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    // Inside the vanilla monument of the fixture (box -1165..-1108, 39..61, -269..-212).
+    let monsters = g.structure_spawns_at(-1140, 50, -240, "monster").expect("the monument overrides monsters");
+    assert_eq!(monsters.len(), 1);
+    let guardian = &monsters[0];
+    assert_eq!((guardian.entity.as_str(), guardian.weight, guardian.min_count, guardian.max_count), ("minecraft:guardian", 1, 2, 4));
+    assert_eq!(g.structure_spawns_at(-1140, 50, -240, "axolotls"), Some(Vec::new()));
+    assert_eq!(g.structure_spawns_at(-1140, 50, -240, "creature"), None);
+    // Above and beside the building.
+    assert_eq!(g.structure_spawns_at(-1140, 62, -240, "monster"), None);
+    assert_eq!(g.structure_spawns_at(-1100, 50, -240, "monster"), None);
+}
+
 #[test]
 fn generator_and_starts_are_send_and_sync() {
     fn check<T: Send + Sync>() {}
     check::<paper_worldgen::WorldGenerator>();
     check::<paper_worldgen::structure::StructureStart>();
 }
+

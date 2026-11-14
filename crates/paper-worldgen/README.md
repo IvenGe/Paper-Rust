@@ -1,8 +1,8 @@
 # paper-worldgen
 
 Vanilla Minecraft 26.3 world generation for paper-rs: the overworld, the nether and the
-end, block for block as vanilla generates them, structures included (except ocean monuments
-and woodland mansions).
+end, block for block as vanilla generates them, structures included (except woodland
+mansions).
 
 ## Usage
 
@@ -60,6 +60,10 @@ fn example(jar: &Jar, seed: i64) -> anyhow::Result<()> {
         let (x, z) = (found.x, found.z);
     }
     let rings: Vec<(i32, i32)> = gen.ring_positions("minecraft:stronghold");
+    // The starts that reach into a chunk (vanilla's `structures.References`), and the mobs
+    // structures spawn instead of the biome's (guardians in monuments, witches in huts).
+    let refs: Vec<(String, Vec<(i32, i32)>)> = gen.structure_references(cx, cz);
+    let spawns = gen.structure_spawns_at(-1140, 50, -240, "monster");
     Ok(())
 }
 ```
@@ -136,10 +140,18 @@ shared between threads. Generated:
   priorities and the expansion hack, all 26.3 processors, and terrain adaptation (beard
   thin, beard box, bury, encapsulate) in the noise stage;
 * shipwrecks, ocean ruins, ruined portals, buried treasure, desert pyramids, jungle temples,
-  swamp huts, igloos, end cities and nether fossils.
+  swamp huts, igloos, end cities and nether fossils;
+* ocean monuments: the surrounding biome check, the room graph and room fitters, the
+  building with its rooms and the three elder guardians. As in vanilla the start holds one
+  piece (the building) and the rooms are its children, and the terrain is not beardified:
+  the building replaces everything around and inside itself with water (air above sea
+  level, ice kept) and fills its pillars down to the floor.
 
-Not generated (they never start; `unsupported_structures` lists them): ocean monuments and
-woodland mansions.
+Not generated (they never start; `unsupported_structures` lists them): woodland mansions.
+
+`structure_spawns_at` answers vanilla's `getMobsAt` for structures from their
+`spawn_overrides`: the guardians that spawn in monuments (natural spawning, not
+generation), witches and cats in swamp huts, pillagers at outposts and the fortress mobs.
 
 Block entities come out typed where `BlockEntity` can express them (containers with a
 loot table and seed, spawners) and as vanilla block entity NBT otherwise
@@ -164,8 +176,16 @@ the settled height depends on which chunk is decorated first.
   from Pumpkin's `assets/tests/`) is matched piece for piece (type, generation depth,
   orientation, bounding box; jigsaw pieces also their template, position, rotation, ground
   level delta and junctions): 2 abandoned camps, 2 bastions, 2 buried treasures, 3 end
-  cities, 4 fortresses, 38 mineshafts, 96 nether fossils, 10 ocean ruins, 6 ruined portals,
-  4 shipwrecks, 1 stronghold, 1 trail ruins, 5 trial chambers and 1 plains village.
+  cities, 4 fortresses, 38 mineshafts, 1 ocean monument, 96 nether fossils, 10 ocean ruins,
+  6 ruined portals, 4 shipwrecks, 1 stronghold, 1 trail ruins, 5 trial chambers and 1 plains
+  village.
+* The same dump's structure references (every start reaching into each of its 1178 chunks
+  with references, 1524 references in all three dimensions, extracted into
+  `tests/fixtures/structure_references.json.gz`) all match.
+* Ocean monuments: only the start (and its references) has a vanilla reference. The rooms
+  were checked by hand against vanilla's `OceanMonumentPieces`; the test places the
+  fixture's monument and checks the core's eight gold blocks, the three elder guardians and
+  that nothing but monument blocks, water, ice and water plants is left in its volume.
 * Desert pyramids, jungle temples, swamp huts, igloos, fossils and the other jigsaw
   structures have no reference here; tests check that they are found and place blocks.
 * Feature types the fixtures do not exercise are checked against Pumpkin (structures off)

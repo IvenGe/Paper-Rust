@@ -271,6 +271,33 @@ impl WorldGenerator {
         self.structures.starts_in_chunk(self, chunk_x, chunk_z)
     }
 
+    /// The structure starts within 8 chunks whose bounding box reaches into a chunk, per
+    /// structure, as vanilla's `createReferences` records them (the chunk's
+    /// `structures.References`): structure id and start chunks, in vanilla's order. Empty
+    /// while structures are disabled.
+    pub fn structure_references(&self, chunk_x: i32, chunk_z: i32) -> Vec<(String, Vec<(i32, i32)>)> {
+        if !self.structures.enabled {
+            return Vec::new();
+        }
+        self.structures
+            .references(self, chunk_x, chunk_z, |_| true)
+            .into_iter()
+            .map(|(s, starts)| (self.structures.structure_id(s).to_owned(), starts.iter().map(|st| (st.chunk_x, st.chunk_z)).collect()))
+            .collect()
+    }
+
+    /// The spawns a structure puts in place of the biome's for a mob category (`monster`,
+    /// `creature`, `axolotls`, ...) at a block position, as the structure part of vanilla's
+    /// `ChunkGenerator.getMobsAt` (`spawn_overrides`): guardians in ocean monuments,
+    /// witches and cats in swamp huts, pillagers at outposts, the fortress mobs. An empty
+    /// list overrides too (no spawns). `None` where no structure overrides the category,
+    /// and while structures are disabled. The natural spawner should use it in place of
+    /// the biome's spawns; vanilla's extra nether fortress rule (monsters on nether bricks,
+    /// `isInNetherFortressBounds`) is a block check left to the caller.
+    pub fn structure_spawns_at(&self, x: i32, y: i32, z: i32, category: &str) -> Option<Vec<crate::structure::SpawnEntry>> {
+        self.structures.spawns_at(self, crate::feature::world::Pos::new(x, y, z), category)
+    }
+
     /// Finds the nearest start of a structure (`/locate structure`): `structure` is its id
     /// (`minecraft:village_plains`), `(x, z)` the block position to search from and
     /// `radius` the search radius in placement cells of random-spread sets (vanilla's

@@ -18,6 +18,7 @@ mod fortress;
 mod jigsaw;
 mod legacy;
 mod mineshaft;
+mod monument;
 pub(crate) mod processor;
 mod stronghold;
 mod temple;
@@ -254,6 +255,52 @@ pub(crate) struct StructureDef {
     pub step: usize,
     pub adaptation: TerrainAdjustment,
     pub supported: bool,
+    /// `spawn_overrides`.
+    pub spawn_overrides: Vec<SpawnOverride>,
+}
+
+/// A mob a structure spawns in place of the biome's (`MobSpawnSettings.SpawnerData` of a
+/// structure's `spawn_overrides`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpawnEntry {
+    /// The entity type (`minecraft:guardian`).
+    pub entity: String,
+    pub weight: i32,
+    /// The size of a group, inclusive.
+    pub min_count: i32,
+    pub max_count: i32,
+}
+
+/// `StructureSpawnOverride` of one mob category.
+pub(crate) struct SpawnOverride {
+    /// The mob category (`monster`, `creature`, `axolotls`, ...).
+    pub category: String,
+    /// `bounding_box: piece`: inside a piece, not anywhere in the start's box.
+    pub piece: bool,
+    pub spawns: Vec<SpawnEntry>,
+}
+
+impl SpawnOverride {
+    fn parse(json: &Value) -> Result<Vec<Self>> {
+        let mut out = Vec::new();
+        for (category, o) in json.get("spawn_overrides").and_then(Value::as_object).into_iter().flatten() {
+            let piece = o.get("bounding_box").and_then(Value::as_str) == Some("piece");
+            let mut spawns = Vec::new();
+            for e in o.get("spawns").and_then(Value::as_array).into_iter().flatten() {
+                let (min_count, max_count) = match e.get("count") {
+                    Some(Value::Number(n)) => {
+                        let n = n.as_i64().unwrap_or(1) as i32;
+                        (n, n)
+                    }
+                    Some(c @ Value::Object(_)) => (c.i64_or("min_inclusive", 1) as i32, c.i64_or("max_inclusive", 1) as i32),
+                    _ => (e.i64_or("minCount", 1) as i32, e.i64_or("maxCount", 1) as i32),
+                };
+                spawns.push(SpawnEntry { entity: full_id(e.str_field("type")?), weight: e.i64_or("weight", 1) as i32, min_count, max_count });
+            }
+            out.push(SpawnOverride { category: category.clone(), piece, spawns });
+        }
+        Ok(out)
+    }
 }
 
 /// A structure set (`worldgen/structure_set`).
@@ -561,10 +608,12 @@ impl Structures {
             "swamp_hut" => Some(Box::new(temple::SwampHut)),
             "jungle_temple" => Some(Box::new(temple::JungleTemple)),
             "desert_pyramid" => Some(Box::new(temple::DesertPyramid)),
+            "ocean_monument" => Some(Box::new(monument::OceanMonument::load(l)?)),
             _ => None,
         };
         let supported = generator.is_some();
-        Ok(StructureDef { id: id.into(), kind, generator: generator.unwrap_or_else(|| Box::new(Unsupported)), biomes, step, adaptation, supported })
+        let spawn_overrides = SpawnOverride::parse(json)?;
+        Ok(StructureDef { id: id.into(), kind, generator: generator.unwrap_or_else(|| Box::new(Unsupported)), biomes, step, adaptation, supported, spawn_overrides })
     }
 
     /// Structure types the data uses that are not generated.
@@ -758,6 +807,24 @@ impl Structures {
                 start.place_in_chunk(&self.defs[structure], w, r, cx, cz);
             }
         }
+    }
+
+    /// `ChunkGenerator.getMobsAt`'s structure part: the spawns of the first structure
+    /// referenced by the position's chunk that overrides `category` and holds the position
+    /// (in its box, or in one of its pieces for `bounding_box: piece`).
+    pub(crate) fn spawns_at(&self, gen: &WorldGenerator, p: Pos, category: &str) -> Option<Vec<SpawnEntry>> {
+        if !self.enabled {
+            return None;
+        }
+        let overrides = |s: &SetDef| s.entries.iter().any(|(i, _)| self.defs[*i].spawn_overrides.iter().any(|o| o.category == category));
+        for (structure, starts) in self.references(gen, p.x >> 4, p.z >> 4, overrides) {
+            let Some(o) = self.defs[structure].spawn_overrides.iter().find(|o| o.category == category) else { continue };
+            let inside = |s: &Arc<StructureStart>| if o.piece { s.pieces.iter().any(|piece| piece.bbox().is_inside(p)) } else { s.bbox.is_inside(p) };
+            if starts.iter().any(inside) {
+                return Some(o.spawns.clone());
+            }
+        }
+        None
     }
 
     /// The id of a structure.

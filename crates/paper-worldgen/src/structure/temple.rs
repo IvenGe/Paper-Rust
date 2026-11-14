@@ -7,12 +7,11 @@
 //! hut are returned as entity NBT; vanilla's `finalizeSpawn` is left to the caller.
 
 use super::bbox::BoundingBox;
-use super::piece::{st, with, with_bool, with_dir, PieceBase, PlaceCtx, Selector};
+use super::piece::{mob, st, with, with_bool, with_dir, PieceBase, PlaceCtx, Selector};
 use super::{GenCtx, Piece, StructureGen};
 use crate::chunk::Heightmap;
 use crate::feature::world::{Dir, Pos};
 use crate::random::{Random, WorldgenRandom};
-use paper_nbt::{Compound, Tag};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -87,17 +86,6 @@ impl Scattered {
         base.bbox.move_by(0, settled.unwrap_or(0), 0);
         Some(base)
     }
-}
-
-/// A mob spawned by a structure, as entity NBT (`setPersistenceRequired`, at the block's
-/// bottom center).
-fn mob(id: &str, p: Pos) -> Compound {
-    let mut nbt = Compound::new();
-    nbt.insert("id", id);
-    nbt.insert("Pos", Tag::List(vec![(p.x as f64 + 0.5).into(), (p.y as f64).into(), (p.z as f64 + 0.5).into()]));
-    nbt.insert("Rotation", Tag::List(vec![0.0f32.into(), 0.0f32.into()]));
-    nbt.insert("PersistenceRequired", true);
-    nbt
 }
 
 /// `JungleTemplePiece.MossStoneSelector`.
