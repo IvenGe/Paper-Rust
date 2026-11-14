@@ -1454,6 +1454,168 @@ public final class HostItemMeta implements HostProxies.Backed {
         this.setBook(new ItemComponents.WrittenBook(b.title(), b.author(), generation == null ? 0 : generation.ordinal(), b.pages(), b.resolved()));
     }
 
+    // --- compasses ------------------------------------------------------------------------------
+
+    /** A compass's {@code minecraft:lodestone_tracker}: the lodestone's dimension and packed block position, if any, and whether it is tracked. */
+    private record Lodestone(@Nullable String dimension, long pos, boolean tracked) {
+    }
+
+    private @Nullable Lodestone lodestone() {
+        final byte[] bytes = this.components.raw(MetaCodecs.LODESTONE_TRACKER);
+        if (bytes == null) {
+            return null;
+        }
+        final ItemComponents.In in = new ItemComponents.In(bytes);
+        String dimension = null;
+        long pos = 0;
+        if (in.bool()) {
+            dimension = in.string();
+            pos = in.int64();
+        }
+        return new Lodestone(dimension, pos, in.bool());
+    }
+
+    private void setLodestoneTracker(final @Nullable String dimension, final long pos, final boolean tracked) {
+        final ItemComponents.Out out = new ItemComponents.Out();
+        out.bool(dimension != null);
+        if (dimension != null) {
+            out.string(dimension);
+            out.int64(pos);
+        }
+        out.bool(tracked);
+        this.components.setRaw(MetaCodecs.LODESTONE_TRACKER, out.toByteArray());
+    }
+
+    public boolean hasLodestone() {
+        final Lodestone lodestone = this.lodestone();
+        return lodestone != null && lodestone.dimension() != null;
+    }
+
+    /** The lodestone, in the loaded world of its dimension (none if no such world is loaded). */
+    public @Nullable org.bukkit.Location getLodestone() {
+        final Lodestone lodestone = this.lodestone();
+        if (lodestone == null || lodestone.dimension() == null) {
+            return null;
+        }
+        org.bukkit.World world = null;
+        for (org.bukkit.World w : org.bukkit.Bukkit.getWorlds()) {
+            if (w.getKey().toString().equals(lodestone.dimension())) {
+                world = w;
+                break;
+            }
+        }
+        final long p = lodestone.pos();
+        return new org.bukkit.Location(world, (int) (p >> 38), (int) (p << 52 >> 52), (int) (p << 26 >> 38));
+    }
+
+    public void setLodestone(final @Nullable org.bukkit.Location lodestone) {
+        if (lodestone != null && lodestone.getWorld() == null) {
+            throw new IllegalArgumentException("world is null");
+        }
+        final Lodestone current = this.lodestone();
+        if (lodestone == null) {
+            if (current != null) {
+                this.setLodestoneTracker(null, 0, current.tracked());
+            }
+            return;
+        }
+        final long pos = ((long) (lodestone.getBlockX() & 0x3FFFFFF) << 38) | ((long) (lodestone.getBlockZ() & 0x3FFFFFF) << 12) | (lodestone.getBlockY() & 0xFFF);
+        this.setLodestoneTracker(lodestone.getWorld().getKey().toString(), pos, current == null || current.tracked());
+    }
+
+    public boolean isLodestoneTracked() {
+        final Lodestone lodestone = this.lodestone();
+        return lodestone != null && lodestone.tracked();
+    }
+
+    public void setLodestoneTracked(final boolean tracked) {
+        final Lodestone lodestone = this.lodestone();
+        this.setLodestoneTracker(lodestone == null ? null : lodestone.dimension(), lodestone == null ? 0 : lodestone.pos(), tracked);
+    }
+
+    // --- buckets of tropical fish and axolotls ---------------------------------------------------
+
+    public boolean hasPattern() {
+        return this.components.has(MetaCodecs.TROPICAL_FISH_PATTERN);
+    }
+
+    public boolean hasBodyColor() {
+        return this.components.has(MetaCodecs.TROPICAL_FISH_BASE_COLOR);
+    }
+
+    public boolean hasPatternColor() {
+        return this.components.has(MetaCodecs.TROPICAL_FISH_PATTERN_COLOR);
+    }
+
+    /** A tropical fish bucket's look, or an axolotl bucket's variant, is set. */
+    public boolean hasVariant() {
+        if (this.type == Material.AXOLOTL_BUCKET) {
+            return this.components.has(MetaCodecs.AXOLOTL_VARIANT);
+        }
+        return this.hasPattern() || this.hasBodyColor() || this.hasPatternColor();
+    }
+
+    /** The pattern (sent as its packed id: size, then the pattern of that size from bit 8). */
+    public org.bukkit.entity.TropicalFish.Pattern getPattern() {
+        final Integer packed = this.components.varInt(MetaCodecs.TROPICAL_FISH_PATTERN);
+        if (packed == null) {
+            throw new IllegalStateException("Pattern is absent, check hasPattern first!");
+        }
+        return org.bukkit.entity.TropicalFish.Pattern.values()[(packed & 0xFF) * 6 + (packed >> 8 & 0xFF)];
+    }
+
+    public void setPattern(final org.bukkit.entity.TropicalFish.Pattern pattern) {
+        if (pattern == null) {
+            throw new IllegalArgumentException("Pattern cannot be null!");
+        }
+        this.components.setVarInt(MetaCodecs.TROPICAL_FISH_PATTERN, pattern.ordinal() / 6 | pattern.ordinal() % 6 << 8);
+    }
+
+    public org.bukkit.DyeColor getBodyColor() {
+        final Integer color = this.components.varInt(MetaCodecs.TROPICAL_FISH_BASE_COLOR);
+        if (color == null) {
+            throw new IllegalStateException("Body color is absent, check hasBodyColor first!");
+        }
+        return org.bukkit.DyeColor.values()[color];
+    }
+
+    public void setBodyColor(final org.bukkit.DyeColor color) {
+        if (color == null) {
+            throw new IllegalArgumentException("Body color cannot be null!");
+        }
+        this.components.setVarInt(MetaCodecs.TROPICAL_FISH_BASE_COLOR, color.ordinal());
+    }
+
+    public org.bukkit.DyeColor getPatternColor() {
+        final Integer color = this.components.varInt(MetaCodecs.TROPICAL_FISH_PATTERN_COLOR);
+        if (color == null) {
+            throw new IllegalStateException("Pattern color is absent, check hasPatternColor first!");
+        }
+        return org.bukkit.DyeColor.values()[color];
+    }
+
+    public void setPatternColor(final org.bukkit.DyeColor color) {
+        if (color == null) {
+            throw new IllegalArgumentException("Pattern color cannot be null!");
+        }
+        this.components.setVarInt(MetaCodecs.TROPICAL_FISH_PATTERN_COLOR, color.ordinal());
+    }
+
+    public org.bukkit.entity.Axolotl.Variant getVariant() {
+        final Integer variant = this.components.varInt(MetaCodecs.AXOLOTL_VARIANT);
+        if (variant == null) {
+            throw new IllegalStateException("Variant is absent, check hasVariant first!");
+        }
+        return org.bukkit.entity.Axolotl.Variant.values()[variant];
+    }
+
+    public void setVariant(final org.bukkit.entity.Axolotl.Variant variant) {
+        if (variant == null) {
+            throw new IllegalArgumentException("Variant cannot be null!");
+        }
+        this.components.setVarInt(MetaCodecs.AXOLOTL_VARIANT, variant.ordinal());
+    }
+
     // --- maps and ominous bottles ---------------------------------------------------------------
 
     public boolean hasMapId() {

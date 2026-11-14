@@ -105,6 +105,16 @@ public final class MetaKinds {
         Crossbow clone();
     }
 
+    public interface TropicalFishBucket extends org.bukkit.inventory.meta.TropicalFishBucketMeta, Damageable, Repairable, BlockDataMeta {
+        @Override
+        TropicalFishBucket clone();
+    }
+
+    public interface AxolotlBucket extends org.bukkit.inventory.meta.AxolotlBucketMeta, Damageable, Repairable, BlockDataMeta {
+        @Override
+        AxolotlBucket clone();
+    }
+
     public interface Compass extends CompassMeta, Damageable, Repairable, BlockDataMeta {
         @Override
         Compass clone();
@@ -178,6 +188,12 @@ public final class MetaKinds {
         }
         if (key.equals("compass")) {
             return Compass.class;
+        }
+        if (key.equals("tropical_fish_bucket")) {
+            return TropicalFishBucket.class;
+        }
+        if (key.equals("axolotl_bucket")) {
+            return AxolotlBucket.class;
         }
         if (key.equals("bundle") || key.endsWith("_bundle")) {
             return Bundle.class;

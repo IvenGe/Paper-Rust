@@ -123,8 +123,8 @@ impl Server {
     }
 
     /// Puts a mob into a water bucket (`Bucketable.bucketMobPickup`), keeping what vanilla
-    /// keeps of it (`saveDefaultDataToBucketTag` and the variants of tropical fish and
-    /// axolotls, the ages of axolotls and tadpoles).
+    /// keeps of it (`saveDefaultDataToBucketTag`, the ages of axolotls and tadpoles, and as
+    /// components the looks of tropical fish and the variants of axolotls).
     fn bucket_mob(&mut self, id: i32, hand: i32, world: usize, target: i32, bucket: &str, sound: &str) {
         let Some(e) = self.worlds[world].entities.get(&target) else { return };
         let (Some(m), Some(item)) = (e.mob(), items::id(bucket)) else { return };
@@ -134,12 +134,20 @@ impl Server {
             data.insert("NoGravity", paper_nbt::Tag::Byte(1));
         }
         data.insert("Health", paper_nbt::Tag::Float(m.living.health));
+        let varint = |v: i32| {
+            let mut bytes = Vec::new();
+            paper_protocol::codec::WriteExt::put_varint(&mut bytes, v);
+            bytes
+        };
         match e.info.name.as_str() {
+            // `TropicalFish.packVariant`: pattern, body colour and pattern colour.
             "minecraft:tropical_fish" => {
-                data.insert("BucketVariantTag", paper_nbt::Tag::Int(m.variant));
+                super::enchanting::set_component(&mut stack, "minecraft:tropical_fish/pattern", varint(m.variant & 0xFFFF));
+                super::enchanting::set_component(&mut stack, "minecraft:tropical_fish/base_color", varint(m.variant >> 16 & 0xFF));
+                super::enchanting::set_component(&mut stack, "minecraft:tropical_fish/pattern_color", varint(m.variant >> 24 & 0xFF));
             }
             "minecraft:axolotl" => {
-                data.insert("Variant", paper_nbt::Tag::Int(m.variant));
+                super::enchanting::set_component(&mut stack, "minecraft:axolotl/variant", varint(m.variant));
                 data.insert("Age", paper_nbt::Tag::Int(m.age));
             }
             "minecraft:tadpole" => {
@@ -183,20 +191,31 @@ impl Server {
             .and_then(|(_, bytes)| paper_nbt::read_network(&mut &bytes[..], 1 << 21).ok().flatten())
             .and_then(|tag| tag.as_compound().cloned());
         let name = super::workstations::custom_name_of(bucket);
+        let component = |name: &str| {
+            let ty = paper_data::registries::id("minecraft:data_component_type", name).map(|i| i as i32);
+            bucket.added.iter().find(|(t, _)| Some(*t) == ty).and_then(|(_, bytes)| paper_protocol::codec::Reader::new(bytes).varint().ok())
+        };
+        let variant = match mob {
+            "minecraft:tropical_fish" => component("minecraft:tropical_fish/pattern").map(|pattern| {
+                (pattern & 0xFFFF) | (component("minecraft:tropical_fish/base_color").unwrap_or(0) & 0xFF) << 16 | (component("minecraft:tropical_fish/pattern_color").unwrap_or(0) & 0xFF) << 24
+            }),
+            "minecraft:axolotl" => component("minecraft:axolotl/variant"),
+            _ => None,
+        };
         let e = self.worlds[world].entities.get_mut(&id)?;
         if name.is_some() {
             e.custom_name = name;
         }
         e.no_gravity |= data.as_ref().and_then(|d| d.bool("NoGravity")) == Some(true);
+        if let (Some(v), Some(m)) = (variant, e.mob_mut()) {
+            m.variant = v;
+        }
         e.metadata_dirty = true;
         if let Some(m) = e.mob_mut() {
             m.persistent = true;
             if let Some(d) = &data {
                 if let Some(health) = d.f64("Health") {
                     m.living.health = (health as f32).clamp(0.0, m.living.max_health);
-                }
-                if let Some(variant) = d.i32("BucketVariantTag").or_else(|| d.i32("Variant")) {
-                    m.variant = variant;
                 }
                 if let Some(age) = d.i32("Age") {
                     m.age = age;

@@ -468,6 +468,33 @@ final class ApiTests implements Listener, CommandExecutor {
         final ItemMeta stewMeta = roundTrip.apply(16, stew);
         check(failures, stewMeta instanceof org.bukkit.inventory.meta.SuspiciousStewMeta m && m.getCustomEffects().size() == 1
             && m.getCustomEffects().get(0).getDuration() == 100, "stew " + stewMeta);
+
+        // A lodestone compass, a bucket of a tropical fish and one of an axolotl.
+        final ItemStack compass = new ItemStack(Material.COMPASS);
+        final org.bukkit.inventory.meta.CompassMeta compassMeta = (org.bukkit.inventory.meta.CompassMeta) compass.getItemMeta();
+        compassMeta.setLodestone(new org.bukkit.Location(player.getWorld(), 10, -61, -20));
+        compassMeta.setLodestoneTracked(false);
+        compass.setItemMeta(compassMeta);
+        final ItemMeta compassBack = roundTrip.apply(17, compass);
+        check(failures, compassBack instanceof org.bukkit.inventory.meta.CompassMeta m && m.hasLodestone() && !m.isLodestoneTracked()
+            && m.getLodestone().getBlockX() == 10 && m.getLodestone().getBlockY() == -61 && m.getLodestone().getBlockZ() == -20
+            && player.getWorld().equals(m.getLodestone().getWorld()), "compass " + compassBack);
+        final ItemStack fish = new ItemStack(Material.TROPICAL_FISH_BUCKET);
+        final org.bukkit.inventory.meta.TropicalFishBucketMeta fishMeta = (org.bukkit.inventory.meta.TropicalFishBucketMeta) fish.getItemMeta();
+        check(failures, !fishMeta.hasVariant(), "a plain fish bucket");
+        fishMeta.setPattern(org.bukkit.entity.TropicalFish.Pattern.GLITTER);
+        fishMeta.setBodyColor(org.bukkit.DyeColor.ORANGE);
+        fishMeta.setPatternColor(org.bukkit.DyeColor.BLUE);
+        fish.setItemMeta(fishMeta);
+        final ItemMeta fishBack = roundTrip.apply(18, fish);
+        check(failures, fishBack instanceof org.bukkit.inventory.meta.TropicalFishBucketMeta m && m.hasVariant() && m.getPattern() == org.bukkit.entity.TropicalFish.Pattern.GLITTER
+            && m.getBodyColor() == org.bukkit.DyeColor.ORANGE && m.getPatternColor() == org.bukkit.DyeColor.BLUE, "fish bucket " + fishBack);
+        final ItemStack axolotl = new ItemStack(Material.AXOLOTL_BUCKET);
+        final org.bukkit.inventory.meta.AxolotlBucketMeta axolotlMeta = (org.bukkit.inventory.meta.AxolotlBucketMeta) axolotl.getItemMeta();
+        axolotlMeta.setVariant(org.bukkit.entity.Axolotl.Variant.CYAN);
+        axolotl.setItemMeta(axolotlMeta);
+        final ItemMeta axolotlBack = roundTrip.apply(19, axolotl);
+        check(failures, axolotlBack instanceof org.bukkit.inventory.meta.AxolotlBucketMeta m && m.hasVariant() && m.getVariant() == org.bukkit.entity.Axolotl.Variant.CYAN, "axolotl bucket " + axolotlBack);
         report(player, "metas", failures);
     }
 

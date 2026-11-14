@@ -112,6 +112,34 @@ fn fish_go_into_water_buckets_and_come_out_again() {
 }
 
 #[test]
+fn axolotls_keep_their_variant_in_the_bucket() {
+    let server = start_server(survival());
+    let (mut alice, id) = join(&server);
+    // A cyan axolotl (variant 3).
+    let axolotl = server
+        .handle
+        .run(|s| {
+            let a = s.spawn_mob(0, "minecraft:axolotl", Vec3::new(10.5, -60.0, 8.5), SpawnReason::Command).unwrap();
+            s.worlds[0].entities.get_mut(&a).unwrap().mob_mut().unwrap().variant = 3;
+            a
+        })
+        .unwrap();
+    hold(&server, id, Slot::of(item("minecraft:water_bucket"), 1));
+    alice.send(&play::Interact { entity_id: VarInt(axolotl), hand: VarInt(0), target: LpVec3(0.0, 0.2, 0.0), sneaking: false });
+    let bucket = item("minecraft:axolotl_bucket");
+    wait_reading(&mut alice, "the axolotl in the bucket", || held(&server, id).0.as_ref().is_some_and(|s| s.item == bucket));
+    // As vanilla keeps it: the `minecraft:axolotl/variant` component.
+    let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:axolotl/variant").unwrap() as i32;
+    let stack = held(&server, id).0.unwrap();
+    assert_eq!(stack.added.iter().find(|(t, _)| *t == ty).map(|(_, bytes)| bytes.clone()), Some(vec![3]));
+    use_down(&mut alice, 2);
+    let let_out = |s: &mut paper_server::server::Server| s.worlds[0].entities.values().find(|e| e.info.name == "minecraft:axolotl" && !e.removed).map(|e| e.mob().unwrap().variant);
+    wait_reading(&mut alice, "the axolotl let out", || server.handle.run(let_out).unwrap().is_some());
+    assert_eq!(server.handle.run(let_out).unwrap(), Some(3));
+    server.stop();
+}
+
+#[test]
 fn spawn_eggs_work_on_water() {
     let server = start_server(survival());
     let (mut alice, id) = join(&server);

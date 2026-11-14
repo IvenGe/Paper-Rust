@@ -241,7 +241,8 @@ What works:
     intact), the
     special metas of heads (`SkullMeta`), potions and tipped arrows (`PotionMeta`, and
     `PotionType` data), suspicious stew, fireworks and firework stars, banners, written and
-    writable books, block data (`BlockDataMeta`), maps (id and colour), ominous bottles, and
+    writable books, block data (`BlockDataMeta`), maps (id and colour), ominous bottles, lodestone compasses, buckets of tropical
+    fish and axolotls, and
     inventories: the player inventory, ender chests, chests, barrels and furnaces (as block
     states), custom inventories from `Bukkit.createInventory` opened with
     `Player.openInventory`, open windows and the cursor;
@@ -304,8 +305,7 @@ Not yet:
   worlds, unloading worlds, registry and tag lifecycle events,
   dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,
-  crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
-  fish, ...), inventories of other block types and anvil and enchanting views, villager
+  crossbows, armour trims, block states of items, map views, spawn eggs, ...), inventories of other block types and anvil and enchanting views, villager
   inventories, sleeping and zombifying villagers, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,

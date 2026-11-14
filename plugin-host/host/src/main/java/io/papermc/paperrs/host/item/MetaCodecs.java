@@ -17,6 +17,11 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class MetaCodecs {
     public static final String PROFILE = "minecraft:profile";
+    public static final String LODESTONE_TRACKER = "minecraft:lodestone_tracker";
+    public static final String TROPICAL_FISH_PATTERN = "minecraft:tropical_fish/pattern";
+    public static final String TROPICAL_FISH_BASE_COLOR = "minecraft:tropical_fish/base_color";
+    public static final String TROPICAL_FISH_PATTERN_COLOR = "minecraft:tropical_fish/pattern_color";
+    public static final String AXOLOTL_VARIANT = "minecraft:axolotl/variant";
     public static final String NOTE_BLOCK_SOUND = "minecraft:note_block_sound";
     public static final String POTION_CONTENTS = "minecraft:potion_contents";
     public static final String STEW_EFFECTS = "minecraft:suspicious_stew_effects";
