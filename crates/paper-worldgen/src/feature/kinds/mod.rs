@@ -7,6 +7,7 @@ mod end;
 mod misc;
 mod nether;
 mod surface;
+mod template;
 mod terrain;
 mod tree;
 
@@ -39,6 +40,9 @@ pub(crate) fn parse(p: &mut Parser, t: &str, v: &Value) -> Result<Option<Box<dyn
         return Ok(Some(f));
     }
     if let Some(f) = dripstone::parse(p, t, v)? {
+        return Ok(Some(f));
+    }
+    if let Some(f) = template::parse(p, t, v)? {
         return Ok(Some(f));
     }
     misc::parse(p, t, v)

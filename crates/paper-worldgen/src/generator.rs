@@ -47,9 +47,9 @@ pub enum Stage {
 
 /// Stack indices of the terrain functions.
 #[derive(Clone, Copy, Debug)]
-struct TerrainFunctions {
-    final_density: usize,
-    aquifer: AquiferFunctions,
+pub(crate) struct TerrainFunctions {
+    pub(crate) final_density: usize,
+    pub(crate) aquifer: AquiferFunctions,
 }
 
 /// Generates chunks of one dimension for one seed. Immutable after construction and shared
@@ -68,14 +68,14 @@ pub struct WorldGenerator {
     pub(crate) legacy_random: bool,
     pub(crate) flags: BlockFlags,
     pub(crate) terrain: SeededStack,
-    terrain_fns: TerrainFunctions,
+    pub(crate) terrain_fns: TerrainFunctions,
     surface_stack: SeededStack,
     pub(crate) climate: SeededStack,
     pub(crate) base_random: PositionalRandom,
     pub(crate) aquifer_random: PositionalRandom,
     pub(crate) ore_random: PositionalRandom,
-    water: u32,
-    lava: u32,
+    pub(crate) water: u32,
+    pub(crate) lava: u32,
     pub(crate) biomes: Biomes,
     pub(crate) biome_source: BiomeSource,
     /// `BiomeManager`'s obfuscated seed for the fuzzy biome lookup.
@@ -85,6 +85,7 @@ pub struct WorldGenerator {
     pub(crate) decoration: crate::feature::Decoration,
     pub(crate) spawn_targets: Vec<crate::spawn::SpawnTarget>,
     pub(crate) has_ceiling: bool,
+    pub(crate) structures: crate::structure::Structures,
 }
 
 // The generator is shared by worker threads.
@@ -191,8 +192,9 @@ impl WorldGenerator {
             frozen_oceans,
         };
         let carvers = crate::carver::Carvers::load(data, &biomes, &possible)?;
-        let decoration = crate::feature::Decoration::load(data, &biomes, dimension, &possible).context("loading features")?;
+        let mut decoration = crate::feature::Decoration::load(data, &biomes, dimension, &possible).context("loading features")?;
         let spawn_targets = crate::spawn::parse_spawn_targets(&settings).context("reading spawn targets")?;
+        let structures = crate::structure::Structures::load(data, &biomes, &possible, seed, &mut decoration.blocks).context("loading structures")?;
 
         Ok(Self {
             dimension,
@@ -224,6 +226,7 @@ impl WorldGenerator {
             decoration,
             spawn_targets,
             has_ceiling: dim_type.bool_or("has_ceiling", false),
+            structures,
         })
     }
 
@@ -261,6 +264,56 @@ impl WorldGenerator {
         self.decoration.decorate(self, chunk_x, chunk_z, region);
     }
 
+    /// The structure starts of a chunk: one per structure set that starts a structure there
+    /// (vanilla's `STRUCTURE_STARTS` of the chunk). Computed on demand from the seed and the
+    /// noise, and cached.
+    pub fn structure_starts(&self, chunk_x: i32, chunk_z: i32) -> Vec<std::sync::Arc<crate::structure::StructureStart>> {
+        self.structures.starts_in_chunk(self, chunk_x, chunk_z)
+    }
+
+    /// Finds the nearest start of a structure (`/locate structure`): `structure` is its id
+    /// (`minecraft:village_plains`), `(x, z)` the block position to search from and
+    /// `radius` the search radius in placement cells of random-spread sets (vanilla's
+    /// `/locate` uses 100). Strongholds are searched among all their ring positions.
+    /// Starts are generated as needed (and cached), never placed.
+    pub fn locate(&self, structure: &str, x: i32, z: i32, radius: i32) -> Option<crate::structure::Located> {
+        let id = crate::data::full_id(structure);
+        let index = self.structures.structure_index(&id)?;
+        let (set, cx, cz) = self.structures.locate(self, index, x, z, radius)?;
+        let (lx, ly, lz) = self.structures.locate_pos(set, cx, cz);
+        Some(crate::structure::Located { structure: id, chunk_x: cx, chunk_z: cz, x: lx, y: ly, z: lz })
+    }
+
+    /// The chunks of the concentric rings a structure (strongholds) is placed on, in ring
+    /// order (each the chunk a start is tried in; empty for other structures).
+    pub fn ring_positions(&self, structure: &str) -> Vec<(i32, i32)> {
+        match self.structures.structure_index(&crate::data::full_id(structure)) {
+            Some(i) => self.structures.ring_positions_of(self, i),
+            None => Vec::new(),
+        }
+    }
+
+    /// The structures of this dimension that are generated (the others start nowhere).
+    pub fn supported_structures(&self) -> Vec<&str> {
+        self.structures.supported()
+    }
+
+    /// Structure types the dimension's structure sets use that this crate does not generate.
+    pub fn unsupported_structures(&self) -> Vec<String> {
+        self.structures.unsupported()
+    }
+
+    /// Turns structure generation off or on (vanilla's `generate-structures`; on by
+    /// default). Without structures nothing starts, nothing is placed and the terrain is
+    /// not adapted.
+    pub fn set_structures_enabled(&mut self, enabled: bool) {
+        self.structures.enabled = enabled;
+    }
+
+    pub fn structures_enabled(&self) -> bool {
+        self.structures.enabled
+    }
+
     /// The block properties generation uses (for heightmaps of chunks read back from disk).
     pub fn block_flags(&self) -> &BlockFlags {
         &self.flags
@@ -288,7 +341,8 @@ impl WorldGenerator {
         if last < Stage::Noise {
             return chunk;
         }
-        let mut aquifer = self.generate_noise(&mut chunk, &mut estimator);
+        let beard = self.structures.beardifier(self, chunk_x, chunk_z);
+        let mut aquifer = self.generate_noise(&mut chunk, &mut estimator, beard.as_ref());
         if last < Stage::Surface {
             return chunk;
         }
@@ -360,9 +414,9 @@ impl WorldGenerator {
 
     /// The noise stage: terrain shape, aquifers and the default fluid. Returns the aquifer,
     /// which the carver stage reuses.
-    pub(crate) fn generate_noise(&self, chunk: &mut ProtoChunk, estimator: &mut SurfaceEstimator) -> Option<Aquifer> {
+    pub(crate) fn generate_noise(&self, chunk: &mut ProtoChunk, estimator: &mut SurfaceEstimator, beard: Option<&crate::structure::Beardifier>) -> Option<Aquifer> {
         let volume = DensityVolume::blocks(16, self.gen_height as usize, 16, chunk.start_x(), self.gen_min_y, chunk.start_z());
-        let mut router = ChunkRouter::terrain(&self.terrain);
+        let mut router = ChunkRouter::terrain_with(&self.terrain, beard);
         let mut density = vec![0.0f32; volume.size()];
         router.sample_volume(self.terrain_fns.final_density, &mut density, &volume);
         let picker = self.fluid_picker();

@@ -38,6 +38,7 @@ pub mod providers;
 pub mod random;
 pub mod router;
 mod spawn;
+pub mod structure;
 pub mod surface;
 
 pub use chunk::{Heightmap, ProtoChunk};

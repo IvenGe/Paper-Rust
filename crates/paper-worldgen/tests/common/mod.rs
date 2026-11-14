@@ -60,6 +60,25 @@ pub fn generator(dimension: Dimension, seed: i64) -> Option<&'static WorldGenera
     Some(g)
 }
 
+/// Like [`generator`], with structure generation turned off (for references made without
+/// structures).
+#[allow(dead_code)]
+pub fn generator_without_structures(dimension: Dimension, seed: i64) -> Option<&'static WorldGenerator> {
+    type Cache = Mutex<Vec<(Dimension, i64, &'static WorldGenerator)>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let jar = jar()?;
+    let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    let mut cache = cache.lock().unwrap();
+    if let Some((_, _, g)) = cache.iter().find(|(d, s, _)| *d == dimension && *s == seed) {
+        return Some(*g);
+    }
+    let mut g = WorldGenerator::new(jar, dimension, seed).expect("building the generator");
+    g.set_structures_enabled(false);
+    let g: &'static WorldGenerator = Box::leak(Box::new(g));
+    cache.push((dimension, seed, g));
+    Some(g)
+}
+
 fn fixture_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join(name)
 }

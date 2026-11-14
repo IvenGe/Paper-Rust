@@ -27,6 +27,17 @@ pub enum IntProvider {
 }
 
 impl IntProvider {
+    /// `getMaxValue()`.
+    pub fn max_inclusive(&self) -> i32 {
+        match self {
+            IntProvider::Constant(v) => *v,
+            IntProvider::Uniform(_, max) | IntProvider::BiasedToBottom(_, max) | IntProvider::VeryBiasedToBottom(_, max) => *max,
+            IntProvider::Clamped(source, _, max) => source.max_inclusive().min(*max),
+            IntProvider::ClampedNormal { max, .. } | IntProvider::Trapezoid { max, .. } => *max,
+            IntProvider::WeightedList(l) => l.iter().map(|(p, _)| p.max_inclusive()).max().unwrap_or(0),
+        }
+    }
+
     pub fn parse(v: &Value) -> Result<Self> {
         if let Some(i) = v.as_i64() {
             return Ok(IntProvider::Constant(i as i32));
