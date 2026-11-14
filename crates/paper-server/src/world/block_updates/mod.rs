@@ -21,6 +21,7 @@
 //! (blocks that need support or connect to their neighbours).
 
 pub mod doors;
+pub mod falling;
 pub mod fire;
 pub mod fluid;
 pub mod piston;
@@ -93,6 +94,9 @@ pub enum Effect {
     Drops { pos: BlockPos, state: u32, block_entity: Option<Compound> },
     /// Powered TNT was primed (the block is already gone): the server spawns the entity.
     PrimeTnt { pos: BlockPos, igniter: Option<i32> },
+    /// A block lost its support and falls (the block is already gone): the server spawns
+    /// the falling block.
+    Fall { pos: BlockPos, state: u32 },
     /// A dispenser or dropper fires (its scheduled tick ran).
     Dispense { pos: BlockPos },
     /// A pressed pressure plate checks whether anything still stands on it.
@@ -724,6 +728,7 @@ impl<'w> Level<'w> {
             Kind::Observer => redstone::observer_on_place(self, state, pos, old),
             Kind::Piston { .. } => piston::on_place(self, state, pos, old),
             Kind::Tnt if kind(old) != Kind::Tnt => self.prime_if_powered(pos),
+            Kind::Falling => falling::on_place(self, state, pos),
             Kind::Fire => fire::on_place(self, state, pos, old),
             Kind::Dispenser | Kind::Hopper if kind(old) != kind(state) => self.machine_power_changed(state, pos),
             Kind::Tripwire => tripwire::wire_on_place(self, state, pos, old),
@@ -842,6 +847,7 @@ impl<'w> Level<'w> {
             Kind::PistonHead => piston::head_update_shape(self, state, pos, dir),
             Kind::Fire => fire::update_shape(self, state, pos),
             Kind::NetherPortal => fire::portal_update_shape(self, state, pos, dir, neighbor_state),
+            Kind::Falling => falling::update_shape(self, state, pos),
             Kind::Tripwire => tripwire::wire_update_shape(state, dir, neighbor_state),
             Kind::Crop | Kind::Farmland | Kind::SugarCane | Kind::Cactus | Kind::Stem | Kind::AttachedStem | Kind::SweetBerryBush | Kind::NetherWart | Kind::Cocoa | Kind::Leaves | Kind::Ice | Kind::SnowLayer => plants::update_shape(self, state, pos, dir, neighbor_state),
             _ => support::update_shape(self, state, pos, dir, neighbor_pos, neighbor_state),
@@ -872,6 +878,7 @@ impl<'w> Level<'w> {
             Kind::Tripwire if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckTripwire { pos }),
             Kind::DetectorRail if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckDetectorRail { pos }),
             Kind::SugarCane | Kind::Cactus | Kind::Farmland | Kind::Leaves => plants::tick(self, state, pos),
+            Kind::Falling => falling::tick(self, state, pos),
             _ => {}
         }
     }

@@ -178,6 +178,8 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
         Kind::Repeater => s = set_bool(s, "locked", redstone::repeater_locked(level, s, pos)),
         Kind::NoteBlock => s = with(s, "instrument", redstone::note_instrument(level, pos)),
         Kind::Observer => s = set_bool(set_dir(s, "facing", ctx.looking), "powered", false),
+        // Concrete powder placed in or by water is concrete at once.
+        Kind::Falling if super::falling::concrete_of(s).is_some() && super::falling::hardens_at(level, pos, ctx.replaced) => s = super::falling::concrete_of(s).unwrap_or(s),
         Kind::Rail | Kind::PoweredRail | Kind::DetectorRail => s = with(s, "shape", super::rails::placement_shape(matches!(ctx.facing, Dir::East | Dir::West))),
         Kind::Door { .. } => {
             let powered = level.has_neighbor_signal(pos) || level.has_neighbor_signal(pos.above());

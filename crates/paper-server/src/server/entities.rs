@@ -324,21 +324,40 @@ impl Server {
                 self.tick_cloud(world, id);
                 return;
             }
-            EntityKind::FallingBlock { state, time } => {
+            EntityKind::FallingBlock { state, time, fall } => {
                 *time += 1;
-                let (state, time) = (*state, *time);
+                let (state, time, mut fallen) = (*state, *time, *fall);
                 let w = &self.worlds[world];
                 if !e.no_gravity {
                     e.vel.y -= 0.04;
                 }
                 let d = e.vel;
+                let before = e.pos.y;
                 e.move_by(w, d, 0.0);
+                if e.pos.y < before {
+                    fallen += (before - e.pos.y) as f32;
+                    if let EntityKind::FallingBlock { fall, .. } = &mut e.kind {
+                        *fall = fallen;
+                    }
+                }
                 e.vel = e.vel.scale(0.98);
-                if e.on_ground || time > 600 || e.pos.y < (w.min_y - 64) as f64 {
+                let pos = BlockPos::new(e.pos.x.floor() as i32, e.pos.y.floor() as i32, e.pos.z.floor() as i32);
+                if e.on_ground {
                     e.removed = true;
-                    let pos = BlockPos::new(e.pos.x.floor() as i32, e.pos.y.round() as i32, e.pos.z.floor() as i32);
+                    let area = e.bounding_box();
                     self.worlds[world].entities.insert(id, e);
-                    self.land_falling_block(world, pos, state);
+                    self.land_falling_block(world, pos, state, fallen, area);
+                    return;
+                }
+                // Lost below the world, or falling for too long: it drops where it is.
+                if time > 100 && (pos.y <= w.min_y || pos.y > w.min_y + w.height) || time > 600 {
+                    e.removed = true;
+                    self.worlds[world].entities.insert(id, e);
+                    if !super::falling_drops_nothing(state) && self.worlds[world].rules.bool("entity_drops") {
+                        for stack in super::loot::fallback_block_drop(state) {
+                            self.pop_resource(world, pos, stack);
+                        }
+                    }
                     return;
                 }
             }
@@ -419,16 +438,82 @@ impl Server {
         self.worlds[world].reindex_entity(id);
     }
 
-    /// A falling block landed: it becomes a block again, or drops as an item.
-    fn land_falling_block(&mut self, world: usize, pos: BlockPos, state: u32) {
-        let here = self.worlds[world].block_at(pos.x, pos.y, pos.z);
-        if here.is_some_and(blocks::is_replaceable) {
-            if self.set_block_and_update(world, pos, state) {
+    /// `FallingBlockEntity.fall`: a block that lost its support becomes a falling block
+    /// (its block is already gone).
+    pub(super) fn start_falling(&mut self, world: usize, pos: BlockPos, state: u32) {
+        let Some(info) = entity_types::by_name("minecraft:falling_block") else { return };
+        let state = blocks::with_property(state, "waterlogged", "false").unwrap_or(state);
+        let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5);
+        let e = Entity::new(self.next_entity_id(), info, at, EntityKind::FallingBlock { state, time: 0, fall: 0.0 });
+        self.spawn_entity(world, e);
+    }
+
+    /// A falling block landed (`FallingBlockEntity.tick` on the ground): an anvil hurts what
+    /// it lands on (2 per block fallen, at most 40) and may chip. The block is placed again
+    /// where the block it lands in can be replaced and something holds it (concrete powder
+    /// by water hardens, `onLand`); otherwise it drops as its item.
+    fn land_falling_block(&mut self, world: usize, pos: BlockPos, mut state: u32, fallen: f32, area: Aabb) {
+        use crate::world::block_updates::falling;
+        let anvil = blocks::block_of_state(state).name.ends_with("anvil");
+        let mut broken = false;
+        if anvil {
+            let distance = (fallen - 1.0).ceil();
+            if distance >= 0.0 {
+                let damage = (distance * 2.0).floor().min(40.0);
+                let players: Vec<i32> = self
+                    .players
+                    .values()
+                    .filter(|p| p.world == world && !p.dead && matches!(p.game_mode, GameMode::Survival | GameMode::Adventure))
+                    .filter(|p| Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&area))
+                    .map(|p| p.entity_id)
+                    .collect();
+                for id in players {
+                    self.hurt_player(id, super::survival::Damage::new("minecraft:anvil"), damage);
+                }
+                let mobs: Vec<i32> = self.worlds[world].entities_in(&area).into_iter().filter(|m| self.worlds[world].entities.get(m).is_some_and(|e| e.mob().is_some() && e.is_alive())).collect();
+                for mob in mobs {
+                    self.hurt_entity(world, mob, super::survival::Damage::new("minecraft:anvil"), damage);
+                }
+                // `AnvilBlock.damage`: anvil, chipped, damaged, gone.
+                if damage > 0.0 && rand::thread_rng().gen::<f32>() < 0.05 + distance * 0.05 {
+                    let worse = match blocks::block_of_state(state).name {
+                        "minecraft:anvil" => Some("minecraft:chipped_anvil"),
+                        "minecraft:chipped_anvil" => Some("minecraft:damaged_anvil"),
+                        _ => None,
+                    };
+                    match worse.and_then(|n| blocks::with_property(blocks::default_state(n)?, "facing", blocks::property(state, "facing")?)) {
+                        Some(s) => state = s,
+                        None => broken = true,
+                    }
+                }
+            }
+        }
+        let w = &self.worlds[world];
+        let here = w.block_at(pos.x, pos.y, pos.z).unwrap_or(blocks::AIR);
+        let below = w.block_at(pos.x, pos.y - 1, pos.z).unwrap_or(blocks::AIR);
+        let in_water = super::survival::fluid_of(here).is_some_and(|(f, _)| f == super::survival::Fluid::Water);
+        if !broken && blocks::is_replaceable(here) && !falling::is_free(below) {
+            if in_water && blocks::property(state, "waterlogged").is_some() {
+                state = blocks::with_property(state, "waterlogged", "true").unwrap_or(state);
+            }
+            let concrete = {
+                let level = crate::world::block_updates::Level::new(&mut self.worlds[world]);
+                falling::concrete_of(state).filter(|_| falling::hardens_at(&level, pos, here))
+            };
+            if self.set_block_and_update(world, pos, concrete.unwrap_or(state)) {
+                if anvil {
+                    self.broadcast_level_event(world, 1031, pos, 0, false);
+                }
                 return;
             }
         }
-        for stack in super::loot::fallback_block_drop(state) {
-            self.pop_resource(world, pos, stack);
+        if anvil {
+            self.broadcast_level_event(world, 1029, pos, 0, false);
+        }
+        if !broken && !super::falling_drops_nothing(state) && self.worlds[world].rules.bool("entity_drops") {
+            for stack in super::loot::fallback_block_drop(state) {
+                self.pop_resource(world, pos, stack);
+            }
         }
     }
 

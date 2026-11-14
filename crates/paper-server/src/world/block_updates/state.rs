@@ -326,6 +326,8 @@ pub enum Kind {
     MovingPiston,
     /// Primed by redstone power.
     Tnt,
+    /// Sand, gravel, concrete powder, anvils, dragon eggs: they fall when unsupported.
+    Falling,
     /// Fire and soul fire.
     Fire,
     NetherPortal,
@@ -393,6 +395,9 @@ fn classify(name: &str) -> Kind {
         "powered_rail" | "activator_rail" => return Kind::PoweredRail,
         "trapped_chest" | "jukebox" | "calibrated_sculk_sensor" => return Kind::PassiveSource,
         _ => {}
+    }
+    if super::falling::is_falling(n) {
+        return Kind::Falling;
     }
     if n.ends_with("_stairs") {
         return Kind::Stairs;

@@ -127,7 +127,8 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
             c.insert("pickup", Tag::Byte(*pickup as i8));
             c.insert("crit", Tag::Byte(*critical as i8));
         }
-        EntityKind::FallingBlock { state, time } => {
+        EntityKind::FallingBlock { state, time, fall } => {
+            c.insert("fall_distance", Tag::Double(f64::from(*fall)));
             c.insert("BlockState", state_nbt(*state));
             c.insert("Time", Tag::Int(*time));
         }
@@ -233,7 +234,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
             pickup: c.i32("pickup").unwrap_or(1) == 1,
             critical: c.bool("crit").unwrap_or(false),
         },
-        "minecraft:falling_block" => EntityKind::FallingBlock { state: c.get("BlockState").and_then(state_from_nbt)?, time: c.i32("Time").unwrap_or(0) },
+        "minecraft:falling_block" => EntityKind::FallingBlock { state: c.get("BlockState").and_then(state_from_nbt)?, time: c.i32("Time").unwrap_or(0) , fall: c.f64("fall_distance").unwrap_or(0.0) as f32 },
         "minecraft:tnt" => EntityKind::Tnt { fuse: c.i32("fuse").unwrap_or(80) },
         n if crate::server::boats::is_boat(n) => {
             let mut kind = crate::server::boats::boat_kind(n);

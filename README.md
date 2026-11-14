@@ -81,7 +81,9 @@ What works:
   and using levers, buttons, doors, repeaters and comparators by hand. Pistons push the
   entities in their way (slime blocks launch them, honey blocks carry what stands on them),
   and moving blocks can be stood on. String between two hooks sets them off while anything
-  is in it, unless cut with shears. Rails join, bend and climb towards the rails next to
+  is in it, unless cut with shears. Sand, gravel, concrete powder, anvils and dragon eggs
+  fall when nothing holds them (anvils hurt what they land on and wear down), and concrete
+  powder hardens in water. Rails join, bend and climb towards the rails next to
   them (a signal switches a junction), pop off without a block below, and powered and
   activator rails pass power along up to eight rails; detector rails are pressed by
   minecarts. Dispensers shoot arrows, thrown items and fire charges,

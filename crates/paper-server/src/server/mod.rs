@@ -40,6 +40,11 @@ pub mod taming;
 pub mod throwing;
 pub mod crafter;
 pub mod boats;
+
+/// Suspicious sand and gravel that cannot land break without dropping (`disableDrop`).
+fn falling_drops_nothing(state: u32) -> bool {
+    matches!(paper_data::blocks::block_of_state(state).name, "minecraft:suspicious_sand" | "minecraft:suspicious_gravel")
+}
 pub mod golems;
 pub mod score_commands;
 pub mod stats;

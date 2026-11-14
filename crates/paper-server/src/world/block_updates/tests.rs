@@ -293,6 +293,32 @@ fn breaking_a_waterlogged_block_leaves_water() {
 
 // --- redstone -----------------------------------------------------------------------------
 
+#[test]
+fn unsupported_sand_and_gravel_fall_and_concrete_powder_hardens_in_water() {
+    let mut w = world();
+    // Gravel placed in the air falls two ticks later, and the sand on it after it.
+    set(&mut w, p(0, Y + 3, 0), s("minecraft:gravel"));
+    set(&mut w, p(0, Y + 4, 0), s("minecraft:sand"));
+    run(&mut w, 1);
+    assert_eq!(name(&w, p(0, Y + 3, 0)), "gravel", "not yet");
+    run(&mut w, 1);
+    assert_eq!(name(&w, p(0, Y + 3, 0)), "air");
+    assert!(w.updates.effects.iter().any(|e| matches!(e, Effect::Fall { pos, state } if *pos == p(0, Y + 3, 0) && blocks::block_of_state(*state).name == "minecraft:gravel")));
+    run(&mut w, 3);
+    assert_eq!(name(&w, p(0, Y + 4, 0)), "air", "the sand falls once the gravel is gone");
+    // On the ground it stays.
+    set(&mut w, p(2, Y, 0), s("minecraft:sand"));
+    run(&mut w, 3);
+    assert_eq!(name(&w, p(2, Y, 0)), "sand");
+    // Concrete powder next to water hardens.
+    set(&mut w, p(4, Y, 0), s("minecraft:red_concrete_powder"));
+    set(&mut w, p(5, Y, 0), s("minecraft:water"));
+    assert_eq!(name(&w, p(4, Y, 0)), "red_concrete");
+    // ... and placed by water it is concrete at once.
+    place(&mut w, p(6, Y, 0), s("minecraft:blue_concrete_powder"));
+    assert_eq!(name(&w, p(6, Y, 0)), "blue_concrete");
+}
+
 fn shape_at(w: &World, pos: BlockPos) -> &'static str {
     prop(get(w, pos), "shape").unwrap()
 }

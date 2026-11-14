@@ -433,7 +433,8 @@ pub enum EntityKind {
     Boat { damage: f32, hurt_time: i32, hurt_dir: i32, paddles: (bool, bool), chest: Option<Box<EntityChest>> },
     Mob(Box<Mob>),
     Arrow { damage: f64, owner: Option<i32>, in_ground: bool, life: i32, pickup: bool, critical: bool },
-    FallingBlock { state: u32, time: i32 },
+    /// A falling block: the block, ticks fallen, and how far (anvils hurt by it).
+    FallingBlock { state: u32, time: i32, fall: f32 },
     ExperienceOrb { value: i32 },
     Tnt { fuse: i32 },
     /// A thrown eye of ender flying towards `target` (`EyeOfEnder`); after 80 ticks it drops
