@@ -56,3 +56,6 @@ target/
 
 # Java class files
 *.class
+
+# Claude Code agent worktrees (local scratch checkouts)
+.claude/worktrees/
