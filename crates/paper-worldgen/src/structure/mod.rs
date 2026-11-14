@@ -16,6 +16,7 @@ pub mod transform;
 
 mod fortress;
 mod jigsaw;
+mod legacy;
 mod mineshaft;
 pub(crate) mod processor;
 mod stronghold;
@@ -399,6 +400,8 @@ pub(crate) struct Loader<'a, 'd> {
     pub templates: template::Templates,
     pub pools: jigsaw::PoolLoader,
     pub builtins: Arc<processor::BuiltinProcessors>,
+    /// The biomes the dimension can have (structures outside them are not loaded).
+    pub possible: u128,
 }
 
 impl Loader<'_, '_> {
@@ -460,11 +463,13 @@ impl Structures {
             templates: Default::default(),
             pools: Default::default(),
             builtins: Arc::new(processor::BuiltinProcessors::new()),
+            possible: 0,
         };
         let mut possible_bits = 0u128;
         for b in possible {
             possible_bits |= 1u128 << b;
         }
+        loader.possible = possible_bits;
         // The structure registry: every structure of a set, sorted by id.
         let mut set_jsons = Vec::new();
         let mut ids: Vec<String> = Vec::new();
@@ -533,7 +538,11 @@ impl Structures {
                 mesa: json.get("mineshaft_type").and_then(Value::as_str) == Some("mesa"),
                 blocking: l.biome_set(&Value::String("#minecraft:mineshaft_blocking".into()))?,
             })),
+            _ if biomes & l.possible == 0 => Some(Box::new(Unsupported)),
             "jigsaw" => Some(Box::new(jigsaw::Jigsaw::parse(json, &mut l.pools, l.builtins.clone())?)),
+            "shipwreck" => Some(Box::new(legacy::Shipwreck::load(l, json)?)),
+            "ocean_ruin" => Some(Box::new(legacy::OceanRuin::load(l, json)?)),
+            "nether_fossil" => Some(Box::new(legacy::NetherFossil::load(l, json)?)),
             _ => None,
         };
         let supported = generator.is_some();

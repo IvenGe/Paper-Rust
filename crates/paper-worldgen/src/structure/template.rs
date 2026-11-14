@@ -266,6 +266,12 @@ impl Template {
     /// `placeInWorld(level, position, referencePos, settings, random, flags)`; `random` is the
     /// piece's random (container loot seeds). Returns whether anything could be placed.
     pub(crate) fn place(&self, w: &mut World, position: Pos, reference: Pos, settings: &mut PlaceSettings, random: &mut WorldgenRandom) -> bool {
+        self.place_buffered(w, position, reference, settings, random, None)
+    }
+
+    /// [`Template::place`], collecting the block entities in `buffer` (when given) instead of
+    /// handing them to the world, so that data markers can still change them.
+    pub(crate) fn place_buffered(&self, w: &mut World, position: Pos, reference: Pos, settings: &mut PlaceSettings, random: &mut WorldgenRandom, mut buffer: Option<&mut Vec<(Pos, Compound)>>) -> bool {
         if self.palettes.is_empty() {
             return false;
         }
@@ -295,7 +301,13 @@ impl Template {
                     if container {
                         nbt.insert("LootTableSeed", random.next_i64());
                     }
-                    w.add_block_entity_nbt(p, nbt);
+                    match buffer.as_deref_mut() {
+                        Some(b) => {
+                            b.retain(|(q, _)| *q != p);
+                            b.push((p, nbt));
+                        }
+                        None => w.add_block_entity_nbt(p, nbt),
+                    }
                 }
             }
             if let Some(previous) = previous {
