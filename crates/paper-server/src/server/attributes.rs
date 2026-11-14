@@ -100,7 +100,7 @@ pub fn effect_modifiers(active: impl Iterator<Item = (i32, i32)>) -> Vec<(String
 const SPRINTING: &str = "minecraft:sprinting";
 
 /// Mob equipment slots, in the order `Mob::equipment` keeps them.
-const MOB_SLOTS: [&str; 6] = ["mainhand", "offhand", "feet", "legs", "chest", "head"];
+const MOB_SLOTS: [&str; 8] = ["mainhand", "offhand", "feet", "legs", "chest", "head", "body", "saddle"];
 
 impl Server {
     /// Applies a player's equipment, effects and sprinting to its attributes (cheap when

@@ -137,6 +137,8 @@ pub struct World {
     pub proto: HashMap<ChunkPos, ProtoEntry>,
     /// Unfinished chunks a decoration job has taken.
     locked: HashSet<ChunkPos>,
+    /// Chunks whose saved structure starts the generator has read (each once per run).
+    structures_read: Arc<parking_lot::Mutex<HashSet<ChunkPos>>>,
     /// Centers of decoration jobs in flight.
     decorating: HashSet<ChunkPos>,
     /// Chunks being turned from unfinished into finished ones.
@@ -224,6 +226,7 @@ impl World {
             encoding: HashMap::new(),
             proto: HashMap::new(),
             locked: HashSet::new(),
+            structures_read: Default::default(),
             decorating: HashSet::new(),
             finalizing: HashSet::new(),
             save_on_return: HashSet::new(),
@@ -348,7 +351,7 @@ impl World {
             return;
         }
         let (generator, min_y, height, index, notify) = (self.generator.clone(), self.min_y, self.height, self.index, ctx.notify.clone());
-        let (storage, has_skylight) = (self.storage.clone(), self.has_skylight);
+        let (storage, has_skylight, structures_read) = (self.storage.clone(), self.has_skylight, self.structures_read.clone());
         ctx.pool.spawn(move || {
             // Saved chunks are loaded; missing ones are generated (and saved later).
             let mut loaded = storage.as_ref().and_then(|s| match s.load_chunk(p, min_y, height, has_skylight) {
@@ -358,6 +361,27 @@ impl World {
                     None
                 }
             });
+            // Vanilla generation continues the structures saved with chunks: this chunk's
+            // starts, and before generating, those of saved chunks around it.
+            if let Some(g) = generator.staged() {
+                let mut read = structures_read.lock();
+                if let Some(saved) = loaded.as_mut().and_then(|c| c.saved_structures.take()) {
+                    read_structures(g, &mut read, p, &saved);
+                }
+                if let (None, Some(storage)) = (&loaded, &storage) {
+                    for (sx, sz) in g.inner.structure_start_chunks(p.x, p.z) {
+                        let at = ChunkPos::new(sx, sz);
+                        if read.contains(&at) {
+                            continue;
+                        }
+                        match storage.load_structures(at) {
+                            Ok(Some(saved)) => read_structures(g, &mut read, at, &saved),
+                            Ok(None) => {}
+                            Err(e) => log::warn!("Could not read the structures of chunk {sx},{sz}: {e:#}"),
+                        }
+                    }
+                }
+            }
             // An unfinished chunk continues where it stopped (with vanilla generation; any
             // other generator makes it again).
             if loaded.as_ref().is_some_and(|c| c.status != GenStatus::Full) {
@@ -495,7 +519,8 @@ impl World {
         let Some(storage) = &self.storage else { return };
         let status = if entry.decorated { GenStatus::Decorated } else { GenStatus::Terrain };
         let chunk = entry.to_chunk(self.min_y, self.height, status);
-        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: self.has_skylight, ticks: Default::default(), status, proto: chunk.proto });
+        let structures = structures_to_save(&self.generator, chunk.pos);
+        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: self.has_skylight, ticks: Default::default(), status, proto: chunk.proto, structures });
     }
 
     fn spawn_light_job(&mut self, pos: ChunkPos, ctx: &WorkerContext) {
@@ -612,6 +637,7 @@ impl World {
         let tickets = &self.tickets;
         let (generating, lighting) = (&self.generating, &self.lighting);
         let (storage, has_skylight, age) = (&self.storage, self.has_skylight, self.age);
+        let generator = &self.generator;
         let mut unloaded: Vec<(ChunkPos, bool)> = Vec::new();
         let entity_chunks = &self.entity_chunks;
         self.chunks.retain(|pos, chunk| {
@@ -630,7 +656,7 @@ impl World {
             }
             if chunk.dirty {
                 if let Some(storage) = storage {
-                    storage.save_chunk(SaveChunk::full(chunk, has_skylight, age));
+                    storage.save_chunk(SaveChunk { structures: structures_to_save(generator, *pos), ..SaveChunk::full(chunk, has_skylight, age) });
                 }
             }
             unloaded.push((*pos, chunk.entities_saved));
@@ -800,7 +826,7 @@ impl World {
         let Some(storage) = &self.storage else { return 0 };
         let mut saved = 0;
         for chunk in self.chunks.values_mut().filter(|c| c.dirty) {
-            storage.save_chunk(SaveChunk::full(chunk, self.has_skylight, self.age));
+            storage.save_chunk(SaveChunk { structures: structures_to_save(&self.generator, chunk.pos), ..SaveChunk::full(chunk, self.has_skylight, self.age) });
             chunk.dirty = false;
             saved += 1;
         }
@@ -867,6 +893,26 @@ impl World {
         if self.daylight_cycle {
             self.day_time += 1;
         }
+    }
+}
+
+/// The structure starts and references to save with a chunk (vanilla generation).
+fn structures_to_save(generator: &Arc<dyn Generator>, pos: ChunkPos) -> Option<paper_nbt::Compound> {
+    generator.staged().map(|g| g.inner.save_structures(pos.x, pos.z))
+}
+
+/// Gives the generator a chunk's saved structure starts, once per chunk and run (reading
+/// them again after they were used would bring back older state).
+fn read_structures(g: &staged::VanillaGenerator, read: &mut HashSet<ChunkPos>, pos: ChunkPos, saved: &paper_nbt::Compound) {
+    if !read.insert(pos) {
+        return;
+    }
+    let result = g.inner.load_structures(pos.x, pos.z, saved);
+    for (structure, why) in &result.recomputed {
+        log::warn!("The saved start of {structure} in chunk {},{} could not be read ({why}); it is placed as the seed has it", pos.x, pos.z);
+    }
+    for structure in &result.unknown {
+        log::warn!("Chunk {},{} has a start of the unknown structure {structure}; it is dropped", pos.x, pos.z);
     }
 }
 

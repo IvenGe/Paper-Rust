@@ -181,6 +181,16 @@ impl Metadata {
         m
     }
 
+    /// An entity referred to by UUID (a pet's owner), or none.
+    pub fn optional_entity_reference(self, index: u8, uuid: Option<uuid::Uuid>) -> Self {
+        let mut m = self.entry(index, "optional_living_entity_reference");
+        m.0.put_bool(uuid.is_some());
+        if let Some(u) = uuid {
+            m.0.put_uuid(u);
+        }
+        m
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

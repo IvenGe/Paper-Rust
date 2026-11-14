@@ -86,6 +86,9 @@ public final class HostEvents {
         GATED.put("VillagerAcquireTradeEvent", org.bukkit.event.entity.VillagerAcquireTradeEvent.class);
         GATED.put("VillagerCareerChangeEvent", org.bukkit.event.entity.VillagerCareerChangeEvent.class);
         GATED.put("VillagerReplenishTradeEvent", org.bukkit.event.entity.VillagerReplenishTradeEvent.class);
+        GATED.put("EntityMountEvent", org.bukkit.event.entity.EntityMountEvent.class);
+        GATED.put("EntityDismountEvent", org.bukkit.event.entity.EntityDismountEvent.class);
+        GATED.put("EntityTameEvent", org.bukkit.event.entity.EntityTameEvent.class);
     }
 
     private final CraftServer server;
@@ -210,6 +213,9 @@ public final class HostEvents {
             case "event.player_death" -> this.entities.playerDeath(args);
             case "event.respawn" -> this.entities.respawn(args);
             case "event.creature_spawn" -> this.entities.creatureSpawn(args);
+            case "event.mount" -> this.entities.mount(args);
+            case "event.dismount" -> this.entities.dismount(args);
+            case "event.tame" -> this.entities.tame(args);
             case "event.trade" -> this.merchants.trade(args);
             case "event.trade_select" -> this.merchants.select(args);
             case "event.villager_acquire_trade" -> this.merchants.acquire(args);

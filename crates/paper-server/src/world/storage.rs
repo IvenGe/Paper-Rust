@@ -422,12 +422,15 @@ pub struct SaveChunk {
     pub status: GenStatus,
     /// Heightmaps and entities of an unfinished chunk.
     pub proto: Option<Box<ProtoData>>,
+    /// The structure starts and references of the chunk (vanilla generation); `None` writes
+    /// an empty compound.
+    pub structures: Option<Compound>,
 }
 
 impl SaveChunk {
     /// A finished chunk.
     pub fn full(chunk: &Chunk, has_skylight: bool, age: i64) -> Self {
-        SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age), status: GenStatus::Full, proto: None }
+        SaveChunk { snapshot: chunk.snapshot(), lit: chunk.lit, has_skylight, ticks: chunk.ticks.save(age), status: GenStatus::Full, proto: None, structures: None }
     }
 }
 
@@ -453,6 +456,7 @@ impl SaveChunk {
             ticks: ChunkTicks::from_saved(self.ticks.clone()),
             status: self.status,
             proto: self.proto.clone(),
+            saved_structures: self.structures.clone(),
         }
     }
 }
@@ -563,7 +567,7 @@ pub fn chunk_to_nbt(save: &SaveChunk) -> Compound {
         .with("block_entities", Tag::List(block_entities))
         .with("block_ticks", ticks_to_nbt(&save.ticks.blocks, TickKind::Block))
         .with("fluid_ticks", ticks_to_nbt(&save.ticks.fluids, TickKind::Fluid))
-        .with("structures", Tag::Compound(Compound::new().with("References", Tag::Compound(Compound::new())).with("starts", Tag::Compound(Compound::new()))));
+        .with("structures", Tag::Compound(save.structures.clone().unwrap_or_else(|| Compound::new().with("References", Tag::Compound(Compound::new())).with("starts", Tag::Compound(Compound::new())))));
     if let Some(entities) = proto_entities {
         out.insert("entities", Tag::List(entities));
     }
@@ -582,6 +586,7 @@ pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, ha
     }
     let plains = biome_names().iter().position(|b| *b == "minecraft:plains").unwrap_or(0) as u8;
     let mut chunk = Chunk::empty(pos, min_y, height, plains);
+    chunk.saved_structures = nbt.compound("structures").cloned();
     let min_section = min_y >> 4;
     let count = chunk.sections.len() as i32;
     let mut unknown = 0usize;
@@ -1000,6 +1005,17 @@ impl WorldStorage {
         chunk_from_nbt(&nbt, pos, min_y, height, has_skylight)
     }
 
+    /// The `structures` compound a chunk was saved with, if the chunk was saved.
+    pub fn load_structures(&self, pos: ChunkPos) -> Result<Option<Compound>> {
+        if let Some(pending) = self.pending.lock().get(&pos) {
+            return Ok(pending.structures.clone());
+        }
+        let Some(region) = self.region(pos, false)? else { return Ok(None) };
+        let Some(bytes) = region.lock().read(pos)? else { return Ok(None) };
+        let (_, nbt) = paper_nbt::read_named(&mut bytes.as_slice(), MAX_NBT).with_context(|| format!("parsing chunk {},{}", pos.x, pos.z))?;
+        Ok(nbt.compound("structures").cloned())
+    }
+
     /// Queues a chunk for writing.
     pub fn save_chunk(self: &Arc<Self>, chunk: SaveChunk) {
         let chunk = Arc::new(chunk);
@@ -1186,7 +1202,7 @@ mod tests {
         chunk.block_light[7] = Arc::new(lamp);
         chunk.lit = true;
 
-        let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None };
+        let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None, structures: None };
         let nbt = chunk_to_nbt(&save);
         let mut bytes = Vec::new();
         paper_nbt::write_named(&mut bytes, "", &nbt);
@@ -1219,7 +1235,7 @@ mod tests {
         let pos = ChunkPos::new(-40, 70);
         let mut chunk = generator.generate(pos, -64, 384);
         chunk.set_block(3, -60, 3, blocks::default_state("minecraft:gold_block").unwrap()).unwrap();
-        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None });
+        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None, structures: None });
         // Readable at once, whether or not the write has happened yet.
         let loaded = storage.load_chunk(pos, -64, 384, true).unwrap().unwrap();
         assert_eq!(loaded.get_block(3, -60, 3), blocks::default_state("minecraft:gold_block").unwrap());

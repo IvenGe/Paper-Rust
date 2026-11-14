@@ -34,6 +34,9 @@ pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
 mod animals;
+pub mod endermen;
+pub mod riding;
+pub mod taming;
 mod weather;
 mod farming;
 pub mod brewing;
@@ -555,6 +558,7 @@ impl Server {
         self.tick_digging();
         self.tick_sleeping();
         self.tick_entities();
+        self.tick_riding();
         self.tick_merchants();
         self.tick_attributes();
         self.tick_spawning();

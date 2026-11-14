@@ -29,7 +29,7 @@ public final class HostEquipment {
         return HostProxies.create(new HostEquipment(null, mob), EntityEquipment.class);
     }
 
-    /** Mob equipment index: main hand, off hand, feet, legs, chest, head. */
+    /** Mob equipment index: main hand, off hand, feet, legs, chest, head, body, saddle. */
     private static int mobSlot(final EquipmentSlot slot) {
         return switch (slot) {
             case HAND -> 0;
@@ -38,7 +38,8 @@ public final class HostEquipment {
             case LEGS -> 3;
             case CHEST -> 4;
             case HEAD -> 5;
-            default -> throw new IllegalArgumentException(slot + " is not supported for this entity");
+            case BODY -> 6;
+            case SADDLE -> 7;
         };
     }
 

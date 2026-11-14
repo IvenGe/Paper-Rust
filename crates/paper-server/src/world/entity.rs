@@ -333,6 +333,13 @@ pub struct MobBrain {
     pub love_time: i32,
     /// Where it wants to walk for its own reasons (a villager to its workstation).
     pub walk_target: Option<Vec3>,
+    /// Endermen: the player staring at it and ticks until it gets angry
+    /// (`EndermanLookForPlayerGoal`), ticks since it last teleported towards its target, and
+    /// when its target last changed.
+    pub stare_target: Option<i32>,
+    pub stare_time: i32,
+    pub teleport_time: i32,
+    pub target_changed: i64,
 }
 
 /// A mob.
@@ -341,8 +348,9 @@ pub struct Mob {
     /// Max health, speed, armour, attack damage, ... with equipment and effect modifiers.
     pub attributes: crate::world::attributes::Attributes,
     pub living: LivingState,
-    /// Main hand, off hand, feet, legs, chest, head.
-    pub equipment: [Slot; 6],
+    /// Main hand, off hand, feet, legs, chest, head, body (horse and wolf armour) and saddle,
+    /// in `EquipmentSlot` order.
+    pub equipment: [Slot; 8],
     pub brain: MobBrain,
     /// Never despawns (named, picked up items, spawned by commands or plugins).
     pub persistent: bool,
@@ -362,6 +370,20 @@ pub struct Mob {
     pub egg_time: i32,
     /// Villagers and wandering traders: profession, trades, experience, gossip.
     pub merchant: Option<Box<crate::world::merchant::Merchant>>,
+    /// Endermen: the block they carry, whether they scream (`DATA_CREEPY`, angry) and whether
+    /// a player stared at them (`DATA_STARED_AT`).
+    pub carried: Option<u32>,
+    pub creepy: bool,
+    pub stared_at: bool,
+    /// Tamed animals (wolves, cats, parrots, horses): whether tamed, the owner, whether told
+    /// to sit, the collar colour (dye id) and a horse's temper (taming progress).
+    pub tamed: bool,
+    pub owner: Option<Uuid>,
+    pub sitting: bool,
+    pub collar: i32,
+    pub temper: i32,
+    /// Pigs and striders: the length of the boost a stick gave (`DATA_BOOST_TIME`).
+    pub boost: i32,
 }
 
 /// Behaviour-specific data.
@@ -413,6 +435,10 @@ pub struct Entity {
     pub metadata_dirty: bool,
     pub equipment_dirty: bool,
     pub force_sync: bool,
+    /// Who rides it (players' and other entities' ids), the one steering first.
+    pub passengers: Vec<i32>,
+    /// What it rides.
+    pub vehicle: Option<i32>,
 }
 
 impl Entity {
@@ -446,6 +472,8 @@ impl Entity {
             metadata_dirty: false,
             equipment_dirty: false,
             force_sync: false,
+            passengers: Vec::new(),
+            vehicle: None,
         }
     }
 

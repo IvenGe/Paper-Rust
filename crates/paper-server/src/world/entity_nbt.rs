@@ -10,7 +10,7 @@ use paper_protocol::types::Slot;
 use uuid::Uuid;
 
 /// Equipment keys in the order of `Mob::equipment`.
-const EQUIPMENT: [&str; 6] = ["mainhand", "offhand", "feet", "legs", "chest", "head"];
+const EQUIPMENT: [&str; 8] = ["mainhand", "offhand", "feet", "legs", "chest", "head", "body", "saddle"];
 
 pub(crate) fn uuid_tag(uuid: Uuid) -> Tag {
     let v = uuid.as_u128();
@@ -135,6 +135,23 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
             if let Some(merchant) = &mob.merchant {
                 merchant.save(&mut c, dimension, e.info.name == "minecraft:villager");
             }
+            if let Some(carried) = mob.carried {
+                c.insert("carriedBlockState", state_nbt(carried));
+            }
+            // `TamableAnimal` and `AbstractHorse`.
+            if let Some(owner) = mob.owner {
+                c.insert("Owner", uuid_tag(owner));
+            }
+            if crate::server::riding::is_horse(&e.info.name) {
+                c.insert("Tame", Tag::Byte(mob.tamed as i8));
+                c.insert("Temper", Tag::Int(mob.temper));
+                c.insert("Variant", Tag::Int(mob.variant));
+            } else if crate::server::taming::is_tameable(&e.info.name) {
+                c.insert("Sitting", Tag::Byte(mob.sitting as i8));
+                if matches!(e.info.name.as_str(), "minecraft:wolf" | "minecraft:cat") {
+                    c.insert("CollarColor", Tag::Byte(mob.collar as i8));
+                }
+            }
         }
         EntityKind::EyeOfEnder { .. } | EntityKind::Other => {}
     }
@@ -177,7 +194,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
             living.fire_ticks = c.i32("Fire").unwrap_or(0).max(0);
             living.air = c.i32("Air").unwrap_or(300);
             living.fall_distance = c.f64("fall_distance").unwrap_or(0.0);
-            let mut equipment: [Slot; 6] = Default::default();
+            let mut equipment: [Slot; 8] = Default::default();
             if let Some(eq) = c.compound("equipment") {
                 for (i, key) in EQUIPMENT.iter().enumerate() {
                     if let Some(item) = eq.compound(key) {
@@ -194,7 +211,8 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 brain: MobBrain { speed_factor: 1.0, idle_ticks: 60, ..Default::default() },
                 persistent: c.bool("PersistenceRequired").unwrap_or(false),
                 baby,
-                variant: c.i32("Color").unwrap_or(0),
+                // Sheep keep their colour in `Color`; horses and parrots a `Variant`.
+                variant: c.i32("Color").or_else(|| c.i32("Variant")).unwrap_or(0),
                 sheared: c.bool("Sheared").unwrap_or(false),
                 no_player_ticks: 0,
                 age,
@@ -202,6 +220,15 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 love_cause: None,
                 egg_time: c.i32("EggLayTime").unwrap_or(6000),
                 merchant: crate::server::villagers::is_merchant(&info.name).then(|| Box::new(crate::world::merchant::Merchant::load(c, info.name == "minecraft:villager"))),
+                carried: c.get("carriedBlockState").and_then(state_from_nbt),
+                creepy: false,
+                stared_at: false,
+                tamed: c.bool("Tame").unwrap_or(false) || uuid_from(c.get("Owner")).is_some() && !crate::server::riding::is_horse(&info.name),
+                owner: uuid_from(c.get("Owner")),
+                sitting: c.bool("Sitting").unwrap_or(false),
+                collar: c.i32("CollarColor").unwrap_or(14),
+                temper: c.i32("Temper").unwrap_or(0),
+                boost: 0,
             }))
         }
         _ => EntityKind::Other,
@@ -249,6 +276,15 @@ mod tests {
             love_cause: None,
             egg_time: 0,
             merchant: None,
+            carried: None,
+            creepy: false,
+            stared_at: false,
+            tamed: false,
+            owner: None,
+            sitting: false,
+            collar: 14,
+            temper: 0,
+            boost: 0,
         };
         mob.living.health = 13.5;
         mob.equipment[5] = Slot::of(paper_data::items::id("minecraft:iron_helmet").unwrap() as i32, 1);

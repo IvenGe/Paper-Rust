@@ -62,11 +62,14 @@ What works:
   from 26.3 and driven by the vanilla jar's worldgen data (`crates/paper-worldgen`): biomes,
   terrain with aquifers and ore veins, surface rules, caves and canyons, and the features
   stage (ores, trees, plants, lakes, dungeons, geodes, icebergs, nether fungi and basalt,
-  end spikes and islands, ...), and structures (villages, strongholds, mineshafts, nether
-  fortresses, bastions, end cities, ancient cities, trial chambers, temples, shipwrecks,
-  ruined portals, ...; `generate-structures`) with their loot chests and mobs, with
-  vanilla's spawn search for new worlds; also the flat preset. `/locate structure` and
-  thrown eyes of ender find structures. Sky and block light,
+  end spikes and islands, sculk patches, ...), and structures (villages, strongholds,
+  mineshafts, nether fortresses, bastions, end cities, ancient cities, trial chambers,
+  temples, shipwrecks, ruined portals, ocean monuments, woodland mansions, ...;
+  `generate-structures`) with their loot chests and mobs, saved with the chunks in
+  vanilla's format so structures continue the same after a restart, and their own natural
+  spawns (guardians at monuments, witches at swamp huts, pillagers at outposts, the
+  mobs of fortresses), with vanilla's spawn search for new worlds; also the flat preset.
+  `/locate structure` and thrown eyes of ender find structures. Sky and block light,
   chunk streaming with the client's flow control, block breaking and placing (with
   orientation for stairs, logs, slabs, doors, beds, ...), world time.
 * **Block updates**: neighbour and shape updates (wire, fence, pane and stair connections,
@@ -95,6 +98,17 @@ What works:
   Animals follow players holding their food and breed when fed (babies grow up, faster when
   fed); cows and goats give milk, mooshrooms stew; sheep are sheared and dyed and eat grass
   to grow their wool back; chickens lay eggs; name tags name mobs.
+  Endermen turn on players who look them in the eyes (not through a carved pumpkin),
+  teleport away from water, rain, daylight and arrows (and towards a far target), and pick
+  up and put down blocks.
+* **Riding and pets**: saddles go on pigs, striders, horses and camels; players get on and
+  steer (their client moves the mount; carrots and warped fungi on sticks steer and boost
+  pigs and striders) and get off with the sneak key. Horses have random health, speed,
+  jump and coat, buck their rider off until their temper (raised by feeding) lets them be
+  tamed, wear horse armour and eat to heal and grow. Wolves (bones), cats (fish) and
+  parrots (seeds) are tamed, sit when told, follow their owner (teleporting when far
+  behind), heal from their food, and wolves wear dyed collars and armour and join their
+  owner's fights; pets never turn on their owner. Owners, saddles and pets are saved.
 * **Villagers and trading**: villagers take the type of the biome they are born in, walk to a
   free workstation and take its profession (and lose it again if it is broken before anyone
   traded with them), and trade: the trading window shows vanilla's trades, read from the
@@ -220,12 +234,12 @@ What works:
 
 Not yet:
 
-* World generation: ocean monuments and woodland mansions are not generated, nor sculk
-  patches (ancient cities have none). Structure starts are not saved: after a restart, a
-  structure that was being placed can show seams. There is no dragon fight (the End's exit
-  portal is open from the start, and the gateways the dragon's death opens do not appear).
-* Gameplay: mobs beyond the common kinds have no special behaviour (endermen, taming).
-  Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
+* World generation: there is no dragon fight (the End's exit portal is open from the start,
+  and the gateways the dragon's death opens do not appear). Sculk sensors, shriekers and
+  catalysts from world generation have no block entities on the server.
+* Gameplay: boats and minecarts cannot be ridden, there is no horse inventory window, donkeys,
+  mules and llamas carry no chests, parrots do not ride on shoulders, cats do not sleep on
+  beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Tripwires,

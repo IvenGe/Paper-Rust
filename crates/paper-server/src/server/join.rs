@@ -116,6 +116,8 @@ impl Server {
             delayed_break: None,
             crack_stage: -1,
             sleeping: None,
+            vehicle: None,
+            last_hurt_mob: None,
             sleep_ticks: 0,
             enchantment_seed: rand::random(),
             attributes: crate::world::attributes::Attributes::of_type("minecraft:player"),

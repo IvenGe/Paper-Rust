@@ -144,6 +144,12 @@ impl Server {
         }
 
         let hurt = self.hurt_entity(world, target, Damage::by("minecraft:player_attack", id, at), total);
+        if hurt {
+            // Pets join in (`OwnerHurtTargetGoal`).
+            if let Some(p) = self.players.get_mut(&id) {
+                p.last_hurt_mob = Some((target, self.tick));
+            }
+        }
         if !hurt {
             self.play_sound(world, at, "minecraft:entity.player.attack.nodamage", category::PLAYERS, 1.0, 1.0, None);
             return;
@@ -322,6 +328,19 @@ impl Server {
             }
             _ => return false,
         }
+        // Endermen dodge projectiles by teleporting away, and teleport away from most harm
+        // that does not come from a mob or player (`EnderMan.hurtServer`).
+        if e.info.name == super::endermen::ENDERMAN {
+            if damage.is("is_projectile") {
+                self.enderman_dodges(world, id);
+                return false;
+            }
+            let from_living = damage.attacker.is_some_and(|a| self.players.contains_key(&a) || self.worlds[world].entities.get(&a).is_some_and(|o| o.mob().is_some()));
+            if !from_living && rand::thread_rng().gen_range(0..10) != 0 {
+                self.enderman_teleport(world, id);
+            }
+        }
+        let Some(e) = self.worlds[world].entities.get(&id) else { return false };
         if damage.is("is_fire") && e.info.fire_immune && !damage.is("bypasses_invulnerability") {
             return false;
         }
@@ -363,11 +382,17 @@ impl Server {
             living.last_attacker = Some((attacker, tick));
         }
         let dead = living.health <= 0.0;
-        // Passive animals (and villagers) panic; hostile and neutral mobs turn on whoever
-        // hurt them.
+        // Passive animals (and villagers) panic; hostile and neutral mobs (wolves too) turn on
+        // whoever hurt them, but pets never on their owner. Hurt pets stop sitting.
         let merchant = mob.merchant.is_some();
-        if let Some(attacker) = damage.attacker.filter(|a| *a != id) {
-            if info.category == "CREATURE" || info.category == "WATER_CREATURE" || info.category == "AMBIENT" || merchant {
+        if mob.sitting {
+            mob.sitting = false;
+            e.metadata_dirty = true;
+        }
+        let by_owner = damage.attacker.is_some_and(|a| mob.owner.is_some() && self.players.get(&a).is_some_and(|p| Some(p.uuid()) == mob.owner));
+        let fights_back = super::mobs::behavior(&info.name, &info.category) == super::mobs::Behavior::Neutral;
+        if let Some(attacker) = damage.attacker.filter(|a| *a != id && !by_owner) {
+            if !fights_back && (info.category == "CREATURE" || info.category == "WATER_CREATURE" || info.category == "AMBIENT" || merchant) {
                 mob.brain.panic_ticks = 60 + rand::thread_rng().gen_range(0..40);
                 mob.brain.path.clear();
             } else if !damage.is("no_anger") {

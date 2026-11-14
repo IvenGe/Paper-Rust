@@ -387,6 +387,10 @@ impl Server {
     /// Moves a player and tells its client; the client must confirm before its own
     /// movement packets are accepted again.
     pub fn teleport(&mut self, entity_id: i32, target: Location) {
+        // A teleport takes the player off what it rides.
+        if self.players.get(&entity_id).is_some_and(|p| p.vehicle.is_some()) {
+            self.dismount_quietly(entity_id);
+        }
         let Some(player) = self.players.get_mut(&entity_id) else { return };
         let id = player.next_teleport_id;
         player.next_teleport_id = player.next_teleport_id.wrapping_add(1).max(1);

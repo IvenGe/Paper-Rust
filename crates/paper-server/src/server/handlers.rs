@@ -152,6 +152,11 @@ impl Server {
             Serverbound::ChatCommand(p) => self.handle_player_command(id, &p.command),
             Serverbound::ChatCommandSigned(p) => self.handle_player_command(id, &p.command),
             Serverbound::CommandSuggestion(p) => self.handle_suggestion_request(id, p.transaction_id.0, &p.text),
+            Serverbound::MoveVehicle(p) => self.handle_move_vehicle(id, p),
+            Serverbound::PlayerInput(p) if p.flags & play::input_flags::SNEAK != 0 && player.vehicle.is_some() => {
+                // The sneak key gets off what the player rides.
+                self.dismount(id);
+            }
             Serverbound::PlayerInput(p) => {
                 let sneaking = p.flags & play::input_flags::SNEAK != 0;
                 if sneaking != player.sneaking {
@@ -257,6 +262,8 @@ impl Server {
         if player.pending_teleport.is_some() || player.sleeping.is_some() {
             return;
         }
+        // A rider sits on its vehicle: only where it looks counts.
+        let pos = if player.vehicle.is_some() { None } else { pos };
         let old_chunk = player.loc.chunk();
         let (old_loc, was_on_ground) = (player.loc, player.on_ground);
         if let Some((x, y, z)) = pos {

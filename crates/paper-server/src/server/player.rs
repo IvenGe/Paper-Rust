@@ -214,6 +214,10 @@ pub struct Player {
     pub crack_stage: i32,
     /// The head of the bed the player sleeps in.
     pub sleeping: Option<paper_protocol::codec::BlockPos>,
+    /// The entity the player rides (in the player's world).
+    pub vehicle: Option<i32>,
+    /// The mob the player last hit, and when (wolves join in).
+    pub last_hurt_mob: Option<(i32, u64)>,
     pub sleep_ticks: i32,
     /// Seed of the enchanting table offers (`XpSeed`); changes with every enchantment.
     pub enchantment_seed: i32,

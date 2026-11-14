@@ -741,6 +741,55 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
             if let Some(i) = info.data_index("DATA_MOB_FLAGS_ID") {
                 m = m.byte(i, if mob.brain.target.is_some() { 4 } else { 0 });
             }
+            // Tamed animals: the sitting and tame flags, the owner, the collar.
+            if super::taming::is_tameable(&info.name) {
+                if let Some(i) = info.data_index("DATA_FLAGS_ID") {
+                    let flags = if mob.sitting { 0x01 } else { 0 } | if mob.tamed { 0x04 } else { 0 };
+                    if flags != 0 || !spawning {
+                        m = m.byte(i, flags);
+                    }
+                }
+                if let Some(i) = info.data_index("DATA_OWNERUUID_ID") {
+                    if mob.owner.is_some() || !spawning {
+                        m = m.optional_entity_reference(i, mob.owner);
+                    }
+                }
+                if let Some(i) = info.data_index("DATA_COLLAR_COLOR") {
+                    if mob.collar != 14 || !spawning {
+                        m = m.varint(i, mob.collar);
+                    }
+                }
+                if let Some(i) = info.data_index("DATA_VARIANT_ID").filter(|_| info.name == "minecraft:parrot") {
+                    m = m.varint(i, mob.variant);
+                }
+            }
+            // Horses: tame flag and coat.
+            if super::riding::is_horse(&info.name) {
+                if let Some(i) = info.data_index("DATA_ID_FLAGS") {
+                    let flags = if mob.tamed { 0x02 } else { 0 };
+                    if flags != 0 || !spawning {
+                        m = m.byte(i, flags);
+                    }
+                }
+                if let Some(i) = info.data_index("DATA_ID_TYPE_VARIANT") {
+                    m = m.varint(i, mob.variant);
+                }
+            }
+            if let Some(i) = info.data_index("DATA_CARRY_STATE") {
+                if mob.carried.is_some() || !spawning {
+                    m = m.optional_block_state(i, mob.carried.map(|s| s as i32));
+                }
+            }
+            if let Some(i) = info.data_index("DATA_CREEPY") {
+                if mob.creepy || !spawning {
+                    m = m.boolean(i, mob.creepy);
+                }
+            }
+            if let Some(i) = info.data_index("DATA_STARED_AT") {
+                if mob.stared_at || !spawning {
+                    m = m.boolean(i, mob.stared_at);
+                }
+            }
             if let Some(merchant) = mob.merchant.as_deref() {
                 if let Some(i) = info.data_index("DATA_VILLAGER_DATA") {
                     let ty = paper_data::registries::id("minecraft:villager_type", &merchant.villager_type).unwrap_or(2) as i32;

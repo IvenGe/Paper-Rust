@@ -38,7 +38,7 @@ pub fn is_food(animal: &str, item: i32) -> bool {
 }
 
 /// Wool colours by dye id (`DyeColor`).
-const COLORS: [&str; 16] = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"];
+pub(super) const COLORS: [&str; 16] = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"];
 
 fn item_name(stack: &ItemStack) -> &'static str {
     items::get(stack.item as u32).map_or("", |i| i.name)
@@ -50,7 +50,7 @@ impl Server {
     }
 
     /// The inventory slot of a hand.
-    fn hand_slot(&self, id: i32, hand: i32) -> usize {
+    pub(super) fn hand_slot(&self, id: i32, hand: i32) -> usize {
         if hand == 1 {
             OFFHAND_SLOT
         } else {
@@ -59,7 +59,7 @@ impl Server {
     }
 
     /// Uses up one of the items in a hand (not in creative).
-    fn use_held(&mut self, id: i32, hand: i32) {
+    pub(super) fn use_held(&mut self, id: i32, hand: i32) {
         let slot = self.hand_slot(id, hand);
         let Some(p) = self.players.get(&id) else { return };
         if p.game_mode == GameMode::Creative {
@@ -111,8 +111,15 @@ impl Server {
         let (name, baby, sheared, age, in_love) = (e.info.name.clone(), mob.baby, mob.sheared, mob.age, mob.in_love);
         let merchant = mob.merchant.is_some();
         let name_tag = held.as_ref().is_some_and(|s| item_name(s) == "minecraft:name_tag");
-        // Villagers and wandering traders trade (name tags still name them).
+        // Villagers and wandering traders trade, pets are tamed and told to sit, and mounts
+        // are saddled and ridden (name tags still name them all).
         if merchant && !name_tag && self.merchant_interact(id, world, target, hand, held.as_ref()) {
+            return;
+        }
+        if !name_tag && super::taming::is_tameable(&name) && self.pet_interact(id, world, target, hand, held.as_ref()) {
+            return;
+        }
+        if !name_tag && self.ride_interact(id, world, target, hand, held.as_ref()) {
             return;
         }
         let Some(stack) = held else { return };

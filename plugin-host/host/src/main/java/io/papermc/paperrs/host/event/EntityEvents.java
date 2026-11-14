@@ -150,6 +150,40 @@ final class EntityEvents {
             "yaw", (double) to.getYaw(), "pitch", (double) to.getPitch());
     }
 
+    /** {@code EntityMountEvent}: something gets on something. */
+    Object mount(final Map<String, Object> args) {
+        final Entity rider = this.entity(args.get("entity"));
+        final Entity mount = this.entity(args.get("mount"));
+        if (rider == null || mount == null) {
+            return Values.of("cancelled", false);
+        }
+        final org.bukkit.event.entity.EntityMountEvent event = new org.bukkit.event.entity.EntityMountEvent(rider, mount);
+        event.callEvent();
+        return Values.of("cancelled", event.isCancelled());
+    }
+
+    /** {@code EntityDismountEvent}: a rider gets off (by itself: cancellable). */
+    Object dismount(final Map<String, Object> args) {
+        final Entity rider = this.entity(args.get("entity"));
+        final Entity mount = this.entity(args.get("dismounted"));
+        if (rider == null || mount == null) {
+            return Values.of("cancelled", false);
+        }
+        final org.bukkit.event.entity.EntityDismountEvent event = new org.bukkit.event.entity.EntityDismountEvent(rider, mount, true);
+        event.callEvent();
+        return Values.of("cancelled", event.isCancelled());
+    }
+
+    /** {@code EntityTameEvent}. */
+    Object tame(final Map<String, Object> args) {
+        if (!(this.entity(args.get("entity")) instanceof LivingEntity animal) || !(this.entity(args.get("owner")) instanceof org.bukkit.entity.AnimalTamer owner)) {
+            return Values.of("cancelled", false);
+        }
+        final org.bukkit.event.entity.EntityTameEvent event = new org.bukkit.event.entity.EntityTameEvent(animal, owner);
+        event.callEvent();
+        return Values.of("cancelled", event.isCancelled());
+    }
+
     Object creatureSpawn(final Map<String, Object> args) {
         final Entity entity = this.entity(Values.of("entity", args.get("entity"), "value", args.get("value")));
         if (!(entity instanceof LivingEntity living)) {

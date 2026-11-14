@@ -247,6 +247,18 @@ packet! {
 }
 
 packet! {
+    /// Where the vehicle the player steers went (the client moves it).
+    MoveVehicle = play::serverbound::MOVE_VEHICLE {
+        x: f64,
+        y: f64,
+        z: f64,
+        yaw: f32,
+        pitch: f32,
+        on_ground: bool,
+    }
+}
+
+packet! {
     /// Right-click on an entity.
     Interact = play::serverbound::INTERACT {
         entity_id: VarInt,
@@ -471,6 +483,7 @@ pub enum Serverbound {
     CookieResponse(CookieResponse),
     CustomPayload(ServerboundCustomPayload),
     Interact(Interact),
+    MoveVehicle(MoveVehicle),
     KeepAlive(ServerboundKeepAlive),
     MovePlayerPos(MovePlayerPos),
     MovePlayerPosRot(MovePlayerPosRot),
@@ -528,6 +541,7 @@ impl Serverbound {
             id::COOKIE_RESPONSE => d!(CookieResponse),
             id::CUSTOM_PAYLOAD => d!(CustomPayload),
             id::INTERACT => d!(Interact),
+            id::MOVE_VEHICLE => d!(MoveVehicle),
             id::KEEP_ALIVE => d!(KeepAlive),
             id::MOVE_PLAYER_POS => d!(MovePlayerPos),
             id::MOVE_PLAYER_POS_ROT => d!(MovePlayerPosRot),

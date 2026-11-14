@@ -829,3 +829,52 @@ pub fn on_replenish(server: &mut Server, world: usize, id: i32, offers: Vec<crat
     }
     out
 }
+
+// --- riding and taming -----------------------------------------------------------------------
+
+/// How plugins name a player or an entity in an event.
+fn actor_value(server: &Server, world: usize, id: i32) -> Value {
+    if let Some(p) = server.players.get(&id) {
+        return bmap! { "player" => p.uuid().to_string() };
+    }
+    match server.worlds.get(world).and_then(|w| w.entities.get(&id)) {
+        Some(e) => bmap! { "entity" => id as i64, "value" => super::entity::entity_value(server, world, e) },
+        None => Value::Null,
+    }
+}
+
+/// A player or entity gets on another (`EntityMountEvent`). Returns whether it may.
+pub fn on_mount(server: &mut Server, world: usize, rider: i32, vehicle: i32) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("EntityMountEvent") {
+        return true;
+    }
+    let args = bmap! { "entity" => actor_value(server, world, rider), "mount" => actor_value(server, world, vehicle) };
+    match fire(server, "EntityMountEvent", "event.mount", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// A rider gets off (`EntityDismountEvent`). Returns whether it may.
+pub fn on_dismount(server: &mut Server, world: usize, rider: i32, vehicle: i32) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("EntityDismountEvent") {
+        return true;
+    }
+    let args = bmap! { "entity" => actor_value(server, world, rider), "dismounted" => actor_value(server, world, vehicle) };
+    match fire(server, "EntityDismountEvent", "event.dismount", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// A player is about to tame an animal (`EntityTameEvent`). Returns whether it may.
+pub fn on_tame(server: &mut Server, world: usize, animal: i32, player: i32) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("EntityTameEvent") {
+        return true;
+    }
+    let args = bmap! { "entity" => actor_value(server, world, animal), "owner" => actor_value(server, world, player) };
+    match fire(server, "EntityTameEvent", "event.tame", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}

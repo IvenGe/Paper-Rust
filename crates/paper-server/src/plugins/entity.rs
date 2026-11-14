@@ -336,7 +336,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     }
                     if let Some(equipment) = args.list("equipment") {
                         for entry in equipment {
-                            let slot = entry.at(0).as_i64().filter(|s| (0..6).contains(s)).ok_or_else(|| anyhow!("equipment slots are 0-5"))? as usize;
+                            let slot = entry.at(0).as_i64().filter(|s| (0..8).contains(s)).ok_or_else(|| anyhow!("equipment slots are 0-7"))? as usize;
                             m.equipment[slot] = slot_from(entry.at(1))?;
                         }
                         e.equipment_dirty = true;

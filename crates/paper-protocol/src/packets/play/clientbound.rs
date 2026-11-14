@@ -2052,3 +2052,36 @@ impl Decode for MerchantOffers {
         Ok(Self { window_id, offers, level: r.varint()?, xp: r.varint()?, show_progress: r.bool()?, can_restock: r.bool()? })
     }
 }
+
+/// Who rides an entity (the whole list; an empty list means nobody).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetPassengers {
+    pub vehicle: i32,
+    pub passengers: Vec<i32>,
+}
+
+packet_id!(SetPassengers = play::clientbound::SET_PASSENGERS);
+
+impl Encode for SetPassengers {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.vehicle);
+        w.put_list(&self.passengers, |w, p| w.put_varint(*p));
+    }
+}
+
+impl Decode for SetPassengers {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self { vehicle: r.varint()?, passengers: r.list(256, |r| r.varint())? })
+    }
+}
+
+packet! {
+    /// Puts the vehicle a player steers back where the server has it.
+    ClientboundMoveVehicle = play::clientbound::MOVE_VEHICLE {
+        x: f64,
+        y: f64,
+        z: f64,
+        yaw: f32,
+        pitch: f32,
+    }
+}

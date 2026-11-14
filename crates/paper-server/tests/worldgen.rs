@@ -155,6 +155,16 @@ fn unfinished_chunks_are_saved_and_finished_after_a_restart() {
         })
         .unwrap();
     assert!(unfinished > 0, "the edge of the generated area is unfinished");
+    // What the generator knows about structure starts, to compare with what gets saved.
+    let expected: Vec<(ChunkPos, paper_nbt::Compound)> = server
+        .handle
+        .run(move |s| {
+            let g = s.worlds[0].generator.staged().unwrap();
+            let chunks: Vec<ChunkPos> = (-6..=6).flat_map(|dz| (-6..=6).map(move |dx| ChunkPos::new(cx + dx, cz + dz))).filter(|p| s.worlds[0].chunks.contains_key(p)).collect();
+            chunks.into_iter().map(|p| (p, g.inner.save_structures(p.x, p.z))).collect()
+        })
+        .unwrap();
+    assert!(!expected.is_empty());
     drop(alice);
     server.stop();
 
@@ -169,6 +179,12 @@ fn unfinished_chunks_are_saved_and_finished_after_a_restart() {
         }
     }
     assert!(statuses.contains_key("Full") && (statuses.contains_key("Decorated") || statuses.contains_key("Terrain")), "{statuses:?}");
+    // Structure starts and references are saved with each chunk, in vanilla's layout.
+    for (pos, structures) in &expected {
+        let saved = storage.load_structures(*pos).unwrap().expect("a saved structures compound");
+        assert!(saved.compound("starts").is_some() && saved.compound("References").is_some(), "chunk {pos:?}");
+        assert_eq!(&saved, structures, "chunk {pos:?} saves the generator's starts");
+    }
     drop(storage);
 
     // After a restart the finished chunk is the same, and generation carries on.

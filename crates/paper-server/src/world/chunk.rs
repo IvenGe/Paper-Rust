@@ -305,6 +305,9 @@ pub struct Chunk {
     pub status: GenStatus,
     /// Unfinished chunks only.
     pub proto: Option<Box<ProtoData>>,
+    /// The `structures` compound the chunk was saved with (structure starts), until the
+    /// generator has read it.
+    pub saved_structures: Option<paper_nbt::Compound>,
 }
 
 fn motion_blocking(state: u32) -> bool {
@@ -333,6 +336,7 @@ impl Chunk {
             ticks: Default::default(),
             status: GenStatus::Full,
             proto: None,
+            saved_structures: None,
         }
     }
 

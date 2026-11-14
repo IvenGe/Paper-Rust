@@ -1099,6 +1099,11 @@ impl Server {
             self.throw_ender_eye(id, slot);
             return;
         }
+        // A carrot or warped fungus on a stick boosts the pig or strider being ridden.
+        if matches!(name, "minecraft:carrot_on_a_stick" | "minecraft:warped_fungus_on_a_stick") {
+            self.boost_ridden(id, hand);
+            return;
+        }
         if let Some(seconds) = data.consume_seconds {
             let can_eat = match &data.food {
                 Some(food) => p.game_mode == GameMode::Creative || food.can_always_eat || p.food < 20,

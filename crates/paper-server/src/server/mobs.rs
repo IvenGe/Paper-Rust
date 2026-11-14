@@ -99,7 +99,7 @@ pub fn sky_darken(world: &World) -> i32 {
     ((1.0 - f * rain * thunder) * 11.0) as i32
 }
 
-fn sky_light(world: &World, x: i32, y: i32, z: i32) -> i32 {
+pub(super) fn sky_light(world: &World, x: i32, y: i32, z: i32) -> i32 {
     world.chunks.get(&ChunkPos::of_block(x, z)).filter(|c| c.lit).map_or(15, |c| c.sky_light_at((x & 15) as usize, y, (z & 15) as usize) as i32)
 }
 
@@ -248,6 +248,19 @@ pub struct SpawnerEntry {
 const CATEGORIES: [(&str, &str, i32, bool); 4] = [("MONSTER", "monster", 70, false), ("CREATURE", "creature", 10, true), ("AMBIENT", "ambient", 15, false), ("WATER_AMBIENT", "water_ambient", 20, false)];
 
 impl Server {
+    /// What spawns at a block position for a category (`getMobsAt`): a structure's own list
+    /// where one overrides the biome's (guardians in ocean monuments, witches in swamp huts,
+    /// pillagers at outposts, the mobs of nether fortresses), else the biome's.
+    pub fn spawners_at(&mut self, world: usize, x: i32, y: i32, z: i32, category: &str) -> Vec<SpawnerEntry> {
+        if let Some(g) = self.worlds[world].generator.staged() {
+            if let Some(list) = g.inner.structure_spawns_at(x, y, z, category) {
+                return list.into_iter().map(|s| SpawnerEntry { entity: s.entity, weight: s.weight, min: s.min_count, max: s.max_count }).collect();
+            }
+        }
+        let biome = self.biome_at(world, x, y, z);
+        self.biome_spawners(biome, category)
+    }
+
     /// The spawner list of a biome for a category (`monster`, `creature`, ...), read from the
     /// vanilla data and cached.
     pub fn biome_spawners(&mut self, biome: &str, category: &str) -> Vec<SpawnerEntry> {
@@ -322,6 +335,15 @@ impl Server {
             love_cause: None,
             egg_time: rng.gen_range(6000..12000),
             merchant: None,
+            carried: None,
+            creepy: false,
+            stared_at: false,
+            tamed: false,
+            owner: None,
+            sitting: false,
+            collar: 14,
+            temper: 0,
+            boost: 0,
         };
         // Equipment and variants picked when spawning (`finalizeSpawn`).
         match name.as_str() {
@@ -356,6 +378,7 @@ impl Server {
             mob.age = -24000;
         }
         self.init_merchant(world, &name, pos, &mut mob, reason);
+        super::riding::randomize_horse(&name, &mut mob, &mut rng);
         let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::Mob(Box::new(mob)));
         e.yaw = rng.gen_range(0.0..360.0);
         e.head_yaw = e.yaw;
@@ -374,7 +397,26 @@ impl Server {
             return;
         }
         self.tick_animal(world, id);
-        self.mob_ai(world, id);
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
+        let (name, riding, sitting) = (e.info.name.clone(), e.vehicle.is_some(), e.mob().is_some_and(|m| m.sitting));
+        if name == super::endermen::ENDERMAN {
+            self.tick_enderman(world, id);
+        }
+        if super::taming::is_tameable(&name) {
+            self.tick_pet(world, id);
+        }
+        // A mount a player steers is moved by that player's client; a mob riding something
+        // goes where that goes.
+        if riding || self.steered(world, id) {
+            return;
+        }
+        if sitting {
+            if let Some(m) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.mob_mut()) {
+                m.brain.path.clear();
+            }
+        } else {
+            self.mob_ai(world, id);
+        }
         self.mob_travel(world, id);
         self.mob_sounds(world, id);
     }
@@ -635,21 +677,24 @@ impl Server {
                     None => brain.love_time = 0,
                 }
             }
-            // Merchants stand still while trading and walk to their workstation.
-            if let Some(m) = mob.merchant.as_deref() {
-                if let Some(at) = m.trading_player.and_then(|p| self.players.get(&p)).map(|p| Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z)) {
-                    busy = true;
+            // Merchants stand still while trading; mobs walk where they want to go (a villager
+            // to its workstation, a pet to its owner, a bucking horse anywhere).
+            let trading_with = mob.merchant.as_deref().and_then(|m| m.trading_player).and_then(|p| self.players.get(&p)).map(|p| Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z));
+            if let Some(at) = trading_with {
+                busy = true;
+                brain.path.clear();
+                brain.walk_target = None;
+                brain.look_at = Some(at);
+            } else if let Some(target) = brain.walk_target {
+                busy = true;
+                if target.distance_squared(pos) > 1.0 {
+                    goal = Some(target);
+                    if !e.passengers.is_empty() && super::riding::is_horse(&info.name) {
+                        brain.speed_factor = 1.2;
+                    }
+                } else {
                     brain.path.clear();
                     brain.walk_target = None;
-                    brain.look_at = Some(at);
-                } else if let Some(target) = brain.walk_target {
-                    busy = true;
-                    if target.distance_squared(pos) > 1.0 {
-                        goal = Some(target);
-                    } else {
-                        brain.path.clear();
-                        brain.walk_target = None;
-                    }
                 }
             }
             if kind == Behavior::Animal && !busy {
@@ -1039,11 +1084,6 @@ impl Server {
         if w.block_at(x0, y, z0).is_none_or(|s| paper_data::physics::flags(s) & paper_data::physics::SOLID_BLOCK != 0) {
             return 0;
         }
-        let biome = self.biome_at(world, x0, y, z0);
-        let spawners = self.biome_spawners(biome, key);
-        if spawners.is_empty() {
-            return 0;
-        }
         let mut count = 0;
         for _ in 0..3 {
             let (mut x, mut z) = (x0, z0);
@@ -1063,6 +1103,8 @@ impl Server {
                     continue;
                 }
                 if chosen.is_none() {
+                    // What spawns here (`getRandomSpawnMobAt`), structures included.
+                    let spawners = self.spawners_at(world, x, y, z, key);
                     let total: i32 = spawners.iter().map(|s| s.weight).sum();
                     if total <= 0 {
                         break;
