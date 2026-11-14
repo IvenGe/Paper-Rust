@@ -405,16 +405,19 @@ fn fed_animals_breed_and_cows_give_milk_and_sheep_wool() {
     alice.drain(QUIET);
     alice.send(&interact(a));
     alice.send(&interact(b));
-    // (Chunk generation may have put baby cows elsewhere: only one born next to the parents counts.)
-    let calves = |s: &mut paper_server::server::Server| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.baby) && (e.pos.x - 11.0).abs() < 4.0 && (e.pos.z - 8.5).abs() < 4.0).count();
+    // Once they have bred, the parents wait before breeding again (their age goes up to 6000
+    // and counts down). Waiting for that rather than for any calf nearby: chunk generation
+    // may have put baby cows around too.
+    let parent_age = move |s: &mut paper_server::server::Server| s.worlds[0].entities.get(&a).and_then(|e| e.mob()).map_or(0, |m| m.age);
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    while server.handle.run(calves).unwrap() == 0 {
-        assert!(std::time::Instant::now() < deadline, "the cows have a calf");
+    while server.handle.run(parent_age).unwrap() <= 5000 {
+        assert!(std::time::Instant::now() < deadline, "the cows breed");
         std::thread::sleep(Duration::from_millis(100));
     }
-    let (left, parent_age) = server.handle.run(move |s| (s.players[&id].inventory[36].clone(), s.worlds[0].entities[&a].mob().unwrap().age)).unwrap();
+    let calves = |s: &mut paper_server::server::Server| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:cow" && e.mob().is_some_and(|m| m.baby) && (e.pos.x - 11.0).abs() < 4.0 && (e.pos.z - 8.5).abs() < 4.0).count();
+    assert!(server.handle.run(calves).unwrap() >= 1, "a calf is born next to them");
+    let left = server.handle.run(move |s| s.players[&id].inventory[36].clone()).unwrap();
     assert_eq!(left, Slot::of(wheat, 1), "two wheat eaten");
-    assert!(parent_age > 5000, "the parents wait before breeding again: {parent_age}");
     let bred = server.handle.run(move |s| s.players[&id].stats.get("minecraft:custom", "minecraft:animals_bred")).unwrap();
     assert_eq!(bred, 1, "the breeding counts for whoever fed them");
 
