@@ -102,6 +102,8 @@ pub enum Effect {
     Craft { pos: BlockPos },
     /// A crafter's power changed (its window shows it).
     CrafterPowered { pos: BlockPos },
+    /// A carved pumpkin or jack o'lantern was placed: it may finish a golem.
+    Golem { pos: BlockPos },
 }
 
 /// Game rules and dimension properties block updates depend on.
@@ -704,6 +706,9 @@ impl<'w> Level<'w> {
 
     /// `onPlace`.
     fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, _moved: bool) {
+        if matches!(state::block_name(state), "minecraft:carved_pumpkin" | "minecraft:jack_o_lantern") && state::block_name(old) != state::block_name(state) {
+            self.world.updates.effects.push(Effect::Golem { pos });
+        }
         match kind(state) {
             Kind::Water | Kind::Lava => fluid::on_place(self, state, pos),
             Kind::RedstoneWire => redstone::wire_on_place(self, state, pos, old),

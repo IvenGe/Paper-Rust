@@ -294,7 +294,7 @@ Not yet:
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
-  data). Dispensers do not place shulker boxes, build golems or withers, or launch
+  data). Withers and copper golems cannot be built. Dispensers do not place shulker boxes, build withers, or launch
   fireworks, wind charges, boats or minecarts.
 * Statistics of what the server does not do yet (fishing, raids, note blocks, bells,
   cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as

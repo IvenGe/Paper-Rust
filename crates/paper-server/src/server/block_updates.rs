@@ -198,6 +198,7 @@ impl Server {
                 }
                 Effect::Drops { pos, state, block_entity } => self.drop_block_items(world, pos, state, block_entity),
                 Effect::PrimeTnt { pos, igniter } => self.prime_tnt(world, pos, 80, igniter),
+                Effect::Golem { pos } => self.try_spawn_golem(world, pos),
                 Effect::Dispense { pos } => self.dispense(world, pos),
                 Effect::CheckPlate { pos } => self.check_pressure_plate(world, pos),
                 Effect::CheckTripwire { pos } => self.check_tripwire(world, pos),

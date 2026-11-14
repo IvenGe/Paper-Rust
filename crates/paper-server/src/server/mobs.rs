@@ -81,6 +81,8 @@ pub enum SpawnReason {
     Breeding,
     /// Let out of a bucket.
     Bucket,
+    /// Built from blocks (snow and iron golems).
+    Built,
 }
 
 // --- light and sky ---------------------------------------------------------------------------

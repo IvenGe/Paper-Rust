@@ -587,6 +587,8 @@ pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: cra
         crate::server::mobs::SpawnReason::Spawner => "SPAWNER",
         crate::server::mobs::SpawnReason::Breeding => "BREEDING",
         crate::server::mobs::SpawnReason::Bucket => "BUCKET",
+        crate::server::mobs::SpawnReason::Built if e.info.name == "minecraft:snow_golem" => "BUILD_SNOWMAN",
+        crate::server::mobs::SpawnReason::Built => "BUILD_IRONGOLEM",
     };
     let args = bmap! {
         "entity" => id as i64,

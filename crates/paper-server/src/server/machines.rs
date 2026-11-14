@@ -545,8 +545,15 @@ impl Server {
                 self.dispensed(world, pos, facing, 1000);
                 Some(ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1))
             }
-            // A carved pumpkin or wither skeleton skull is only worn (building golems and
-            // withers is not done here); nothing to wear it makes the dispenser click.
+            // A carved pumpkin finishing a golem is placed (and becomes the golem's head);
+            // otherwise it is worn, as a wither skeleton skull is (building withers is not done
+            // here). Nothing to wear it makes the dispenser click.
+            "minecraft:carved_pumpkin" if blocks::is_air(in_front) && super::golems::golem_at(w, front, false).is_some() => {
+                let pumpkin = blocks::default_state("minecraft:carved_pumpkin").unwrap_or(blocks::AIR);
+                self.set_block_and_update(world, front, pumpkin);
+                self.dispensed(world, pos, facing, 1000);
+                Some(stack.with_count(stack.count - 1))
+            }
             "minecraft:carved_pumpkin" | "minecraft:wither_skeleton_skull" => {
                 let worn = self.dispense_equipment(world, front, &stack);
                 self.dispensed(world, pos, facing, if worn { 1000 } else { 1001 });

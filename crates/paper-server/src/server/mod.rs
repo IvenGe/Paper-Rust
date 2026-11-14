@@ -39,6 +39,7 @@ pub mod riding;
 pub mod taming;
 pub mod throwing;
 pub mod crafter;
+pub mod golems;
 pub mod score_commands;
 pub mod stats;
 pub mod dragon;
