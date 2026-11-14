@@ -17,6 +17,7 @@ pub mod transform;
 mod fortress;
 mod jigsaw;
 mod legacy;
+mod mansion;
 mod mineshaft;
 mod monument;
 pub(crate) mod processor;
@@ -609,6 +610,7 @@ impl Structures {
             "jungle_temple" => Some(Box::new(temple::JungleTemple)),
             "desert_pyramid" => Some(Box::new(temple::DesertPyramid)),
             "ocean_monument" => Some(Box::new(monument::OceanMonument::load(l)?)),
+            "woodland_mansion" => Some(Box::new(mansion::WoodlandMansion::load(l)?)),
             _ => None,
         };
         let supported = generator.is_some();

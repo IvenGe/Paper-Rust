@@ -40,6 +40,8 @@ pub(crate) enum TemplateKind {
     RuinedPortal(PortalProperties),
     EndCity,
     Igloo { part: IglooPart, offset: Pos },
+    /// `WoodlandMansionPiece`.
+    Mansion,
 }
 
 /// `RuinedPortalPiece.VerticalPlacement`.
@@ -104,6 +106,14 @@ impl TemplatePiece {
         let bbox = template.bounding_box(position, rotation, pivot, mirror);
         let base = PieceBase::new(kind_id, 0, bbox).with_orientation(Some(Dir::North));
         Self { base, template, position: Mutex::new((position, false)), rotation, mirror, pivot, processors, kind, ignore_entities: false, waterlog: true }
+    }
+
+    /// A woodland mansion piece (`WoodlandMansionPiece`): ignores entities, skips structure
+    /// blocks.
+    pub(crate) fn mansion(template: Arc<Template>, position: Pos, rotation: Rotation, mirror: Mirror, structure_block: Arc<Processor>) -> Self {
+        let mut p = Self::new("minecraft:wmp", template, position, rotation, mirror, Pos::new(0, 0, 0), vec![structure_block], TemplateKind::Mansion);
+        p.ignore_entities = true;
+        p
     }
 
     fn settings(&self, bbox: BoundingBox) -> PlaceSettings<'static> {
@@ -207,6 +217,7 @@ impl TemplatePiece {
                     set_loot(ctx, entities, pos.down(), "minecraft:chests/igloo_chest");
                 }
             }
+            TemplateKind::Mansion => super::mansion::data_marker(id, pos, self.rotation, ctx),
             TemplateKind::NetherFossil | TemplateKind::RuinedPortal(_) => {}
         }
     }
@@ -287,7 +298,7 @@ impl Piece for TemplatePiece {
                 };
                 self.place_template(ctx, position, chunk_box);
             }
-            TemplateKind::EndCity => {
+            TemplateKind::EndCity | TemplateKind::Mansion => {
                 let position = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
                 self.place_template(ctx, position, chunk_box);
             }

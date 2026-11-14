@@ -60,6 +60,8 @@ pub(crate) struct EntityInfo {
 
 /// A parsed template.
 pub struct Template {
+    /// The template's id (`minecraft:end_city/base_floor`).
+    pub id: String,
     pub size: (i32, i32, i32),
     pub(crate) palettes: Vec<Palette>,
     pub(crate) entities: Vec<EntityInfo>,
@@ -206,7 +208,7 @@ impl Template {
                 entities.push(EntityInfo { pos: (d(0), d(1), d(2)), block_pos: Pos::new(bx, by, bz), nbt: nbt.clone() });
             }
         }
-        Ok(Self { size: (sx, sy, sz), palettes, entities })
+        Ok(Self { id: String::new(), size: (sx, sy, sz), palettes, entities })
     }
 
     /// `getSize(rotation)`.
@@ -543,8 +545,12 @@ impl Templates {
         let file = format!("data/{ns}/structure/{path}.nbt");
         // `StructureTemplateManager.getOrCreate`: a missing template is an empty one.
         let t = match data.bytes(&file) {
-            Some(bytes) => Arc::new(Template::parse(&bytes).with_context(|| format!("parsing {file}"))?),
-            None => Arc::new(Template { size: (0, 0, 0), palettes: Vec::new(), entities: Vec::new() }),
+            Some(bytes) => {
+                let mut t = Template::parse(&bytes).with_context(|| format!("parsing {file}"))?;
+                t.id = id.clone();
+                Arc::new(t)
+            }
+            None => Arc::new(Template { id: id.clone(), size: (0, 0, 0), palettes: Vec::new(), entities: Vec::new() }),
         };
         self.map.insert(id, t.clone());
         Ok(t)

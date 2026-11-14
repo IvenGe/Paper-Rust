@@ -1,8 +1,7 @@
 # paper-worldgen
 
 Vanilla Minecraft 26.3 world generation for paper-rs: the overworld, the nether and the
-end, block for block as vanilla generates them, structures included (except woodland
-mansions).
+end, block for block as vanilla generates them, structures included.
 
 ## Usage
 
@@ -145,9 +144,14 @@ shared between threads. Generated:
   building with its rooms and the three elder guardians. As in vanilla the start holds one
   piece (the building) and the rooms are its children, and the terrain is not beardified:
   the building replaces everything around and inside itself with water (air above sea
-  level, ice kept) and fills its pillars down to the floor.
+  level, ice kept) and fills its pillars down to the floor;
+* woodland mansions: the floor grids, the piece placer (outer walls, roofs, corridors and
+  carpets, inner walls and doors, the rooms of each floor), the `woodland_mansion/*`
+  templates with their data markers (loot chests, vindicators, evokers, allays) and the
+  cobblestone foundation of `afterPlace`.
 
-Not generated (they never start; `unsupported_structures` lists them): woodland mansions.
+`unsupported_structures` lists structure types that are not generated (none in 26.3's
+data).
 
 `structure_spawns_at` answers vanilla's `getMobsAt` for structures from their
 `spawn_overrides`: the guardians that spawn in monuments (natural spawning, not
@@ -186,6 +190,10 @@ the settled height depends on which chunk is decorated first.
   were checked by hand against vanilla's `OceanMonumentPieces`; the test places the
   fixture's monument and checks the core's eight gold blocks, the three elder guardians and
   that nothing but monument blocks, water, ice and water plants is left in its volume.
+* Woodland mansions: the dump has none. The piece layouts (every piece's template,
+  position, rotation and mirror) match the Java layouts Pumpkin's test records for four
+  seeds; the test places a mansion of seed 0 and checks its blocks, loot chests, mobs and
+  foundation.
 * Desert pyramids, jungle temples, swamp huts, igloos, fossils and the other jigsaw
   structures have no reference here; tests check that they are found and place blocks.
 * Feature types the fixtures do not exercise are checked against Pumpkin (structures off)

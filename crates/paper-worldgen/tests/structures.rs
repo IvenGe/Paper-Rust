@@ -351,6 +351,50 @@ fn ocean_monument_is_placed() {
 }
 
 #[test]
+fn woodland_mansion_is_placed() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    let found = g.locate("minecraft:mansion", 0, 0, 100).expect("a woodland mansion");
+    let start = g.structure_starts(found.chunk_x, found.chunk_z).into_iter().find(|s| s.id() == "minecraft:mansion").unwrap();
+    let pieces = start.pieces();
+    eprintln!("mansion at chunk ({}, {}): {} pieces, box {:?}", found.chunk_x, found.chunk_z, pieces.len(), start.bbox);
+    assert!(pieces.len() > 300, "{} pieces", pieces.len());
+    assert!(pieces.iter().all(|p| p.kind == "minecraft:wmp" && p.orientation == 2));
+    let b = start.bbox;
+    let mut w = TestWorld::new(g);
+    w.decorate_box(b.min_x >> 4, b.min_z >> 4, b.max_x >> 4, b.max_z >> 4);
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for x in b.min_x..=b.max_x {
+        for z in b.min_z..=b.max_z {
+            for y in b.min_y - 8..=b.max_y {
+                *counts.entry(w.name(x, y, z)).or_default() += 1;
+            }
+        }
+    }
+    eprintln!("dark oak planks {:?}, cobblestone {:?}, chests {:?}", counts.get("minecraft:dark_oak_planks"), counts.get("minecraft:cobblestone"), counts.get("minecraft:chest"));
+    assert!(counts.get("minecraft:dark_oak_planks").copied().unwrap_or(0) > 5000);
+    assert!(counts.get("minecraft:cobblestone").copied().unwrap_or(0) > 1000, "walls and the foundation");
+    assert!(!counts.contains_key("minecraft:structure_block"), "data markers are replaced");
+    let chests: Vec<_> = w.block_entities.iter().filter(|(_, be)| matches!(be, paper_worldgen::BlockEntity::Loot { table, .. } if table == "minecraft:chests/woodland_mansion")).collect();
+    assert!(!chests.is_empty(), "loot chests");
+    for ((x, y, z), _) in &chests {
+        assert_eq!(w.name(*x, *y, *z), "minecraft:chest");
+    }
+    let mobs: BTreeMap<&str, usize> = w.entities.iter().filter_map(|e| e.string("id")).fold(BTreeMap::new(), |mut m, id| {
+        *m.entry(id).or_default() += 1;
+        m
+    });
+    eprintln!("loot chests {}, entities {mobs:?}", chests.len());
+    assert!(mobs.get("minecraft:vindicator").copied().unwrap_or(0) > 0);
+    let illagers = ["minecraft:vindicator", "minecraft:evoker", "minecraft:allay"];
+    for e in w.entities.iter().filter(|e| illagers.contains(&e.string("id").unwrap_or(""))) {
+        let pos = e.list("Pos").unwrap();
+        let (x, y, z) = (pos[0].as_f64().unwrap(), pos[1].as_f64().unwrap(), pos[2].as_f64().unwrap());
+        assert!(b.contains(x.floor() as i32, y as i32, z.floor() as i32));
+        assert_eq!(w.name(x.floor() as i32, y as i32, z.floor() as i32), "minecraft:air", "the marker is cleared");
+    }
+}
+
+#[test]
 fn ocean_monuments_spawn_guardians() {
     let Some(g) = generator(Dimension::Overworld, 0) else { return };
     // Inside the vanilla monument of the fixture (box -1165..-1108, 39..61, -269..-212).
