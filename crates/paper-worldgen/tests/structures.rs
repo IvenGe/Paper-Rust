@@ -185,3 +185,21 @@ fn scattered_structures_are_placed() {
         assert!(n > 0, "{id}: no {block} placed");
     }
 }
+
+#[test]
+fn template_features_are_placed() {
+    // Fossils (`fossil_upper` in deserts, `fossil_lower` deep down) around the desert pyramid
+    // the placement test finds.
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    let mut bones = 0;
+    'scan: for cz in -192..-184 {
+        for cx in -4..4 {
+            bones += count(&decorate(g, cx, cz), "minecraft:bone_block");
+            if bones > 0 {
+                break 'scan;
+            }
+        }
+    }
+    eprintln!("bone blocks: {bones}");
+    assert!(bones > 0);
+}

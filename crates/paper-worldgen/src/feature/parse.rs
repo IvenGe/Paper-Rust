@@ -22,6 +22,9 @@ pub struct Parser<'a, 'd> {
     /// For each placed feature id, the biomes whose feature lists contain it.
     pub(crate) biome_features: HashMap<String, u128>,
     pub(crate) unsupported: Vec<String>,
+    /// Structure templates and processor lists of template features.
+    pub(crate) templates: crate::structure::template::Templates,
+    pub(crate) processor_lists: crate::structure::processor::ProcessorLists,
 }
 
 impl<'a, 'd> Parser<'a, 'd> {
@@ -43,6 +46,8 @@ impl<'a, 'd> Parser<'a, 'd> {
             providers: HashMap::new(),
             biome_features,
             unsupported: Vec::new(),
+            templates: Default::default(),
+            processor_lists: Default::default(),
         }
     }
 

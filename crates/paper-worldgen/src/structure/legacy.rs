@@ -122,7 +122,7 @@ impl TemplatePiece {
     fn place_template(&self, ctx: &mut PlaceCtx, position: Pos, chunk_box: BoundingBox) {
         let mut settings = self.settings(chunk_box);
         let mut entities: Vec<(Pos, Compound)> = Vec::new();
-        if self.template.place_buffered(ctx.w, position, ctx.reference, &mut settings, ctx.r, Some(&mut entities)) {
+        if self.template.place_buffered(ctx.w, position, ctx.reference, &mut settings, Some(&mut *ctx.r), Some(&mut entities)) {
             let marker = blocks::id("minecraft:structure_block").unwrap_or(0);
             for m in self.template.filter_blocks(position, &mut settings, marker) {
                 let Some(nbt) = &m.nbt else { continue };

@@ -217,6 +217,20 @@ impl Template {
         }
     }
 
+    /// `getZeroPositionWithTransform`.
+    pub fn zero_position_with_transform(&self, zero: Pos, mirror: Mirror, rotation: Rotation) -> Pos {
+        let (sx, sz) = (self.size.0 - 1, self.size.2 - 1);
+        let mx = if mirror == Mirror::FrontBack { sx } else { 0 };
+        let mz = if mirror == Mirror::LeftRight { sz } else { 0 };
+        let (dx, dz) = match rotation {
+            Rotation::None => (mx, mz),
+            Rotation::Clockwise90 => (sz - mz, mx),
+            Rotation::Clockwise180 => (sx - mx, sz - mz),
+            Rotation::CounterClockwise90 => (mz, sx - mx),
+        };
+        Pos::new(zero.x + dx, zero.y, zero.z + dz)
+    }
+
     /// `getBoundingBox(position, rotation, pivot, mirror)`.
     pub fn bounding_box(&self, position: Pos, rotation: Rotation, pivot: Pos, mirror: Mirror) -> BoundingBox {
         let (sx, sy, sz) = self.size;
@@ -266,12 +280,22 @@ impl Template {
     /// `placeInWorld(level, position, referencePos, settings, random, flags)`; `random` is the
     /// piece's random (container loot seeds). Returns whether anything could be placed.
     pub(crate) fn place(&self, w: &mut World, position: Pos, reference: Pos, settings: &mut PlaceSettings, random: &mut WorldgenRandom) -> bool {
-        self.place_buffered(w, position, reference, settings, random, None)
+        self.place_buffered(w, position, reference, settings, Some(random), None)
     }
 
     /// [`Template::place`], collecting the block entities in `buffer` (when given) instead of
-    /// handing them to the world, so that data markers can still change them.
-    pub(crate) fn place_buffered(&self, w: &mut World, position: Pos, reference: Pos, settings: &mut PlaceSettings, random: &mut WorldgenRandom, mut buffer: Option<&mut Vec<(Pos, Compound)>>) -> bool {
+    /// handing them to the world, so that data markers can still change them. Without a
+    /// `random`, container loot seeds come from the settings' random (features place
+    /// templates with their own random as both).
+    pub(crate) fn place_buffered(
+        &self,
+        w: &mut World,
+        position: Pos,
+        reference: Pos,
+        settings: &mut PlaceSettings,
+        mut random: Option<&mut WorldgenRandom>,
+        mut buffer: Option<&mut Vec<(Pos, Compound)>>,
+    ) -> bool {
         if self.palettes.is_empty() {
             return false;
         }
@@ -299,7 +323,11 @@ impl Template {
                 if let Some(container) = block_entity_kind(state) {
                     let mut nbt = (**nbt).clone();
                     if container {
-                        nbt.insert("LootTableSeed", random.next_i64());
+                        let seed = match random.as_deref_mut() {
+                            Some(r) => r.next_i64(),
+                            None => settings.with_random(p, |r| r.next_i64()),
+                        };
+                        nbt.insert("LootTableSeed", seed);
                     }
                     match buffer.as_deref_mut() {
                         Some(b) => {
