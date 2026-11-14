@@ -826,6 +826,8 @@ enum IoJob {
     /// The entities of a chunk (`entities/r.x.z.mca`).
     Entities(Arc<WorldStorage>, ChunkPos, Arc<Compound>),
     Player(Arc<WorldStorage>, uuid::Uuid, Arc<Compound>),
+    /// A player's statistics (`stats/<uuid>.json`).
+    Stats(Arc<WorldStorage>, uuid::Uuid, Arc<Vec<u8>>),
     File { path: PathBuf, bytes: Vec<u8> },
     Flush(std::sync::mpsc::Sender<()>),
 }
@@ -876,6 +878,19 @@ impl ChunkIo {
                             }
                             let mut pending = storage.pending_players.lock();
                             if pending.get(&uuid).is_some_and(|p| Arc::ptr_eq(p, &data)) {
+                                pending.remove(&uuid);
+                            }
+                        }
+                        IoJob::Stats(storage, uuid, bytes) => {
+                            let path = storage.stats_path(uuid);
+                            if let Some(parent) = path.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            if let Err(e) = write_atomically(&path, &bytes) {
+                                log::error!("Failed to save the statistics of {uuid}: {e:#}");
+                            }
+                            let mut pending = storage.pending_stats.lock();
+                            if pending.get(&uuid).is_some_and(|p| Arc::ptr_eq(p, &bytes)) {
                                 pending.remove(&uuid);
                             }
                         }
@@ -931,6 +946,8 @@ pub struct WorldStorage {
     pending: Mutex<HashMap<ChunkPos, Arc<SaveChunk>>>,
     /// Player data queued for writing.
     pending_players: Mutex<HashMap<uuid::Uuid, Arc<Compound>>>,
+    /// Statistics queued for writing, so reads see them.
+    pending_stats: Mutex<HashMap<uuid::Uuid, Arc<Vec<u8>>>>,
     /// Held open (and locked) while the server uses the world.
     _session_lock: File,
 }
@@ -964,6 +981,7 @@ impl WorldStorage {
             pending_entities: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             pending_players: Mutex::new(HashMap::new()),
+            pending_stats: Mutex::new(HashMap::new()),
             _session_lock: lock,
         }))
     }
@@ -1107,6 +1125,28 @@ impl WorldStorage {
         }
         let Some(level) = read_gzip_nbt(&self.dir.join("level.dat"))? else { return Ok(None) };
         Ok(level.compound("Data").and_then(|d| d.compound("GameRules")).map(super::rules::GameRules::from_legacy))
+    }
+
+    /// A player's statistics (`stats/<uuid>.json`).
+    pub fn read_stats(&self, uuid: uuid::Uuid) -> Option<serde_json::Value> {
+        if let Some(pending) = self.pending_stats.lock().get(&uuid) {
+            return serde_json::from_slice(pending).ok();
+        }
+        let bytes = std::fs::read(self.stats_path(uuid)).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Queues a player's statistics for writing.
+    pub fn save_stats(self: &Arc<Self>, uuid: uuid::Uuid, stats: &serde_json::Value) {
+        if let Ok(bytes) = serde_json::to_vec(stats) {
+            let bytes = Arc::new(bytes);
+            self.pending_stats.lock().insert(uuid, bytes.clone());
+            let _ = self.io.tx.send(IoJob::Stats(self.clone(), uuid, bytes));
+        }
+    }
+
+    fn stats_path(&self, uuid: uuid::Uuid) -> PathBuf {
+        self.dir.join("stats").join(format!("{uuid}.json"))
     }
 
     /// The main scoreboard (`data/minecraft/scoreboard.dat`, or `data/scoreboard.dat` of older

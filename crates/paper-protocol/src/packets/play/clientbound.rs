@@ -118,6 +118,36 @@ impl Decode for SectionBlocksUpdate {
     }
 }
 
+/// The statistics screen's numbers: stat type, key (an id in the type's registry) and value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AwardStats {
+    pub stats: Vec<(VarInt, VarInt, VarInt)>,
+}
+
+packet_id!(AwardStats = play::clientbound::AWARD_STATS);
+
+impl Encode for AwardStats {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.stats.len() as i32);
+        for (kind, key, value) in &self.stats {
+            w.put_varint(kind.0);
+            w.put_varint(key.0);
+            w.put_varint(value.0);
+        }
+    }
+}
+
+impl Decode for AwardStats {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let n = r.varint()?.max(0) as usize;
+        let mut stats = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            stats.push((VarInt(r.varint()?), VarInt(r.varint()?), VarInt(r.varint()?)));
+        }
+        Ok(Self { stats })
+    }
+}
+
 /// Boss bar operations.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BossEventAction {

@@ -107,6 +107,7 @@ impl Server {
             p.sleep_ticks = 0;
             p.metadata_dirty = true;
         }
+        self.award_stat(id, super::stats::CUSTOM, "minecraft:sleep_in_bed", 1);
         let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.6875, z: head.z as f64 + 0.5, ..self.players[&id].loc };
         self.teleport(id, at);
         true

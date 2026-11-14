@@ -140,6 +140,8 @@ fn villagers_take_workstations_trade_and_level_up() {
     wait_until("three trades", TIMEOUT, || count_of(&server, id, emerald) == 3);
     let m = merchant(&server, villager).unwrap();
     assert_eq!((m.xp, m.offers.as_ref().unwrap()[0].uses), (6, 3));
+    let counted = server.handle.run(move |s| (s.players[&id].stats.get("minecraft:custom", "minecraft:talked_to_villager"), s.players[&id].stats.get("minecraft:custom", "minecraft:traded_with_villager"))).unwrap();
+    assert_eq!(counted, (1, 3), "talking to the villager and each trade count");
     let alice_uuid = server.handle.run(move |s| s.players[&id].uuid()).unwrap();
     // The wheat left in the payment slot does not pay for a fourth.
     let payment = server.handle.run(move |s| s.players[&id].open_menu.as_ref().unwrap().craft_grid.clone()).unwrap();

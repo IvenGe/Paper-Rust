@@ -205,6 +205,8 @@ impl Server {
                 // 0: respawn after death, 1: statistics request.
                 if p.action.0 == 0 {
                     self.respawn_player(id);
+                } else if p.action.0 == 1 {
+                    self.send_stats(id);
                 }
             }
             Serverbound::Punch => {
@@ -519,6 +521,9 @@ impl Server {
                 self.set_block_and_update(world, pos, second_state);
             }
             self.block_placed(world, target, state);
+            if let Some(item) = items::get(stack.item as u32) {
+                self.award_stat(id, "minecraft:used", item.name, 1);
+            }
         }
         if mode == GameMode::Survival {
             if let Some(player) = self.players.get_mut(&id) {

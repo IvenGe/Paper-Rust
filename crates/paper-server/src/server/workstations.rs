@@ -282,6 +282,7 @@ impl Server {
         }
         self.send_menu_contents(id);
         self.update_enchanting_table(id);
+        self.award_stat(id, super::stats::CUSTOM, "minecraft:enchant_item", 1);
         let pitch = rand::thread_rng().gen::<f32>() * 0.1 + 0.9;
         self.play_sound(world, crate::world::entity::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), "minecraft:block.enchantment_table.use", super::survival::category::BLOCKS, 1.0, pitch, None);
     }

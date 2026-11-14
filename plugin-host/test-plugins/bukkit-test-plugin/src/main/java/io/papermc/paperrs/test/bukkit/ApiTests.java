@@ -61,6 +61,9 @@ final class ApiTests implements Listener, CommandExecutor {
     private final JavaPlugin plugin;
     private final NamespacedKey ownerKey;
 
+    /** Jumps the server counted, as PlayerStatisticIncrementEvent reported them (and cancelled). */
+    private final List<String> jumps = new ArrayList<>();
+
     ApiTests(final JavaPlugin plugin) {
         this.plugin = plugin;
         this.ownerKey = new NamespacedKey(plugin, "owner");
@@ -84,6 +87,14 @@ final class ApiTests implements Listener, CommandExecutor {
 
     private static void report(final CommandSender sender, final String area, final List<String> failures) {
         sender.sendMessage(area + ": " + (failures.isEmpty() ? "ok" : "FAIL " + String.join(", ", failures)));
+    }
+
+    @EventHandler
+    public void onStatistic(final org.bukkit.event.player.PlayerStatisticIncrementEvent event) {
+        if (event.getStatistic() == org.bukkit.Statistic.JUMP) {
+            this.jumps.add(event.getStatistic() + " " + event.getPreviousValue() + "->" + event.getNewValue());
+            event.setCancelled(true);
+        }
     }
 
     @Override
@@ -141,6 +152,38 @@ final class ApiTests implements Listener, CommandExecutor {
                     sender.sendMessage("attrmods: " + back.hasAttributeModifiers() + " " + modifier.getKey().getKey() + " " + modifier.getAmount() + " " + modifier.getSlotGroup() + " "
                         + back.getAttributeModifiers(org.bukkit.inventory.EquipmentSlot.HAND).size() + " " + back.getAttributeModifiers(org.bukkit.inventory.EquipmentSlot.HEAD).size());
                 }
+                case "stats" -> {
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    player.setStatistic(org.bukkit.Statistic.JUMP, 5);
+                    player.incrementStatistic(org.bukkit.Statistic.JUMP, 3);
+                    player.decrementStatistic(org.bukkit.Statistic.JUMP);
+                    check(failures, player.getStatistic(org.bukkit.Statistic.JUMP) == 7, "jumps " + player.getStatistic(org.bukkit.Statistic.JUMP));
+                    player.incrementStatistic(org.bukkit.Statistic.MINE_BLOCK, Material.STONE, 4);
+                    check(failures, player.getStatistic(org.bukkit.Statistic.MINE_BLOCK, Material.STONE) == 4, "stone mined");
+                    player.setStatistic(org.bukkit.Statistic.KILL_ENTITY, org.bukkit.entity.EntityType.ZOMBIE, 2);
+                    check(failures, player.getStatistic(org.bukkit.Statistic.KILL_ENTITY, org.bukkit.entity.EntityType.ZOMBIE) == 2, "zombies killed");
+                    player.incrementStatistic(org.bukkit.Statistic.CHEST_OPENED);
+                    check(failures, player.getStatistic(org.bukkit.Statistic.CHEST_OPENED) == 1, "chests opened");
+                    // Offline players read the same saved counts.
+                    check(failures, Bukkit.getOfflinePlayer(player.getUniqueId()).getStatistic(org.bukkit.Statistic.JUMP) == 7, "offline jumps");
+                    // CraftStatistic's argument checks.
+                    for (final Runnable bad : List.<Runnable>of(
+                        () -> player.getStatistic(org.bukkit.Statistic.MINE_BLOCK),
+                        () -> player.getStatistic(org.bukkit.Statistic.MINE_BLOCK, Material.DIAMOND),
+                        () -> player.getStatistic(org.bukkit.Statistic.JUMP, org.bukkit.entity.EntityType.ZOMBIE),
+                        () -> player.incrementStatistic(org.bukkit.Statistic.JUMP, 0),
+                        () -> player.decrementStatistic(org.bukkit.Statistic.DEATHS, 1000))) {
+                        try {
+                            bad.run();
+                            failures.add("accepted a bad argument");
+                        } catch (IllegalArgumentException expected) {
+                            // As CraftStatistic.
+                        }
+                    }
+                    report(sender, "stats", failures);
+                }
+                case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getWorld().dropItem(((Player) sender).getLocation(), new ItemStack(Material.STICK)).setOwner(java.util.UUID.randomUUID());

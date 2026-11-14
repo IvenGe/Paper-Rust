@@ -203,10 +203,15 @@ What works:
   piles up in cold biomes, and sleeping through the night clears the weather.
 * **Game rules**: all 26.3 rules with `/gamerule`, saved in `data/minecraft/game_rules.dat`.
 * **Saving**: chunks in region files, entities (mobs, items, arrows, ...) in
-  `entities/` region files, `level.dat`, game rules and player data (inventory, ender chest,
-  experience, ...) in vanilla's layout, autosave, `/save-all`, saving on shutdown.
+  `entities/` region files, `level.dat`, game rules, player data (inventory, ender chest,
+  experience, ...) and statistics (`stats/<uuid>.json`) in vanilla's layout, autosave,
+  `/save-all`, saving on shutdown.
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
+* **Statistics**: counted as players walk, swim, climb, fly, fall, ride, jump, mine, place,
+  use, craft, pick up and drop items, fight, die, sleep, open containers, talk and trade with
+  villagers, breed animals and enchant; shown on the statistics screen, and followed by
+  scoreboard objectives with statistic criteria (`minecraft.mined:minecraft.stone`, ...).
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
   weather difficulty gamerule summon kill effect seed locate setworldspawn scoreboard team tps mspt
   kick ban pardon ban-ip pardon-ip banlist op deop whitelist save-all stop version plugins
@@ -224,7 +229,8 @@ What works:
   `InventoryOpenEvent`, `InventoryClickEvent`, `InventoryDragEvent`, `InventoryCloseEvent`,
   `CraftItemEvent`, `PlayerAttemptPickupItemEvent`, `EntityPickupItemEvent`,
   `PlayerDropItemEvent`, `EntityDamageEvent` (and its `ByEntity`/`ByBlock` forms),
-  `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`. Players,
+  `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`,
+  `PlayerStatisticIncrementEvent`. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -243,6 +249,8 @@ What works:
     horses (domestication, jump strength), and the persistent data containers of players and
     entities, saved with them as Bukkit's `BukkitValues`;
   * offline players, from the player data files and the name cache (`usercache.json`);
+  * statistics of online and offline players (`getStatistic`, `setStatistic`,
+    `incrementStatistic`, `decrementStatistic`, with CraftBukkit's argument checks);
   * scoreboards: the main scoreboard and new ones, objectives, display slots, scores
     (`health`, `food`, `air`, `armor`, `level` and `xp` follow the players), teams and
     `Player.setScoreboard`;
@@ -284,14 +292,17 @@ Not yet:
   data). Dispensers do not place shulker boxes, build golems or withers, or launch
   fireworks, wind charges, boats or minecarts. Spawn eggs are not
   used on water (for fish and squid), and buckets do not catch fish.
+* Statistics of what the server does not do yet (fishing, raids, note blocks, bells,
+  cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
+  used or broken only when placed, eaten or drunk, thrown, used as spawn eggs or worn out as
+  tools.
 * Plugin API: creating worlds, registry and tag lifecycle events,
-  statistics, dialogs, signed chat messages, entity AI goals, the data component API
+  dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
   fish, ...), inventories of other block types and anvil and enchanting views, villager
-  inventories, sleeping and zombifying villagers,
-  stat-based scoreboard criteria (they are kept but not counted), `/scoreboard players
-  enable` and `/trigger`, and vanilla-format item serialization
+  inventories, sleeping and zombifying villagers, `/scoreboard players enable` and
+  `/trigger`, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet. Items do not remember who may pick them up (`Item#setOwner`).

@@ -1455,4 +1455,96 @@ public final class HostPlayer extends AbstractPlayer {
     public String toString() {
         return "CraftPlayer{name=" + this.name + "}";
     }
+
+    // --- statistics -------------------------------------------------------------------------
+
+    @Override
+    public int getStatistic(final org.bukkit.Statistic statistic) {
+        return Statistics.get(this.server, this.uuid, statistic);
+    }
+
+    @Override
+    public void setStatistic(final org.bukkit.Statistic statistic, final int newValue) {
+        Statistics.set(this.server, this.uuid, statistic, newValue);
+    }
+
+    @Override
+    public void incrementStatistic(final org.bukkit.Statistic statistic) {
+        Statistics.add(this.server, this.uuid, statistic, Statistics.amount(1));
+    }
+
+    @Override
+    public void incrementStatistic(final org.bukkit.Statistic statistic, final int amount) {
+        Statistics.add(this.server, this.uuid, statistic, Statistics.amount(amount));
+    }
+
+    @Override
+    public void decrementStatistic(final org.bukkit.Statistic statistic) {
+        Statistics.add(this.server, this.uuid, statistic, -Statistics.amount(1));
+    }
+
+    @Override
+    public void decrementStatistic(final org.bukkit.Statistic statistic, final int amount) {
+        Statistics.add(this.server, this.uuid, statistic, -Statistics.amount(amount));
+    }
+
+    @Override
+    public int getStatistic(final org.bukkit.Statistic statistic, final org.bukkit.Material material) {
+        return Statistics.get(this.server, this.uuid, statistic, material);
+    }
+
+    @Override
+    public void setStatistic(final org.bukkit.Statistic statistic, final org.bukkit.Material material, final int newValue) {
+        Statistics.set(this.server, this.uuid, statistic, material, newValue);
+    }
+
+    @Override
+    public void incrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.Material material) {
+        Statistics.add(this.server, this.uuid, statistic, material, Statistics.amount(1));
+    }
+
+    @Override
+    public void incrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.Material material, final int amount) {
+        Statistics.add(this.server, this.uuid, statistic, material, Statistics.amount(amount));
+    }
+
+    @Override
+    public void decrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.Material material) {
+        Statistics.add(this.server, this.uuid, statistic, material, -Statistics.amount(1));
+    }
+
+    @Override
+    public void decrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.Material material, final int amount) {
+        Statistics.add(this.server, this.uuid, statistic, material, -Statistics.amount(amount));
+    }
+
+    @Override
+    public int getStatistic(final org.bukkit.Statistic statistic, final org.bukkit.entity.EntityType entityType) {
+        return Statistics.get(this.server, this.uuid, statistic, entityType);
+    }
+
+    @Override
+    public void setStatistic(final org.bukkit.Statistic statistic, final org.bukkit.entity.EntityType entityType, final int newValue) {
+        Statistics.set(this.server, this.uuid, statistic, entityType, newValue);
+    }
+
+    @Override
+    public void incrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.entity.EntityType entityType) {
+        Statistics.add(this.server, this.uuid, statistic, entityType, Statistics.amount(1));
+    }
+
+    @Override
+    public void incrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.entity.EntityType entityType, final int amount) {
+        Statistics.add(this.server, this.uuid, statistic, entityType, Statistics.amount(amount));
+    }
+
+    @Override
+    public void decrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.entity.EntityType entityType) {
+        Statistics.add(this.server, this.uuid, statistic, entityType, -Statistics.amount(1));
+    }
+
+    @Override
+    public void decrementStatistic(final org.bukkit.Statistic statistic, final org.bukkit.entity.EntityType entityType, final int amount) {
+        Statistics.add(this.server, this.uuid, statistic, entityType, -Statistics.amount(amount));
+    }
 }

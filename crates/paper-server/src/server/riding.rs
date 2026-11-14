@@ -111,7 +111,7 @@ impl Server {
             }
         }
         self.send_passengers(world, vehicle);
-        self.position_riders(world, vehicle);
+        self.position_riders(world, vehicle, false);
         true
     }
 
@@ -236,15 +236,21 @@ impl Server {
         if to.chunk() != old_chunk {
             self.worlds[world].reindex_entity(vehicle);
         }
-        self.position_riders(world, vehicle);
+        self.position_riders(world, vehicle, true);
     }
 
-    /// Riders sit on their vehicles (`positionRider`).
-    fn position_riders(&mut self, world: usize, vehicle: i32) {
+    /// Riders sit on their vehicles (`positionRider`); players riding along count how far
+    /// (`checkRidingStatistics`), except when just getting on.
+    fn position_riders(&mut self, world: usize, vehicle: i32, count: bool) {
         let Some(v) = self.worlds[world].entities.get(&vehicle) else { return };
         let seat = Vec3::new(v.pos.x, v.pos.y + rider_height(&v.info.name, v.info.height as f64), v.pos.z);
+        let kind = v.info.name.clone();
+        let mut ridden = Vec::new();
         for rider in v.passengers.clone() {
             if let Some(p) = self.players.get_mut(&rider) {
+                if count {
+                    ridden.push((rider, seat.x - p.loc.x, seat.y - p.loc.y, seat.z - p.loc.z));
+                }
                 let old_chunk = p.loc.chunk();
                 p.loc.x = seat.x;
                 p.loc.y = seat.y;
@@ -261,6 +267,9 @@ impl Server {
                     self.worlds[world].reindex_entity(rider);
                 }
             }
+        }
+        for (rider, dx, dy, dz) in ridden {
+            self.riding_stats(rider, &kind, dx, dy, dz);
         }
     }
 
@@ -302,7 +311,7 @@ impl Server {
                     }
                     self.send_passengers(world, vehicle);
                 }
-                self.position_riders(world, vehicle);
+                self.position_riders(world, vehicle, true);
                 self.buck(world, vehicle);
             }
             // Boosts run out (`ItemBasedSteering`).

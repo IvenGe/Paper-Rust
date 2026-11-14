@@ -411,6 +411,7 @@ fn enchanting_tables_enchant_for_levels_and_lapis() {
     assert!(components(&sword).contains(&"minecraft:enchantments"), "the sword is enchanted: {sword:?}");
     assert_eq!(lapis, Slot::of(item("minecraft:lapis_lazuli"), 2), "three lapis used");
     assert_eq!(level, 27, "three levels paid");
+    assert_eq!(server.handle.run(move |s| s.players[&id].stats.get("minecraft:custom", "minecraft:enchant_item")).unwrap(), 1);
     server.stop();
 }
 

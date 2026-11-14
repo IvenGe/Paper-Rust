@@ -415,6 +415,8 @@ fn fed_animals_breed_and_cows_give_milk_and_sheep_wool() {
     let (left, parent_age) = server.handle.run(move |s| (s.players[&id].inventory[36].clone(), s.worlds[0].entities[&a].mob().unwrap().age)).unwrap();
     assert_eq!(left, Slot::of(wheat, 1), "two wheat eaten");
     assert!(parent_age > 5000, "the parents wait before breeding again: {parent_age}");
+    let bred = server.handle.run(move |s| s.players[&id].stats.get("minecraft:custom", "minecraft:animals_bred")).unwrap();
+    assert_eq!(bred, 1, "the breeding counts for whoever fed them");
 
     // A bucket of milk from a cow; wool from a sheep.
     let (bucket, shears) = (items::id("minecraft:bucket").unwrap() as i32, items::id("minecraft:shears").unwrap() as i32);

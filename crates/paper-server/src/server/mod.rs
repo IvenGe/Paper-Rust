@@ -40,6 +40,7 @@ pub mod taming;
 pub mod throwing;
 pub mod crafter;
 pub mod score_commands;
+pub mod stats;
 pub mod dragon;
 mod weather;
 mod farming;
@@ -579,6 +580,7 @@ impl Server {
         self.tick_hoppers();
         self.tick_pressure_plates();
         self.tick_dragon_fights();
+        self.tick_stats();
         self.tick_tracker();
 
         if self.tick % 100 == 0 {

@@ -444,6 +444,19 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     // Attribute modifiers on an item's meta, worn by the server's attribute maps too.
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
+    // Statistics: read and written by plugins, online and offline; the plugin cancels the
+    // jump PlayerStatisticIncrementEvent reports, so the count stays.
+    alice.command("apitest stats");
+    expect_line(&mut alice, "stats: ok");
+    let at = server.handle.run(|s| s.player_by_name("Alice").unwrap().loc).unwrap();
+    alice.send(&play::MovePlayerPos { x: at.x, y: at.y, z: at.z, flags: play::move_flags::ON_GROUND });
+    alice.send(&play::ClientTickEnd {});
+    alice.send(&play::MovePlayerPos { x: at.x, y: at.y + 0.42, z: at.z, flags: 0 });
+    alice.send(&play::ClientTickEnd {});
+    alice.send(&play::MovePlayerPos { x: at.x, y: at.y, z: at.z, flags: play::move_flags::ON_GROUND });
+    alice.send(&play::ClientTickEnd {});
+    alice.command("apitest statevents");
+    expect_line(&mut alice, "statevents: JUMP 7->8 now 7");
 
     // --- a custom inventory: open, click (cancelled by the plugin), closed by the plugin ----
     alice.clear_backlog();

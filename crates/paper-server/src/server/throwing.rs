@@ -63,6 +63,7 @@ impl Server {
             let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
             self.set_inventory_slot(player, slot, rest);
         }
+        self.award_stat(player, "minecraft:used", item_name(&stack), 1);
         true
     }
 
@@ -454,6 +455,7 @@ impl Server {
                 let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
                 self.set_inventory_slot(player, slot, rest);
             }
+            self.award_stat(player, "minecraft:used", item_name(&stack), 1);
             return true;
         }
         let face = use_on.face.0;
@@ -472,6 +474,7 @@ impl Server {
             let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
             self.set_inventory_slot(player, slot, rest);
         }
+        self.award_stat(player, "minecraft:used", item_name(&stack), 1);
         true
     }
 }

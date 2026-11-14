@@ -326,6 +326,7 @@ impl Server {
     pub fn save_player_data(&self, player: &Player) {
         let Some(storage) = self.worlds.first().and_then(|w| w.storage.as_ref()) else { return };
         storage.save_player(player.uuid(), self.player_to_nbt(player));
+        self.save_stats(player);
     }
 }
 

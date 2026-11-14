@@ -361,6 +361,19 @@ fn state_value(server: &Server, world: usize, x: i32, y: i32, z: i32) -> Value {
 pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> {
     match method {
         // --- players ---
+        // `Player.getStatistic`/`setStatistic`: a stat type and key.
+        // Online or offline players (by uuid).
+        "player.statistic" => {
+            let uuid: Uuid = args.str("uuid").ok_or_else(|| anyhow!("missing uuid"))?.parse()?;
+            let (kind, key) = (args.str("type").unwrap_or(crate::server::stats::CUSTOM), args.str("key").unwrap_or(""));
+            Ok(Value::Int(server.statistic(uuid, kind, key) as i64))
+        }
+        "player.set_statistic" => {
+            let uuid: Uuid = args.str("uuid").ok_or_else(|| anyhow!("missing uuid"))?.parse()?;
+            let (kind, key) = (args.str("type").unwrap_or(crate::server::stats::CUSTOM).to_owned(), args.str("key").unwrap_or("").to_owned());
+            server.set_statistic(uuid, &kind, &key, args.i32("value").unwrap_or(0));
+            Ok(Value::Null)
+        }
         "player.state" => {
             let id = player_id(server, args)?;
             Ok(player_state(server, &server.players[&id]))

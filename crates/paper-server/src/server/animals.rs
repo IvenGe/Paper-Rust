@@ -366,6 +366,8 @@ impl Server {
         let (Some(ea), Some(eb)) = (self.worlds[world].entities.get(&a), self.worlds[world].entities.get(&b)) else { return };
         let (name, pos) = (ea.info.name.clone(), ea.pos);
         let colors = (ea.mob().map_or(0, |m| m.variant), eb.mob().map_or(0, |m| m.variant));
+        // The player who fed either parent counts the breeding.
+        let breeder = ea.mob().and_then(|m| m.love_cause).or_else(|| eb.mob().and_then(|m| m.love_cause));
         for parent in [a, b] {
             if let Some(m) = self.worlds[world].entities.get_mut(&parent).and_then(|e| e.mob_mut()) {
                 m.age = 6000;
@@ -387,6 +389,9 @@ impl Server {
             e.metadata_dirty = true;
         }
         self.entity_event(world, a, 18);
+        if let Some(player) = breeder {
+            self.award_stat(player, super::stats::CUSTOM, "minecraft:animals_bred", 1);
+        }
         if self.worlds[world].rules.bool("mob_drops") {
             let xp = rand::thread_rng().gen_range(1..=7);
             self.award_experience(world, pos, xp);

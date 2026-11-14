@@ -868,6 +868,48 @@ pub fn on_dismount(server: &mut Server, world: usize, rider: i32, vehicle: i32) 
 }
 
 /// A player is about to tame an animal (`EntityTameEvent`). Returns whether it may.
+/// Custom statistics counted too often for an event (CraftBukkit's `handleStatisticsIncrease`).
+const FREQUENT_STATISTICS: &[&str] = &[
+    "minecraft:fall_one_cm",
+    "minecraft:boat_one_cm",
+    "minecraft:climb_one_cm",
+    "minecraft:walk_on_water_one_cm",
+    "minecraft:walk_under_water_one_cm",
+    "minecraft:fly_one_cm",
+    "minecraft:horse_one_cm",
+    "minecraft:minecart_one_cm",
+    "minecraft:pig_one_cm",
+    "minecraft:play_time",
+    "minecraft:swim_one_cm",
+    "minecraft:walk_one_cm",
+    "minecraft:sprint_one_cm",
+    "minecraft:crouch_one_cm",
+    "minecraft:time_since_death",
+    "minecraft:sneak_time",
+    "minecraft:total_world_time",
+    "minecraft:time_since_rest",
+    "minecraft:aviate_one_cm",
+    "minecraft:strider_one_cm",
+    "minecraft:happy_ghast_one_cm",
+    "minecraft:nautilus_one_cm",
+];
+
+/// `PlayerStatisticIncrementEvent`: whether a statistic may go up from `old` to `new`.
+pub fn on_statistic_increment(server: &mut Server, id: i32, kind: &str, key: &str, old: i32, new: i32) -> bool {
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerStatisticIncrementEvent") {
+        return true;
+    }
+    if kind == crate::server::stats::CUSTOM && FREQUENT_STATISTICS.contains(&key) {
+        return true;
+    }
+    let Some(p) = server.players.get(&id) else { return true };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "type" => kind, "key" => key, "old" => old, "new" => new };
+    match fire(server, "PlayerStatisticIncrementEvent", "event.statistic_increment", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
 pub fn on_tame(server: &mut Server, world: usize, animal: i32, player: i32) -> bool {
     if server.plugins.is_none() || !server.plugin_events.contains("EntityTameEvent") {
         return true;

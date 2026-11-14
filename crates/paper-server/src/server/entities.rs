@@ -133,6 +133,12 @@ impl Server {
 
     /// The item a player throws (Q, or dropping from the inventory screen).
     pub fn player_drop(&mut self, id: i32, stack: Slot, thrown: bool) {
+        if let Some(s) = stack.0.as_ref().filter(|_| thrown) {
+            if let Some(name) = items::get(s.item as u32).map(|i| i.name) {
+                self.award_stat(id, "minecraft:dropped", name, s.count);
+            }
+            self.award_stat(id, super::stats::CUSTOM, "minecraft:drop", 1);
+        }
         let Some(player) = self.players.get(&id) else { return };
         let world = player.world;
         let eye = Vec3::new(player.loc.x, player.loc.y + player.eye_height() - 0.3, player.loc.z);
@@ -490,6 +496,9 @@ impl Server {
                 let taken = stack.count - left;
                 if taken <= 0 {
                     continue;
+                }
+                if let Some(name) = items::get(stack.item as u32).map(|i| i.name) {
+                    self.award_stat(player, "minecraft:picked_up", name, taken);
                 }
                 let packet = play::TakeItemEntity { collected_id: VarInt(item), collector_id: VarInt(player), count: VarInt(taken) };
                 let mut viewers: HashSet<i32> = self.worlds[world].entities.get(&item).map(|e| e.viewers.clone()).unwrap_or_default();

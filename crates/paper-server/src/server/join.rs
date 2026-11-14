@@ -119,6 +119,7 @@ impl Server {
             vehicle: None,
             cooldowns: Default::default(),
             pdc: None,
+            stats: Default::default(),
             last_hurt_mob: None,
             sleep_ticks: 0,
             enchantment_seed: rand::random(),
@@ -228,6 +229,7 @@ impl Server {
         let uuid = player.uuid();
         let address = player.conn.addr;
         self.players.insert(entity_id, player);
+        self.load_stats(entity_id);
         self.player_order.push(entity_id);
         self.by_uuid.insert(uuid, entity_id);
         self.shared.player_count.store(self.players.len(), Ordering::Relaxed);
@@ -292,6 +294,8 @@ impl Server {
         }
         player.leaving = true;
         let (uuid, name) = (player.uuid(), player.name().to_owned());
+        // Vanilla counts the leave before the quit event (`PlayerList.remove`).
+        self.award_stat(entity_id, super::stats::CUSTOM, "minecraft:leave_game", 1);
         // PlayerQuitEvent fires while the player is still in the game, as in Paper.
         let message = Component::translatable("multiplayer.player.left", vec![Component::text(name)]).color("yellow");
         let message = crate::plugins::events::on_quit(self, uuid, reason, message);

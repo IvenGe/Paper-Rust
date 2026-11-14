@@ -446,6 +446,9 @@ impl Server {
         if self.players.get(&player).is_none_or(|p| p.game_mode == GameMode::Spectator) {
             return false;
         }
+        if hand == 0 {
+            self.award_stat(player, super::stats::CUSTOM, "minecraft:talked_to_villager", 1);
+        }
         let no_offers = self.merchant_offers(world, target).is_empty();
         if no_offers {
             if villager && hand == 0 {
@@ -605,6 +608,7 @@ impl Server {
         slots[0] = a;
         slots[1] = b;
         self.notify_trade(merchant, index, player, reward_exp, increase_uses);
+        self.award_stat(player, super::stats::CUSTOM, "minecraft:traded_with_villager", 1);
         let offers = self.offers_of(merchant);
         let (active, result) = sell_item(&offers, &slots[0], &slots[1], selection);
         slots[2] = result;

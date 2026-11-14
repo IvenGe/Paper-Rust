@@ -220,6 +220,8 @@ pub struct Player {
     pub cooldowns: std::collections::HashMap<String, u64>,
     /// Plugins' persistent data (Bukkit's `BukkitValues`).
     pub pdc: Option<paper_nbt::Compound>,
+    /// Statistics (`stats/<uuid>.json`).
+    pub stats: super::stats::Stats,
     /// The mob the player last hit, and when (wolves join in).
     pub last_hurt_mob: Option<(i32, u64)>,
     pub sleep_ticks: i32,

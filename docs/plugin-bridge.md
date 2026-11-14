@@ -140,6 +140,9 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.trade_select` | `uuid`, `index` | `cancelled` (`TradeSelectEvent`) |
 | `event.villager_acquire_trade` / `event.villager_replenish_trade` | `entity`, `value` (state), `recipe` | `cancelled`, `recipe` (`VillagerAcquireTradeEvent`, `VillagerReplenishTradeEvent`; one per trade) |
 | `event.villager_career_change` | `entity`, `value`, `profession`, `reason` (`EMPLOYED`, `LOSING_JOB`) | `cancelled`, `profession` (`VillagerCareerChangeEvent`) |
+| `event.mount` / `event.dismount` | `entity` (the rider), `mount` / `dismounted` (the vehicle) | `cancelled` (`EntityMountEvent`, `EntityDismountEvent`) |
+| `event.tame` | `entity` (the animal), `owner` (the player) | `cancelled` (`EntityTameEvent`) |
+| `event.statistic_increment` | `uuid`, `type` (stat type), `key`, `old`, `new` | `cancelled` (`PlayerStatisticIncrementEvent`; as in CraftBukkit, not fired for statistics counted every tick or by the centimetre) |
 | `event.command_preprocess` | `uuid`, `message` (with `/`) | `cancelled`, `message` |
 | `event.server_command` | `command` | `cancelled`, `command` |
 | `event.block_break` | `uuid`, `world`, `x`, `y`, `z`, `state` | `cancelled` |
@@ -195,6 +198,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.block_change` | `uuid`, `x`, `y`, `z`, `state` (a block only this player sees) |
 | `player.resource_pack_push` / `player.resource_pack_pop` | `uuid`, `id` (the pack), `url`, `hash`, `forced`, `prompt` (JSON) / `uuid`, and `id` or nothing for all |
 | `player.open_book` | `uuid`, `item` (a written book) |
+| `player.statistic` / `player.set_statistic` | `uuid` (online or offline), `type` (stat type, `minecraft:custom` by default), `key` / and `value` |
 | `player.stop_sound` | `uuid`, and optionally `sound` and `category` (none: all sounds) |
 | `player.inventory` / `player.set_slot` / `player.set_held_slot` | `uuid` / `slot`, `item` (window slot numbers) / `slot` |
 | `player.open_inventory` | `uuid`, `inventory` (descriptor), `title` (answers `opened`, `window`) |

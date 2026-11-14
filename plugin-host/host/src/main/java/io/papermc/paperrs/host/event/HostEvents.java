@@ -89,6 +89,7 @@ public final class HostEvents {
         GATED.put("EntityMountEvent", org.bukkit.event.entity.EntityMountEvent.class);
         GATED.put("EntityDismountEvent", org.bukkit.event.entity.EntityDismountEvent.class);
         GATED.put("EntityTameEvent", org.bukkit.event.entity.EntityTameEvent.class);
+        GATED.put("PlayerStatisticIncrementEvent", org.bukkit.event.player.PlayerStatisticIncrementEvent.class);
     }
 
     private final CraftServer server;
@@ -216,6 +217,7 @@ public final class HostEvents {
             case "event.mount" -> this.entities.mount(args);
             case "event.dismount" -> this.entities.dismount(args);
             case "event.tame" -> this.entities.tame(args);
+            case "event.statistic_increment" -> this.statisticIncrement(args);
             case "event.trade" -> this.merchants.trade(args);
             case "event.trade_select" -> this.merchants.select(args);
             case "event.villager_acquire_trade" -> this.merchants.acquire(args);
@@ -225,6 +227,36 @@ public final class HostEvents {
             case "event.pre_login" -> this.preLogin(args);
             default -> throw new IllegalArgumentException("unknown event " + method);
         };
+    }
+
+    /** A statistic goes up, unless the event is cancelled (CraftBukkit's handleStatisticsIncrease). */
+    private Object statisticIncrement(final Map<String, Object> args) {
+        final HostPlayer player = this.player(args);
+        final String key = Values.str(args, "key");
+        final org.bukkit.Statistic statistic = io.papermc.paperrs.host.entity.Statistics.statistic(Values.str(args, "type"), key);
+        if (statistic == null) {
+            return Values.of("cancelled", false);
+        }
+        final int previous = Values.i32(args, "old", 0);
+        final int now = Values.i32(args, "new", 0);
+        final org.bukkit.event.player.PlayerStatisticIncrementEvent event;
+        if (statistic.getType() == org.bukkit.Statistic.Type.UNTYPED) {
+            event = new org.bukkit.event.player.PlayerStatisticIncrementEvent(player, statistic, previous, now);
+        } else if (statistic.getType() == org.bukkit.Statistic.Type.ENTITY) {
+            final org.bukkit.entity.EntityType type = io.papermc.paperrs.host.entity.Statistics.entityType(key);
+            if (type == null) {
+                return Values.of("cancelled", false);
+            }
+            event = new org.bukkit.event.player.PlayerStatisticIncrementEvent(player, statistic, previous, now, type);
+        } else {
+            final org.bukkit.Material material = io.papermc.paperrs.host.entity.Statistics.material(key);
+            if (material == null) {
+                return Values.of("cancelled", false);
+            }
+            event = new org.bukkit.event.player.PlayerStatisticIncrementEvent(player, statistic, previous, now, material);
+        }
+        event.callEvent();
+        return Values.of("cancelled", event.isCancelled());
     }
 
     private Object join(final Map<String, Object> args) {

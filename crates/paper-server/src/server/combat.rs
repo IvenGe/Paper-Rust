@@ -49,6 +49,14 @@ impl Server {
         }
         let slot = HOTBAR_START + player.held_slot as usize;
         let held = player.inventory[slot].clone();
+        // Statistics: a tool is used (`ItemStack.mineBlock`), and the block counts as mined
+        // only with a tool that gets its drops (`Block.playerDestroy`).
+        if let Some(name) = held.0.as_ref().filter(|s| item_data::by_id(s.item as u32).tool.is_some()).and_then(|s| paper_data::items::get(s.item as u32)).map(|i| i.name) {
+            self.award_stat(id, "minecraft:used", name, 1);
+        }
+        if !paper_data::physics::requires_correct_tool(old) || self.tool_is_correct(&held, old) {
+            self.award_stat(id, "minecraft:mined", blocks::block_of_state(old).name, 1);
+        }
         if self.worlds[world].rules.bool("block_drops") {
             self.drop_block_loot(world, pos, old, Some(&held), None);
         }
@@ -62,6 +70,9 @@ impl Server {
                 if survival::hurt_item(&mut p.inventory[slot], per_block, false) {
                     let (w, at) = (p.world, Vec3::new(p.loc.x, p.loc.y, p.loc.z));
                     self.play_sound(w, at, "minecraft:entity.item.break", category::PLAYERS, 0.8, 0.8 + rand::thread_rng().gen::<f32>() * 0.4, None);
+                    if let Some(item) = paper_data::items::get(stack.item as u32) {
+                        self.award_stat(id, "minecraft:broken", item.name, 1);
+                    }
                 }
                 let item = self.players[&id].inventory[slot].clone();
                 self.set_inventory_slot(id, slot, item);
@@ -149,10 +160,20 @@ impl Server {
             self.play_sound(world, at, "minecraft:entity.player.attack.knockback", category::PLAYERS, 1.0, 1.0, None);
         }
 
+        let victim = part.map_or(target, |(dragon, _)| dragon);
+        let health_of = |s: &Server| s.players.get(&victim).map(|p| p.health).or_else(|| s.worlds[world].entities.get(&victim).and_then(|e| e.mob()).map(|m| m.living.health));
+        let before = health_of(self);
         let hurt = match part {
             Some((dragon, p)) => self.hurt_dragon(world, dragon, p, Damage::by("minecraft:player_attack", id, at), total),
             None => self.hurt_entity(world, target, Damage::by("minecraft:player_attack", id, at), total),
         };
+        // `Player.attack` counts the health the target lost, in tenths of a point.
+        if let Some(before) = before.filter(|_| hurt) {
+            let lost = before - health_of(self).unwrap_or(0.0).max(0.0);
+            if lost > 0.0 {
+                self.award_stat(id, super::stats::CUSTOM, "minecraft:damage_dealt", (lost * 10.0).round() as i32);
+            }
+        }
         if hurt {
             // Pets join in (`OwnerHurtTargetGoal`).
             if let Some(p) = self.players.get_mut(&id) {
@@ -462,6 +483,11 @@ impl Server {
         let killer = mob.living.last_attacker.filter(|(_, t)| tick.saturating_sub(*t) < 100).map(|(a, _)| a).filter(|a| self.players.contains_key(a));
         if mob.merchant.is_some() {
             self.merchant_killed(world, id, killer);
+        }
+        if let Some(k) = killer {
+            self.award_stat(k, super::stats::CUSTOM, "minecraft:mob_kills", 1);
+            self.award_stat(k, "minecraft:killed", &info.name, 1);
+            self.bump_criteria(k, "totalKillCount");
         }
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let Some(mob) = e.mob() else { return };

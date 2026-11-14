@@ -417,6 +417,26 @@ impl Server {
         if !self.open_menu(id, menu_kind, menu_name, title) {
             return true;
         }
+        let block = blocks::block_of_state(state).name;
+        let stat = match kind {
+            ContainerBlock::Chest if block == "minecraft:trapped_chest" => "minecraft:trigger_trapped_chest",
+            ContainerBlock::Chest => "minecraft:open_chest",
+            ContainerBlock::Barrel => "minecraft:open_barrel",
+            ContainerBlock::EnderChest => "minecraft:open_enderchest",
+            ContainerBlock::CraftingTable => "minecraft:interact_with_crafting_table",
+            ContainerBlock::Furnace("minecraft:smoking") => "minecraft:interact_with_smoker",
+            ContainerBlock::Furnace("minecraft:blasting") => "minecraft:interact_with_blast_furnace",
+            ContainerBlock::Furnace(_) => "minecraft:interact_with_furnace",
+            ContainerBlock::Hopper => "minecraft:inspect_hopper",
+            ContainerBlock::Dispenser if block == "minecraft:dropper" => "minecraft:inspect_dropper",
+            ContainerBlock::Dispenser => "minecraft:inspect_dispenser",
+            ContainerBlock::BrewingStand => "minecraft:interact_with_brewingstand",
+            ContainerBlock::Anvil => "minecraft:interact_with_anvil",
+            ContainerBlock::EnchantingTable | ContainerBlock::Crafter => "",
+        };
+        if !stat.is_empty() {
+            self.award_stat(id, super::stats::CUSTOM, stat, 1);
+        }
         if matches!(kind, ContainerBlock::EnderChest) {
             self.block_event_and_sound(world, pos, 1, 1, "minecraft:block.ender_chest.open");
         }
@@ -770,6 +790,11 @@ impl Server {
             slots[super::crafter::RESULT_SLOT] = self.crafter_result(*world, *pos);
             if before[..9] != slots[..9] {
                 self.refresh_crafter_viewers(*world, *pos, Some(id));
+            }
+        }
+        for crafted in &result.crafted {
+            if let Some(name) = paper_data::items::get(crafted.item as u32).map(|i| i.name) {
+                self.award_stat(id, "minecraft:crafted", name, crafted.count);
             }
         }
         for stack in result.dropped {

@@ -611,6 +611,7 @@ impl Server {
         let below_pos = BlockPos::new(to.x.floor() as i32, (to.y - 0.2).floor() as i32, to.z.floor() as i32);
         let below = w.block_at(below_pos.x, below_pos.y, below_pos.z).unwrap_or(blocks::AIR);
         let climbing = is_climbable(feet);
+        let eyes_in_water = w.block_at(to.x.floor() as i32, (to.y + 1.62).floor() as i32, to.z.floor() as i32).and_then(fluid_of).is_some_and(|(f, _)| f == Fluid::Water);
         let slows_fall = matches!(blocks::block_of_state(feet).name, "minecraft:cobweb" | "minecraft:powder_snow" | "minecraft:sweet_berry_bush");
         let fall_damage = w.rules.bool("fall_damage");
         let sprinting = p.sprinting;
@@ -667,6 +668,11 @@ impl Server {
             let world = self.players[&id].world;
             self.landed_on(world, below_pos, distance, true);
         }
+        // Statistics: jumps and how far it went (`checkMovementStatistics`).
+        if was_on_ground && !on_ground && dy > 0.0 {
+            self.award_stat(id, super::stats::CUSTOM, "minecraft:jump", 1);
+        }
+        self.movement_stats(id, dx, dy, dz, in_water, eyes_in_water, climbing);
     }
 
     fn cause_fall_damage(&mut self, id: i32, distance: f64, multiplier: f64) {
@@ -788,8 +794,14 @@ impl Server {
             amount = damage_after_armor(amount, points, toughness);
         }
         // Resistance: 20% less per level.
+        // What resistance and absorption took, and what is left, count as statistics.
+        let mut awards: Vec<(&str, i32)> = Vec::new();
         if let Some(level) = resistance {
+            let before = amount;
             amount = (amount * (25 - (level + 1) * 5) as f32 / 25.0).max(0.0);
+            if before - amount > 0.0 && before - amount < 3.4028235e37 {
+                awards.push(("minecraft:damage_resisted", ((before - amount) * 10.0).round() as i32));
+            }
         }
         if !damage.is("bypasses_enchantments") {
             let protection = enchantment_protection(&armor_refs, &damage);
@@ -804,8 +816,14 @@ impl Server {
             p.absorption -= absorbed;
             amount -= absorbed;
             p.metadata_dirty = true;
+            if absorbed < 3.4028235e37 {
+                awards.push(("minecraft:damage_absorbed", (absorbed * 10.0).round() as i32));
+            }
         }
-
+        // Vanilla leaves out absurd amounts (`/kill`).
+        if amount > 0.0 && amount < 3.4028235e37 {
+            awards.push(("minecraft:damage_taken", (amount * 10.0).round() as i32));
+        }
         p.health = (p.health - amount).max(0.0);
         if let Some(info) = &info {
             if amount > 0.0 && info.exhaustion > 0.0 && matches!(p.game_mode, GameMode::Survival | GameMode::Adventure) {
@@ -849,6 +867,9 @@ impl Server {
                 };
                 self.play_sound(world, pos, sound, category::PLAYERS, 1.0, Self::random_pitch(), None);
             }
+        }
+        for (stat, amount) in awards {
+            self.award_stat(id, super::stats::CUSTOM, stat, amount);
         }
         if self.players.get(&id).is_some_and(|p| p.sleeping.is_some()) {
             self.wake_up(id);
@@ -918,6 +939,21 @@ impl Server {
         // Plugin hook: PlayerDeathEvent may cancel the death, change the message, keep the
         // inventory or level, and change the drops (it applies the game rules without plugins).
         let Some(death) = crate::plugins::events::on_player_death(self, id, &damage, message) else { return };
+        // Statistics and the kill and death criteria (`ServerPlayer.die`, `awardKillScore`).
+        self.award_stat(id, super::stats::CUSTOM, "minecraft:deaths", 1);
+        self.reset_stat(id, super::stats::CUSTOM, "minecraft:time_since_death");
+        self.reset_stat(id, super::stats::CUSTOM, "minecraft:time_since_rest");
+        self.bump_criteria(id, "deathCount");
+        if let Some(attacker) = damage.attacker.filter(|a| *a != id) {
+            if self.players.contains_key(&attacker) {
+                self.award_stat(id, "minecraft:killed_by", "minecraft:player", 1);
+                self.award_stat(attacker, super::stats::CUSTOM, "minecraft:player_kills", 1);
+                self.bump_criteria(attacker, "totalKillCount");
+                self.bump_criteria(attacker, "playerKillCount");
+            } else if let Some(kind) = self.worlds[world].entities.get(&attacker).map(|e| e.info.name.clone()) {
+                self.award_stat(id, "minecraft:killed_by", &kind, 1);
+            }
+        }
         let show = self.worlds[world].rules.bool("show_death_messages") && death.message.is_some();
         let message = death.message.clone().unwrap_or_else(|| Component::text(""));
         self.close_menu(id, true);
@@ -1215,6 +1251,9 @@ impl Server {
         }
         self.consume_effects(id, &stack);
         self.send_health_if_changed(id);
+        if let Some(item) = items::get(stack.item as u32) {
+            self.award_stat(id, "minecraft:used", item.name, 1);
+        }
     }
 
     // --- experience ----------------------------------------------------------------------------

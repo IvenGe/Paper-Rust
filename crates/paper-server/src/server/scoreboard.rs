@@ -303,6 +303,11 @@ impl Default for Scoreboards {
 }
 
 impl Scoreboards {
+    /// Every board's id.
+    pub fn ids(&self) -> Vec<u64> {
+        self.boards.keys().copied().collect()
+    }
+
     /// Replaces the main board (with a saved one) before anyone views it.
     pub fn set_main(&mut self, board: Scoreboard) {
         self.boards.insert(MAIN, board);
