@@ -97,15 +97,17 @@ impl Server {
         };
         // Vanilla allows the interaction range (3) plus a margin of 3 for latency.
         let nearest = Vec3::new(eye.x.clamp(target_box.min.x, target_box.max.x), eye.y.clamp(target_box.min.y, target_box.max.y), eye.z.clamp(target_box.min.z, target_box.max.z));
-        if nearest.distance_squared(eye) > 36.0 {
+        let range = self.players[&id].attributes.value("entity_interaction_range") + 3.0;
+        if nearest.distance_squared(eye) > range * range {
             return;
         }
 
+        // The held weapon's modifiers (and strength or weakness) are in the attributes.
+        self.refresh_player_attributes(id);
         let p = &self.players[&id];
         let weapon = p.held_item().clone();
-        let data = weapon.0.as_ref().map(|s| item_data::by_id(s.item as u32));
-        let mut base = 1.0 + data.map_or(0.0, |d| d.modifier("minecraft:attack_damage", "mainhand") + d.modifier("attack_damage", "mainhand")) as f32;
-        let speed = 4.0 + data.map_or(0.0, |d| d.modifier("minecraft:attack_speed", "mainhand") + d.modifier("attack_speed", "mainhand")) as f32;
+        let mut base = p.attributes.value("attack_damage") as f32;
+        let speed = p.attributes.value("attack_speed") as f32;
         let delay = 20.0 / speed.max(0.1);
         let strength = (((self.tick.saturating_sub(p.last_swing)) as f32 + 0.5) / delay).clamp(0.0, 1.0);
         let target_type = if self.players.contains_key(&target) { "minecraft:player" } else { self.worlds[world].entities[&target].info.name.as_str() };
@@ -119,12 +121,6 @@ impl Server {
         }
         if level("minecraft:bane_of_arthropods") > 0 && entity_in_tag(target_type, "minecraft:sensitive_to_bane_of_arthropods") {
             enchant += 2.5 * level("minecraft:bane_of_arthropods") as f32;
-        }
-        if let Some(level) = p.effects.iter().find(|e| e.name() == "minecraft:strength").map(|e| e.amplifier) {
-            base += 3.0 * (level + 1) as f32;
-        }
-        if let Some(level) = p.effects.iter().find(|e| e.name() == "minecraft:weakness").map(|e| e.amplifier) {
-            base = (base - 4.0 * (level + 1) as f32).max(0.0);
         }
         base *= 0.2 + strength * strength * 0.8;
         enchant *= strength;
@@ -259,7 +255,10 @@ impl Server {
             return;
         }
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
-        let resistance = e.info.attribute("knockback_resistance").unwrap_or(0.0);
+        let resistance = match &e.kind {
+            EntityKind::Mob(mob) => mob.attributes.value("knockback_resistance"),
+            _ => e.info.attribute("knockback_resistance").unwrap_or(0.0),
+        };
         let strength = strength * (1.0 - resistance);
         if strength <= 0.0 {
             return;
@@ -355,9 +354,8 @@ impl Server {
             true
         };
         if !damage.is("bypasses_armor") {
-            let armor = info.attribute("armor").unwrap_or(0.0) as f32
-                + mob.equipment[2..6].iter().filter_map(|s| s.0.as_ref()).map(|s| item_data::by_id(s.item as u32)).map(|d| (d.modifier("minecraft:armor", "feet") + d.modifier("minecraft:armor", "legs") + d.modifier("minecraft:armor", "chest") + d.modifier("minecraft:armor", "head")) as f32).sum::<f32>();
-            amount = survival::damage_after_armor(amount, armor, info.attribute("armor_toughness").unwrap_or(0.0) as f32);
+            // Armour points include what the mob wears (its equipment modifiers).
+            amount = survival::damage_after_armor(amount, mob.attributes.value("armor") as f32, mob.attributes.value("armor_toughness") as f32);
         }
         let living = &mut mob.living;
         living.health = (living.health - amount.max(0.0)).max(0.0);

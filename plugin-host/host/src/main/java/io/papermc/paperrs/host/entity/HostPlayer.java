@@ -119,6 +119,18 @@ public final class HostPlayer extends AbstractPlayer {
         return this.uuid;
     }
 
+    // --- attributes ------------------------------------------------------------------------
+
+    @Override
+    public org.bukkit.attribute.@org.jetbrains.annotations.Nullable AttributeInstance getAttribute(final org.bukkit.attribute.Attribute attribute) {
+        return HostAttributeInstance.of(this.server, this.entityId, attribute, () -> this.refresh(this.server.call("player.state", this.args())));
+    }
+
+    @Override
+    public void registerAttribute(final org.bukkit.attribute.Attribute attribute) {
+        HostAttributeInstance.register(this.server, this.entityId, attribute);
+    }
+
     @Override
     public int getEntityId() {
         return this.entityId;
@@ -818,7 +830,23 @@ public final class HostPlayer extends AbstractPlayer {
 
     @Override
     public double getMaxHealth() {
-        return 20;
+        final org.bukkit.attribute.AttributeInstance max = this.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        return max == null ? 20 : max.getValue();
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void setMaxHealth(final double health) {
+        final org.bukkit.attribute.AttributeInstance max = this.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        if (max != null) {
+            max.setBaseValue(health);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void resetMaxHealth() {
+        this.setMaxHealth(20);
     }
 
     @Override

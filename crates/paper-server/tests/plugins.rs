@@ -402,7 +402,8 @@ fn plugins_drive_the_server_through_the_bridge() {
     let below = BlockPos::new(8, -61, 8);
     let before = server.handle.run(move |s| s.worlds[0].block_at(8, -61, 8)).unwrap();
     alice.send(&play::PlayerAction { status: VarInt(play::player_action::START_DESTROY_BLOCK), pos: below, face: 1, sequence: VarInt(9) });
-    let update: play::BlockUpdate = alice.expect();
+    // (Animals eating grass elsewhere send block updates too.)
+    let update: play::BlockUpdate = alice.find(TIMEOUT, |u: &play::BlockUpdate| u.pos == below).expect("the block is resent");
     assert_eq!((update.pos, Some(update.state.0 as u32)), (below, before));
     assert_eq!(server.handle.run(move |s| s.worlds[0].block_at(8, -61, 8)).unwrap(), before);
 

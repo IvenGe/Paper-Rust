@@ -518,8 +518,8 @@ impl Server {
         let tick = self.tick;
         let p = self.players.get_mut(&id).unwrap();
         if difficulty == Difficulty::Peaceful && regen {
-            if p.health < 20.0 && tick % 20 == 0 {
-                p.health = (p.health + 1.0).min(20.0);
+            if p.health < p.max_health() && tick % 20 == 0 {
+                p.health = (p.health + 1.0).min(p.max_health());
             }
             if p.food < 20 && tick % 10 == 0 {
                 p.food += 1;
@@ -533,19 +533,19 @@ impl Server {
                 p.food = (p.food - 1).max(0);
             }
         }
-        let hurt = p.health > 0.0 && p.health < 20.0;
+        let hurt = p.health > 0.0 && p.health < p.max_health();
         if regen && p.saturation > 0.0 && hurt && p.food >= 20 {
             p.food_timer += 1;
             if p.food_timer >= 10 {
                 let amount = p.saturation.min(6.0);
-                p.health = (p.health + amount / 6.0).min(20.0);
+                p.health = (p.health + amount / 6.0).min(p.max_health());
                 p.exhaustion = (p.exhaustion + amount).min(40.0);
                 p.food_timer = 0;
             }
         } else if regen && p.food >= 18 && hurt {
             p.food_timer += 1;
             if p.food_timer >= 80 {
-                p.health = (p.health + 1.0).min(20.0);
+                p.health = (p.health + 1.0).min(p.max_health());
                 p.exhaustion = (p.exhaustion + 6.0).min(40.0);
                 p.food_timer = 0;
             }
@@ -586,7 +586,7 @@ impl Server {
     pub fn heal_player(&mut self, id: i32, amount: f32) {
         if let Some(p) = self.players.get_mut(&id) {
             if !p.dead && p.health > 0.0 {
-                p.health = (p.health + amount).min(20.0);
+                p.health = (p.health + amount).min(p.max_health());
             }
         }
     }
@@ -670,9 +670,10 @@ impl Server {
     }
 
     fn cause_fall_damage(&mut self, id: i32, distance: f64, multiplier: f64) {
-        // safe_fall_distance is 3 (more with jump boost), fall_damage_multiplier 1.
-        let jump_boost = self.players.get(&id).and_then(|p| p.effects.iter().find(|e| e.name() == "minecraft:jump_boost")).map_or(0, |e| e.amplifier + 1);
-        let amount = ((distance - 3.0 - jump_boost as f64) * multiplier).ceil();
+        // `calculateFallDamage`: past the safe fall distance (3, more with jump boost), times
+        // the fall damage multiplier.
+        let Some((safe, factor)) = self.players.get(&id).map(|p| (p.attributes.value("safe_fall_distance"), p.attributes.value("fall_damage_multiplier"))) else { return };
+        let amount = ((distance - safe) * multiplier * factor).ceil();
         if amount <= 0.0 {
             return;
         }
@@ -775,7 +776,7 @@ impl Server {
         let armor_slots = [p.inventory[8].clone(), p.inventory[7].clone(), p.inventory[6].clone(), p.inventory[5].clone()];
         let armor_refs: Vec<&Slot> = armor_slots.iter().collect();
         if !damage.is("bypasses_armor") {
-            let (points, toughness) = armor_values(&armor_refs);
+            let (points, toughness) = (p.attributes.value("armor") as f32, p.attributes.value("armor_toughness") as f32);
             // Each armour piece wears by a quarter of the damage (at least one point).
             let wear = (amount / 4.0).max(1.0) as i32;
             for slot in 5..9 {
@@ -862,7 +863,7 @@ impl Server {
     /// Pushes a player away (`LivingEntity.knockback`); the client applies the motion.
     pub fn knockback_player(&mut self, id: i32, strength: f64, dx: f64, dz: f64) {
         let Some(p) = self.players.get(&id) else { return };
-        let resistance: f64 = [5, 6, 7, 8].iter().filter_map(|s| p.inventory[*s].0.as_ref()).map(|s| item_data::by_id(s.item as u32).modifier("minecraft:knockback_resistance", "any").max(item_data::by_id(s.item as u32).modifier("knockback_resistance", "any"))).sum();
+        let resistance = p.attributes.value("knockback_resistance");
         let strength = strength * (1.0 - resistance.clamp(0.0, 1.0));
         if strength <= 0.0 || dx * dx + dz * dz < 1.0e-5 {
             return;
@@ -1006,7 +1007,7 @@ impl Server {
         let p = self.players.get_mut(&id).unwrap();
         p.seen_by.clear();
         if !after_credits {
-            p.health = 20.0;
+            p.health = p.max_health();
             p.food = 20;
             p.saturation = 5.0;
             p.exhaustion = 0.0;

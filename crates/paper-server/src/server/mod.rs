@@ -21,6 +21,7 @@ mod beds;
 mod machines;
 mod mining;
 pub mod containers;
+pub mod attributes;
 pub mod effects;
 pub mod enchanting;
 pub mod entities;
@@ -545,6 +546,7 @@ impl Server {
         self.tick_digging();
         self.tick_sleeping();
         self.tick_entities();
+        self.tick_attributes();
         self.tick_spawning();
         self.tick_furnaces();
         self.tick_spawners();

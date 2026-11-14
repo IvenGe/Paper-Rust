@@ -217,6 +217,8 @@ pub struct Player {
     pub sleep_ticks: i32,
     /// Seed of the enchanting table offers (`XpSeed`); changes with every enchantment.
     pub enchantment_seed: i32,
+    /// Max health, speed, armour, reach, ... with the modifiers of equipment and effects.
+    pub attributes: crate::world::attributes::Attributes,
 }
 
 impl Player {
@@ -279,6 +281,11 @@ impl Player {
     /// The item in the main hand.
     pub fn held_item(&self) -> &Slot {
         &self.inventory[HOTBAR_START + self.held_slot as usize]
+    }
+
+    /// The `max_health` attribute.
+    pub fn max_health(&self) -> f32 {
+        self.attributes.value("max_health") as f32
     }
 
     pub fn eye_height(&self) -> f64 {

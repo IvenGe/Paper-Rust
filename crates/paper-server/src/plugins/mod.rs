@@ -19,6 +19,7 @@
 //! they are queued as [`MainTask`]s and run between ticks.
 
 pub mod api;
+pub mod attributes;
 pub mod bossbar;
 pub mod entity;
 pub mod events;

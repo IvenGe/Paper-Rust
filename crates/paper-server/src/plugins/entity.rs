@@ -296,7 +296,9 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                         if h <= 0.0 {
                             bail!("Max health amount ({h}) must be greater than 0");
                         }
-                        m.living.max_health = h as f32;
+                        // The max_health attribute's base, as CraftLivingEntity#setMaxHealth.
+                        m.attributes.set_base("max_health", h);
+                        m.living.max_health = m.attributes.value("max_health") as f32;
                         m.living.health = m.living.health.min(m.living.max_health);
                     }
                     if let Some(h) = args.f64("health") {

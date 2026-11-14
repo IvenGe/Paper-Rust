@@ -104,6 +104,7 @@ pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
             c.insert("Air", short(l.air));
             c.insert("fall_distance", Tag::Double(l.fall_distance));
             c.insert("PersistenceRequired", Tag::Byte(mob.persistent as i8));
+            c.insert("attributes", mob.attributes.to_nbt());
             let mut equipment = Compound::new();
             for (key, slot) in EQUIPMENT.iter().zip(mob.equipment.iter()) {
                 if let Some(item) = item_to_nbt(slot) {
@@ -155,7 +156,10 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
         "minecraft:falling_block" => EntityKind::FallingBlock { state: c.get("BlockState").and_then(state_from_nbt)?, time: c.i32("Time").unwrap_or(0) },
         "minecraft:tnt" => EntityKind::Tnt { fuse: c.i32("fuse").unwrap_or(80) },
         _ if info.mob => {
-            let max_health = info.attribute("max_health").map_or(info.max_health, |h| h as f32).max(1.0);
+            let mut attributes = crate::world::attributes::Attributes::of_type(&info.name);
+            attributes.load_nbt(c.list("attributes").unwrap_or(&[]));
+            attributes.take_dirty();
+            let max_health = if attributes.has("max_health") { attributes.value("max_health") as f32 } else { info.max_health.max(1.0) };
             let mut living = LivingState::new(max_health);
             living.health = c.f64("Health").map_or(max_health, |h| h as f32).clamp(0.0, max_health);
             if living.health <= 0.0 {
@@ -175,6 +179,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
             let age = if ages(&info.name) { c.i32("Age").unwrap_or(0) } else { 0 };
             let baby = if ages(&info.name) { age < 0 } else { c.bool("IsBaby").unwrap_or(false) };
             EntityKind::Mob(Box::new(Mob {
+                attributes,
                 living,
                 equipment,
                 brain: MobBrain { speed_factor: 1.0, idle_ticks: 60, ..Default::default() },
@@ -220,6 +225,7 @@ mod tests {
     fn mobs_and_items_round_trip() {
         let zombie = paper_data::entity_types::by_name("minecraft:zombie").unwrap();
         let mut mob = Mob {
+            attributes: crate::world::attributes::Attributes::of_type("minecraft:zombie"),
             living: LivingState::new(20.0),
             equipment: Default::default(),
             brain: MobBrain::default(),

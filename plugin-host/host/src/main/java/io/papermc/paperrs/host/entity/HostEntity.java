@@ -119,6 +119,16 @@ public final class HostEntity implements HostProxies.Backed {
 
     // --- identity -------------------------------------------------------------------------------
 
+    // --- attributes ------------------------------------------------------------------------
+
+    public org.bukkit.attribute.@org.jetbrains.annotations.Nullable AttributeInstance getAttribute(final org.bukkit.attribute.Attribute attribute) {
+        return HostAttributeInstance.of(this.server, this.id, attribute, () -> { });
+    }
+
+    public void registerAttribute(final org.bukkit.attribute.Attribute attribute) {
+        HostAttributeInstance.register(this.server, this.id, attribute);
+    }
+
     public int getEntityId() {
         return this.id;
     }

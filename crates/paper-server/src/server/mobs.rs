@@ -305,8 +305,10 @@ impl Server {
             return Some(self.spawn_entity(world, e));
         }
         let mut rng = rand::thread_rng();
-        let max_health = info.attribute("max_health").map_or(info.max_health, |h| h as f32).max(1.0);
+        let attributes = crate::world::attributes::Attributes::of_type(&info.name);
+        let max_health = if attributes.has("max_health") { attributes.value("max_health") as f32 } else { info.max_health.max(1.0) };
         let mut mob = Mob {
+            attributes,
             living: LivingState::new(max_health),
             equipment: Default::default(),
             brain: MobBrain { speed_factor: 1.0, idle_ticks: rng.gen_range(0..120), ..Default::default() },
@@ -472,7 +474,7 @@ impl Server {
         let info = e.info;
         let kind = behavior(&info.name, &info.category);
         let (pos, eye) = (e.pos, e.eye_pos());
-        let follow = info.attribute("follow_range").unwrap_or(16.0);
+        let follow = mob.attributes.value("follow_range");
         let height = (info.height.ceil() as i32).max(1);
         let mut brain = mob.brain.clone();
         let mut rng = rand::thread_rng();
@@ -588,10 +590,8 @@ impl Server {
                     if brain.attack_cooldown <= 0 && reach.intersects(&target_box) {
                         brain.attack_cooldown = 20;
                         swing = true;
-                        let mut amount = info.attribute("attack_damage").unwrap_or(2.0) as f32;
-                        if let Some(weapon) = mob.equipment[0].0.as_ref() {
-                            amount += paper_data::item_data::by_id(weapon.item as u32).modifier("minecraft:attack_damage", "mainhand") as f32;
-                        }
+                        // With the held weapon's modifier and effects, as attributes.
+                        let amount = mob.attributes.value("attack_damage") as f32;
                         attack = Some((t, amount));
                     }
                 }
@@ -788,8 +788,10 @@ impl Server {
         let w = &self.worlds[world];
         let info = e.info;
         let kind = behavior(&info.name, &info.category);
-        let speed_attr = info.attribute("movement_speed").unwrap_or(0.25);
-        let step = info.attribute("step_height").unwrap_or(0.6);
+        let (speed_attr, step) = match e.mob() {
+            Some(mob) => (mob.attributes.value("movement_speed"), mob.attributes.value("step_height")),
+            None => (info.attribute("movement_speed").unwrap_or(0.25), info.attribute("step_height").unwrap_or(0.6)),
+        };
         let area = e.bounding_box();
         let in_water = survival::box_in_fluid(w, &area, Fluid::Water);
         let in_lava = survival::box_in_fluid(w, &area, Fluid::Lava);

@@ -58,7 +58,7 @@ public final class HostRegistryAccess implements RegistryAccess {
         this.register(RegistryKey.VILLAGER_TYPE, org.bukkit.entity.Villager.Type.class, "villager_type", HostVillagerType::new);
         this.register(RegistryKey.MAP_DECORATION_TYPE, org.bukkit.map.MapCursor.Type.class, "map_decoration", HostMapCursorType::new);
         this.register(RegistryKey.MENU, org.bukkit.inventory.MenuType.class, "container", HostMenuType::new);
-        this.register(RegistryKey.ATTRIBUTE, org.bukkit.attribute.Attribute.class, "attribute.name", HostAttribute::new);
+        this.register(RegistryKey.ATTRIBUTE, org.bukkit.attribute.Attribute.class, "attribute.name", HostAttributeType::new);
         this.register(RegistryKey.FLUID, org.bukkit.Fluid.class, "fluid", HostFluid::new);
         this.register(RegistryKey.SOUND_EVENT, org.bukkit.Sound.class, "subtitles", HostSound::new);
         this.registerDataComponents();

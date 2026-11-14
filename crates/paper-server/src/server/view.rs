@@ -351,6 +351,8 @@ impl Server {
                 if equipment.iter().any(|(_, item)| !item.is_empty()) {
                     viewer.conn.send(&play::SetEquipment { entity_id: target_id, equipment });
                 }
+                let names: Vec<String> = target.attributes.names().map(str::to_owned).collect();
+                viewer.conn.send(&play::UpdateAttributes { entity_id: target_id, attributes: target.attributes.packet_entries(names.iter().map(String::as_str)) });
                 self.players.get_mut(&viewer_id).unwrap().visible.insert(target_id);
                 self.players.get_mut(&target_id).unwrap().seen_by.insert(viewer_id);
             }

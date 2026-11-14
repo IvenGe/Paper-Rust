@@ -521,8 +521,7 @@ impl Server {
                     "level" => p.xp_level,
                     "xp" => p.xp_total,
                     "armor" => {
-                        let armor: Vec<&paper_protocol::types::Slot> = [8, 7, 6, 5].iter().map(|s| &p.inventory[*s]).collect();
-                        super::survival::armor_values(&armor).0 as i32
+                        p.attributes.value("armor") as i32
                     }
                     _ => continue,
                 };

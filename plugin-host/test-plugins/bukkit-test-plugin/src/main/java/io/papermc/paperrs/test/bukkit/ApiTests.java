@@ -103,6 +103,7 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "bossbar" -> this.bossbar((Player) sender);
                 case "blockdata" -> this.blockData((Player) sender);
                 case "metas" -> this.metas((Player) sender);
+                case "attributes" -> this.attributes((Player) sender);
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
@@ -120,6 +121,44 @@ final class ApiTests implements Listener, CommandExecutor {
             sender.sendMessage(args[0] + ": FAIL " + e);
         }
         return true;
+    }
+
+    // --- attributes ---------------------------------------------------------------------------
+
+    private void attributes(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final org.bukkit.attribute.AttributeInstance health = player.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        check(failures, health != null && health.getBaseValue() == 20.0 && health.getValue() == 20.0 && health.getDefaultValue() == 20.0, "max health");
+        final NamespacedKey bonus = new NamespacedKey(this.plugin, "bonus");
+        health.addModifier(new org.bukkit.attribute.AttributeModifier(bonus, 10.0, org.bukkit.attribute.AttributeModifier.Operation.ADD_NUMBER));
+        check(failures, health.getValue() == 30.0 && health.getModifier(bonus) != null && player.getMaxHealth() == 30.0, "modifier " + health.getValue());
+        player.setHealth(30.0);
+        check(failures, player.getHealth() == 30.0, "more health " + player.getHealth());
+        health.removeModifier(bonus);
+        check(failures, health.getValue() == 20.0 && player.getHealth() <= 20.0, "removed " + player.getHealth());
+        final org.bukkit.attribute.AttributeInstance speed = player.getAttribute(org.bukkit.attribute.Attribute.MOVEMENT_SPEED);
+        check(failures, speed != null && Math.abs(speed.getValue() - 0.1) < 1e-6, "speed " + (speed == null ? null : speed.getValue()));
+
+        // Equipment counts: an iron chestplate gives 6 armour.
+        final org.bukkit.attribute.AttributeInstance armor = player.getAttribute(org.bukkit.attribute.Attribute.ARMOR);
+        final double before = armor.getValue();
+        player.getInventory().setChestplate(new ItemStack(Material.IRON_CHESTPLATE));
+        check(failures, armor.getValue() == before + 6.0, "armor " + before + " -> " + armor.getValue());
+        player.getInventory().setChestplate(null);
+
+        final Zombie zombie = player.getWorld().spawn(player.getLocation().add(3, 0, 0), Zombie.class);
+        final org.bukkit.attribute.AttributeInstance zombieHealth = zombie.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        zombieHealth.setBaseValue(40.0);
+        zombie.setHealth(40.0);
+        check(failures, zombie.getMaxHealth() == 40.0 && zombie.getHealth() == 40.0, "zombie health " + zombie.getMaxHealth());
+        check(failures, zombie.getAttribute(org.bukkit.attribute.Attribute.FOLLOW_RANGE).getValue() == 35.0, "follow range");
+        check(failures, zombie.getAttribute(org.bukkit.attribute.Attribute.FLYING_SPEED) == null, "zombies do not fly");
+        zombie.registerAttribute(org.bukkit.attribute.Attribute.FLYING_SPEED);
+        check(failures, zombie.getAttribute(org.bukkit.attribute.Attribute.FLYING_SPEED) != null, "registered");
+        zombie.getAttribute(org.bukkit.attribute.Attribute.SCALE).setBaseValue(2.0);
+        check(failures, zombie.getAttribute(org.bukkit.attribute.Attribute.SCALE).getValue() == 2.0, "scale");
+        zombie.remove();
+        report(player, "attributes", failures);
     }
 
     // --- special item metas ---------------------------------------------------------------------

@@ -1627,6 +1627,19 @@ impl Encode for UpdateAttributes {
     }
 }
 
+impl Decode for UpdateAttributes {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let entity_id = r.varint()?;
+        let attributes = r.list(1024, |r| {
+            let id = r.varint()?;
+            let base = r.f64()?;
+            let modifiers = r.list(1024, |r| Ok((r.string(32767)?, r.f64()?, r.varint()? as i8)))?;
+            Ok((id, base, modifiers))
+        })?;
+        Ok(Self { entity_id, attributes })
+    }
+}
+
 packet! {
     UpdateMobEffect = play::clientbound::UPDATE_MOB_EFFECT {
         entity_id: VarInt,

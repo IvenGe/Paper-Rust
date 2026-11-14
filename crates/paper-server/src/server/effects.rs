@@ -285,41 +285,10 @@ impl Server {
         }
     }
 
-    /// Sends a player the attribute values its effects change (speed, jump strength...).
+    /// Applies a player's effects to its attributes; the changed ones go out with the next
+    /// attribute sync.
     pub(super) fn sync_effect_attributes(&mut self, id: i32) {
-        let Some(p) = self.players.get(&id) else { return };
-        // Base values of the player's attributes that effects modify.
-        let bases: &[(&str, f64)] = &[
-            ("minecraft:movement_speed", 0.1),
-            ("minecraft:attack_speed", 4.0),
-            ("minecraft:attack_damage", 1.0),
-            ("minecraft:jump_strength", 0.41999998688697815),
-            ("minecraft:safe_fall_distance", 3.0),
-            ("minecraft:max_absorption", 0.0),
-            ("minecraft:block_break_speed", 1.0),
-            ("minecraft:luck", 0.0),
-            ("minecraft:gravity", 0.08),
-        ];
-        let mut attributes = Vec::new();
-        for (attribute, base) in bases {
-            let Some(attr_id) = paper_data::registries::id("minecraft:attribute", attribute) else { continue };
-            let mut modifiers = Vec::new();
-            for e in &p.effects {
-                for (attr, op, amount, modifier) in effects::by_id(e.id).map(|i| i.modifiers.as_slice()).unwrap_or(&[]) {
-                    if attr != attribute {
-                        continue;
-                    }
-                    let op = match op.as_str() {
-                        "add_value" => 0,
-                        "add_multiplied_base" => 1,
-                        _ => 2,
-                    };
-                    modifiers.push((modifier.clone(), amount * (e.amplifier + 1) as f64, op));
-                }
-            }
-            attributes.push((attr_id as i32, *base, modifiers));
-        }
-        p.conn.send(&play::UpdateAttributes { entity_id: id, attributes });
+        self.refresh_player_attributes(id);
     }
 
     // --- consuming ---------------------------------------------------------------------------

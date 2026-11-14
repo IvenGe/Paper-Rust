@@ -43,6 +43,8 @@ pub struct SavedPlayer {
     /// Bukkit's `bukkit.firstPlayed`, for offline players in the plugin API.
     pub first_played: Option<i64>,
     pub enchantment_seed: Option<i32>,
+    /// Vanilla's `attributes` list (base values and saved modifiers).
+    pub attributes: Vec<Tag>,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -194,6 +196,7 @@ impl Server {
             c.insert("active_effects", Tag::List(effects));
         }
         c.insert("AbsorptionAmount", Tag::Float(player.absorption));
+        c.insert("attributes", player.attributes.to_nbt());
         if let Some((w, pos)) = player.respawn.filter(|(w, _)| *w < self.worlds.len()) {
             c.insert(
                 "respawn",
@@ -296,6 +299,7 @@ impl Server {
             }),
             first_played: c.compound("bukkit").and_then(|b| b.i64("firstPlayed")),
             enchantment_seed: c.i32("XpSeed"),
+            attributes: c.list("attributes").map(<[Tag]>::to_vec).unwrap_or_default(),
         })
     }
 

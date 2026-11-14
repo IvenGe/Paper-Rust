@@ -169,6 +169,8 @@ fn creepers_explode_near_players() {
     let server = survival_server();
     let mut alice = join(&server, "Alice");
     let id = alice.entity_id;
+    // Two blocks from the creeper (the spawn point is spread at random).
+    server.handle.run(move |s| s.teleport(id, paper_server::server::player::Location { x: 8.5, y: -60.0, z: 8.5, yaw: 0.0, pitch: 0.0 })).unwrap();
     server.handle.console_command("summon creeper 10.5 -60 8.5");
     let explosion: play::Explode = alice.find(Duration::from_secs(30), |_: &play::Explode| true).expect("the creeper explodes");
     assert!((explosion.center.0 - 10.5).abs() < 3.0, "{:?}", explosion.center);

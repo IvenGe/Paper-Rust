@@ -118,6 +118,7 @@ impl Server {
             sleeping: None,
             sleep_ticks: 0,
             enchantment_seed: rand::random(),
+            attributes: crate::world::attributes::Attributes::of_type("minecraft:player"),
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -146,6 +147,8 @@ impl Server {
             if let Some(seed) = saved.enchantment_seed {
                 player.enchantment_seed = seed;
             }
+            player.attributes.load_nbt(&saved.attributes);
+            player.health = player.health.min(player.max_health());
             player.apply_game_mode_abilities();
             player.flying = saved.flying && player.allow_flight;
         } else {

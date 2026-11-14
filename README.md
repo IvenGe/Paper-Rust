@@ -97,7 +97,10 @@ What works:
   magma, with armour, protection enchantments, difficulty scaling and invulnerability frames;
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
   experience, death messages) and respawning; attacking with the attack cooldown, critical
-  hits, sweeping, knockback and weapon enchantments; tool and weapon wear; bows; explosions
+  hits, sweeping, knockback and weapon enchantments; tool and weapon wear; bows; attributes
+  (max health, armour, attack damage and speed, movement speed, knockback resistance, fall
+  damage, reach, ...) with the modifiers of equipment, effects and sprinting, sent to the
+  clients and saved with players and mobs; explosions
   that break blocks and hurt and push entities. Blocks take vanilla's mining time (tool
   speeds, efficiency, haste, mining fatigue, water and air) and drop their loot. Status
   effects (`/effect`, golden apples, potions, poisonous food, milk, chorus fruit, poisonous
@@ -177,6 +180,8 @@ What works:
     (`health`, `food`, `air`, `armor`, `level` and `xp` follow the players), teams and
     `Player.setScoreboard`;
   * potion effects of players and mobs (`addPotionEffect`, `getActivePotionEffects`, ...);
+  * attributes of players and mobs (`getAttribute`, base values, modifiers,
+    `registerAttribute`, `getMaxHealth`/`setMaxHealth`);
   * boss bars, Adventure's (`showBossBar`) and Bukkit's (`Server.createBossBar`, keyed ones
     included);
   * block data: `Bukkit.createBlockData`, `Material`/`BlockType.createBlockData`,
@@ -199,7 +204,7 @@ Not yet:
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.
 * Plugin API: creating worlds, registry and tag lifecycle events,
-  attributes, statistics, books (`openBook`), resource packs, dialogs, signed chat messages, entity AI and passengers, the data component API
+  statistics, books (`openBook`), item attribute modifiers (`ItemMeta#getAttributeModifiers`), resource packs, dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
   fish, ...), inventories of other block types and anvils, enchanting or merchant views,

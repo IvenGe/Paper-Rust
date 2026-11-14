@@ -349,6 +349,8 @@ fn commands_and_permissions() {
 #[test]
 fn breaking_and_placing_blocks() {
     let server = start_server(|_| {});
+    // No animals: a sheep eating grass would send block updates of its own.
+    server.handle.run(|s| s.set_game_rule(0, "spawn_mobs", paper_data::game_rules::Value::Bool(false))).unwrap();
     let mut alice = Client::join(server.port(), "Alice");
     alice.expect::<play::PlayerPosition>();
     let mut bob = Client::join(server.port(), "Bob");

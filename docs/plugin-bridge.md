@@ -212,6 +212,9 @@ same name, which stay reachable as `minecraft:<name>`.
 | `entity.remove_effect` / `entity.clear_effects` / `entity.effects` | `id`, `effect` / `id` (answers how many) / `id` (answers `[{effect, duration, amplifier, ambient, particles, icon}]`) |
 | `bossbar.update` | `id` (a UUID the host picks), and any of `title`, `progress`, `color` (`pink`...`white`), `overlay` (`progress`, `notched_6`...), `flags` (1 darken, 2 music, 4 fog); creates the bar |
 | `bossbar.show` / `bossbar.hide` / `bossbar.remove` | `id`, `player` / `id`, `player` / `id` |
+| `attribute.get` | `id` (entity id of a player or mob), `attribute`; `{base, value, default, modifiers: [{id, amount, operation}]}` or null if the entity does not have it |
+| `attribute.set_base` / `attribute.add_modifier` / `attribute.remove_modifier` / `attribute.register` | `id`, `attribute` / and `base` / `modifier` (id), `amount`, `operation` (0 add, 1 multiply base, 2 multiply total), `persistent` / `modifier` / nothing |
+| `attribute.default` | `attribute`; its default value |
 | `scoreboard.new` / `scoreboard.release` / `scoreboard.retain` | / `board` / `board` |
 | `scoreboard.objectives` / `scoreboard.objective` | `board` / `board`, `name` |
 | `scoreboard.register_objective` / `unregister_objective` / `update_objective` | `board`, `name`, `criteria`, `display_name`, `render_type` |

@@ -598,6 +598,10 @@ impl Server {
             if !equipment.is_empty() {
                 out.push(Bytes::from(encode_packet(&play::SetEquipment { entity_id: id, equipment })));
             }
+            // Changed attributes (a plugin's scale, say).
+            if let Some(packet) = Server::mob_attributes_for_new_viewer(&m.attributes, &e.info.name, id) {
+                out.push(Bytes::from(encode_packet(&packet)));
+            }
         }
         out
     }

@@ -296,7 +296,9 @@ impl Server {
         let Some(player) = self.players.get(&id) else { return false };
         let eye = Location { y: player.loc.y + player.eye_height(), ..player.loc };
         let center = Location { x: pos.x as f64 + 0.5, y: pos.y as f64 + 0.5, z: pos.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 };
-        eye.distance_squared(&center) <= MAX_REACH * MAX_REACH
+        // The block interaction range (4.5) plus vanilla's margin, from the eye to the centre.
+        let reach = MAX_REACH - 4.5 + player.attributes.value("block_interaction_range");
+        eye.distance_squared(&center) <= reach * reach
     }
 
     /// Sends the real state of a block to a player, undoing a client-side prediction.

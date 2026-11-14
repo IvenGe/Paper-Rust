@@ -166,7 +166,8 @@ fn bukkit_and_paper_plugins_run_against_the_rust_server() {
     alice.send(&play::PlayerAction { status: VarInt(play::player_action::START_DESTROY_BLOCK), pos: grass, face: 1, sequence: VarInt(3) });
     let protected: play::SystemChat = alice.find(TIMEOUT, |m: &play::SystemChat| m.content.to_plain() == "This block is protected").expect("protection message");
     assert_eq!(protected.content.to_plain(), "This block is protected");
-    let update: play::BlockUpdate = alice.expect();
+    // (Animals eating grass elsewhere send block updates too.)
+    let update: play::BlockUpdate = alice.find(TIMEOUT, |u: &play::BlockUpdate| u.pos == grass).expect("the block is resent");
     assert_eq!((update.pos, Some(update.state.0 as u32)), (grass, before));
     assert_eq!(server.handle.run(move |s| s.worlds[0].block_at(8, -61, 8)).unwrap(), before, "the block is still there");
 
@@ -292,6 +293,10 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             }
         })
         .unwrap();
+
+    // Attributes of players and mobs.
+    alice.command("apitest attributes");
+    expect_line(&mut alice, "attributes: ok");
 
     // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
     alice.command("apitest unsupported");

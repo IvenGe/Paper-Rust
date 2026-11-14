@@ -336,6 +336,8 @@ pub struct MobBrain {
 /// A mob.
 #[derive(Clone, Debug)]
 pub struct Mob {
+    /// Max health, speed, armour, attack damage, ... with equipment and effect modifiers.
+    pub attributes: crate::world::attributes::Attributes,
     pub living: LivingState,
     /// Main hand, off hand, feet, legs, chest, head.
     pub equipment: [Slot; 6],
