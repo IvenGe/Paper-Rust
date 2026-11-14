@@ -363,9 +363,11 @@ impl Server {
             living.last_attacker = Some((attacker, tick));
         }
         let dead = living.health <= 0.0;
-        // Passive animals panic; hostile and neutral mobs turn on whoever hurt them.
+        // Passive animals (and villagers) panic; hostile and neutral mobs turn on whoever
+        // hurt them.
+        let merchant = mob.merchant.is_some();
         if let Some(attacker) = damage.attacker.filter(|a| *a != id) {
-            if info.category == "CREATURE" || info.category == "WATER_CREATURE" || info.category == "AMBIENT" {
+            if info.category == "CREATURE" || info.category == "WATER_CREATURE" || info.category == "AMBIENT" || merchant {
                 mob.brain.panic_ticks = 60 + rand::thread_rng().gen_range(0..40);
                 mob.brain.path.clear();
             } else if !damage.is("no_anger") {
@@ -386,6 +388,11 @@ impl Server {
                 if let Some(sound) = info.hurt_sound.as_deref() {
                     self.play_sound(world, pos, sound, mob_category(info), 1.0, Self::mob_pitch(world, self, id), None);
                 }
+            }
+        }
+        if merchant && !dead {
+            if let Some(attacker) = damage.attacker {
+                self.merchant_hurt(world, id, attacker);
             }
         }
         if dead {
@@ -410,6 +417,11 @@ impl Server {
         let baby = mob.baby;
         // Kill credit goes to a player who hurt it in the last five seconds.
         let killer = mob.living.last_attacker.filter(|(_, t)| tick.saturating_sub(*t) < 100).map(|(a, _)| a).filter(|a| self.players.contains_key(a));
+        if mob.merchant.is_some() {
+            self.merchant_killed(world, id, killer);
+        }
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
+        let Some(mob) = e.mob() else { return };
         let equipment: Vec<Slot> = mob.equipment.iter().filter(|s| !s.is_empty()).cloned().collect();
         // Loot and experience are worked out before EntityDeathEvent, which may change them.
         // Baby animals drop nothing; baby monsters (zombies) drop as adults, with 2.5 times

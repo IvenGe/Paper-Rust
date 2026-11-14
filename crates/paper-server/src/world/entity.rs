@@ -331,6 +331,8 @@ pub struct MobBrain {
     pub ambient: i32,
     /// Ticks spent near a breeding partner (`BreedGoal.loveTime`).
     pub love_time: i32,
+    /// Where it wants to walk for its own reasons (a villager to its workstation).
+    pub walk_target: Option<Vec3>,
 }
 
 /// A mob.
@@ -358,6 +360,8 @@ pub struct Mob {
     pub love_cause: Option<i32>,
     /// Chickens: ticks until the next egg.
     pub egg_time: i32,
+    /// Villagers and wandering traders: profession, trades, experience, gossip.
+    pub merchant: Option<Box<crate::world::merchant::Merchant>>,
 }
 
 /// Behaviour-specific data.

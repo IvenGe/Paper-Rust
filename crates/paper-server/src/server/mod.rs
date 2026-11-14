@@ -41,6 +41,7 @@ mod spawners;
 pub mod workstations;
 pub mod survival;
 pub mod usercache;
+pub mod villagers;
 mod view;
 
 pub use join::info_entry as join_info_entry;
@@ -188,6 +189,8 @@ pub struct Server {
     /// Vanilla's data files (loot tables, recipes, ...), when the server jar is available.
     pub vanilla: Option<Arc<crate::vanilla::VanillaData>>,
     pub loot: loot::LootTables,
+    /// Villager and wandering trader trades from the vanilla data.
+    pub trades: villagers::Trades,
     /// Crafting and smelting recipes from the vanilla data.
     pub recipes: Option<Arc<recipes::Recipes>>,
     /// `minecraft:damage_type` entries (death messages, exhaustion, difficulty scaling).
@@ -383,6 +386,7 @@ impl Server {
             workers,
             io,
             loot: loot::LootTables::new(vanilla.clone()),
+            trades: villagers::Trades::new(vanilla.clone()),
             recipes: vanilla.as_ref().map(|v| Arc::new(recipes::Recipes::load(v))),
             damage_types: survival::load_damage_types(vanilla.as_deref()),
             spawner_cache: HashMap::new(),
@@ -551,6 +555,7 @@ impl Server {
         self.tick_digging();
         self.tick_sleeping();
         self.tick_entities();
+        self.tick_merchants();
         self.tick_attributes();
         self.tick_spawning();
         self.tick_furnaces();

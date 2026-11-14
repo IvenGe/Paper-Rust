@@ -741,6 +741,21 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
             if let Some(i) = info.data_index("DATA_MOB_FLAGS_ID") {
                 m = m.byte(i, if mob.brain.target.is_some() { 4 } else { 0 });
             }
+            if let Some(merchant) = mob.merchant.as_deref() {
+                if let Some(i) = info.data_index("DATA_VILLAGER_DATA") {
+                    let ty = paper_data::registries::id("minecraft:villager_type", &merchant.villager_type).unwrap_or(2) as i32;
+                    let profession = paper_data::registries::id("minecraft:villager_profession", &merchant.profession).unwrap_or(0) as i32;
+                    m = m.villager_data(i, ty, profession, merchant.level);
+                }
+                if let Some(i) = info.data_index("DATA_VILLAGER_DATA_FINALIZED") {
+                    m = m.boolean(i, true);
+                }
+                if let Some(i) = info.data_index("DATA_UNHAPPY_COUNTER") {
+                    if merchant.unhappy > 0 || !spawning {
+                        m = m.varint(i, merchant.unhappy);
+                    }
+                }
+            }
         }
         EntityKind::Arrow { critical, .. } => {
             if let Some(i) = info.data_index("ID_FLAGS") {

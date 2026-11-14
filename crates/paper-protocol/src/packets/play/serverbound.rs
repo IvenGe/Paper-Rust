@@ -239,6 +239,14 @@ packet! {
 }
 
 packet! {
+    /// A trade picked in a villager's trading window: the server moves matching payment
+    /// from the inventory into the payment slots.
+    SelectTrade = play::serverbound::SELECT_TRADE {
+        item: VarInt,
+    }
+}
+
+packet! {
     /// Right-click on an entity.
     Interact = play::serverbound::INTERACT {
         entity_id: VarInt,
@@ -459,6 +467,7 @@ pub enum Serverbound {
     ContainerClick(ContainerClick),
     ContainerClose(ServerboundContainerClose),
     RenameItem(RenameItem),
+    SelectTrade(SelectTrade),
     CookieResponse(CookieResponse),
     CustomPayload(ServerboundCustomPayload),
     Interact(Interact),
@@ -514,6 +523,7 @@ impl Serverbound {
             id::CONTAINER_BUTTON_CLICK => d!(ContainerButtonClick),
             id::CONTAINER_CLICK => d!(ContainerClick),
             id::RENAME_ITEM => d!(RenameItem),
+            id::SELECT_TRADE => d!(SelectTrade),
             id::CONTAINER_CLOSE => d!(ContainerClose),
             id::COOKIE_RESPONSE => d!(CookieResponse),
             id::CUSTOM_PAYLOAD => d!(CustomPayload),

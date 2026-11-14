@@ -61,6 +61,8 @@ pub enum MenuShape {
     Enchanting,
     Anvil,
     Brewing,
+    /// A villager's trading window: two payment slots and the result.
+    Merchant,
 }
 
 impl Layout {
@@ -124,6 +126,13 @@ impl Layout {
         let mut kinds = vec![SlotKind::Normal; 39];
         kinds[2] = SlotKind::Output;
         Layout { kinds, main: 3..30, hotbar: 30..39, offhand: None, container: 0..3, crafting: None, furnace: None, kind: MenuShape::Anvil }
+    }
+
+    /// `MerchantMenu`: payment A, payment B, result.
+    pub fn merchant() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 39];
+        kinds[2] = SlotKind::Output;
+        Layout { kinds, main: 3..30, hotbar: 30..39, offhand: None, container: 0..3, crafting: None, furnace: None, kind: MenuShape::Merchant }
     }
 
     pub fn len(&self) -> usize {
@@ -244,7 +253,7 @@ impl Menu<'_> {
     }
 
     /// vanilla's `moveItemStackTo`: merge into matching stacks, then fill empty slots.
-    fn move_into(&mut self, item: &mut Slot, range: Range<usize>, reverse: bool) -> bool {
+    pub(crate) fn move_into(&mut self, item: &mut Slot, range: Range<usize>, reverse: bool) -> bool {
         let mut moved = false;
         let order: Vec<usize> = if reverse { range.clone().rev().collect() } else { range.clone().collect() };
         if let Some(stack) = item.0.clone() {
@@ -402,6 +411,18 @@ impl Menu<'_> {
                             self.move_into(&mut item, l.main.clone(), false);
                         }
                     }
+                }
+            }
+            // `MerchantMenu.quickMoveStack`: payment goes back to the inventory, and the
+            // inventory and hotbar trade places (the result slot is handled by the trading
+            // code, which takes one trade at a time).
+            MenuShape::Merchant => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), index == 2);
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
                 }
             }
             MenuShape::Furnace => {

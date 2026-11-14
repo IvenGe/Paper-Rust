@@ -28,6 +28,10 @@ pub struct OpenMenu {
     pub craft_grid: Vec<Slot>,
     /// What an open anvil has worked out.
     pub anvil: super::workstations::AnvilState,
+    /// The trade picked in a trading window (`selectionHint`) and the one its payment
+    /// pays for (`activeOffer`).
+    pub trade_selection: Option<usize>,
+    pub active_offer: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +44,8 @@ pub enum MenuKind {
     Enchanting { world: usize, pos: BlockPos },
     Anvil { world: usize, pos: BlockPos },
     Brewing { world: usize, pos: BlockPos },
+    /// Trading with a villager or wandering trader.
+    Merchant { world: usize, entity: i32 },
     /// A custom inventory made by a plugin (`Bukkit.createInventory`); its slots are kept in
     /// `Server::plugin_data` (see `plugins::inventory`) and clicks go to the plugin host.
     Custom { id: u64 },
@@ -417,10 +423,10 @@ impl Server {
         let craft_grid = match menu_kind {
             MenuKind::CraftingTable => vec![Slot::EMPTY; 10],
             MenuKind::Enchanting { .. } => vec![Slot::EMPTY; 2],
-            MenuKind::Anvil { .. } => vec![Slot::EMPTY; 3],
+            MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => vec![Slot::EMPTY; 3],
             _ => Vec::new(),
         };
-        player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid, anvil: Default::default() });
+        player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid, anvil: Default::default(), trade_selection: None, active_offer: None });
         player.conn.send(&play::OpenScreen { window_id: VarInt(window_id), menu_type: VarInt(menu_type(menu_name)), title });
         self.send_menu_contents(id);
         // Lid animation and sound.
@@ -464,7 +470,7 @@ impl Server {
         }
         // What the player put in goes back (not results).
         let inputs = match menu.kind {
-            MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => &menu.craft_grid[..2],
+            MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => &menu.craft_grid[..2],
             _ => menu.craft_grid.get(1..).unwrap_or(&[]),
         };
         let leftovers: Vec<Slot> = inputs.iter().filter(|s| !s.is_empty()).cloned().collect();
@@ -481,6 +487,7 @@ impl Server {
             }
             // A plugin inventory nobody refers to any more can go now.
             MenuKind::Custom { .. } => crate::plugins::inventory::collect_released(self),
+            MenuKind::Merchant { world, entity } => self.stop_trading(*world, *entity),
             _ => {}
         }
     }
@@ -572,19 +579,20 @@ impl Server {
             Some(MenuKind::CraftingTable) => Layout::crafting_table(),
             Some(MenuKind::Enchanting { .. }) => Layout::enchanting(),
             Some(MenuKind::Anvil { .. }) => Layout::anvil(),
+            Some(MenuKind::Merchant { .. }) => Layout::merchant(),
             Some(MenuKind::Brewing { .. }) => Layout::brewing(),
             Some(MenuKind::Furnace { recipe_type, .. }) => Layout::furnace(recipe_type),
         }
     }
 
     /// The slots of the player's open window (or inventory), as the client numbers them.
-    fn menu_slots(&self, id: i32) -> Option<(Option<MenuKind>, Vec<Slot>)> {
+    pub(super) fn menu_slots(&self, id: i32) -> Option<(Option<MenuKind>, Vec<Slot>)> {
         let player = self.players.get(&id)?;
         let Some(menu) = &player.open_menu else { return Some((None, player.inventory.clone())) };
         let mut slots = match &menu.kind {
             MenuKind::Container { world, positions } => positions.iter().flat_map(|p| self.container_items(*world, *p)).collect(),
             MenuKind::EnderChest => player.ender_items.clone(),
-            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => menu.craft_grid.clone(),
+            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => menu.craft_grid.clone(),
             MenuKind::Furnace { world, pos, .. } | MenuKind::Brewing { world, pos } => self.container_items(*world, *pos),
             MenuKind::Custom { id } => self.plugin_data.inventories.get(id).map(|i| i.items.clone()).unwrap_or_default(),
         };
@@ -593,7 +601,7 @@ impl Server {
     }
 
     /// Writes a window's slots back where they belong.
-    fn store_menu_slots(&mut self, id: i32, kind: Option<&MenuKind>, slots: &[Slot]) {
+    pub(super) fn store_menu_slots(&mut self, id: i32, kind: Option<&MenuKind>, slots: &[Slot]) {
         let Some(player) = self.players.get_mut(&id) else { return };
         let Some(kind) = kind else {
             player.inventory.clone_from_slice(slots);
@@ -612,7 +620,7 @@ impl Server {
                 }
             }
             MenuKind::EnderChest => player.ender_items.clone_from_slice(&slots[..27]),
-            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } => {
+            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => {
                 if let Some(menu) = player.open_menu.as_mut() {
                     let n = menu.craft_grid.len();
                     menu.craft_grid.clone_from_slice(&slots[..n]);
@@ -701,7 +709,11 @@ impl Server {
         let mut carried = std::mem::take(&mut player.carried);
         let mut drag = std::mem::take(&mut player.drag);
         let recipes = self.recipes.clone();
-        let result = {
+        // Taking a trade's result pays for it, one trade at a time.
+        let trading = matches!(kind, Some(MenuKind::Merchant { .. })) && click.slot == 2 && matches!(click.mode, 0 | 1 | 2 | 4);
+        let result = if trading {
+            self.trade_result_click(id, &layout, &mut slots, &mut carried, click.mode, click.button)
+        } else {
             let mut menu = Menu { layout: &layout, slots: &mut slots, carried: &mut carried, recipes: recipes.as_deref(), creative, drag: &mut drag };
             if kind.is_none() || matches!(kind, Some(MenuKind::CraftingTable)) {
                 menu.update_result();
@@ -736,6 +748,7 @@ impl Server {
             Some(MenuKind::Enchanting { .. }) if before[..2] != slots[..2] => self.update_enchanting_table(id),
             Some(MenuKind::Anvil { .. }) if !before[2].is_empty() && slots[2].is_empty() => self.took_anvil_result(id),
             Some(MenuKind::Anvil { .. }) if before[..2] != slots[..2] => self.update_anvil(id),
+            Some(MenuKind::Merchant { .. }) if before[..2] != slots[..2] && !trading => self.update_trade_result(id),
             _ => {}
         }
         // Others looking into the same container see its slots change.

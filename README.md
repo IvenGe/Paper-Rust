@@ -95,6 +95,19 @@ What works:
   Animals follow players holding their food and breed when fed (babies grow up, faster when
   fed); cows and goats give milk, mooshrooms stew; sheep are sheared and dyed and eat grass
   to grow their wool back; chickens lay eggs; name tags name mobs.
+* **Villagers and trading**: villagers take the type of the biome they are born in, walk to a
+  free workstation and take its profession (and lose it again if it is broken before anyone
+  traded with them), and trade: the trading window shows vanilla's trades, read from the
+  26.3 trade data in the server jar (`trade_set`, `villager_trade` and their tags, with
+  enchanted, dyed and potion goods and type-specific trades); picking a trade fills the
+  payment from the inventory, prices follow demand, gossip (trading raises a player's
+  reputation, hurting a villager lowers it, killing one in front of others more) and Hero
+  of the Village; trading gives experience orbs and villager experience, and villagers level
+  up (with new trades) after the trading ends. In the day villagers work at their
+  workstation and restock there up to twice a day. Wandering traders offer nine trades (two
+  they buy, seven they sell), turn up near players with vanilla's daily chance
+  (`spawn_wandering_traders`, saved in `level.dat`) and leave after two days. Villagers,
+  their trades, experience, gossip and workstation are saved in vanilla's format.
 * **Survival**: damage from falls, the void, lava, fire, drowning, suffocation, cacti and
   magma, with armour, protection enchantments, difficulty scaling and invulnerability frames;
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
@@ -203,8 +216,10 @@ Not yet:
   patches (ancient cities have none). Structure starts are not saved: after a restart, a
   structure that was being placed can show seams. There is no dragon fight (the End's exit
   portal is open from the start, and the gateways the dragon's death opens do not appear).
-* Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, taming); poplar saplings do not grow (how they pick their tree is not in the
+* Gameplay: mobs beyond the common kinds have no special behaviour (endermen, taming).
+  Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
+  zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
+  so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Tripwires,
   crafters and observers of entities do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push

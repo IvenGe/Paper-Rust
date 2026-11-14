@@ -171,6 +171,16 @@ impl Metadata {
         m
     }
 
+    /// `VillagerData`: ids in `minecraft:villager_type` and `minecraft:villager_profession`,
+    /// and the level (1-5).
+    pub fn villager_data(self, index: u8, villager_type: i32, profession: i32, level: i32) -> Self {
+        let mut m = self.entry(index, "villager_data");
+        m.0.put_varint(villager_type);
+        m.0.put_varint(profession);
+        m.0.put_varint(level);
+        m
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

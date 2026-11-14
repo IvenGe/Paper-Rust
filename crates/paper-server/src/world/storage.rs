@@ -673,6 +673,9 @@ pub struct LevelData {
     pub hardcore: bool,
     /// Rain and thunder with their timers (the levels follow `raining` and `thundering`).
     pub weather: super::Weather,
+    /// The wandering trader spawner: ticks until the next try and its chance in percent.
+    pub trader_spawn_delay: i32,
+    pub trader_spawn_chance: i32,
 }
 
 impl LevelData {
@@ -741,6 +744,8 @@ impl LevelData {
             .with("rainTime", Tag::Int(self.weather.rain_time))
             .with("thunderTime", Tag::Int(self.weather.thunder_time))
             .with("clearWeatherTime", Tag::Int(self.weather.clear_time))
+            .with("WanderingTraderSpawnDelay", Tag::Int(self.trader_spawn_delay))
+            .with("WanderingTraderSpawnChance", Tag::Int(self.trader_spawn_chance))
             .with("paper-rs", Tag::Compound(Compound::new().with("generator", Tag::String(self.generator.clone())).with("daylight_cycle", Tag::Byte(self.daylight_cycle as i8))));
         Compound::new().with("Data", Tag::Compound(data))
     }
@@ -795,6 +800,8 @@ impl LevelData {
                     thunder_level: if thundering { 1.0 } else { 0.0 },
                 }
             },
+            trader_spawn_delay: data.i32("WanderingTraderSpawnDelay").unwrap_or(0),
+            trader_spawn_chance: data.i32("WanderingTraderSpawnChance").unwrap_or(0),
         })
     }
 }
@@ -1225,7 +1232,7 @@ mod tests {
         assert!(storage.load_chunk(ChunkPos::new(0, 0), -64, 384, true).unwrap().is_none());
 
         let weather = crate::world::Weather { raining: true, thundering: false, rain_time: 500, thunder_time: 12000, clear_time: 0, rain_level: 1.0, thunder_level: 0.0 };
-        let level = LevelData { name: "world".into(), seed: -99, generator: "flat".into(), spawn: (1, 2, 3), spawn_yaw: 90.0, age: 1234, day_time: 6000, daylight_cycle: false, game_type: 1, hardcore: false, weather };
+        let level = LevelData { name: "world".into(), seed: -99, generator: "flat".into(), spawn: (1, 2, 3), spawn_yaw: 90.0, age: 1234, day_time: 6000, daylight_cycle: false, game_type: 1, hardcore: false, weather, trader_spawn_delay: 1200, trader_spawn_chance: 50 };
         storage.save_level(&level).unwrap();
         io.flush();
         assert_eq!(storage.read_level().unwrap().unwrap(), level);

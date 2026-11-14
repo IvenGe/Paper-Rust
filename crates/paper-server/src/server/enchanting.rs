@@ -107,16 +107,18 @@ impl Enchantments {
 
     /// `enchant_randomly`: one random enchantment of `options` at a random level; books
     /// become enchanted books. With `only_compatible`, only enchantments the item supports.
-    pub fn enchant_randomly(&self, slot: &mut Slot, options: &Value, only_compatible: bool, rng: &mut impl Rng) {
-        let Some(stack) = slot.0.as_mut() else { return };
+    /// Returns the enchantment and level it added.
+    pub fn enchant_randomly(&self, slot: &mut Slot, options: &Value, only_compatible: bool, rng: &mut impl Rng) -> Option<(i32, i32)> {
+        let stack = slot.0.as_mut()?;
         let book = is(stack, "minecraft:book");
         let candidates: Vec<&EnchantmentDef> = self.options(options).into_iter().filter(|d| book || !only_compatible || d.supported.binary_search(&stack.item).is_ok()).collect();
         if candidates.is_empty() {
-            return;
+            return None;
         }
         let def = candidates[rng.gen_range(0..candidates.len())];
         let level = rng.gen_range(1..=def.max_level.max(1));
         enchant(stack, def.id, level);
+        Some((def.id, level))
     }
 
     /// `enchant_with_levels` (vanilla's enchanting-table selection for `levels`

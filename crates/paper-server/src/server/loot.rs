@@ -256,13 +256,24 @@ impl LootTables {
 }
 
 impl LootTables {
-    /// One item modifier on the stacks it applies to.
-    fn apply(&self, f: &Value, ctx: &LootContext, rng: &mut impl Rng, stacks: &mut [Slot]) {
+    /// One item modifier (or a list of them) on the stacks it applies to.
+    pub(crate) fn apply(&self, f: &Value, ctx: &LootContext, rng: &mut impl Rng, stacks: &mut [Slot]) {
+        if let Value::Array(list) = f {
+            for f in list {
+                self.apply(f, ctx, rng, stacks);
+            }
+            return;
+        }
+        let additional_cost = f["include_additional_cost_component"].as_bool().unwrap_or(false);
         match kind(f) {
             "minecraft:enchant_randomly" => {
                 if let Some(enchantments) = self.enchantments() {
                     for slot in stacks.iter_mut() {
-                        enchantments.enchant_randomly(slot, &f["options"], f["only_compatible"].as_bool().unwrap_or(true), rng);
+                        let chosen = enchantments.enchant_randomly(slot, &f["options"], f["only_compatible"].as_bool().unwrap_or(true), rng);
+                        // What a trade adds to its price: vanilla's enchanted book price.
+                        if let (true, Some((_, level)), Some(stack)) = (additional_cost, chosen, slot.0.as_mut()) {
+                            add_trade_cost(stack, 2 + rng.gen_range(0..5 + level * 10) + 3 * level);
+                        }
                     }
                 }
             }
@@ -271,9 +282,67 @@ impl LootTables {
                     for slot in stacks.iter_mut() {
                         let levels = number(&f["levels"], rng).floor() as i32;
                         enchantments.enchant_with_levels(slot, levels, &f["options"], rng);
+                        if let (true, Some(stack)) = (additional_cost, slot.0.as_mut()) {
+                            add_trade_cost(stack, levels);
+                        }
                     }
                 }
             }
+            "minecraft:set_random_potion" => {
+                let ids: Vec<i32> = match f["options"].as_str() {
+                    Some(tag) if tag.starts_with('#') => paper_data::synced::tag("minecraft:potion", &tag[1..]).map(<[i32]>::to_vec).unwrap_or_default(),
+                    Some(name) => paper_data::registries::id("minecraft:potion", name).map(|i| vec![i as i32]).unwrap_or_default(),
+                    None => paper_data::registries::entries("minecraft:potion").map(|e| (0..e.len() as i32).collect()).unwrap_or_default(),
+                };
+                for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
+                    if !ids.is_empty() {
+                        set_potion(stack, ids[rng.gen_range(0..ids.len())]);
+                    }
+                }
+            }
+            "minecraft:set_stew_effect" => {
+                let Some(effects) = f["effects"].as_array().filter(|e| !e.is_empty()) else { return };
+                for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
+                    let entry = &effects[rng.gen_range(0..effects.len())];
+                    let Some(info) = entry["type"].as_str().and_then(paper_data::effects::by_name) else { continue };
+                    let mut duration = number(&entry["duration"], rng) as i32;
+                    if !info.instantaneous {
+                        duration *= 20;
+                    }
+                    let mut data = Vec::new();
+                    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(1), &mut data);
+                    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(info.id), &mut data);
+                    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(duration), &mut data);
+                    super::enchanting::set_component(stack, "minecraft:suspicious_stew_effects", data);
+                }
+            }
+            "minecraft:set_random_dyes" => {
+                for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
+                    let n = number(&f["number_of_dyes"], rng) as i32;
+                    let dyes: Vec<u32> = (0..n.max(0)).map(|_| DYE_COLORS[rng.gen_range(0..DYE_COLORS.len())]).collect();
+                    if !dyes.is_empty() && is_dyeable(stack.item) {
+                        let current = dyed_color(stack);
+                        super::enchanting::set_component(stack, "minecraft:dyed_color", mix_dyes(current, &dyes).to_be_bytes().to_vec());
+                    }
+                }
+            }
+            "minecraft:filtered" => {
+                for slot in stacks.iter_mut() {
+                    let pass = slot.0.as_ref().is_some_and(|s| item_filter(&f["item_filter"], s));
+                    let branch = if pass { &f["on_pass"] } else { &f["on_fail"] };
+                    if !branch.is_null() {
+                        self.apply(branch, ctx, rng, std::slice::from_mut(slot));
+                    }
+                }
+            }
+            "minecraft:discard" => {
+                for slot in stacks.iter_mut() {
+                    *slot = Slot::EMPTY;
+                }
+            }
+            // Explorer maps need maps, which this server does not keep yet: the stack stays
+            // a blank explorer map (and trades that require a located map drop out).
+            "minecraft:exploration_map" => {}
             "minecraft:set_damage" => {
                 for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
                     let Some(max) = paper_data::item_data::by_id(stack.item as u32).max_damage.filter(|m| *m > 0) else { continue };
@@ -288,11 +357,7 @@ impl LootTables {
             "minecraft:set_potion" => {
                 let Some(potion) = f["id"].as_str().and_then(|p| paper_data::registries::id("minecraft:potion", p)) else { return };
                 for stack in stacks.iter_mut().filter_map(|s| s.0.as_mut()) {
-                    // Potion, no custom colour, no custom effects, no custom name.
-                    let mut data = vec![1u8];
-                    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(potion as i32), &mut data);
-                    data.extend_from_slice(&[0, 0, 0]);
-                    super::enchanting::set_component(stack, "minecraft:potion_contents", data);
+                    set_potion(stack, potion as i32);
                 }
             }
             _ => apply_function(f, ctx, rng, stacks),
@@ -306,12 +371,111 @@ fn damage_of(stack: &paper_protocol::types::ItemStack) -> i32 {
     stack.added.iter().find(|(t, _)| *t as u32 == ty).and_then(|(_, d)| paper_protocol::codec::Reader::new(d).varint().ok()).unwrap_or(0)
 }
 
-/// Evaluates a number provider: a constant, `uniform`, `binomial` or `constant`.
-fn number(v: &Value, rng: &mut impl Rng) -> f64 {
+/// The `potion_contents` of a plain potion: the potion, no custom colour, no custom
+/// effects, no custom name.
+pub fn potion_contents(potion: i32) -> Vec<u8> {
+    let mut data = vec![1u8];
+    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(potion), &mut data);
+    data.extend_from_slice(&[0, 0, 0]);
+    data
+}
+
+fn set_potion(stack: &mut ItemStack, potion: i32) {
+    super::enchanting::set_component(stack, "minecraft:potion_contents", potion_contents(potion));
+}
+
+/// Adds to a stack's `additional_trade_cost` (what a trade adds to its price for it).
+fn add_trade_cost(stack: &mut ItemStack, cost: i32) {
+    let Some(ty) = paper_data::registries::id("minecraft:data_component_type", "minecraft:additional_trade_cost") else { return };
+    let current = stack.added.iter().find(|(t, _)| *t as u32 == ty).and_then(|(_, d)| paper_protocol::codec::Reader::new(d).varint().ok()).unwrap_or(0);
+    let mut data = Vec::new();
+    paper_protocol::codec::Encode::encode(&paper_protocol::codec::VarInt(current + cost), &mut data);
+    super::enchanting::set_component(stack, "minecraft:additional_trade_cost", data);
+}
+
+/// Takes a stack's `additional_trade_cost` off it, returning the cost.
+pub fn take_trade_cost(stack: &mut ItemStack) -> i32 {
+    let Some(ty) = paper_data::registries::id("minecraft:data_component_type", "minecraft:additional_trade_cost") else { return 0 };
+    let Some(i) = stack.added.iter().position(|(t, _)| *t as u32 == ty) else { return 0 };
+    let (_, data) = stack.added.remove(i);
+    paper_protocol::codec::Reader::new(&data).varint().unwrap_or(0)
+}
+
+/// Texture colours of the sixteen dyes (`DyeColor.getTextureDiffuseColor`), in dye order.
+pub const DYE_COLORS: [u32; 16] = [
+    0xF9FFFE, 0xF9801D, 0xC74EBD, 0x3AB3DA, 0xFED83D, 0x80C71F, 0xF38BAA, 0x474F52, 0x9D9D97, 0x169C9C, 0x8932B8, 0x3C44AA, 0x835432, 0x5E7C16, 0xB02E26, 0x1D1D21,
+];
+
+fn is_dyeable(item: i32) -> bool {
+    paper_data::synced::tag("minecraft:item", "minecraft:cauldron_can_remove_dye").is_some_and(|ids| ids.contains(&item))
+}
+
+fn dyed_color(stack: &ItemStack) -> Option<u32> {
+    let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:dyed_color")?;
+    let (_, data) = stack.added.iter().find(|(t, _)| *t as u32 == ty)?;
+    Some(u32::from_be_bytes(data.get(..4)?.try_into().ok()?))
+}
+
+/// `DyedItemColor.applyDyes`: the average of the colours, kept as bright as they were.
+pub fn mix_dyes(current: Option<u32>, dyes: &[u32]) -> u32 {
+    let (mut r, mut g, mut b, mut intensity, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
+    for color in current.into_iter().chain(dyes.iter().copied()) {
+        let (cr, cg, cb) = ((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+        intensity += cr.max(cg).max(cb);
+        r += cr;
+        g += cg;
+        b += cb;
+        n += 1;
+    }
+    if n == 0 {
+        return 0;
+    }
+    let (r, g, b) = (r / n, g / n, b / n);
+    let average = intensity as f32 / n as f32;
+    let max = r.max(g).max(b).max(1) as f32;
+    let scale = |c: u32| ((c as f32 * average / max) as u32).min(255);
+    (scale(r) << 16) | (scale(g) << 8) | scale(b)
+}
+
+/// An `ItemPredicate` as `filtered` uses it: items (an id, `#tag` or list) and component
+/// predicates, which this checks for presence (and enchantments for being non-empty).
+pub fn item_filter(filter: &Value, stack: &ItemStack) -> bool {
+    let items_ok = match &filter["items"] {
+        Value::Null => true,
+        Value::String(s) if s.starts_with('#') => paper_data::synced::tag("minecraft:item", &s[1..]).is_some_and(|ids| ids.contains(&stack.item)),
+        Value::String(s) => paper_data::items::id(s).is_some_and(|i| i as i32 == stack.item),
+        Value::Array(list) => list.iter().filter_map(Value::as_str).any(|s| paper_data::items::id(s).is_some_and(|i| i as i32 == stack.item)),
+        _ => false,
+    };
+    if !items_ok {
+        return false;
+    }
+    let components = filter["predicates"].as_object().into_iter().flatten().map(|(k, _)| k).chain(filter["components"].as_object().into_iter().flatten().map(|(k, _)| k));
+    for name in components {
+        match name.as_str() {
+            "minecraft:enchantments" | "minecraft:stored_enchantments" => {
+                if super::enchanting::read_enchantments(stack, name).is_empty() {
+                    return false;
+                }
+            }
+            other => {
+                let Some(ty) = paper_data::registries::id("minecraft:data_component_type", other) else { return false };
+                if !stack.added.iter().any(|(t, _)| *t as u32 == ty) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Evaluates a number provider: a constant, `uniform`, `binomial`, `constant` or `add`.
+pub(crate) fn number(v: &Value, rng: &mut impl Rng) -> f64 {
     match v {
         Value::Number(n) => n.as_f64().unwrap_or(0.0),
         Value::Object(o) => match o.get("type").and_then(Value::as_str).unwrap_or("minecraft:uniform") {
             "minecraft:constant" => o.get("value").and_then(Value::as_f64).unwrap_or(0.0),
+            "minecraft:add" => o.get("inputs").and_then(Value::as_array).map_or(0.0, |inputs| inputs.iter().map(|i| number(i, rng)).sum()),
             "minecraft:binomial" => {
                 let n = number(o.get("n").unwrap_or(&Value::Null), rng).round() as i32;
                 let p = number(o.get("p").unwrap_or(&Value::Null), rng);

@@ -228,6 +228,7 @@ impl Server {
                 }
             }
             Serverbound::Interact(p) => self.handle_interact(id, p.entity_id.0, p.hand.0),
+            Serverbound::SelectTrade(p) => self.handle_select_trade(id, p.item.0),
             Serverbound::ChatAck(_)
             | Serverbound::ChatSessionUpdate(_)
             | Serverbound::ClientTickEnd

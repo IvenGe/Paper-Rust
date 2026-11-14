@@ -137,7 +137,7 @@ fn standable(world: &World, x: i32, y: i32, z: i32) -> bool {
         && !matches!(blocks::block_of_state(state).name, "minecraft:magma_block" | "minecraft:cactus" | "minecraft:campfire" | "minecraft:soul_campfire")
 }
 
-fn walkable(world: &World, x: i32, y: i32, z: i32, height: i32) -> bool {
+pub(super) fn walkable(world: &World, x: i32, y: i32, z: i32, height: i32) -> bool {
     (0..height).all(|dy| passable(world, x, y + dy, z)) && standable(world, x, y, z)
 }
 
@@ -321,6 +321,7 @@ impl Server {
             in_love: 0,
             love_cause: None,
             egg_time: rng.gen_range(6000..12000),
+            merchant: None,
         };
         // Equipment and variants picked when spawning (`finalizeSpawn`).
         match name.as_str() {
@@ -354,6 +355,7 @@ impl Server {
         if mob.baby {
             mob.age = -24000;
         }
+        self.init_merchant(world, &name, pos, &mut mob, reason);
         let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::Mob(Box::new(mob)));
         e.yaw = rng.gen_range(0.0..360.0);
         e.head_yaw = e.yaw;
@@ -529,9 +531,20 @@ impl Server {
         // Movement goal.
         brain.speed_factor = 1.0;
         let mut goal: Option<Vec3> = None;
+        // Villagers and wandering traders stroll at half speed (`RandomStroll.stroll(0.5)`).
+        let merchant = mob.merchant.is_some();
+        if merchant {
+            brain.speed_factor = 0.5;
+        }
         if brain.panic_ticks > 0 {
             brain.panic_ticks -= 1;
-            brain.speed_factor = if info.name == "minecraft:chicken" { 1.4 } else { 2.0 };
+            brain.speed_factor = if info.name == "minecraft:chicken" {
+                1.4
+            } else if merchant {
+                0.6
+            } else {
+                2.0
+            };
             if brain.path.is_empty() {
                 let d = Vec3::new(rng.gen_range(-5.0..5.0), 0.0, rng.gen_range(-5.0..5.0));
                 goal = Some(pos.add(d));
@@ -620,6 +633,23 @@ impl Server {
                         }
                     }
                     None => brain.love_time = 0,
+                }
+            }
+            // Merchants stand still while trading and walk to their workstation.
+            if let Some(m) = mob.merchant.as_deref() {
+                if let Some(at) = m.trading_player.and_then(|p| self.players.get(&p)).map(|p| Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z)) {
+                    busy = true;
+                    brain.path.clear();
+                    brain.walk_target = None;
+                    brain.look_at = Some(at);
+                } else if let Some(target) = brain.walk_target {
+                    busy = true;
+                    if target.distance_squared(pos) > 1.0 {
+                        goal = Some(target);
+                    } else {
+                        brain.path.clear();
+                        brain.walk_target = None;
+                    }
                 }
             }
             if kind == Behavior::Animal && !busy {
@@ -868,9 +898,11 @@ impl Server {
         } else {
             let slip = if e.on_ground { friction_below(w, e.pos) } else { 1.0 };
             let friction = if e.on_ground { slip * 0.91 } else { 0.91 };
+            // `moveRelative(getFrictionInfluencedSpeed(), input)`: a mob's input is its speed
+            // (`Mob.setSpeed` sets `zza` too), so it speeds up by its speed squared.
             let accel = if e.on_ground { forward * (0.216_000_02 / (slip * slip * slip)) } else { 0.02 };
             if forward > 0.0 {
-                e.vel = e.vel.add(input.scale(accel / forward));
+                e.vel = e.vel.add(input.scale(accel));
             }
             if jump && e.on_ground {
                 e.vel.y = info.attribute("jump_strength").unwrap_or(0.42);

@@ -45,7 +45,7 @@ fn item_name(stack: &ItemStack) -> &'static str {
 }
 
 impl Server {
-    fn entity_event(&self, world: usize, id: i32, status: i8) {
+    pub(super) fn entity_event(&self, world: usize, id: i32, status: i8) {
         self.broadcast_entity(world, id, Bytes::from(encode_packet(&play::EntityEvent { entity_id: id, status })));
     }
 
@@ -109,6 +109,12 @@ impl Server {
         }
         let Some(mob) = e.mob().filter(|m| !m.living.is_dead()) else { return };
         let (name, baby, sheared, age, in_love) = (e.info.name.clone(), mob.baby, mob.sheared, mob.age, mob.in_love);
+        let merchant = mob.merchant.is_some();
+        let name_tag = held.as_ref().is_some_and(|s| item_name(s) == "minecraft:name_tag");
+        // Villagers and wandering traders trade (name tags still name them).
+        if merchant && !name_tag && self.merchant_interact(id, world, target, hand, held.as_ref()) {
+            return;
+        }
         let Some(stack) = held else { return };
         let item = item_name(&stack);
 

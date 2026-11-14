@@ -12,12 +12,12 @@ use uuid::Uuid;
 /// Equipment keys in the order of `Mob::equipment`.
 const EQUIPMENT: [&str; 6] = ["mainhand", "offhand", "feet", "legs", "chest", "head"];
 
-fn uuid_tag(uuid: Uuid) -> Tag {
+pub(crate) fn uuid_tag(uuid: Uuid) -> Tag {
     let v = uuid.as_u128();
     Tag::IntArray(vec![(v >> 96) as i32, (v >> 64) as i32, (v >> 32) as i32, v as i32])
 }
 
-fn uuid_from(tag: Option<&Tag>) -> Option<Uuid> {
+pub(crate) fn uuid_from(tag: Option<&Tag>) -> Option<Uuid> {
     let Some(Tag::IntArray(v)) = tag else { return None };
     if v.len() != 4 {
         return None;
@@ -48,6 +48,12 @@ pub fn ages(name: &str) -> bool {
 
 /// The saved form of an entity, or `None` for entities that are not saved (dead ones).
 pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
+    entity_to_nbt_in(e, "minecraft:overworld")
+}
+
+/// The saved form of an entity in the world of `dimension` (which positions it remembers,
+/// such as a villager's workstation, are in).
+pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
     // Thrown eyes of ender live for four seconds and are not kept.
     if e.removed || !e.is_alive() || matches!(e.kind, EntityKind::EyeOfEnder { .. }) {
         return None;
@@ -126,6 +132,9 @@ pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
                 c.insert("Color", Tag::Byte(mob.variant as i8));
                 c.insert("Sheared", Tag::Byte(mob.sheared as i8));
             }
+            if let Some(merchant) = &mob.merchant {
+                merchant.save(&mut c, dimension, e.info.name == "minecraft:villager");
+            }
         }
         EntityKind::EyeOfEnder { .. } | EntityKind::Other => {}
     }
@@ -192,6 +201,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 in_love: c.i32("InLove").unwrap_or(0),
                 love_cause: None,
                 egg_time: c.i32("EggLayTime").unwrap_or(6000),
+                merchant: crate::server::villagers::is_merchant(&info.name).then(|| Box::new(crate::world::merchant::Merchant::load(c, info.name == "minecraft:villager"))),
             }))
         }
         _ => EntityKind::Other,
@@ -238,6 +248,7 @@ mod tests {
             in_love: 0,
             love_cause: None,
             egg_time: 0,
+            merchant: None,
         };
         mob.living.health = 13.5;
         mob.equipment[5] = Slot::of(paper_data::items::id("minecraft:iron_helmet").unwrap() as i32, 1);

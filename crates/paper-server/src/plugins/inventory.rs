@@ -153,7 +153,7 @@ pub fn contents(server: &Server, inv: &InvRef) -> Result<Vec<Slot>> {
         InvRef::Crafting(id) => {
             let p = server.players.get(id).ok_or_else(|| anyhow!("player left"))?;
             match &p.open_menu {
-                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. }) => m.craft_grid.clone(),
+                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. }) => m.craft_grid.clone(),
                 _ => p.inventory[0..5].to_vec(),
             }
         }
@@ -200,7 +200,7 @@ pub fn set_slots(server: &mut Server, inv: &InvRef, changes: Vec<(usize, Slot)>)
         InvRef::Crafting(id) => {
             let p = server.players.get_mut(id).ok_or_else(|| anyhow!("player left"))?;
             match p.open_menu.as_mut() {
-                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. }) => {
+                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. }) => {
                     for (index, item) in changes {
                         m.craft_grid[index] = item;
                     }
@@ -342,6 +342,7 @@ pub fn menu_value(server: &Server, id: i32, kind: Option<&MenuKind>) -> Value {
         Some(MenuKind::CraftingTable) => ("WORKBENCH".to_owned(), 10, InvRef::Crafting(id), None),
         Some(MenuKind::Enchanting { .. }) => ("ENCHANTING".to_owned(), 2, InvRef::Crafting(id), None),
         Some(MenuKind::Anvil { .. }) => ("ANVIL".to_owned(), 3, InvRef::Crafting(id), None),
+        Some(MenuKind::Merchant { .. }) => ("MERCHANT".to_owned(), 3, InvRef::Crafting(id), None),
         Some(MenuKind::Brewing { world, pos }) => ("BREWING".to_owned(), 5, InvRef::Block { world: *world, positions: vec![*pos] }, None),
         Some(MenuKind::Furnace { world, pos, recipe_type }) => {
             let ty = match *recipe_type {

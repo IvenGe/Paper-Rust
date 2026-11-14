@@ -1948,3 +1948,107 @@ impl Decode for SetPlayerTeam {
         Ok(Self { name, method, parameters, members })
     }
 }
+
+/// What a trade asks for (`ItemCost`): an item, a count, and component values the payment
+/// must have (written as in the trusted slot format: type, then value).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TradeItem {
+    pub item: i32,
+    pub count: i32,
+    pub components: Vec<(i32, Vec<u8>)>,
+}
+
+impl TradeItem {
+    fn write(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.item);
+        w.put_varint(self.count);
+        w.put_list(&self.components, |w, (ty, data)| {
+            w.put_varint(*ty);
+            w.put_slice(data);
+        });
+    }
+
+    /// Component values have no length prefix, so only costs without components decode.
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let (item, count) = (r.varint()?, r.varint()?);
+        if r.len(64)? > 0 {
+            return Err(DecodeError::Other("cannot decode data components of a trade cost".into()));
+        }
+        Ok(Self { item, count, components: Vec::new() })
+    }
+}
+
+/// One offer of a merchant (`MerchantOffer`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TradeOffer {
+    pub cost_a: TradeItem,
+    pub result: Slot,
+    pub cost_b: Option<TradeItem>,
+    pub out_of_stock: bool,
+    pub uses: i32,
+    pub max_uses: i32,
+    pub xp: i32,
+    pub special_price: i32,
+    pub price_multiplier: f32,
+    pub demand: i32,
+}
+
+/// The offers shown in an open trading window, with the villager's level and experience.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MerchantOffers {
+    pub window_id: i32,
+    pub offers: Vec<TradeOffer>,
+    pub level: i32,
+    pub xp: i32,
+    /// Villagers show their experience bar; wandering traders do not.
+    pub show_progress: bool,
+    pub can_restock: bool,
+}
+
+packet_id!(MerchantOffers = play::clientbound::MERCHANT_OFFERS);
+
+impl Encode for MerchantOffers {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.window_id);
+        w.put_list(&self.offers, |w, o| {
+            o.cost_a.write(w);
+            o.result.encode_trusted(w);
+            w.put_bool(o.cost_b.is_some());
+            if let Some(b) = &o.cost_b {
+                b.write(w);
+            }
+            w.put_bool(o.out_of_stock);
+            w.put_i32(o.uses);
+            w.put_i32(o.max_uses);
+            w.put_i32(o.xp);
+            w.put_i32(o.special_price);
+            w.put_f32(o.price_multiplier);
+            w.put_i32(o.demand);
+        });
+        w.put_varint(self.level);
+        w.put_varint(self.xp);
+        w.put_bool(self.show_progress);
+        w.put_bool(self.can_restock);
+    }
+}
+
+impl Decode for MerchantOffers {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let window_id = r.varint()?;
+        let offers = r.list(256, |r| {
+            Ok(TradeOffer {
+                cost_a: TradeItem::read(r)?,
+                result: Slot::decode_trusted(r)?,
+                cost_b: r.option(TradeItem::read)?,
+                out_of_stock: r.bool()?,
+                uses: r.i32()?,
+                max_uses: r.i32()?,
+                xp: r.i32()?,
+                special_price: r.i32()?,
+                price_multiplier: r.f32()?,
+                demand: r.i32()?,
+            })
+        })?;
+        Ok(Self { window_id, offers, level: r.varint()?, xp: r.varint()?, show_progress: r.bool()?, can_restock: r.bool()? })
+    }
+}

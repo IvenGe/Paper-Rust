@@ -20,6 +20,7 @@ pub mod entity;
 pub mod entity_nbt;
 pub mod generator;
 pub mod light;
+pub mod merchant;
 pub mod portal;
 pub mod rules;
 pub mod staged;
@@ -101,6 +102,11 @@ pub struct World {
     pub daylight_cycle: bool,
     pub weather: Weather,
     pub rules: rules::GameRules,
+    /// The wandering trader spawner (`WanderingTraderSpawner`): ticks until it next checks,
+    /// ticks until the next try (saved), and the chance of that try in percent (saved).
+    pub trader_tick_delay: i32,
+    pub trader_spawn_delay: i32,
+    pub trader_spawn_chance: i32,
     /// Network id of the world's clock in `minecraft:world_clock`, if it has one.
     pub clock: Option<i32>,
     /// Size of the synchronised biome registry.
@@ -198,6 +204,9 @@ impl World {
             age: 0,
             day_time: 0,
             daylight_cycle: true,
+            trader_tick_delay: 1200,
+            trader_spawn_delay: 24000,
+            trader_spawn_chance: 25,
             weather: Weather::default(),
             rules: rules::GameRules::default(),
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
@@ -645,7 +654,7 @@ impl World {
         // The entities of unloaded chunks are saved and leave memory with them.
         for (pos, was_saved) in unloaded {
             let ids: Vec<i32> = self.entity_chunks.remove(&pos).map(|s| s.into_iter().collect()).unwrap_or_default();
-            let saved: Vec<paper_nbt::Compound> = ids.iter().filter_map(|id| self.entities.get(id)).filter_map(entity_nbt::entity_to_nbt).collect();
+            let saved: Vec<paper_nbt::Compound> = ids.iter().filter_map(|id| self.entities.get(id)).filter_map(|e| entity_nbt::entity_to_nbt_in(e, &self.dimension)).collect();
             if let Some(storage) = &self.storage {
                 if !saved.is_empty() || was_saved {
                     storage.save_entities(pos, saved);
@@ -810,7 +819,7 @@ impl World {
         let Some(storage) = &self.storage else { return saved };
         // Entities move all the time: every loaded chunk that has (or had) some is written.
         for (pos, chunk) in self.chunks.iter_mut() {
-            let list: Vec<paper_nbt::Compound> = self.entity_chunks.get(pos).map(|ids| ids.iter().filter_map(|id| self.entities.get(id)).filter_map(entity_nbt::entity_to_nbt).collect()).unwrap_or_default();
+            let list: Vec<paper_nbt::Compound> = self.entity_chunks.get(pos).map(|ids| ids.iter().filter_map(|id| self.entities.get(id)).filter_map(|e| entity_nbt::entity_to_nbt_in(e, &self.dimension)).collect()).unwrap_or_default();
             if list.is_empty() && !chunk.entities_saved {
                 continue;
             }
@@ -834,6 +843,8 @@ impl World {
             game_type,
             hardcore,
             weather: self.weather.clone(),
+            trader_spawn_delay: self.trader_spawn_delay,
+            trader_spawn_chance: self.trader_spawn_chance,
         }
     }
 
@@ -845,6 +856,9 @@ impl World {
         self.day_time = level.day_time;
         self.daylight_cycle = level.daylight_cycle;
         self.weather = level.weather.clone();
+        // Vanilla starts over with a day's wait and 25% when nothing was saved.
+        self.trader_spawn_delay = if level.trader_spawn_delay > 0 { level.trader_spawn_delay } else { 24000 };
+        self.trader_spawn_chance = if level.trader_spawn_chance > 0 { level.trader_spawn_chance } else { 25 };
     }
 
     /// Advances world time by one tick.
