@@ -253,6 +253,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `world.set_time` | `world`, `time`, `daylight_cycle` |
 | `world.set_spawn` | `world`, `x`, `y`, `z`, `yaw` |
 | `world.is_chunk_loaded` | `world`, `x`, `z` |
+| `server.create_world` | `name`, `environment` (`NORMAL`, `NETHER`, `THE_END`), `seed`, `type` (`NORMAL`, `FLAT`), `structures` (answers the world, like `worlds` in the welcome) |
 | `server.dispatch_command` | `sender`, `command` (built-in commands; answers whether one ran) |
 | `server.broadcast` | `message` |
 | `server.status` | (answers `tps`, `mspt`, `tick`, `online`) |

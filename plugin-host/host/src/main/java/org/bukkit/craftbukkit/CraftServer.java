@@ -558,6 +558,35 @@ public final class CraftServer extends AbstractServer {
         return List.copyOf(this.worlds);
     }
 
+    /**
+     * The world of that name: loaded already, opened from its folder, or made by the server
+     * (normal or flat; overworld, Nether or End). Plugins' own chunk generators and biome
+     * providers are not supported.
+     */
+    @Override
+    public @Nullable World createWorld(final org.bukkit.WorldCreator creator) {
+        if (creator == null) {
+            throw new IllegalArgumentException("WorldCreator cannot be null");
+        }
+        final World existing = this.getWorld(creator.name());
+        if (existing != null) {
+            return existing;
+        }
+        if (creator.generator() != null) {
+            throw io.papermc.paperrs.host.Unsupported.method("WorldCreator#generator");
+        }
+        if (creator.biomeProvider() != null) {
+            throw io.papermc.paperrs.host.Unsupported.method("WorldCreator#biomeProvider");
+        }
+        final Map<String, Object> info = Values.map(this.call("server.create_world", Values.of("name", creator.name(), "environment", creator.environment().name(),
+            "seed", creator.seed(), "type", creator.type().name(), "structures", creator.generateStructures())));
+        final World world = new HostWorld(this, info);
+        this.worlds.add(world);
+        new org.bukkit.event.world.WorldInitEvent(world).callEvent();
+        new org.bukkit.event.world.WorldLoadEvent(world).callEvent();
+        return world;
+    }
+
     @Override
     public @Nullable World getWorld(final String name) {
         for (World world : this.worlds) {

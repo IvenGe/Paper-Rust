@@ -413,9 +413,6 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         "player.teleport" => {
             let id = player_id(server, args)?;
             let world = world_index(server, args)?;
-            if server.players[&id].world != world {
-                bail!("teleporting between worlds is not supported yet");
-            }
             let current = server.players[&id].loc;
             let target = Location {
                 x: args.f64("x").unwrap_or(current.x),
@@ -424,7 +421,12 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 yaw: args.f64("yaw").map_or(current.yaw, |v| v as f32),
                 pitch: args.f64("pitch").map_or(current.pitch, |v| v as f32),
             };
-            server.teleport(id, target);
+            if server.players[&id].world == world {
+                server.teleport(id, target);
+            } else {
+                // To another world, as portals take players.
+                server.change_dimension(id, world, target);
+            }
             Ok(player_state(server, &server.players[&id]))
         }
         "player.set_game_mode" => {
@@ -720,6 +722,12 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         }
 
         // --- server ---
+        // `Bukkit.createWorld`: the world of that name, opened or made.
+        "server.create_world" => {
+            let name = args.str("name").ok_or_else(|| anyhow!("missing name"))?;
+            let index = server.create_world(name, args.str("environment").unwrap_or("NORMAL"), args.i64("seed"), args.str("type").unwrap_or("NORMAL"), args.bool("structures").unwrap_or(true))?;
+            Ok(world_info(&server.worlds[index]))
+        }
         "server.dispatch_command" => {
             let command = args.str("command").ok_or_else(|| anyhow!("missing command"))?.to_owned();
             let source = match args.str("sender") {

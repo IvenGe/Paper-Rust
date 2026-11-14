@@ -194,6 +194,25 @@ final class ApiTests implements Listener, CommandExecutor {
                     feather.setOwner(player.getUniqueId());
                     sender.sendMessage("owner: " + stranger.equals(stick.getOwner()) + " " + stranger.equals(stick.getThrower()) + " " + player.getUniqueId().equals(feather.getOwner()) + " " + (feather.getThrower() == null));
                 }
+                case "worlds" -> {
+                    // A flat world made by the plugin, once; Alice goes there.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final org.bukkit.World flat = Bukkit.createWorld(new org.bukkit.WorldCreator("plugin_flat").type(org.bukkit.WorldType.FLAT));
+                    check(failures, flat != null && "plugin_flat".equals(flat.getName()) && flat.getEnvironment() == org.bukkit.World.Environment.NORMAL, "created");
+                    check(failures, Bukkit.getWorld("plugin_flat") == flat, "listed");
+                    check(failures, Bukkit.createWorld(new org.bukkit.WorldCreator("plugin_flat")) == flat, "made once");
+                    try {
+                        Bukkit.createWorld(new org.bukkit.WorldCreator("plugin_amplified").type(org.bukkit.WorldType.AMPLIFIED));
+                        failures.add("an amplified world");
+                    } catch (RuntimeException expected) {
+                        // Not supported yet: the server says so.
+                    }
+                    if (flat != null) {
+                        player.teleport(new org.bukkit.Location(flat, 8.5, -60, 8.5));
+                    }
+                    report(sender, "worlds", failures);
+                }
                 case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
                     try {

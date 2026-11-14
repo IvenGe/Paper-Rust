@@ -280,6 +280,8 @@ What works:
     `PlayerTradeEvent`, `PlayerPurchaseEvent`, `TradeSelectEvent`,
     `VillagerAcquireTradeEvent`, `VillagerCareerChangeEvent` and
     `VillagerReplenishTradeEvent`;
+  * worlds made by plugins (`Bukkit.createWorld`): normal or flat; overworld, Nether or End;
+    opened again from their folders; and players teleported from one world to another;
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload)).
 
 Not yet:
@@ -298,7 +300,8 @@ Not yet:
   cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
   used or broken only when placed, eaten or drunk, thrown, used as spawn eggs, buckets or
   bottles, or worn out as tools.
-* Plugin API: creating worlds, registry and tag lifecycle events,
+* Plugin API: plugins' own chunk generators and biome providers, amplified and large-biome
+  worlds, unloading worlds, registry and tag lifecycle events,
   dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of

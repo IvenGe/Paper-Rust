@@ -465,6 +465,66 @@ impl Server {
         Ok(world)
     }
 
+    /// A world a plugin asks for (`Bukkit.createWorld`): the loaded world of that name, the
+    /// world in that folder under the server directory (with the seed and generator it was
+    /// made with), or a new one. `environment` is Bukkit's (`NORMAL`, `NETHER`, `THE_END`),
+    /// `kind` its world type (`NORMAL` or `FLAT`). Answers the world's index.
+    pub fn create_world(&mut self, name: &str, environment: &str, seed: Option<i64>, kind: &str, structures: bool) -> Result<usize> {
+        if let Some(index) = self.worlds.iter().position(|w| w.name == name) {
+            return Ok(index);
+        }
+        if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
+            bail!("invalid world name {name:?}");
+        }
+        let (dimension, subdir) = match environment {
+            "NETHER" => ("minecraft:the_nether", Some("DIM-1")),
+            "THE_END" => ("minecraft:the_end", Some("DIM1")),
+            "NORMAL" => ("minecraft:overworld", None),
+            other => bail!("{other} worlds are not supported by Paper-RS yet"),
+        };
+        let generator_kind = match kind {
+            "NORMAL" => "vanilla",
+            "FLAT" => "flat",
+            other => bail!("{other} worlds are not supported by Paper-RS yet"),
+        };
+        let io = self.worlds.first().and_then(|w| w.storage.as_ref()).map(|s| s.io().clone());
+        let storage = match io {
+            Some(io) => {
+                let dir = self.config.root.join(name);
+                Some(match subdir {
+                    Some(sub) => WorldStorage::open_dimension(&dir, sub, io)?,
+                    None => WorldStorage::open(&dir, io)?,
+                })
+            }
+            None => None,
+        };
+        let level = match &storage {
+            Some(storage) => storage.read_level().with_context(|| format!("reading {}", storage.dir.join("level.dat").display()))?,
+            None => None,
+        };
+        let seed = level.as_ref().map(|l| l.seed).or(seed).unwrap_or_else(rand::random);
+        let kind = level.as_ref().map_or(generator_kind, |l| l.generator.as_str()).to_owned();
+        let vanilla = self.worlds.first().and_then(|w| w.vanilla.clone());
+        let min_y = paper_data::synced::dimension_type(dimension).map_or(0, |d| d.min_y);
+        let generator = Self::make_generator(vanilla.as_deref(), dimension, &kind, seed, min_y, level.is_some(), structures)?;
+        let index = self.worlds.len();
+        let mut world = Self::open_world(index, name, dimension, seed, generator.clone(), storage, level.as_ref(), vanilla)?;
+        if level.is_none() {
+            match (dimension, generator.staged()) {
+                ("minecraft:overworld", Some(vanilla)) => {
+                    let (x, y, z) = vanilla.find_spawn();
+                    world.spawn = paper_protocol::codec::BlockPos::new(x, y, z);
+                }
+                ("minecraft:the_end", _) => world.spawn = paper_protocol::codec::BlockPos::new(100, 49, 0),
+                ("minecraft:the_nether", _) => world.spawn = paper_protocol::codec::BlockPos::new(0, 64, 0),
+                _ => {}
+            }
+        }
+        log::info!("Opened world '{name}' ({environment}, seed {seed}, {} terrain) for a plugin", world.generator.name());
+        self.worlds.push(world);
+        Ok(index)
+    }
+
     /// The world of a dimension (`minecraft:the_nether`, ...), if it exists.
     pub fn world_of_dimension(&self, dimension: &str) -> Option<usize> {
         self.worlds.iter().position(|w| w.dimension == dimension)

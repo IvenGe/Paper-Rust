@@ -692,6 +692,25 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest items");
     expect_line(&mut alice, "items: ok");
 
+    // A world a plugin makes (`Bukkit.createWorld`): flat as asked, with Alice sent there,
+    // and saved in its own folder.
+    alice.command("apitest worlds");
+    expect_line(&mut alice, "worlds: ok");
+    let (index, generator) = server
+        .handle
+        .run(|s| {
+            let index = s.worlds.iter().position(|w| w.name == "plugin_flat").unwrap();
+            (index, s.worlds[index].generator.name())
+        })
+        .unwrap();
+    assert_eq!(generator, "flat");
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while server.handle.run(|s| s.player_by_name("Alice").unwrap().world).unwrap() != index {
+        assert!(std::time::Instant::now() < deadline, "Alice goes to the new world");
+        alice.drain(Duration::from_millis(50));
+    }
+
     server.stop();
+    assert!(dir.join("plugin_flat").join("level.dat").exists(), "the new world is saved in its folder");
     let _ = std::fs::remove_dir_all(&dir);
 }
