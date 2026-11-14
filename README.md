@@ -171,7 +171,8 @@ What works:
   damage, reach, ...) with the modifiers of equipment, effects and sprinting, sent to the
   clients and saved with players and mobs; explosions
   that break blocks and hurt and push entities. Blocks take vanilla's mining time (tool
-  speeds, efficiency, haste, mining fatigue, water and air) and drop their loot. Status
+  speeds, efficiency, haste, mining fatigue, water and air) and drop their loot; ores,
+  spawners and sculk give experience when mined with the right tool, not with silk touch. Status
   effects (`/effect`, golden apples, potions, poisonous food, milk, chorus fruit, poisonous
   mob bites): regeneration, poison, wither, hunger, saturation, instant health and damage,
   absorption, resistance, fire resistance, water breathing, strength, weakness, jump boost,
@@ -319,6 +320,14 @@ What works:
   * chunks: `getChunkAt` loads or generates the chunk on the spot as on Paper, loaded and
     generated chunks, force-loaded chunks, plugin chunk tickets, a chunk's entities and block
     entities, slime chunks;
+  * game rules (`getGameRuleValue`, `setGameRule`, by name too, the Bukkit constants of rules
+    vanilla replaced, `WorldGameRuleChangeEvent`), a world's own plugin data (saved as Paper
+    saves it, `data/paper/persistent_data_container.dat`), metadata on worlds, blocks and
+    block states, `World#save`, the world folder, plugin messages to a world's players;
+  * blocks: `breakNaturally` (drops, experience and the break effect, as with the given
+    tool), `getDrops`, collision, how pistons move them, legacy data values; block entities as
+    block states written back by `update()`: custom names (`Nameable`), plugin data
+    (`TileState`), banner patterns, a spawner's mob and timings;
   * Folia's entity scheduler (`Entity.getScheduler`) and region checks, `matchPlayer`, player
     profiles, server-wide plugin messages and the server's settings;
   * WorldEdit: it only works through an adapter for the server version, and the ones it ships
@@ -329,9 +338,19 @@ What works:
     features from WorldEdit are not supported;
   * Paper's start-up order: STARTUP plugins are enabled before the worlds load, then each
     world loads with `WorldInitEvent` and `WorldLoadEvent`, then the POSTWORLD plugins.
-    Libraries bundled in plugins recognise the server as Paper (PaperLib), plugins logging with
-    Log4j are logged, and reading or changing a block of an unloaded chunk loads it first, as
-    on Paper;
+    Libraries bundled in plugins recognise the server as Paper (PaperLib), and reading or
+    changing a block of an unloaded chunk loads it first, as on Paper. A plugin whose
+    lifecycle handler fails (often one reaching for Minecraft's own classes) is logged, and
+    the other plugins still start;
+  * what Paper's server offers plugins besides the API: Log4j with log4j-core (plugins add
+    console filters and appenders; it all ends up in the server's log), the SQLite and MySQL
+    JDBC drivers, Commons Lang 2, json-simple; and the field permission plugins swap their own
+    permissions into (`CraftHumanEntity.perm`, for LuckPerms). In a test with 32 popular
+    plugins loaded together, 24 enabled (EssentialsX, LuckPerms, Vault, WorldEdit, WorldGuard,
+    Multiverse, GriefPrevention, BlueMap, DiscordSRV, TAB, PlaceholderAPI, Plan, DeluxeMenus,
+    Chunky, ...); the others use Minecraft's internal classes (dynmap, squaremap, InvSee++,
+    DecentHolograms, Simple Voice Chat, LagFixer), refuse the version (CoreProtect 24.1), or
+    need crafting recipes from plugins (LifeStealZ);
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload));
   * Paper's class rewriting as plugins load (Commodore): fields and enum constants renamed
     since a plugin's api-version, enums that became registries, and `Material.values()`

@@ -54,11 +54,16 @@ impl Server {
         if let Some(name) = held.0.as_ref().filter(|s| item_data::by_id(s.item as u32).tool.is_some()).and_then(|s| paper_data::items::get(s.item as u32)).map(|i| i.name) {
             self.award_stat(id, "minecraft:used", name, 1);
         }
-        if !paper_data::physics::requires_correct_tool(old) || self.tool_is_correct(&held, old) {
+        let harvested = !paper_data::physics::requires_correct_tool(old) || self.tool_is_correct(&held, old);
+        if harvested {
             self.award_stat(id, "minecraft:mined", blocks::block_of_state(old).name, 1);
         }
         if self.worlds[world].rules.bool("block_drops") {
             self.drop_block_loot(world, pos, old, Some(&held), None);
+            // Ores, spawners and sculk give experience, mined with the right tool.
+            if harvested {
+                self.drop_block_experience(world, pos, old, Some(&held));
+            }
         }
         self.add_exhaustion(id, 0.005);
         // Tools wear when they break something that takes time to break.

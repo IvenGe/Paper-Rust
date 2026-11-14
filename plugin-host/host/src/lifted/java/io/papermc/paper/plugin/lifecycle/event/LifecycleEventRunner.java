@@ -1,4 +1,5 @@
 // Copied from paper-server/src/main/java/io/papermc/paper/plugin/lifecycle/event/LifecycleEventRunner.java by plugin-host/host/tools/lift.py.
+// Edited: a handler that fails (often one reaching for Minecraft's own classes, which the host does not have) is logged and the other plugins' handlers still run, instead of the whole start-up failing.
 package io.papermc.paper.plugin.lifecycle.event;
 
 import io.papermc.paper.plugin.lifecycle.event.registrar.PaperRegistrar;
@@ -56,7 +57,7 @@ public class LifecycleEventRunner {
                 }
                 registeredHandler.lifecycleEventHandler().run(event);
             } catch (final Throwable ex) {
-                throw new RuntimeException("Could not run '%s' lifecycle event handler from %s".formatted(lifecycleEventType.name(), registeredHandler.owner().getPluginMeta().getDisplayName()), ex);
+                org.slf4j.LoggerFactory.getLogger(LifecycleEventRunner.class).error("Could not run '{}' lifecycle event handler from {}", lifecycleEventType.name(), registeredHandler.owner().getPluginMeta().getDisplayName(), ex);
             } finally {
                 if (event instanceof final OwnerAwareLifecycleEvent<?> ownerAwareEvent) {
                     ownerAwareEvent.setOwner(null);

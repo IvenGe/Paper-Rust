@@ -62,7 +62,7 @@ public final class HostRegistryAccess implements RegistryAccess {
         this.register(RegistryKey.FLUID, org.bukkit.Fluid.class, "fluid", HostFluid::new);
         this.register(RegistryKey.SOUND_EVENT, org.bukkit.Sound.class, "subtitles", HostSound::new);
         this.registerDataComponents();
-        this.register(RegistryKey.GAME_RULE, org.bukkit.GameRule.class, "gamerule", HostGameRule::new);
+        this.register(RegistryKey.GAME_RULE, org.bukkit.GameRule.class, "gamerule", io.papermc.paperrs.host.world.HostGameRule::new);
         this.register(RegistryKey.BIOME, org.bukkit.block.Biome.class, "biome", HostBiome::new);
         this.register(RegistryKey.STRUCTURE, org.bukkit.generator.structure.Structure.class, "structure", HostStructure::new);
         this.register(RegistryKey.TRIM_MATERIAL, org.bukkit.inventory.meta.trim.TrimMaterial.class, "trim_material", HostTrimMaterial::new);

@@ -130,6 +130,7 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "playerstate" -> this.playerState((Player) sender);
                 case "worldstate" -> this.worldState((Player) sender);
                 case "signs" -> this.signs((Player) sender);
+                case "worldapi" -> this.worldApi((Player) sender);
                 case "merchant" -> this.merchant((Player) sender);
                 case "career" -> this.career((Player) sender);
                 case "riding" -> this.riding((Player) sender);
@@ -298,6 +299,77 @@ final class ApiTests implements Listener, CommandExecutor {
         check(failures, again.isWaxed() && "Hello".equals(again.getLine(0)), "waxed, old API");
         block.setType(Material.AIR);
         report(player, "signs", failures);
+    }
+
+    /** A plugin may change a game rule value on its way (WorldGameRuleChangeEvent). */
+    @EventHandler
+    public void onGameRuleChange(final io.papermc.paper.event.world.WorldGameRuleChangeEvent event) {
+        if (event.getGameRule().equals(org.bukkit.GameRules.MAX_ENTITY_CRAMMING) && "13".equals(event.getValue())) {
+            event.setValue("14");
+        }
+    }
+
+    /**
+     * Game rules, the world's own plugin data and metadata, blocks broken naturally, and block
+     * entities: custom names, plugin data, banners and spawners.
+     */
+    private void worldApi(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final World world = player.getWorld();
+        // Game rules: by rule and by name, a legacy constant, and a listener changing a value.
+        check(failures, !world.getGameRuleValue(org.bukkit.GameRules.KEEP_INVENTORY), "keep_inventory off");
+        check(failures, world.setGameRule(org.bukkit.GameRules.KEEP_INVENTORY, true) && world.getGameRuleValue(org.bukkit.GameRules.KEEP_INVENTORY), "keep_inventory on");
+        check(failures, "true".equals(world.getGameRuleValue("keep_inventory")) && world.isGameRule("minecraft:keep_inventory") && !world.isGameRule("no_such_rule"), "rules by name");
+        check(failures, world.setGameRule(org.bukkit.GameRules.RANDOM_TICK_SPEED, 5) && world.getGameRuleValue(org.bukkit.GameRules.RANDOM_TICK_SPEED) == 5, "random_tick_speed");
+        @SuppressWarnings("deprecation") final org.bukkit.GameRule<Boolean> fireTick = org.bukkit.GameRule.DO_FIRE_TICK;
+        check(failures, world.getGameRuleValue(fireTick) && world.setGameRule(fireTick, false) && world.getGameRuleValue(org.bukkit.GameRules.FIRE_SPREAD_RADIUS_AROUND_PLAYER) == 0, "fire tick, a legacy rule");
+        world.setGameRule(fireTick, true);
+        check(failures, world.setGameRule(org.bukkit.GameRules.MAX_ENTITY_CRAMMING, 13) && world.getGameRuleValue(org.bukkit.GameRules.MAX_ENTITY_CRAMMING) == 14, "changed by a listener");
+        check(failures, java.util.Arrays.asList(world.getGameRules()).contains("minecraft:keep_inventory") && world.getPVP(), "rule names, pvp");
+        // The world's own plugin data, and metadata on worlds and blocks.
+        final NamespacedKey key = new NamespacedKey(this.plugin, "visits");
+        world.getPersistentDataContainer().set(key, PersistentDataType.INTEGER, 42);
+        check(failures, world.getPersistentDataContainer().get(key, PersistentDataType.INTEGER) == 42, "world data");
+        final Block block = player.getLocation().add(3, 0, -3).getBlock();
+        world.setMetadata("marker", new org.bukkit.metadata.FixedMetadataValue(this.plugin, "w"));
+        block.setMetadata("marker", new org.bukkit.metadata.FixedMetadataValue(this.plugin, "b"));
+        check(failures, "w".equals(world.getMetadata("marker").getFirst().asString()) && "b".equals(block.getMetadata("marker").getFirst().asString())
+            && block.getState().hasMetadata("marker") && !block.getRelative(org.bukkit.block.BlockFace.UP).hasMetadata("marker"), "metadata");
+        // Stone drops cobblestone with no tool or a pickaxe, nothing with a stick; breaking it
+        // naturally leaves the cobblestone there.
+        block.setType(Material.STONE);
+        check(failures, block.getDrops().stream().anyMatch(i -> i.getType() == Material.COBBLESTONE), "drops of stone " + block.getDrops());
+        check(failures, block.getDrops(new ItemStack(Material.STICK)).isEmpty() && !block.getDrops(new ItemStack(Material.WOODEN_PICKAXE)).isEmpty(), "drops by tool");
+        check(failures, !block.isPassable() && block.getPistonMoveReaction() == org.bukkit.block.PistonMoveReaction.MOVE, "stone is solid and moves");
+        check(failures, block.breakNaturally() && block.getType() == Material.AIR, "broken naturally");
+        // A chest's name and plugin data, a banner's patterns, a spawner's mob.
+        final Block chestBlock = player.getLocation().add(3, 0, -5).getBlock();
+        chestBlock.setType(Material.CHEST);
+        final Chest chest = (Chest) chestBlock.getState();
+        chest.customName(Component.text("Loot"));
+        chest.getPersistentDataContainer().set(key, PersistentDataType.STRING, "owned");
+        check(failures, chest.update(), "chest update");
+        final Chest chestAgain = (Chest) chestBlock.getState();
+        check(failures, "Loot".equals(chestAgain.getCustomName()) && "owned".equals(chestAgain.getPersistentDataContainer().get(key, PersistentDataType.STRING)), "chest name and data " + chestAgain.getCustomName());
+        final Block bannerBlock = player.getLocation().add(5, 0, -5).getBlock();
+        bannerBlock.setType(Material.RED_BANNER);
+        final org.bukkit.block.Banner banner = (org.bukkit.block.Banner) bannerBlock.getState();
+        banner.addPattern(new org.bukkit.block.banner.Pattern(org.bukkit.DyeColor.WHITE, org.bukkit.block.banner.PatternType.STRIPE_TOP));
+        check(failures, banner.update(), "banner update");
+        final org.bukkit.block.Banner bannerAgain = (org.bukkit.block.Banner) bannerBlock.getState();
+        check(failures, bannerAgain.getBaseColor() == org.bukkit.DyeColor.RED && bannerAgain.numberOfPatterns() == 1 && bannerAgain.getPattern(0).getColor() == org.bukkit.DyeColor.WHITE
+            && bannerAgain.getPattern(0).getPattern() == org.bukkit.block.banner.PatternType.STRIPE_TOP, "banner patterns");
+        final Block spawnerBlock = player.getLocation().add(5, 0, -7).getBlock();
+        spawnerBlock.setType(Material.SPAWNER);
+        final org.bukkit.block.CreatureSpawner spawner = (org.bukkit.block.CreatureSpawner) spawnerBlock.getState();
+        spawner.setSpawnedType(org.bukkit.entity.EntityType.ZOMBIE);
+        spawner.setDelay(100);
+        check(failures, spawner.update(), "spawner update");
+        final org.bukkit.block.CreatureSpawner spawnerAgain = (org.bukkit.block.CreatureSpawner) spawnerBlock.getState();
+        check(failures, spawnerAgain.getSpawnedType() == org.bukkit.entity.EntityType.ZOMBIE && spawnerAgain.getDelay() == 100, "spawner " + spawnerAgain.getSpawnedType());
+        check(failures, world.getWorldFolder().getName().equals(world.getName()), "world folder " + world.getWorldFolder());
+        world.save();
+        report(player, "worldapi", failures);
     }
 
     /** The world border and the weather of a world. */

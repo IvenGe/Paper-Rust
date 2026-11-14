@@ -67,5 +67,31 @@ public final class HostLogging {
             public void close() {
             }
         });
+        forwardLog4j();
+    }
+
+    /**
+     * Log4j (log4j-core, as on Paper, so plugins can add filters and appenders to its root
+     * logger) logs through java.util.logging too: one appender on the root logger hands every
+     * event to the JUL logger of the same name.
+     */
+    private static void forwardLog4j() {
+        final org.apache.logging.log4j.core.LoggerContext context = (org.apache.logging.log4j.core.LoggerContext) org.apache.logging.log4j.LogManager.getContext(false);
+        final org.apache.logging.log4j.core.config.Configuration config = context.getConfiguration();
+        final org.apache.logging.log4j.core.Appender appender = new org.apache.logging.log4j.core.appender.AbstractAppender("PaperRsJul", null, null, true, org.apache.logging.log4j.core.config.Property.EMPTY_ARRAY) {
+            @Override
+            public void append(final org.apache.logging.log4j.core.LogEvent event) {
+                final org.apache.logging.log4j.Level level = event.getLevel();
+                final Level jul = level.isMoreSpecificThan(org.apache.logging.log4j.Level.ERROR) ? Level.SEVERE
+                    : level.isMoreSpecificThan(org.apache.logging.log4j.Level.WARN) ? Level.WARNING
+                    : level.isMoreSpecificThan(org.apache.logging.log4j.Level.INFO) ? Level.INFO : Level.FINE;
+                final String name = event.getLoggerName() == null ? "" : event.getLoggerName();
+                Logger.getLogger(name).log(jul, event.getMessage() == null ? "" : event.getMessage().getFormattedMessage(), event.getThrown());
+            }
+        };
+        appender.start();
+        config.addAppender(appender);
+        config.getRootLogger().addAppender(appender, null, null);
+        context.updateLoggers();
     }
 }

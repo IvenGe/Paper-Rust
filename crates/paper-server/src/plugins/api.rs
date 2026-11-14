@@ -115,6 +115,8 @@ fn world_info(w: &crate::world::World) -> Value {
         "height" => w.height,
         "seed" => w.seed,
         "sea_level" => w.generator.sea_level(),
+        // The world's folder (`level.dat`, `region`...), for `World#getWorldPath`.
+        "folder" => w.storage.as_ref().map_or(Value::Null, |s| Value::Str(s.dir.display().to_string())),
         "spawn" => Value::List(vec![w.spawn.x.into(), w.spawn.y.into(), w.spawn.z.into()]),
         "spawn_yaw" => w.spawn_yaw,
         "time" => w.day_time,
@@ -420,6 +422,14 @@ fn state_value(server: &Server, world: usize, x: i32, y: i32, z: i32) -> Value {
             "loaded" => true,
             "sky_light" => w.chunks.get(&crate::world::chunk::ChunkPos::of_block(x, z)).map_or(0, |c| c.sky_light_at((x & 15) as usize, y, (z & 15) as usize)),
             "block_light" => w.chunks.get(&crate::world::chunk::ChunkPos::of_block(x, z)).map_or(0, |c| c.block_light_at((x & 15) as usize, y, (z & 15) as usize)),
+            "collision" => blocks::has_collision(state),
+            "block_entity" => blocks::flags(state) & blocks::FLAG_BLOCK_ENTITY != 0,
+            "piston" => match paper_data::physics::push_reaction(state) {
+                paper_data::physics::PushReaction::Normal => "MOVE",
+                paper_data::physics::PushReaction::Destroy => "BREAK",
+                paper_data::physics::PushReaction::Block => "BLOCK",
+                paper_data::physics::PushReaction::PushOnly => "PUSH_ONLY",
+            },
         },
         None => bmap! { "state" => "minecraft:air", "id" => 0, "loaded" => false, "sky_light" => 0, "block_light" => 0 },
     }
@@ -819,6 +829,185 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let (x, y, z) = block_xyz(args)?;
             ensure_chunk(server, world, x, z);
             Ok(Value::Str(server.biome_at(world, x, y, z).to_owned()))
+        }
+        // A world's persistent data container (Paper's `paper:persistent_data_container`
+        // saved data), as network NBT.
+        "world.pdc" => {
+            let world = world_index(server, args)?;
+            Ok(match &server.worlds[world].plugin_data {
+                Some(data) => {
+                    let mut out = Vec::new();
+                    paper_nbt::write_network_compound(&mut out, data);
+                    Value::Bytes(out)
+                }
+                None => Value::Null,
+            })
+        }
+        "world.set_pdc" => {
+            let world = world_index(server, args)?;
+            let data = match args.get("data") {
+                Value::Bytes(b) if !b.is_empty() => match paper_nbt::read_network(&mut b.as_slice(), 2 * 1024 * 1024) {
+                    Ok(Some(paper_nbt::Tag::Compound(c))) => c,
+                    _ => bail!("invalid persistent data"),
+                },
+                _ => paper_nbt::Compound::new(),
+            };
+            server.worlds[world].plugin_data = Some(data);
+            Ok(Value::Bool(true))
+        }
+        // Game rules by name (`keep_inventory` or `minecraft:keep_inventory`); null for a
+        // rule there is not.
+        "world.game_rule" => {
+            let world = world_index(server, args)?;
+            let name = args.str("rule").unwrap_or("");
+            if paper_data::game_rules::get(name).is_none() {
+                return Ok(Value::Null);
+            }
+            Ok(match server.worlds[world].rules.get(name) {
+                paper_data::game_rules::Value::Bool(b) => Value::Bool(b),
+                paper_data::game_rules::Value::Int(i) => Value::Int(i as i64),
+            })
+        }
+        "world.set_game_rule" => {
+            use paper_data::game_rules::Value as Rule;
+            let world = world_index(server, args)?;
+            let name = args.str("rule").unwrap_or("");
+            let Some(rule) = paper_data::game_rules::get(name) else { return Ok(Value::Bool(false)) };
+            let value = match (rule.default, args.get("value")) {
+                (Rule::Bool(_), Value::Bool(b)) => Rule::Bool(*b),
+                (Rule::Int(_), Value::Int(i)) if (rule.min as i64..=rule.max as i64).contains(i) => Rule::Int(*i as i32),
+                (_, Value::Str(s)) => match rule.parse(s) {
+                    Some(v) => v,
+                    None => return Ok(Value::Bool(false)),
+                },
+                _ => return Ok(Value::Bool(false)),
+            };
+            server.set_game_rule(world, name, value);
+            Ok(Value::Bool(true))
+        }
+        "world.game_rules" => Ok(Value::List(paper_data::game_rules::all().iter().map(|r| Value::Str(r.name.clone())).collect())),
+        // `Block#breakNaturally`: what the block yields drops (with the given tool: nothing if
+        // it is the wrong one; with none: whatever tool the block needs), with its experience if
+        // asked, the break effect if asked, and the block is removed (leaving its water). True
+        // if the block was removed and dropped something.
+        "world.break_naturally" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let pos = paper_protocol::codec::BlockPos::new(x, y, z);
+            let Some(state) = server.worlds[world].block_at(x, y, z) else { return Ok(Value::Bool(false)) };
+            if blocks::is_air(state) {
+                return Ok(Value::Bool(false));
+            }
+            let tool = match args.get("tool") {
+                Value::Null => None,
+                v => Some(slot_from(v)?),
+            };
+            let drops = match &tool {
+                None => true,
+                Some(t) => !paper_data::physics::requires_correct_tool(state) || server.tool_is_correct(t, state),
+            };
+            if drops {
+                server.roll_block_loot(world, pos, state, tool.as_ref(), None);
+                if args.bool("experience") == Some(true) {
+                    server.drop_block_experience(world, pos, state, tool.as_ref());
+                }
+            }
+            if args.bool("effect") == Some(true) {
+                let fire = matches!(blocks::block_of_state(state).name, "minecraft:fire" | "minecraft:soul_fire");
+                let event = play::LevelEvent { event: if fire { 1009 } else { 2001 }, pos, data: if fire { 0 } else { state as i32 }, global: false };
+                server.send_near(world, pos, 64.0, None, &event);
+            }
+            let removed = server.remove_block(world, pos);
+            Ok(Value::Bool(removed && drops))
+        }
+        // `Block#getDrops`: what breaking the block would drop (with the tool, if one is
+        // given: nothing if it is the wrong one).
+        "world.block_drops" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let Some(state) = server.worlds[world].block_at(x, y, z) else { return Ok(Value::List(Vec::new())) };
+            let tool = match args.get("tool") {
+                Value::Null => None,
+                v => Some(slot_from(v)?),
+            };
+            if blocks::is_air(state) || tool.as_ref().is_some_and(|t| paper_data::physics::requires_correct_tool(state) && !server.tool_is_correct(t, state)) {
+                return Ok(Value::List(Vec::new()));
+            }
+            Ok(Value::List(server.block_loot(state, tool.as_ref(), None).iter().map(item_value).collect()))
+        }
+        // A block entity for a block state snapshot (`CraftBlockEntityState`): its saved NBT
+        // (network form) and its custom name as JSON. Null where there is none.
+        "world.tile_data" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let chunk = crate::world::chunk::ChunkPos::of_block(x, z);
+            let Some(nbt) = server.worlds[world].chunks.get(&chunk).and_then(|c| c.block_entities.get(&(y, (z & 15) as u8, (x & 15) as u8))) else { return Ok(Value::Null) };
+            let mut out = Vec::new();
+            paper_nbt::write_network_compound(&mut out, nbt);
+            let name = nbt.get("CustomName").map(|t| Component::from_nbt(t).to_json_string());
+            Ok(bmap! { "nbt" => Value::Bytes(out), "name" => name.map_or(Value::Null, Value::Str) })
+        }
+        // Writes a snapshot's changes to the block entity: tags to replace (`set`, network
+        // NBT), tags to remove (`remove`), and the custom name (`name` as JSON, or null to
+        // clear it) when `name_changed`. Clients are shown blocks that look different for it.
+        "world.set_tile_data" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let set = match args.get("set") {
+                Value::Bytes(b) if !b.is_empty() => match paper_nbt::read_network(&mut b.as_slice(), 2 * 1024 * 1024) {
+                    Ok(Some(paper_nbt::Tag::Compound(c))) => Some(c),
+                    _ => bail!("invalid block entity data"),
+                },
+                _ => None,
+            };
+            let name = if args.bool("name_changed") == Some(true) {
+                Some(match args.str("name") {
+                    Some(json) => Some(Component::from_json_str(json).map_err(|e| anyhow!("invalid custom name: {e}"))?.to_nbt()),
+                    None => None,
+                })
+            } else {
+                None
+            };
+            let pos = paper_protocol::codec::BlockPos::new(x, y, z);
+            let chunk = crate::world::chunk::ChunkPos::of_block(x, z);
+            let Some(c) = server.worlds[world].chunks.get_mut(&chunk) else { return Ok(Value::Bool(false)) };
+            let Some(be) = c.block_entities.get_mut(&(y, (z & 15) as u8, (x & 15) as u8)) else { return Ok(Value::Bool(false)) };
+            for (key, tag) in set.iter().flat_map(|c| c.iter()) {
+                be.insert(key.clone(), tag.clone());
+            }
+            for key in args.list("remove").unwrap_or(&[]).iter().filter_map(Value::as_str) {
+                be.remove(key);
+            }
+            match name {
+                Some(Some(tag)) => {
+                    be.insert("CustomName", tag);
+                }
+                Some(None) => {
+                    be.remove("CustomName");
+                }
+                None => {}
+            }
+            let mut shown = be.clone();
+            c.dirty = true;
+            let id = shown.get("id").and_then(|t| t.as_str()).unwrap_or("").to_owned();
+            if matches!(id.as_str(), "minecraft:banner" | "minecraft:mob_spawner" | "minecraft:skull" | "minecraft:sign" | "minecraft:hanging_sign") {
+                if let Some(ty) = paper_data::registries::id("minecraft:block_entity_type", &id) {
+                    shown.remove("PublicBukkitValues");
+                    let packet = play::BlockEntityData { pos, block_entity_type: VarInt(ty as i32), data: paper_protocol::codec::Nbt(Some(paper_nbt::Tag::Compound(shown))) };
+                    server.broadcast_to_chunk_viewers(world, chunk, &packet);
+                }
+            }
+            Ok(Value::Bool(true))
+        }
+        // `World#save`: the world's chunks, level.dat, game rules and plugin data, on disk
+        // once this returns if `flush`.
+        "world.save" => {
+            let world = world_index(server, args)?;
+            Ok(Value::Bool(server.save_world(world, args.bool("flush").unwrap_or(true))))
         }
         "world.set_block" => {
             let world = world_index(server, args)?;

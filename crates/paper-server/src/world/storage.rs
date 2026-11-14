@@ -1205,6 +1205,23 @@ impl WorldStorage {
         Ok(())
     }
 
+    /// What plugins keep with the world: Paper's `paper:persistent_data_container` saved data
+    /// (`data/paper/persistent_data_container.dat`), or the `BukkitValues` older Paper versions
+    /// kept in `level.dat`.
+    pub fn read_plugin_data(&self) -> Result<Option<Compound>> {
+        if let Some(root) = read_gzip_nbt(&self.dir.join("data").join("paper").join("persistent_data_container.dat"))? {
+            return Ok(root.compound("data").cloned());
+        }
+        let Some(level) = read_gzip_nbt(&self.dir.join("level.dat"))? else { return Ok(None) };
+        Ok(level.compound("Data").and_then(|d| d.compound("BukkitValues")).cloned())
+    }
+
+    pub fn save_plugin_data(&self, data: &Compound) -> Result<()> {
+        let root = Compound::new().with("data", Tag::Compound(data.clone())).with("DataVersion", Tag::Int(data_version()));
+        self.io.write_file(self.dir.join("data").join("paper").join("persistent_data_container.dat"), gzip_nbt(&root)?);
+        Ok(())
+    }
+
     pub fn save_game_rules(&self, rules: &super::rules::GameRules) -> Result<()> {
         self.io.write_file(self.dir.join("data").join("minecraft").join("game_rules.dat"), gzip_nbt(&rules.to_nbt())?);
         Ok(())

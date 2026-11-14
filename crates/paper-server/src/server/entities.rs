@@ -95,25 +95,40 @@ impl Server {
         self.spawn_item(world, pos, stack, vel, 10);
     }
 
-    /// Drops what a block yields when broken (by a player with `tool`, or by an explosion).
+    /// Drops what a block yields when broken (by a player with `tool`, or by an explosion):
+    /// nothing if the block needs a tool and `tool` is not the right one.
     pub fn drop_block_loot(&mut self, world: usize, pos: BlockPos, state: u32, tool: Option<&Slot>, explosion_radius: Option<f32>) {
-        let drops = {
-            let block = blocks::block_of_state(state);
-            let correct_tool = !paper_data::physics::requires_correct_tool(state) || tool.is_some_and(|t| self.tool_is_correct(t, state));
-            if !correct_tool {
-                Vec::new()
-            } else if let Some(table) = paper_data::physics::loot_table(block.name) {
-                if self.loot.available() {
-                    self.loot.roll(table, &LootContext { tool, block_state: Some(state), explosion_radius, ..Default::default() })
-                } else {
-                    super::loot::fallback_block_drop(state)
-                }
-            } else {
-                Vec::new()
-            }
-        };
-        for stack in drops {
+        let correct_tool = !paper_data::physics::requires_correct_tool(state) || tool.is_some_and(|t| self.tool_is_correct(t, state));
+        if correct_tool {
+            self.roll_block_loot(world, pos, state, tool, explosion_radius);
+        }
+    }
+
+    /// Drops what a block's loot table yields with `tool`, whatever tool the block needs.
+    pub fn roll_block_loot(&mut self, world: usize, pos: BlockPos, state: u32, tool: Option<&Slot>, explosion_radius: Option<f32>) {
+        for stack in self.block_loot(state, tool, explosion_radius) {
             self.pop_resource(world, pos, stack);
+        }
+    }
+
+    /// What a block's loot table yields with `tool` (one roll), whatever tool it needs.
+    pub fn block_loot(&mut self, state: u32, tool: Option<&Slot>, explosion_radius: Option<f32>) -> Vec<Slot> {
+        match paper_data::physics::loot_table(blocks::block_of_state(state).name) {
+            Some(table) if self.loot.available() => self.loot.roll(table, &LootContext { tool, block_state: Some(state), explosion_radius, ..Default::default() }),
+            Some(_) => super::loot::fallback_block_drop(state),
+            None => Vec::new(),
+        }
+    }
+
+    /// The experience a block gives when it is broken with the right tool
+    /// (`spawnAfterBreak`): ores, spawners and sculk, none with silk touch.
+    pub fn drop_block_experience(&mut self, world: usize, pos: BlockPos, state: u32, tool: Option<&Slot>) {
+        if super::loot::enchantment_level(tool, "minecraft:silk_touch") > 0 || !self.worlds[world].rules.bool("block_drops") {
+            return;
+        }
+        let amount = block_experience(state, &mut rand::thread_rng());
+        if amount > 0 {
+            self.award_experience(world, Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), amount);
         }
     }
 
@@ -998,4 +1013,20 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         _ => {}
     }
     m.finish()
+}
+
+/// The experience a block drops when broken (`DropExperienceBlock`, `RedStoneOreBlock`,
+/// `SpawnerBlock` and the sculk blocks).
+pub fn block_experience(state: u32, rng: &mut impl Rng) -> i32 {
+    match blocks::block_of_state(state).name {
+        "minecraft:coal_ore" | "minecraft:deepslate_coal_ore" => rng.gen_range(0..=2),
+        "minecraft:diamond_ore" | "minecraft:deepslate_diamond_ore" | "minecraft:emerald_ore" | "minecraft:deepslate_emerald_ore" => rng.gen_range(3..=7),
+        "minecraft:lapis_ore" | "minecraft:deepslate_lapis_ore" | "minecraft:nether_quartz_ore" => rng.gen_range(2..=5),
+        "minecraft:nether_gold_ore" => rng.gen_range(0..=1),
+        "minecraft:redstone_ore" | "minecraft:deepslate_redstone_ore" => rng.gen_range(1..=5),
+        "minecraft:spawner" => rng.gen_range(15..=43),
+        "minecraft:sculk" => 1,
+        "minecraft:sculk_catalyst" | "minecraft:sculk_shrieker" | "minecraft:sculk_sensor" | "minecraft:calibrated_sculk_sensor" => 5,
+        _ => 0,
+    }
 }

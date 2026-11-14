@@ -102,6 +102,7 @@ public final class CraftServer extends AbstractServer {
     private final SimpleServicesManager servicesManager = new SimpleServicesManager();
     private final StandardMessenger messenger = new StandardMessenger();
     private final PlayerMetadataStore playerMetadata = new PlayerMetadataStore();
+    private final org.bukkit.craftbukkit.metadata.WorldMetadataStore worldMetadata = new org.bukkit.craftbukkit.metadata.WorldMetadataStore();
     private final UnsafeValues unsafe = new HostUnsafeValues();
     private final HelpMap helpMap = new EmptyHelpMap();
     private final Logger logger = Logger.getLogger("Minecraft");
@@ -239,6 +240,11 @@ public final class CraftServer extends AbstractServer {
 
     public void runOnMain(final Runnable task) {
         this.bridge().runOnMain(task);
+    }
+
+    /** Metadata of worlds ({@code CraftServer#getWorldMetadata}). */
+    public org.bukkit.craftbukkit.metadata.WorldMetadataStore worldMetadata() {
+        return this.worldMetadata;
     }
 
     public PlayerMetadataStore playerMetadata() {

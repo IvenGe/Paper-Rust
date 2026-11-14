@@ -3,6 +3,9 @@ package io.papermc.paperrs.host.world;
 import io.papermc.paperrs.host.bridge.Values;
 import io.papermc.paperrs.host.entity.Entities;
 import io.papermc.paperrs.host.item.HostItemStack;
+import io.papermc.paperrs.host.item.HostPersistentDataContainer;
+import io.papermc.paperrs.host.item.Nbt;
+import io.papermc.paper.event.world.WorldGameRuleChangeEvent;
 import io.papermc.paperrs.host.stub.AbstractWorld;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -685,9 +688,212 @@ public final class HostWorld extends AbstractWorld {
         return this.border;
     }
 
+    // --- game rules ---------------------------------------------------------------------------
+
+    /** The value the server keeps for a rule; null for a rule there is not. */
+    private @Nullable Object ruleValue(final org.bukkit.GameRule<?> rule) {
+        return this.server.call("world.game_rule", Values.of("world", this.name, "rule", rule.getKey().asString()));
+    }
+
+    private static HostGameRule<?> hostRule(final org.bukkit.GameRule<?> rule) {
+        if (!(rule instanceof HostGameRule<?> host)) {
+            throw new IllegalArgumentException("not a game rule of this server: " + rule);
+        }
+        return host;
+    }
+
+    /**
+     * Sets a rule as Paper does ({@code CraftEventFactory.handleGameRuleSet}): plugins see a
+     * {@link WorldGameRuleChangeEvent} with the value as text first, may change or cancel it.
+     */
+    private boolean changeRule(final HostGameRule<?> rule, final Object serverValue) {
+        final String text = String.valueOf(serverValue);
+        final WorldGameRuleChangeEvent event = new WorldGameRuleChangeEvent(this, null, rule, text);
+        if (!event.callEvent()) {
+            return false;
+        }
+        Object value = serverValue;
+        if (!event.getValue().equals(text)) {
+            value = rule.parseServerValue(event.getValue());
+            if (value == null) {
+                throw new IllegalArgumentException("Invalid value: " + event.getValue());
+            }
+        }
+        this.server.call("world.set_game_rule", Values.of("world", this.name, "rule", rule.getKey().asString(), "value", value));
+        return true;
+    }
+
+    @Override
+    public String[] getGameRules() {
+        return Values.list(this.server.call("world.game_rules", Values.of("world", this.name))).stream().map(String::valueOf).toArray(String[]::new);
+    }
+
+    @Override
+    public boolean isGameRule(final String rule) {
+        if (rule == null || rule.isEmpty()) {
+            throw new IllegalArgumentException("String rule cannot be " + (rule == null ? "null" : "empty"));
+        }
+        final org.bukkit.GameRule<?> bukkit = org.bukkit.GameRule.getByName(rule);
+        return bukkit != null && this.ruleValue(bukkit) != null;
+    }
+
+    @Override
+    public @Nullable String getGameRuleValue(final @Nullable String rule) {
+        if (rule == null) {
+            return null;
+        }
+        final org.bukkit.GameRule<?> bukkit = org.bukkit.GameRule.getByName(rule);
+        if (bukkit == null) {
+            throw new IllegalArgumentException("Unknown gamerule: " + rule);
+        }
+        return String.valueOf(this.ruleValue(bukkit));
+    }
+
+    @Override
+    public boolean setGameRuleValue(final @Nullable String rule, final @Nullable String value) {
+        if (rule == null || value == null) {
+            return false;
+        }
+        final org.bukkit.GameRule<?> bukkit = org.bukkit.GameRule.getByName(rule);
+        if (bukkit == null || this.ruleValue(bukkit) == null) {
+            return false;
+        }
+        final HostGameRule<?> host = hostRule(bukkit);
+        final Object parsed = host.parseServerValue(value);
+        if (parsed == null) {
+            throw new IllegalArgumentException("Invalid value: " + value);
+        }
+        return this.changeRule(host, parsed);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T getGameRuleValue(final org.bukkit.GameRule<T> rule) {
+        if (rule == null) {
+            throw new IllegalArgumentException("GameRule cannot be null");
+        }
+        return ((HostGameRule<T>) hostRule(rule)).fromServer(this.ruleValue(rule));
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> boolean setGameRule(final org.bukkit.GameRule<T> rule, final T newValue) {
+        if (rule == null || newValue == null) {
+            throw new IllegalArgumentException(rule == null ? "GameRule cannot be null" : "GameRule value cannot be null");
+        }
+        if (this.ruleValue(rule) == null) {
+            return false;
+        }
+        final HostGameRule<T> host = (HostGameRule<T>) hostRule(rule);
+        return this.changeRule(host, host.toServer(newValue));
+    }
+
     @Override
     public boolean getPVP() {
-        return true;
+        return this.getGameRuleValue(org.bukkit.GameRules.PVP);
+    }
+
+    @Override
+    public void setPVP(final boolean pvp) {
+        this.setGameRule(org.bukkit.GameRules.PVP, pvp);
+    }
+
+    // --- saving, plugin data, metadata and plugin messages ----------------------------------
+
+    private boolean autoSave = true;
+    private @Nullable HostPersistentDataContainer pdc;
+    private final org.bukkit.craftbukkit.metadata.BlockMetadataStore blockMetadata = new org.bukkit.craftbukkit.metadata.BlockMetadataStore(this);
+
+    @Override
+    public void save(final boolean flush) {
+        this.server.call("world.save", Values.of("world", this.name, "flush", flush));
+    }
+
+    /** The world's folder ({@code getWorldFolder} too): the server's, or where it would be. */
+    @Override
+    public java.nio.file.Path getWorldPath() {
+        final Object folder = this.info().get("folder");
+        return folder instanceof String path ? java.nio.file.Path.of(path) : this.server.getWorldContainer().toPath().resolve(this.name);
+    }
+
+    /** Kept by the host: the server saves its worlds on its own schedule. */
+    @Override
+    public boolean isAutoSave() {
+        return this.autoSave;
+    }
+
+    @Override
+    public void setAutoSave(final boolean value) {
+        this.autoSave = value;
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public org.bukkit.WorldType getWorldType() {
+        return "minecraft:flat".equals(this.server.getWorldType()) && this.environment == Environment.NORMAL ? org.bukkit.WorldType.FLAT : org.bukkit.WorldType.NORMAL;
+    }
+
+    /** Worlds are generated by the server; plugins cannot give them generators yet. */
+    @Override
+    public org.bukkit.generator.@Nullable ChunkGenerator getGenerator() {
+        return null;
+    }
+
+    /** Saved with the world, as Paper saves it (its {@code paper:persistent_data_container} data). */
+    @Override
+    public org.bukkit.persistence.PersistentDataContainer getPersistentDataContainer() {
+        if (this.pdc == null) {
+            HostPersistentDataContainer container = new HostPersistentDataContainer();
+            if (this.server.call("world.pdc", Values.of("world", this.name)) instanceof byte[] saved && saved.length > 0) {
+                container = new HostPersistentDataContainer(Nbt.readCompound(saved));
+            }
+            final HostPersistentDataContainer data = container;
+            this.pdc = data.onChange(() -> this.server.call("world.set_pdc", Values.of("world", this.name, "data", data.isEmpty() ? new byte[0] : Nbt.writeCompound(data.tags()))));
+        }
+        return this.pdc;
+    }
+
+    /** Metadata of the blocks of this world ({@code CraftWorld#getBlockMetadata}). */
+    public org.bukkit.craftbukkit.metadata.BlockMetadataStore blockMetadata() {
+        return this.blockMetadata;
+    }
+
+    @Override
+    public void setMetadata(final String key, final org.bukkit.metadata.MetadataValue value) {
+        this.server.worldMetadata().setMetadata(this, key, value);
+    }
+
+    @Override
+    public List<org.bukkit.metadata.MetadataValue> getMetadata(final String key) {
+        return this.server.worldMetadata().getMetadata(this, key);
+    }
+
+    @Override
+    public boolean hasMetadata(final String key) {
+        return this.server.worldMetadata().hasMetadata(this, key);
+    }
+
+    @Override
+    public void removeMetadata(final String key, final org.bukkit.plugin.Plugin plugin) {
+        this.server.worldMetadata().removeMetadata(this, key, plugin);
+    }
+
+    /** To every player in the world ({@code CraftWorld#sendPluginMessage}). */
+    @Override
+    public void sendPluginMessage(final org.bukkit.plugin.Plugin source, final String channel, final byte[] message) {
+        org.bukkit.plugin.messaging.StandardMessenger.validatePluginMessage(this.server.getMessenger(), source, channel, message);
+        for (final Player player : this.getPlayers()) {
+            player.sendPluginMessage(source, channel, message);
+        }
+    }
+
+    @Override
+    public java.util.Set<String> getListeningPluginChannels() {
+        final java.util.Set<String> channels = new java.util.HashSet<>();
+        for (final Player player : this.getPlayers()) {
+            channels.addAll(player.getListeningPluginChannels());
+        }
+        return channels;
     }
 
     @Override

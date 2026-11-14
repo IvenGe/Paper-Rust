@@ -5,6 +5,8 @@ import io.papermc.paperrs.host.Components;
 import io.papermc.paperrs.host.HostProxies;
 import io.papermc.paperrs.host.bridge.Values;
 import io.papermc.paperrs.host.inventory.Inventories;
+import io.papermc.paperrs.host.item.HostPersistentDataContainer;
+import io.papermc.paperrs.host.item.Nbt;
 import java.util.List;
 import java.util.Map;
 import org.bukkit.Location;
@@ -21,6 +23,7 @@ import org.bukkit.block.EnderChest;
 import org.bukkit.block.Furnace;
 import org.bukkit.block.Hopper;
 import org.bukkit.block.Smoker;
+import org.bukkit.block.TileState;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
@@ -49,11 +52,17 @@ public final class HostBlockState implements HostProxies.Backed {
     }
 
     static BlockState of(final HostBlock block) {
-        return of(block, block.stateString());
+        final Map<String, Object> info = block.info();
+        return of(block, Values.str(info, "state", "minecraft:air"), Values.bool(info, "block_entity", false));
     }
 
     /** A snapshot of {@code block} holding {@code state} (for events about a state the world no longer has). */
     public static BlockState of(final HostBlock block, final String state) {
+        return of(block, state, false);
+    }
+
+    /** A snapshot; blocks with a block entity of no more particular kind are {@link TileState}s. */
+    private static BlockState of(final HostBlock block, final String state, final boolean blockEntity) {
         final String name = state.indexOf('[') < 0 ? state : state.substring(0, state.indexOf('['));
         final String path = name.substring(name.indexOf(':') + 1);
         final Class<? extends BlockState> iface = path.endsWith("_hanging_sign") ? org.bukkit.block.HangingSign.class
@@ -68,7 +77,10 @@ public final class HostBlockState implements HostProxies.Backed {
             case "hopper" -> Hopper.class;
             case "dispenser" -> Dispenser.class;
             case "dropper" -> Dropper.class;
-            default -> BlockState.class;
+            case "spawner" -> org.bukkit.block.CreatureSpawner.class;
+            default -> path.endsWith("_banner") ? org.bukkit.block.Banner.class
+                : path.endsWith("shulker_box") ? org.bukkit.block.ShulkerBox.class
+                : blockEntity ? TileState.class : BlockState.class;
         };
         return HostProxies.create(new HostBlockState(block, iface, state), iface);
     }
@@ -162,6 +174,7 @@ public final class HostBlockState implements HostProxies.Backed {
             return false;
         }
         this.block.setState(this.data, applyPhysics);
+        this.writeTile();
         if (this.signChanged && this.sign != null) {
             final HostWorld world = (HostWorld) this.block.getWorld();
             final Map<String, Object> args = new java.util.HashMap<>(this.sign);
@@ -170,6 +183,306 @@ public final class HostBlockState implements HostProxies.Backed {
             this.signChanged = false;
         }
         return true;
+    }
+
+    // --- metadata (kept by the block, as CraftBlockState does) --------------------------------
+
+    public void setMetadata(final String key, final org.bukkit.metadata.MetadataValue value) {
+        this.block.setMetadata(key, value);
+    }
+
+    public List<org.bukkit.metadata.MetadataValue> getMetadata(final String key) {
+        return this.block.getMetadata(key);
+    }
+
+    public boolean hasMetadata(final String key) {
+        return this.block.hasMetadata(key);
+    }
+
+    public void removeMetadata(final String key, final org.bukkit.plugin.Plugin plugin) {
+        this.block.removeMetadata(key, plugin);
+    }
+
+    public org.bukkit.Chunk getChunk() {
+        return this.block.getChunk();
+    }
+
+    // --- block entities (CraftBlockEntityState: a snapshot, written back by update) ----------
+
+    /** The block entity as read when first asked: {nbt, name}; empty where there is none. */
+    private @Nullable Map<String, Object> tile;
+    private Nbt.@Nullable Compound tileNbt;
+    /** Tags the snapshot changed, written back over the block entity's by update. */
+    private final Nbt.Compound tileSet = new Nbt.Compound();
+    private final java.util.Set<String> tileRemoved = new java.util.HashSet<>();
+    private net.kyori.adventure.text.@Nullable Component customName;
+    private boolean nameChanged;
+    private @Nullable HostPersistentDataContainer tilePdc;
+    private boolean tilePdcChanged;
+
+    private Map<String, Object> tile() {
+        if (this.tile == null) {
+            final HostWorld world = (HostWorld) this.block.getWorld();
+            final Object read = world.server().call("world.tile_data", Values.of("world", world.getName(), "x", this.getX(), "y", this.getY(), "z", this.getZ()));
+            this.tile = read instanceof Map<?, ?> m ? Values.map(m) : new java.util.HashMap<>();
+        }
+        return this.tile;
+    }
+
+    /** The block entity's tags as read (an empty compound where there is none). */
+    private Nbt.Compound tileNbt() {
+        if (this.tileNbt == null) {
+            this.tileNbt = this.tile().get("nbt") instanceof byte[] bytes && bytes.length > 0 ? Nbt.readCompound(bytes) : new Nbt.Compound();
+        }
+        return this.tileNbt;
+    }
+
+    /** A tag of the snapshot: as changed, or as read. */
+    private @Nullable Object tileTag(final String key) {
+        if (this.tileRemoved.contains(key)) {
+            return null;
+        }
+        final Object changed = this.tileSet.get(key);
+        return changed != null ? changed : this.tileNbt().get(key);
+    }
+
+    private void setTileTag(final String key, final @Nullable Object value) {
+        if (value == null) {
+            this.tileSet.remove(key);
+            this.tileRemoved.add(key);
+        } else {
+            this.tileRemoved.remove(key);
+            this.tileSet.put(key, value);
+        }
+    }
+
+    private void writeTile() {
+        if (this.tilePdcChanged && this.tilePdc != null) {
+            this.setTileTag(HostPersistentDataContainer.BUKKIT_KEY, this.tilePdc.isEmpty() ? null : this.tilePdc.tags().copy());
+            this.tilePdcChanged = false;
+        }
+        if (this.tileSet.isEmpty() && this.tileRemoved.isEmpty() && !this.nameChanged) {
+            return;
+        }
+        final HostWorld world = (HostWorld) this.block.getWorld();
+        world.server().call("world.set_tile_data", Values.of("world", world.getName(), "x", this.getX(), "y", this.getY(), "z", this.getZ(),
+            "set", this.tileSet.isEmpty() ? new byte[0] : Nbt.writeCompound(this.tileSet), "remove", new java.util.ArrayList<>(this.tileRemoved),
+            "name_changed", this.nameChanged, "name", Components.toJson(this.customName)));
+    }
+
+    /** The block entity's custom name (containers, banners, beacons...: {@code Nameable}). */
+    public net.kyori.adventure.text.@Nullable Component customName() {
+        return this.nameChanged ? this.customName : Components.fromJson(this.tile().get("name"));
+    }
+
+    public void customName(final net.kyori.adventure.text.@Nullable Component name) {
+        this.customName = name;
+        this.nameChanged = true;
+    }
+
+    public @Nullable String getCustomName() {
+        final net.kyori.adventure.text.Component name = this.customName();
+        return name == null ? null : net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().serialize(name);
+    }
+
+    public void setCustomName(final @Nullable String name) {
+        this.customName(name == null ? null : net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(name));
+    }
+
+    /** What plugins keep on the block entity ({@code PublicBukkitValues}), saved by update. */
+    public org.bukkit.persistence.PersistentDataContainer getPersistentDataContainer() {
+        if (this.tilePdc == null) {
+            final Object saved = this.tileNbt().get(HostPersistentDataContainer.BUKKIT_KEY);
+            this.tilePdc = (saved instanceof Nbt.Compound c ? new HostPersistentDataContainer(c.copy()) : new HostPersistentDataContainer()).onChange(() -> this.tilePdcChanged = true);
+        }
+        return this.tilePdc;
+    }
+
+    public boolean isSnapshot() {
+        return true;
+    }
+
+    // --- banners (CraftBanner) -----------------------------------------------------------------
+
+    private java.util.@Nullable List<org.bukkit.block.banner.Pattern> patterns;
+    private org.bukkit.@Nullable DyeColor baseColor;
+
+    public org.bukkit.DyeColor getBaseColor() {
+        if (this.baseColor == null) {
+            final String path = this.type.getKey().getKey();
+            final String color = path.substring(0, path.indexOf(path.contains("_wall_banner") ? "_wall_banner" : "_banner"));
+            this.baseColor = org.bukkit.DyeColor.valueOf(color.toUpperCase(java.util.Locale.ROOT));
+        }
+        return this.baseColor;
+    }
+
+    /** As on Paper, kept by the snapshot only: a placed banner's colour is its block's. */
+    public void setBaseColor(final org.bukkit.DyeColor color) {
+        if (color == null) {
+            throw new IllegalArgumentException("color");
+        }
+        this.baseColor = color;
+    }
+
+    private java.util.List<org.bukkit.block.banner.Pattern> patterns() {
+        if (this.patterns == null) {
+            this.patterns = new java.util.ArrayList<>();
+            if (this.tileTag("patterns") instanceof Nbt.NbtList list) {
+                for (final Object entry : list) {
+                    if (entry instanceof Nbt.Compound layer && layer.get("pattern") instanceof String id && layer.get("color") instanceof String color) {
+                        final org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(id);
+                        final org.bukkit.block.banner.PatternType type = key == null ? null : org.bukkit.Registry.BANNER_PATTERN.get(key);
+                        if (type != null) {
+                            this.patterns.add(new org.bukkit.block.banner.Pattern(org.bukkit.DyeColor.valueOf(color.toUpperCase(java.util.Locale.ROOT)), type));
+                        }
+                    }
+                }
+            }
+        }
+        return this.patterns;
+    }
+
+    private void patternsChanged() {
+        final Nbt.NbtList list = new Nbt.NbtList(Nbt.COMPOUND);
+        for (final org.bukkit.block.banner.Pattern pattern : this.patterns()) {
+            final Nbt.Compound layer = new Nbt.Compound();
+            layer.put("color", pattern.getColor().name().toLowerCase(java.util.Locale.ROOT));
+            layer.put("pattern", pattern.getPattern().getKey().asString());
+            list.add(layer);
+        }
+        this.setTileTag("patterns", list.isEmpty() ? null : list);
+    }
+
+    public java.util.List<org.bukkit.block.banner.Pattern> getPatterns() {
+        return new java.util.ArrayList<>(this.patterns());
+    }
+
+    public void setPatterns(final java.util.List<org.bukkit.block.banner.Pattern> patterns) {
+        this.patterns = new java.util.ArrayList<>(patterns);
+        this.patternsChanged();
+    }
+
+    public void addPattern(final org.bukkit.block.banner.Pattern pattern) {
+        this.patterns().add(pattern);
+        this.patternsChanged();
+    }
+
+    public org.bukkit.block.banner.Pattern getPattern(final int i) {
+        return this.patterns().get(i);
+    }
+
+    public org.bukkit.block.banner.Pattern removePattern(final int i) {
+        final org.bukkit.block.banner.Pattern removed = this.patterns().remove(i);
+        this.patternsChanged();
+        return removed;
+    }
+
+    public void setPattern(final int i, final org.bukkit.block.banner.Pattern pattern) {
+        this.patterns().set(i, pattern);
+        this.patternsChanged();
+    }
+
+    public int numberOfPatterns() {
+        return this.patterns().size();
+    }
+
+    // --- spawners (CraftCreatureSpawner): the block entity's tags -----------------------------
+
+    public org.bukkit.entity.@Nullable EntityType getSpawnedType() {
+        if (this.tileTag("SpawnData") instanceof Nbt.Compound data && data.get("entity") instanceof Nbt.Compound entity && entity.get("id") instanceof String id) {
+            final org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(id);
+            return key == null ? null : org.bukkit.Registry.ENTITY_TYPE.get(key);
+        }
+        return null;
+    }
+
+    public void setSpawnedType(final org.bukkit.entity.@Nullable EntityType type) {
+        if (type == null) {
+            this.setTileTag("SpawnData", null);
+            this.setTileTag("SpawnPotentials", null);
+            return;
+        }
+        if (!type.isSpawnable()) {
+            throw new IllegalArgumentException("Can't spawn EntityType " + type + " from mob spawners!");
+        }
+        final Nbt.Compound entity = new Nbt.Compound();
+        entity.put("id", type.getKey().asString());
+        final Nbt.Compound data = new Nbt.Compound();
+        data.put("entity", entity);
+        this.setTileTag("SpawnData", data);
+        this.setTileTag("SpawnPotentials", null);
+    }
+
+    private int spawnerValue(final String key, final int fallback) {
+        return this.tileTag(key) instanceof Number n ? n.intValue() : fallback;
+    }
+
+    public int getDelay() {
+        return this.spawnerValue("Delay", 20);
+    }
+
+    public void setDelay(final int delay) {
+        this.setTileTag("Delay", (short) delay);
+    }
+
+    public int getMinSpawnDelay() {
+        return this.spawnerValue("MinSpawnDelay", 200);
+    }
+
+    public void setMinSpawnDelay(final int delay) {
+        if (delay > this.getMaxSpawnDelay()) {
+            throw new IllegalArgumentException("Minimum Spawn Delay must be less than or equal to Maximum Spawn Delay");
+        }
+        this.setTileTag("MinSpawnDelay", (short) delay);
+    }
+
+    public int getMaxSpawnDelay() {
+        return this.spawnerValue("MaxSpawnDelay", 800);
+    }
+
+    public void setMaxSpawnDelay(final int delay) {
+        if (delay <= 0) {
+            throw new IllegalArgumentException("Maximum Spawn Delay must be greater than 0.");
+        }
+        if (delay < this.getMinSpawnDelay()) {
+            throw new IllegalArgumentException("Maximum Spawn Delay must be greater than or equal to Minimum Spawn Delay");
+        }
+        this.setTileTag("MaxSpawnDelay", (short) delay);
+    }
+
+    public int getSpawnCount() {
+        return this.spawnerValue("SpawnCount", 4);
+    }
+
+    public void setSpawnCount(final int count) {
+        if (count < 0) {
+            throw new IllegalArgumentException("Spawn count must be greater than or equal to 0");
+        }
+        this.setTileTag("SpawnCount", (short) count);
+    }
+
+    public int getMaxNearbyEntities() {
+        return this.spawnerValue("MaxNearbyEntities", 6);
+    }
+
+    public void setMaxNearbyEntities(final int max) {
+        this.setTileTag("MaxNearbyEntities", (short) max);
+    }
+
+    public int getRequiredPlayerRange() {
+        return this.spawnerValue("RequiredPlayerRange", 16);
+    }
+
+    public void setRequiredPlayerRange(final int range) {
+        this.setTileTag("RequiredPlayerRange", (short) range);
+    }
+
+    public int getSpawnRange() {
+        return this.spawnerValue("SpawnRange", 4);
+    }
+
+    public void setSpawnRange(final int range) {
+        this.setTileTag("SpawnRange", (short) range);
     }
 
     // --- signs (CraftSign: a snapshot of both sides, written back by update) ------------------

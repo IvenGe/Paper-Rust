@@ -72,6 +72,10 @@ FILES = [
 
 # (file, exact text, replacement, why)
 EDITS = [
+    ('io/papermc/paper/plugin/lifecycle/event/LifecycleEventRunner.java',
+     '''                throw new RuntimeException("Could not run '%s' lifecycle event handler from %s".formatted(lifecycleEventType.name(), registeredHandler.owner().getPluginMeta().getDisplayName()), ex);''',
+     '''                org.slf4j.LoggerFactory.getLogger(LifecycleEventRunner.class).error("Could not run '{}' lifecycle event handler from {}", lifecycleEventType.name(), registeredHandler.owner().getPluginMeta().getDisplayName(), ex);''',
+     'a handler that fails (often one reaching for Minecraft\'s own classes, which the host does not have) is logged and the other plugins\' handlers still run, instead of the whole start-up failing'),
     ('org/bukkit/craftbukkit/util/Commodore.java',
      'import joptsimple.OptionParser;\nimport joptsimple.OptionSet;\nimport joptsimple.OptionSpec;\n', '',
      'the command-line converter (main) is left out: the host does not bundle jopt-simple'),

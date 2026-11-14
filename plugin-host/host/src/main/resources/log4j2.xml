@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Log4j for plugins (Paper ships log4j-core). HostLogging adds the one appender at start-up:
+     it forwards everything to java.util.logging, which the host prints for the server. -->
+<Configuration status="WARN">
+  <Appenders/>
+  <Loggers>
+    <Root level="info"/>
+  </Loggers>
+</Configuration>

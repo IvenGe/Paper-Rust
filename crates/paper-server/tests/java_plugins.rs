@@ -500,6 +500,37 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         assert!(std::time::Instant::now() < deadline, "the plugin's line never arrived: {text}");
         alice.drain(Duration::from_millis(50));
     }
+    // Game rules (one changed on its way by the plugin's WorldGameRuleChangeEvent listener),
+    // the world's plugin data and metadata, stone broken naturally into cobblestone, and block
+    // entities: a chest's name and plugin data, a banner's patterns, a spawner's mob.
+    let at = server.handle.run(|s| s.player_by_name("Alice").unwrap().loc).unwrap();
+    let block = |dx: f64, dz: f64| BlockPos::new((at.x + dx).floor() as i32, at.y.floor() as i32, (at.z + dz).floor() as i32);
+    alice.command("apitest worldapi");
+    expect_line(&mut alice, "worldapi: ok");
+    let rules = server.handle.run(|s| (s.worlds[0].rules.bool("keep_inventory"), s.worlds[0].rules.int("max_entity_cramming"), s.worlds[0].rules.int("random_tick_speed"))).unwrap();
+    assert_eq!(rules, (true, 14, 5));
+    let data = server.handle.run(|s| s.worlds[0].plugin_data.clone()).unwrap().expect("the world's plugin data");
+    assert!(format!("{data:?}").contains("visits"), "{data:?}");
+    let stone = block(3.0, -3.0);
+    let cobblestone = paper_data::items::id("minecraft:cobblestone").unwrap() as i32;
+    let dropped = server
+        .handle
+        .run(move |s| {
+            s.worlds[0].entities.values().any(|e| {
+                matches!(&e.kind, paper_server::world::entity::EntityKind::Item { stack, .. } if stack.0.as_ref().is_some_and(|i| i.item == cobblestone))
+                    && (e.pos.x - stone.x as f64 - 0.5).abs() < 1.5
+                    && (e.pos.z - stone.z as f64 - 0.5).abs() < 1.5
+            })
+        })
+        .unwrap();
+    assert!(dropped, "the stone's cobblestone");
+    let (chest, banner) = (block(3.0, -5.0), block(5.0, -5.0));
+    let chest_data = server.handle.run(move |s| s.block_entity_data(0, chest).cloned()).unwrap().expect("the chest");
+    let name = chest_data.get("CustomName").map(paper_protocol::text::Component::from_nbt).map(|c| c.to_plain());
+    assert_eq!(name.as_deref(), Some("Loot"));
+    assert!(chest_data.compound("PublicBukkitValues").is_some_and(|v| format!("{v:?}").contains("owned")), "{chest_data:?}");
+    let patterns = server.handle.run(move |s| s.block_entity_data(0, banner).and_then(|d| d.get("patterns").cloned())).unwrap();
+    assert!(format!("{patterns:?}").contains("minecraft:stripe_top"), "{patterns:?}");
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

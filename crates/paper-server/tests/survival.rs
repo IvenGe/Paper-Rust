@@ -485,3 +485,47 @@ fn fed_animals_breed_and_cows_give_milk_and_sheep_wool() {
     assert!(sheared && wool >= 1, "sheared: {sheared}, wool drops: {wool}, {debug:?}");
     server.stop();
 }
+
+/// Ores give experience when mined with a tool that gets their drops, none with silk touch or
+/// the wrong tool.
+#[test]
+fn ores_give_experience_unless_mined_with_silk_touch() {
+    use paper_protocol::codec::BlockPos;
+    let server = survival_server();
+    server.handle.run(|s| s.set_game_rule(0, "spawn_mobs", paper_data::game_rules::Value::Bool(false))).unwrap();
+    let alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let tool = |name: &str, silk: bool| {
+        let mut stack = paper_protocol::types::ItemStack::new(items::id(name).unwrap() as i32, 1);
+        if silk {
+            paper_server::server::enchanting::enchant(&mut stack, paper_data::synced::id("minecraft:enchantment", "minecraft:silk_touch").unwrap(), 1);
+        }
+        Slot(Some(stack))
+    };
+    // Mines an ore next to Alice; returns the experience the orbs it left are worth (counted
+    // before she can pick any up).
+    let mine = |ore: &'static str, tool: Slot| {
+        server
+            .handle
+            .run(move |s| {
+                let pos = BlockPos::new(9, -61, 9);
+                s.set_block_and_update(0, pos, paper_data::blocks::default_state(ore).unwrap());
+                s.set_inventory_slot(id, 36, tool);
+                let orbs = |s: &paper_server::server::Server| {
+                    s.worlds[0].entities.values().map(|e| if let paper_server::world::entity::EntityKind::ExperienceOrb { value } = e.kind { value } else { 0 }).sum::<i32>()
+                };
+                let before = orbs(s);
+                assert!(s.break_block(id, pos), "mined {ore}");
+                orbs(s) - before
+            })
+            .unwrap()
+    };
+    let xp = mine("minecraft:diamond_ore", tool("minecraft:iron_pickaxe", false));
+    assert!((3..=7).contains(&xp), "a diamond ore gave {xp}");
+    let xp = mine("minecraft:redstone_ore", tool("minecraft:iron_pickaxe", false));
+    assert!((1..=5).contains(&xp), "a redstone ore gave {xp}");
+    assert_eq!(mine("minecraft:diamond_ore", tool("minecraft:iron_pickaxe", true)), 0, "silk touch");
+    assert_eq!(mine("minecraft:diamond_ore", tool("minecraft:wooden_pickaxe", false)), 0, "the wrong tool");
+    assert_eq!(mine("minecraft:iron_ore", tool("minecraft:iron_pickaxe", false)), 0, "iron ore gives none");
+    server.stop();
+}

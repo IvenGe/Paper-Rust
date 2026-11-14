@@ -6,7 +6,6 @@ import io.papermc.paper.entity.TeleportFlag;
 import io.papermc.paperrs.host.Components;
 import io.papermc.paperrs.host.HostPlayerProfile;
 import io.papermc.paperrs.host.bridge.Values;
-import io.papermc.paperrs.host.stub.AbstractPlayer;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.List;
@@ -47,12 +46,11 @@ import org.jetbrains.annotations.Nullable;
  * call into plugin code, so reads are local. Changes are sent to the server, which applies
  * them and answers with the new state.
  */
-public final class HostPlayer extends AbstractPlayer {
+public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEntity {
     private final CraftServer server;
     private final UUID uuid;
     private final String name;
     private final int entityId;
-    private final PermissibleBase perm;
     private final HostPlayerProfile profile;
     private volatile Map<String, Object> state;
     private volatile boolean online = true;

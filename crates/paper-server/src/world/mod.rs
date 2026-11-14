@@ -122,6 +122,9 @@ pub struct World {
     pub biome_count: u32,
     /// Where the world is saved; `None` keeps it in memory only.
     pub storage: Option<Arc<WorldStorage>>,
+    /// What plugins keep with the world (its persistent data container), saved as Paper
+    /// saves it; `None` until a plugin sets something or the world had some.
+    pub plugin_data: Option<paper_nbt::Compound>,
     /// Entities other than players, by entity id.
     pub entities: HashMap<i32, entity::Entity>,
     /// Entity ids per chunk, for area queries and saving.
@@ -315,6 +318,7 @@ impl World {
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
             storage: None,
+            plugin_data: None,
             entities: HashMap::new(),
             entity_chunks: HashMap::new(),
             removed_block_entities: Vec::new(),

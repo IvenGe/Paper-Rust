@@ -44,6 +44,12 @@ public final class HostBlock extends AbstractBlock {
         return Values.map(this.world.server().call("world.get_block", Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z)));
     }
 
+    /** The block's state and whether it has a block entity, as {@code world.get_block} tells. */
+    Map<String, Object> info() {
+        final String state = this.pending;
+        return state != null ? Values.of("state", state, "block_entity", false) : this.query();
+    }
+
     /** The block state as {@code minecraft:name[property=value,...]}. */
     public String stateString() {
         final String state = this.pending;
@@ -201,6 +207,104 @@ public final class HostBlock extends AbstractBlock {
     @Override
     public String translationKey() {
         return this.getType().translationKey();
+    }
+
+    @Override
+    public boolean isPassable() {
+        return !Values.bool(this.query(), "collision", false);
+    }
+
+    @Override
+    public boolean isCollidable() {
+        return Values.bool(this.query(), "collision", false);
+    }
+
+    @Override
+    public org.bukkit.block.PistonMoveReaction getPistonMoveReaction() {
+        return org.bukkit.block.PistonMoveReaction.valueOf(Values.str(this.query(), "piston", "MOVE"));
+    }
+
+    /** The legacy data value of the block ({@code CraftMagicNumbers#toLegacyData}). */
+    @Override
+    @SuppressWarnings("deprecation")
+    public byte getData() {
+        return org.bukkit.craftbukkit.legacy.CraftLegacy.toLegacyData(this.getBlockData());
+    }
+
+    // --- breaking ---------------------------------------------------------------------------
+
+    @Override
+    public boolean breakNaturally() {
+        return this.breakNaturally(null, false, false, false);
+    }
+
+    @Override
+    public boolean breakNaturally(final org.bukkit.inventory.@Nullable ItemStack tool) {
+        return this.breakNaturally(tool, false, false, false);
+    }
+
+    @Override
+    public boolean breakNaturally(final boolean triggerEffect, final boolean dropExperience) {
+        return this.breakNaturally(null, triggerEffect, dropExperience, false);
+    }
+
+    @Override
+    public boolean breakNaturally(final org.bukkit.inventory.@Nullable ItemStack tool, final boolean triggerEffect, final boolean dropExperience) {
+        return this.breakNaturally(tool, triggerEffect, dropExperience, false);
+    }
+
+    /**
+     * As {@code CraftBlock#breakNaturally}: what the block yields drops (with a tool, nothing
+     * if it is the wrong one; with none, whatever tool the block needs), with its experience if
+     * asked, the break effect if asked, and the block is removed. True if it dropped anything.
+     */
+    @Override
+    public boolean breakNaturally(final org.bukkit.inventory.@Nullable ItemStack tool, final boolean triggerEffect, final boolean dropExperience, final boolean forceEffect) {
+        this.pending = null;
+        return Boolean.TRUE.equals(this.world.server().call("world.break_naturally", Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z,
+            "tool", tool == null ? null : io.papermc.paperrs.host.item.HostItemStack.toValue(tool), "effect", triggerEffect, "experience", dropExperience)));
+    }
+
+    @Override
+    public java.util.Collection<org.bukkit.inventory.ItemStack> getDrops() {
+        return this.getDrops(null);
+    }
+
+    @Override
+    public java.util.Collection<org.bukkit.inventory.ItemStack> getDrops(final org.bukkit.inventory.@Nullable ItemStack tool) {
+        final java.util.List<org.bukkit.inventory.ItemStack> drops = new java.util.ArrayList<>();
+        for (final Object item : Values.list(this.world.server().call("world.block_drops", Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z,
+            "tool", tool == null ? null : io.papermc.paperrs.host.item.HostItemStack.toValue(tool))))) {
+            drops.add(io.papermc.paperrs.host.item.HostItemStack.fromValue(item));
+        }
+        return drops;
+    }
+
+    @Override
+    public java.util.Collection<org.bukkit.inventory.ItemStack> getDrops(final org.bukkit.inventory.@Nullable ItemStack tool, final org.bukkit.entity.@Nullable Entity entity) {
+        return this.getDrops(tool);
+    }
+
+    // --- metadata (kept by the world, as CraftBlock does) ------------------------------------
+
+    @Override
+    public void setMetadata(final String key, final org.bukkit.metadata.MetadataValue value) {
+        this.world.blockMetadata().setMetadata(this, key, value);
+    }
+
+    @Override
+    public java.util.List<org.bukkit.metadata.MetadataValue> getMetadata(final String key) {
+        return this.world.blockMetadata().getMetadata(this, key);
+    }
+
+    @Override
+    public boolean hasMetadata(final String key) {
+        return this.world.blockMetadata().hasMetadata(this, key);
+    }
+
+    @Override
+    public void removeMetadata(final String key, final org.bukkit.plugin.Plugin plugin) {
+        this.world.blockMetadata().removeMetadata(this, key, plugin);
     }
 
     @Override

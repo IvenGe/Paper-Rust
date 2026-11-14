@@ -310,6 +310,42 @@ pub struct Chunk {
     pub saved_structures: Option<paper_nbt::Compound>,
 }
 
+/// The block entity type of a block, for blocks that have one: most are named like their
+/// block, but every banner is a `minecraft:banner`, every head a `minecraft:skull`, a spawner a
+/// `minecraft:mob_spawner`...
+pub fn block_entity_type(block: &str) -> Option<String> {
+    let path = block.strip_prefix("minecraft:")?;
+    let ty = if path.ends_with("_banner") {
+        "banner"
+    } else if path.ends_with("_hanging_sign") {
+        "hanging_sign"
+    } else if path.ends_with("_sign") {
+        "sign"
+    } else if path.ends_with("shulker_box") {
+        "shulker_box"
+    } else if path.ends_with("_bed") {
+        "bed"
+    } else if path.ends_with("_head") || path.ends_with("_skull") {
+        "skull"
+    } else if path.ends_with("_shelf") {
+        "shelf"
+    } else if path.ends_with("copper_golem_statue") {
+        "copper_golem_statue"
+    } else {
+        match path {
+            "spawner" => "mob_spawner",
+            "soul_campfire" => "campfire",
+            "bee_nest" => "beehive",
+            "chain_command_block" | "repeating_command_block" => "command_block",
+            "moving_piston" => "piston",
+            "suspicious_sand" | "suspicious_gravel" => "brushable_block",
+            other => other,
+        }
+    };
+    let ty = format!("minecraft:{ty}");
+    paper_data::registries::id("minecraft:block_entity_type", &ty).map(|_| ty)
+}
+
 fn motion_blocking(state: u32) -> bool {
     blocks::flags(state) & (blocks::FLAG_COLLISION | blocks::FLAG_FLUID) != 0
 }
@@ -381,9 +417,8 @@ impl Chunk {
         // A new block with a block entity gets an empty one (whose type is named like the
         // block: chests, hoppers, furnaces, ...), so it ticks and is sent to clients.
         if blocks::flags(state) & blocks::FLAG_BLOCK_ENTITY != 0 && !self.block_entities.contains_key(&(y, z as u8, x as u8)) {
-            let name = blocks::block_of_state(state).name;
-            if paper_data::registries::id("minecraft:block_entity_type", name).is_some() {
-                self.block_entities.insert((y, z as u8, x as u8), paper_nbt::Compound::new().with("id", paper_nbt::Tag::String(name.to_owned())));
+            if let Some(ty) = block_entity_type(blocks::block_of_state(state).name) {
+                self.block_entities.insert((y, z as u8, x as u8), paper_nbt::Compound::new().with("id", paper_nbt::Tag::String(ty)));
             }
         }
         self.dirty = true;
@@ -683,10 +718,11 @@ impl ChunkSnapshot {
                 let ty = nbt
                     .string("id")
                     .and_then(|id| paper_data::registries::id("minecraft:block_entity_type", id))
-                    .or_else(|| paper_data::registries::id("minecraft:block_entity_type", name))?;
-                // Clients are only sent what they render: container contents stay on the server.
+                    .or_else(|| paper_data::registries::id("minecraft:block_entity_type", &block_entity_type(name)?))?;
+                // Clients are only sent what they render: container contents and plugins' data
+                // stay on the server.
                 let mut data = nbt.clone();
-                for hidden in ["Items", "LootTable", "LootTableSeed", "RecipesUsed", "lit_time_remaining", "lit_total_time", "cooking_time_spent", "cooking_total_time"] {
+                for hidden in ["Items", "LootTable", "LootTableSeed", "RecipesUsed", "lit_time_remaining", "lit_total_time", "cooking_time_spent", "cooking_total_time", "PublicBukkitValues"] {
                     data.remove(hidden);
                 }
                 Some(ChunkBlockEntity { packed_xz: (*x << 4) | *z, y: *y as i16, block_entity_type: ty as i32, data: Some(paper_nbt::Tag::Compound(data)) })

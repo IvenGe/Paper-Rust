@@ -255,6 +255,12 @@ same name, which stay reachable as `minecraft:<name>`.
 | `world.set_time` | `world`, `time`, `daylight_cycle` |
 | `world.set_spawn` | `world`, `x`, `y`, `z`, `yaw` |
 | `world.is_chunk_loaded` | `world`, `x`, `z` |
+| `world.game_rule` / `set_game_rule` / `game_rules` | `world`, `rule` (`keep_inventory` or `minecraft:keep_inventory`) / and `value` (a boolean, a number or text) / `world` |
+| `world.pdc` / `world.set_pdc` | `world` / and `data` (network NBT; the world's persistent data container) |
+| `world.break_naturally` | `world`, `x`, `y`, `z`, `tool` (an item, or none), `effect`, `experience` (answers whether the block dropped anything) |
+| `world.block_drops` | `world`, `x`, `y`, `z`, `tool` (answers the items breaking the block would drop) |
+| `world.tile_data` / `world.set_tile_data` | `world`, `x`, `y`, `z` (answers the block entity's `nbt` and `name`) / and `set` (tags as network NBT), `remove` (tag names), `name_changed`, `name` (JSON) |
+| `world.save` | `world`, `flush` |
 | `server.create_world` | `name`, `environment` (`NORMAL`, `NETHER`, `THE_END`), `seed`, `type` (`NORMAL`, `FLAT`), `structures` (answers the world, like `worlds` in the welcome) |
 | `server.dispatch_command` | `sender`, `command` (built-in commands; answers whether one ran) |
 | `server.broadcast` | `message` |

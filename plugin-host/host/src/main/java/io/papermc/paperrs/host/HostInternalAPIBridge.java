@@ -6,7 +6,6 @@ import io.papermc.paper.plugin.lifecycle.event.LifecycleEventManager;
 import io.papermc.paper.plugin.lifecycle.event.PaperLifecycleEventManager;
 import io.papermc.paperrs.host.stub.AbstractInternalAPIBridge;
 import io.papermc.paperrs.host.stub.HostBiome;
-import io.papermc.paperrs.host.stub.HostGameRule;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -39,7 +38,7 @@ public final class HostInternalAPIBridge extends AbstractInternalAPIBridge {
             // GameRules is still initialising (GameRule must be initialised first).
             throw new IllegalStateException("game rules are initialised in the wrong order");
         }
-        return new HostGameRule<>(rule.getKey(), -1, rule.translationKey());
+        return new io.papermc.paperrs.host.world.HostGameRule.Legacy<>(rule, fromLegacy, toLegacy, legacyClass);
     }
 
     @Override

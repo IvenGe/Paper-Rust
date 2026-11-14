@@ -469,6 +469,7 @@ impl Server {
             if let Some(rules) = storage.read_game_rules().context("reading game rules")? {
                 world.rules = rules;
             }
+            world.plugin_data = storage.read_plugin_data().context("reading the world's plugin data")?;
         }
         world.daylight_cycle = world.rules.bool("advance_time");
         world.sync_rule_settings();
@@ -871,22 +872,32 @@ impl Server {
             }
         }
         for world in &mut self.worlds {
-            let chunks = world.save_chunks();
-            if let Some(storage) = &world.storage {
-                if let Err(e) = storage.save_level(&world.level_data(game_type, hardcore)) {
-                    log::error!("Could not save level.dat of {}: {e:#}", world.name);
-                }
-                if let Err(e) = storage.save_game_rules(&world.rules) {
-                    log::error!("Could not save the game rules of {}: {e:#}", world.name);
-                }
-            }
-            log::debug!("Queued {chunks} chunk(s) of '{}' for saving", world.name);
+            save_world_files(world, game_type, hardcore);
         }
         if flush {
             if let Some(io) = &self.io {
                 io.flush();
             }
             for storage in self.worlds.iter().filter_map(|w| w.storage.as_ref()) {
+                storage.sync();
+            }
+        }
+        true
+    }
+
+    /// Saves one world (`World#save`): its chunks, `level.dat`, game rules and plugin data,
+    /// and waits until they are on disk if `flush`. False if worlds are kept in memory only.
+    pub fn save_world(&mut self, world: usize, flush: bool) -> bool {
+        if self.io.is_none() || world >= self.worlds.len() {
+            return false;
+        }
+        let (game_type, hardcore) = (self.default_game_mode.id(), self.config.properties.hardcore);
+        save_world_files(&mut self.worlds[world], game_type, hardcore);
+        if flush {
+            if let Some(io) = &self.io {
+                io.flush();
+            }
+            if let Some(storage) = &self.worlds[world].storage {
                 storage.sync();
             }
         }
@@ -966,4 +977,23 @@ impl Server {
         self.io = None;
         log::logger().flush();
     }
+}
+
+/// Queues a world's chunks, `level.dat`, game rules and plugin data for writing.
+fn save_world_files(world: &mut World, game_type: i32, hardcore: bool) {
+    let chunks = world.save_chunks();
+    if let Some(storage) = &world.storage {
+        if let Err(e) = storage.save_level(&world.level_data(game_type, hardcore)) {
+            log::error!("Could not save level.dat of {}: {e:#}", world.name);
+        }
+        if let Err(e) = storage.save_game_rules(&world.rules) {
+            log::error!("Could not save the game rules of {}: {e:#}", world.name);
+        }
+        if let Some(data) = &world.plugin_data {
+            if let Err(e) = storage.save_plugin_data(data) {
+                log::error!("Could not save the plugin data of {}: {e:#}", world.name);
+            }
+        }
+    }
+    log::debug!("Queued {chunks} chunk(s) of '{}' for saving", world.name);
 }

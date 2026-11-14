@@ -77,6 +77,15 @@ impl Server {
         destroyed
     }
 
+    /// Removes a block without drops or effect (`Level.removeBlock`): a waterlogged block
+    /// leaves its water. Returns whether anything changed.
+    pub fn remove_block(&mut self, world: usize, pos: BlockPos) -> bool {
+        let Some(w) = self.worlds.get_mut(world) else { return false };
+        let removed = Level::new(w).remove_block(pos, false);
+        self.publish_block_updates(world);
+        removed
+    }
+
     /// A player breaks a block (`playerWillDestroy`, then `removeBlock`): a waterlogged
     /// block leaves its water, the other half of a door or tall plant follows. Returns
     /// whether the block was removed.
@@ -211,7 +220,7 @@ impl Server {
     }
 
     /// Sends a packet to the players of a world within `range` blocks of a block.
-    pub(super) fn send_near<P: Packet + paper_protocol::codec::Encode>(&self, world: usize, pos: BlockPos, range: f64, except: Option<i32>, packet: &P) {
+    pub(crate) fn send_near<P: Packet + paper_protocol::codec::Encode>(&self, world: usize, pos: BlockPos, range: f64, except: Option<i32>, packet: &P) {
         let payload = Bytes::from(encode_packet(packet));
         let (x, y, z) = (pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
         for player in self.players.values() {
