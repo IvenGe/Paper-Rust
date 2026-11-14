@@ -374,6 +374,10 @@ impl Server {
                     return;
                 }
             }
+            EntityKind::Boat { .. } => {
+                let steered = e.passengers.first().is_some_and(|p| self.players.contains_key(p));
+                super::boats::tick_boat(&self.worlds[world], &mut e, steered);
+            }
             EntityKind::Tnt { fuse } => {
                 *fuse -= 1;
                 let explode = *fuse <= 0;
@@ -869,6 +873,23 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         EntityKind::ExperienceOrb { value } => {
             if let Some(i) = info.data_index("DATA_VALUE") {
                 m = m.varint(i, *value);
+            }
+        }
+        EntityKind::Boat { damage, hurt_time, hurt_dir, paddles } => {
+            if let Some(i) = info.data_index("DATA_ID_HURT") {
+                m = m.varint(i, *hurt_time);
+            }
+            if let Some(i) = info.data_index("DATA_ID_HURTDIR") {
+                m = m.varint(i, *hurt_dir);
+            }
+            if let Some(i) = info.data_index("DATA_ID_DAMAGE") {
+                m = m.float(i, *damage);
+            }
+            if let Some(i) = info.data_index("DATA_ID_PADDLE_LEFT") {
+                m = m.boolean(i, paddles.0);
+            }
+            if let Some(i) = info.data_index("DATA_ID_PADDLE_RIGHT") {
+                m = m.boolean(i, paddles.1);
             }
         }
         EntityKind::Tnt { fuse } => {

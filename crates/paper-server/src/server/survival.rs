@@ -1139,6 +1139,10 @@ impl Server {
             self.use_spawn_egg_on_fluid(id, hand, yaw, pitch);
             return;
         }
+        if super::boats::is_boat(name) {
+            self.use_boat(id, hand, yaw, pitch);
+            return;
+        }
         // Snowballs, eggs, ender pearls, bottles o' enchanting and splash potions are thrown.
         if super::throwing::throwable(name).is_some() {
             self.throw_held(id, hand);

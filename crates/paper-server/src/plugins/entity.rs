@@ -93,7 +93,7 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
         EntityKind::Tnt { fuse } => out.set("fuse", *fuse),
         EntityKind::FallingBlock { state, .. } => out.set("block", paper_data::blocks::state_to_string(*state)),
         EntityKind::Thrown { item, .. } => out.set("item", item_value(item)),
-        EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Other => {}
+        EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
     out
 }

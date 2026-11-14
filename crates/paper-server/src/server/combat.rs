@@ -327,6 +327,9 @@ impl Server {
         if self.players.contains_key(&id) {
             return self.hurt_player(id, damage, amount);
         }
+        if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Boat { .. })) {
+            return self.hurt_boat(world, id, &damage, amount);
+        }
         let tick = self.tick;
         let Some(e) = self.worlds[world].entities.get(&id) else { return false };
         if e.info.name == super::dragon::DRAGON {

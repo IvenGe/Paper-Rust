@@ -256,6 +256,14 @@ packet! {
 }
 
 packet! {
+    /// Which paddles of the boat the player steers are moving.
+    PaddleBoat = play::serverbound::PADDLE_BOAT {
+        left: bool,
+        right: bool,
+    }
+}
+
+packet! {
     /// Where the vehicle the player steers went (the client moves it).
     MoveVehicle = play::serverbound::MOVE_VEHICLE {
         x: f64,
@@ -494,6 +502,7 @@ pub enum Serverbound {
     CustomPayload(ServerboundCustomPayload),
     Interact(Interact),
     MoveVehicle(MoveVehicle),
+    PaddleBoat(PaddleBoat),
     KeepAlive(ServerboundKeepAlive),
     MovePlayerPos(MovePlayerPos),
     MovePlayerPosRot(MovePlayerPosRot),
@@ -553,6 +562,7 @@ impl Serverbound {
             id::CUSTOM_PAYLOAD => d!(CustomPayload),
             id::INTERACT => d!(Interact),
             id::MOVE_VEHICLE => d!(MoveVehicle),
+            id::PADDLE_BOAT => d!(PaddleBoat),
             id::KEEP_ALIVE => d!(KeepAlive),
             id::MOVE_PLAYER_POS => d!(MovePlayerPos),
             id::MOVE_PLAYER_POS_ROT => d!(MovePlayerPosRot),

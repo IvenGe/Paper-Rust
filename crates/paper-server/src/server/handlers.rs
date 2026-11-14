@@ -153,6 +153,7 @@ impl Server {
             Serverbound::ChatCommandSigned(p) => self.handle_player_command(id, &p.command),
             Serverbound::CommandSuggestion(p) => self.handle_suggestion_request(id, p.transaction_id.0, &p.text),
             Serverbound::MoveVehicle(p) => self.handle_move_vehicle(id, p),
+            Serverbound::PaddleBoat(p) => self.handle_paddle_boat(id, p.left, p.right),
             Serverbound::PlayerInput(p) if p.flags & play::input_flags::SNEAK != 0 && player.vehicle.is_some() => {
                 // The sneak key gets off what the player rides.
                 self.dismount(id);

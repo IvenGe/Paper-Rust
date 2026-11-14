@@ -181,7 +181,7 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 }
             }
         }
-        EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Other => {}
+        EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
     Some(c)
 }
@@ -209,6 +209,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
         },
         "minecraft:falling_block" => EntityKind::FallingBlock { state: c.get("BlockState").and_then(state_from_nbt)?, time: c.i32("Time").unwrap_or(0) },
         "minecraft:tnt" => EntityKind::Tnt { fuse: c.i32("fuse").unwrap_or(80) },
+        n if crate::server::boats::is_boat(n) => EntityKind::Boat { damage: 0.0, hurt_time: 0, hurt_dir: 1, paddles: (false, false) },
         _ if info.mob => {
             let mut attributes = crate::world::attributes::Attributes::of_type(&info.name);
             attributes.load_nbt(c.list("attributes").unwrap_or(&[]));

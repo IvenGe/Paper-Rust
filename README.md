@@ -119,11 +119,12 @@ What works:
   Endermen turn on players who look them in the eyes (not through a carved pumpkin),
   teleport away from water, rain, daylight and arrows (and towards a far target), and pick
   up and put down blocks.
-* **Riding and pets**: saddles go on pigs, striders, horses and camels; players get on and
-  steer (their client moves the mount; carrots and warped fungi on sticks steer and boost
-  pigs and striders) and get off with the sneak key. Horses have random health, speed,
-  jump and coat, buck their rider off until their temper (raised by feeding) lets them be
-  tamed, wear horse armour and eat to heal and grow. Tamed ones open their inventory when
+* **Riding and pets**: boats and rafts are put on water, boarded (two to a boat), steered,
+  float, and break into their item; saddles go on pigs, striders, horses and camels;
+  players get on and steer (their client moves the mount; carrots and warped fungi on
+  sticks steer and boost pigs and striders) and get off with the sneak key. Horses have
+  random health, speed, jump and coat, buck their rider off until their temper (raised by
+  feeding) lets them be tamed, wear horse armour and eat to heal and grow. Tamed ones open their inventory when
   their rider asks or a player sneaks and clicks them: saddle, armour (carpets for llamas)
   and the chests that donkeys, mules and llamas carry (llamas' by their strength), all saved
   with them and dropped when they die. Wolves (bones), cats (fish) and
@@ -291,7 +292,7 @@ Not yet:
   block entities on the server.
 * The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
   portal.
-* Gameplay: boats and minecarts cannot be ridden, parrots do not ride on shoulders, cats do not sleep on
+* Gameplay: minecarts cannot be ridden, chest boats' chests cannot be opened, parrots do not ride on shoulders, cats do not sleep on
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the

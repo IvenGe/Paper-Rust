@@ -419,6 +419,9 @@ pub struct Mob {
 pub enum EntityKind {
     /// A dropped item; with an `owner` (vanilla's `target`), only that player picks it up.
     Item { stack: Slot, pickup_delay: i32, thrower: Option<Uuid>, owner: Option<Uuid> },
+    /// A boat or raft: the damage it has taken (it breaks past 40), its wobble, and the
+    /// paddles its driver moves.
+    Boat { damage: f32, hurt_time: i32, hurt_dir: i32, paddles: (bool, bool) },
     Mob(Box<Mob>),
     Arrow { damage: f64, owner: Option<i32>, in_ground: bool, life: i32, pickup: bool, critical: bool },
     FallingBlock { state: u32, time: i32 },

@@ -58,6 +58,7 @@ pub fn rider_height(name: &str, height: f64) -> f64 {
         "minecraft:camel" | "minecraft:camel_husk" => 1.975,
         "minecraft:pig" => 0.86875,
         "minecraft:strider" => 1.1875,
+        n if super::boats::is_boat(n) => super::boats::seat_height(n, height),
         _ => height,
     }
 }
@@ -207,6 +208,10 @@ impl Server {
         let v = self.worlds.get(world)?.entities.get(&vehicle)?;
         let first = *v.passengers.first()?;
         let p = self.players.get(&first)?;
+        // Whoever sits in front steers a boat.
+        if super::boats::is_boat(&v.info.name) {
+            return Some(first);
+        }
         let mob = v.mob()?;
         let saddled = !mob.equipment[SADDLE_SLOT].is_empty();
         let holds = |name: &str| [&p.inventory[super::player::HOTBAR_START + p.held_slot as usize], &p.inventory[super::player::OFFHAND_SLOT]].iter().any(|s| s.0.as_ref().is_some_and(|st| item_name(st) == name));

@@ -241,6 +241,10 @@ impl Server {
         if e.pos.distance_squared(at) > 64.0 {
             return;
         }
+        if super::boats::is_boat(&e.info.name) {
+            self.board_boat(id, world, target);
+            return;
+        }
         let Some(mob) = e.mob().filter(|m| !m.living.is_dead()) else { return };
         let (name, baby, sheared, age, in_love) = (e.info.name.clone(), mob.baby, mob.sheared, mob.age, mob.in_love);
         let merchant = mob.merchant.is_some();
