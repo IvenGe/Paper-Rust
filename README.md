@@ -111,8 +111,13 @@ What works:
   blocks and primed TNT, and mobs: animals wander, look at players and panic when hurt;
   zombies, spiders and other monsters chase and hit players; skeletons shoot arrows;
   creepers explode; undead burn in daylight. Mobs use A* pathfinding and vanilla's walking
-  physics, spawn naturally from the biomes' spawner lists (animals also when a chunk is
-  generated), despawn far from players, and drop loot (vanilla loot tables) and experience.
+  physics, spawn naturally from the biomes' spawn lists (26.3 keeps them in the biomes'
+  `natural_mob_spawns` attributes), each type by its own vanilla rules: animals on their own
+  ground (rabbits on sand and snow, goats on stone, mooshrooms on mycelium, ...) and also when
+  a chunk is generated, under the trees too; bats in dark caves, fish and squid near the
+  surface of water, glow squid deep down, axolotls in lush caves, slimes in swamps and slime
+  chunks, the nether's own mobs. They despawn far from players, and drop loot (vanilla loot
+  tables) and experience.
   Mob spawners (dungeons) spawn their mob near players; end crystals explode when hit.
   Animals follow players holding their food and breed when fed (babies grow up, faster when
   fed); cows and goats give milk, mooshrooms stew; sheep are sheared and dyed and eat grass

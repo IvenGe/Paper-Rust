@@ -864,6 +864,22 @@ impl World {
         Some(chunk.top_y((x & 15) as usize, (z & 15) as usize))
     }
 
+    /// Y of the first free block above the highest block that blocks motion, leaves not
+    /// counted (`MOTION_BLOCKING_NO_LEAVES`): the ground under the trees.
+    pub fn top_y_no_leaves(&self, x: i32, z: i32) -> Option<i32> {
+        let leaves = paper_data::synced::tag("minecraft:block", "minecraft:leaves").unwrap_or(&[]);
+        let mut y = self.top_y(x, z)?;
+        while y > self.min_y {
+            let below = self.block_at(x, y - 1, z)?;
+            let blocks_motion = blocks::flags(below) & (blocks::FLAG_COLLISION | blocks::FLAG_FLUID) != 0;
+            if blocks_motion && !leaves.contains(&(blocks::block_id_of_state(below) as i32)) {
+                break;
+            }
+            y -= 1;
+        }
+        Some(y)
+    }
+
     // --- entities --------------------------------------------------------------------------
 
     /// Adds an entity to the world and its chunk index.

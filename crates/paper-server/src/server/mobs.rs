@@ -19,6 +19,7 @@ use paper_protocol::packets::{encode_packet, play};
 use paper_protocol::types::Slot;
 use rand::Rng;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 /// How a mob behaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +105,9 @@ pub fn sky_darken(world: &World) -> i32 {
 }
 
 pub(super) fn sky_light(world: &World, x: i32, y: i32, z: i32) -> i32 {
+    if !world.has_skylight {
+        return 0;
+    }
     world.chunks.get(&ChunkPos::of_block(x, z)).filter(|c| c.lit).map_or(15, |c| c.sky_light_at((x & 15) as usize, y, (z & 15) as usize) as i32)
 }
 
@@ -239,7 +243,8 @@ pub fn find_path(world: &World, start: (i32, i32, i32), goal: (i32, i32, i32), h
 
 // --- spawning data ---------------------------------------------------------------------------
 
-/// One `spawners` entry of a biome.
+/// One entry of a spawn list (`MobSpawnSettings.SpawnerData`): a mob type, its weight and the
+/// size of its groups.
 #[derive(Clone, Debug)]
 pub struct SpawnerEntry {
     pub entity: String,
@@ -248,8 +253,70 @@ pub struct SpawnerEntry {
     pub max: i32,
 }
 
-/// Mob caps per category (`MobCategory`): (category, cap, friendly/persistent).
-const CATEGORIES: [(&str, &str, i32, bool); 4] = [("MONSTER", "monster", 70, false), ("CREATURE", "creature", 10, true), ("AMBIENT", "ambient", 15, false), ("WATER_AMBIENT", "water_ambient", 20, false)];
+/// What a biome spawns (`MobSpawnSettings`). A 26.3 biome keeps it in attributes:
+/// `minecraft:gameplay/natural_mob_spawns` (spawn lists by category, a group's size a number or
+/// a uniform range) and `minecraft:gameplay/creature_world_gen_spawn_probability`.
+#[derive(Clone, Debug)]
+pub struct BiomeSpawns {
+    /// Spawn lists by category (`monster`, `creature`, `water_ambient`, ...).
+    pub by_category: HashMap<String, Vec<SpawnerEntry>>,
+    /// The chance of each further group of animals placed when a chunk is generated.
+    pub creature_probability: f32,
+}
+
+impl Default for BiomeSpawns {
+    fn default() -> Self {
+        Self { by_category: HashMap::new(), creature_probability: 0.1 }
+    }
+}
+
+impl BiomeSpawns {
+    /// Reads a biome (`worldgen/biome/<name>.json`).
+    pub fn parse(biome: &serde_json::Value) -> Self {
+        use serde_json::Value;
+        let attributes = &biome["attributes"];
+        let mut by_category = HashMap::new();
+        for (category, entries) in attributes["minecraft:gameplay/natural_mob_spawns"]["argument"]["spawns_by_category"].as_object().into_iter().flatten() {
+            let list = entries
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| {
+                    let (min, max) = match &e["count"] {
+                        Value::Number(n) => (n.as_i64()? as i32, n.as_i64()? as i32),
+                        c if c["type"] == "minecraft:constant" => (c["value"].as_i64()? as i32, c["value"].as_i64()? as i32),
+                        c => (c["min_inclusive"].as_i64().unwrap_or(1) as i32, c["max_inclusive"].as_i64().unwrap_or(1) as i32),
+                    };
+                    Some(SpawnerEntry { entity: e["type"].as_str()?.to_owned(), weight: e["weight"].as_i64().unwrap_or(1) as i32, min, max })
+                })
+                .collect();
+            by_category.insert(category.clone(), list);
+        }
+        let creature_probability = attributes["minecraft:gameplay/creature_world_gen_spawn_probability"].as_f64().unwrap_or(0.1) as f32;
+        Self { by_category, creature_probability }
+    }
+
+    /// Without the vanilla data: the plains' farm animals and the usual monsters.
+    fn fallback() -> Self {
+        let e = |entity: &str, weight, min, max| SpawnerEntry { entity: entity.into(), weight, min, max };
+        let mut by_category = HashMap::new();
+        by_category.insert("monster".to_owned(), vec![e("minecraft:spider", 100, 4, 4), e("minecraft:zombie", 95, 4, 4), e("minecraft:skeleton", 100, 4, 4), e("minecraft:creeper", 100, 4, 4), e("minecraft:enderman", 10, 1, 4)]);
+        by_category.insert("creature".to_owned(), vec![e("minecraft:sheep", 12, 4, 4), e("minecraft:pig", 10, 4, 4), e("minecraft:chicken", 10, 4, 4), e("minecraft:cow", 8, 4, 4)]);
+        Self { by_category, ..Self::default() }
+    }
+}
+
+/// Mob caps per category (`MobCategory`): (category, spawn list, cap, persistent: spawned only
+/// every 400 ticks).
+const CATEGORIES: [(&str, &str, i32, bool); 7] = [
+    ("MONSTER", "monster", 70, false),
+    ("CREATURE", "creature", 10, true),
+    ("AMBIENT", "ambient", 15, false),
+    ("AXOLOTLS", "axolotls", 5, false),
+    ("UNDERGROUND_WATER_CREATURE", "underground_water_creature", 5, false),
+    ("WATER_CREATURE", "water_creature", 5, false),
+    ("WATER_AMBIENT", "water_ambient", 20, false),
+];
 
 impl Server {
     /// What spawns at a block position for a category (`getMobsAt`): a structure's own list
@@ -265,35 +332,25 @@ impl Server {
         self.biome_spawners(biome, category)
     }
 
-    /// The spawner list of a biome for a category (`monster`, `creature`, ...), read from the
-    /// vanilla data and cached.
-    pub fn biome_spawners(&mut self, biome: &str, category: &str) -> Vec<SpawnerEntry> {
-        let key = format!("{biome}|{category}");
-        if let Some(list) = self.spawner_cache.get(&key) {
-            return list.clone();
+    /// What a biome spawns, read from the vanilla data and cached.
+    pub fn biome_spawns(&mut self, biome: &str) -> Arc<BiomeSpawns> {
+        if let Some(spawns) = self.spawner_cache.get(biome) {
+            return spawns.clone();
         }
-        let path = format!("data/minecraft/worldgen/biome/{}.json", biome.strip_prefix("minecraft:").unwrap_or(biome));
-        let list: Vec<SpawnerEntry> = self
-            .vanilla
-            .as_ref()
-            .and_then(|v| v.read_json(&path))
-            .and_then(|json| json.get("spawners").and_then(|s| s.get(category)).and_then(|l| l.as_array()).cloned())
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(|e| {
-                        Some(SpawnerEntry {
-                            entity: e["type"].as_str()?.to_owned(),
-                            weight: e["weight"].as_i64().unwrap_or(1) as i32,
-                            min: e["minCount"].as_i64().unwrap_or(1) as i32,
-                            max: e["maxCount"].as_i64().unwrap_or(1) as i32,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| default_spawners(category));
-        self.spawner_cache.insert(key, list.clone());
-        list
+        let spawns = Arc::new(match &self.vanilla {
+            Some(vanilla) => {
+                let path = format!("data/minecraft/worldgen/biome/{}.json", biome.strip_prefix("minecraft:").unwrap_or(biome));
+                vanilla.read_json(&path).map(|json| BiomeSpawns::parse(&json)).unwrap_or_default()
+            }
+            None => BiomeSpawns::fallback(),
+        });
+        self.spawner_cache.insert(biome.to_owned(), spawns.clone());
+        spawns
+    }
+
+    /// The spawn list of a biome for a category (`monster`, `creature`, ...).
+    pub fn biome_spawners(&mut self, biome: &str, category: &str) -> Vec<SpawnerEntry> {
+        self.biome_spawns(biome).by_category.get(category).cloned().unwrap_or_default()
     }
 
     /// The biome at a block position.
@@ -330,7 +387,7 @@ impl Server {
             living: LivingState::new(max_health),
             equipment: Default::default(),
             brain: MobBrain { speed_factor: 1.0, idle_ticks: rng.gen_range(0..120), ..Default::default() },
-            persistent: matches!(reason, SpawnReason::Command | SpawnReason::Plugin | SpawnReason::Egg),
+            persistent: matches!(reason, SpawnReason::Command | SpawnReason::Plugin | SpawnReason::Egg | SpawnReason::Bucket),
             baby: false,
             variant: 0,
             sheared: false,
@@ -1173,6 +1230,13 @@ impl Server {
         if w.block_at(x0, y, z0).is_none_or(|s| paper_data::physics::flags(s) & paper_data::physics::SOLID_BLOCK != 0) {
             return 0;
         }
+        // Mobs of most categories only spawn where they would not despawn at once
+        // (`canSpawnFarFromPlayer`, `getDespawnDistance`); animals anywhere in range.
+        let far = match category {
+            "CREATURE" => f64::MAX,
+            "WATER_AMBIENT" => 64.0 * 64.0,
+            _ => 128.0 * 128.0,
+        };
         let mut count = 0;
         for _ in 0..3 {
             let (mut x, mut z) = (x0, z0);
@@ -1188,7 +1252,7 @@ impl Server {
                 let nearest = self.players.values().filter(|p| p.world == world).map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z).distance_squared(at)).fold(f64::MAX, f64::min);
                 // Not too close to a player, not so far that it would despawn at once, and not
                 // within 24 blocks of the world spawn (`isRightDistanceToPlayerAndSpawnPoint`).
-                if nearest <= 576.0 || nearest > 128.0 * 128.0 || spawn_center.distance_squared(at) < 576.0 {
+                if nearest <= 576.0 || nearest > far || spawn_center.distance_squared(at) < 576.0 {
                     continue;
                 }
                 if chosen.is_none() {
@@ -1210,7 +1274,7 @@ impl Server {
                     pack = c.min + rng.gen_range(0..=(c.max - c.min).max(0));
                 }
                 let entry = chosen.clone().unwrap();
-                if !self.can_spawn_at(world, &entry.entity, x, y, z, category, false) {
+                if !self.can_spawn_at(world, &entry.entity, x, y, z, SpawnReason::Natural) {
                     continue;
                 }
                 if self.spawn_mob(world, &entry.entity, at, SpawnReason::Natural).is_some() {
@@ -1226,72 +1290,176 @@ impl Server {
         count
     }
 
-    /// Spawn placement and light rules for a mob type at a block position.
-    fn can_spawn_at(&self, world: usize, entity: &str, x: i32, y: i32, z: i32, category: &str, generation: bool) -> bool {
+    /// Whether a mob of a type may spawn at a block position (`isValidSpawnPostitionForType`
+    /// without the distances, and the mob's own `checkSpawnObstruction`): where the type may
+    /// be (`SpawnPlacements.isSpawnPositionOk`), the type's own rules
+    /// (`SpawnPlacements.checkSpawnRules`), and room for it, out of fluids unless it lives in
+    /// them.
+    pub fn can_spawn_at(&self, world: usize, entity: &str, x: i32, y: i32, z: i32, reason: SpawnReason) -> bool {
         let w = &self.worlds[world];
         let Some(info) = entity_types::by_name(entity) else { return false };
-        let empty = |yy: i32| {
-            w.block_at(x, yy, z).is_some_and(|s| {
-                paper_data::physics::flags(s) & paper_data::physics::FULL_CUBE == 0 && survival::fluid_of(s).is_none() && !matches!(blocks::block_of_state(s).name, "minecraft:fire" | "minecraft:soul_fire" | "minecraft:powder_snow" | "minecraft:sweet_berry_bush" | "minecraft:cactus" | "minecraft:wither_rose" | "minecraft:magma_block") && !blocks::block_of_state(s).name.ends_with("_rail")
-            })
+        let fluid = |yy: i32| w.block_at(x, yy, z).and_then(survival::fluid_of).map(|(f, _)| f);
+        let placed = match info.spawn_location.as_str() {
+            "ON_GROUND" => w.block_at(x, y - 1, z).is_some_and(|below| valid_spawn_on(below, info)) && empty_for_spawn(w, x, y, z, info) && empty_for_spawn(w, x, y + 1, z, info),
+            "IN_WATER" => fluid(y) == Some(Fluid::Water) && w.block_at(x, y + 1, z).is_some_and(|above| paper_data::physics::flags(above) & paper_data::physics::SOLID_BLOCK == 0),
+            "IN_LAVA" => fluid(y) == Some(Fluid::Lava),
+            _ => true,
         };
-        let in_water_type = info.spawn_location == "IN_WATER";
-        if in_water_type {
-            let water = |yy: i32| w.block_at(x, yy, z).and_then(survival::fluid_of).is_some_and(|(f, _)| f == Fluid::Water);
-            if !(water(y) && water(y - 1)) {
-                return false;
-            }
-        } else {
-            let Some(below) = w.block_at(x, y - 1, z) else { return false };
-            let below_name = blocks::block_of_state(below).name;
-            let sturdy = paper_data::physics::flags(below) & paper_data::physics::SOLID_BLOCK != 0;
-            if !sturdy || matches!(below_name, "minecraft:bedrock" | "minecraft:barrier") || !empty(y) || !empty(y + 1) {
-                return false;
-            }
+        if !placed || !self.spawn_rules(world, info, x, y, z, reason) {
+            return false;
         }
-        // The mob must fit.
         let area = Aabb::of_entity(Vec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5), info.width as f64, info.height as f64);
         if collides(w, &area) {
             return false;
         }
-        match category {
-            "MONSTER" => {
-                // `isDarkEnoughToSpawn`: no block light, and dark sky light.
-                let mut rng = rand::thread_rng();
-                if sky_light(w, x, y, z) > rng.gen_range(0..32) {
-                    return false;
+        // Mobs that live in water or lava spawn in it; the others out of any fluid.
+        matches!(info.spawn_location.as_str(), "IN_WATER" | "IN_LAVA") || !contains_fluid(w, &area)
+    }
+
+    /// A mob type's own spawn rules (`SpawnPlacements.checkSpawnRules`): the blocks animals
+    /// spawn on, the light they need, how dark it must be for monsters, and the rules of the
+    /// mobs that spawn their own way (slimes, drowned, fish, bats, ghasts...).
+    fn spawn_rules(&self, world: usize, info: &entity_types::EntityTypeInfo, x: i32, y: i32, z: i32, reason: SpawnReason) -> bool {
+        let w = &self.worlds[world];
+        let mut rng = rand::thread_rng();
+        let peaceful = self.difficulty == Difficulty::Peaceful;
+        let sea = w.generator.sea_level();
+        let here = w.block_at(x, y, z).unwrap_or(blocks::AIR);
+        let below = w.block_at(x, y - 1, z).unwrap_or(blocks::AIR);
+        let below_name = blocks::block_of_state(below).name;
+        let below_in = |tag: &str| block_in_tag(below, tag);
+        let water_at = |yy: i32| w.block_at(x, yy, z).and_then(survival::fluid_of).is_some_and(|(f, _)| f == Fluid::Water);
+        let biome = || self.biome_at(world, x, y, z);
+        // `Animal.isBrightEnoughToSpawn`; a generated chunk is spawned in before it has light.
+        let bright = reason == SpawnReason::ChunkGeneration || raw_brightness(w, x, y, z) > 8;
+        // `checkSurfaceWaterAnimalSpawnRules`: near the surface of water.
+        let surface_water = (sea - 13..=sea).contains(&y) && water_at(y - 1) && w.block_at(x, y + 1, z).is_some_and(|s| blocks::block_of_state(s).name == "minecraft:water");
+        let monster = |rng: &mut rand::rngs::ThreadRng| !peaceful && dark_enough(w, x, y, z, rng);
+        match info.name.strip_prefix("minecraft:").unwrap_or(&info.name) {
+            // Animals on their own ground.
+            "rabbit" => below_in("minecraft:rabbits_spawnable_on") && bright,
+            "fox" => below_in("minecraft:foxes_spawnable_on") && bright,
+            "goat" => below_in("minecraft:goats_spawnable_on") && bright,
+            "wolf" => below_in("minecraft:wolves_spawnable_on") && bright,
+            "mooshroom" => below_in("minecraft:mooshrooms_spawnable_on") && bright,
+            "frog" => below_in("minecraft:frogs_spawnable_on") && bright,
+            "armadillo" => below_in("minecraft:armadillo_spawnable_on") && bright,
+            "parrot" => below_in("minecraft:parrots_spawnable_on") && bright,
+            "camel" => below_in("minecraft:camels_spawnable_on") && bright,
+            "polar_bear" if biome_in_tag(biome(), "minecraft:polar_bears_spawn_on_alternate_blocks") => below_in("minecraft:polar_bears_spawnable_on_alternate") && bright,
+            "turtle" => y < sea + 4 && below_in("minecraft:sand") && bright,
+            // Ocelots spawn with the monsters of jungles, on grass or leaves above the sea.
+            "ocelot" => rng.gen_range(0..3) != 0 && y >= sea && (below_name == "minecraft:grass_block" || below_in("minecraft:leaves")),
+            // Striders in lava, under open air.
+            "strider" => {
+                let mut top = y;
+                while w.block_at(x, top, z).and_then(survival::fluid_of).is_some_and(|(f, _)| f == Fluid::Lava) {
+                    top += 1;
                 }
-                if block_light(w, x, y, z) > 0 {
-                    return false;
+                w.block_at(x, top, z).is_some_and(blocks::is_air)
+            }
+            "axolotl" => below_in("minecraft:axolotls_spawnable_on"),
+            // Bats in the dark below sea level, on stone (half as many as around Halloween,
+            // which is not kept here).
+            "bat" => y < sea && rng.gen_bool(0.5) && raw_brightness(w, x, y, z) <= rng.gen_range(0..4) && below_in("minecraft:bats_spawnable_on"),
+            "cod" | "salmon" | "pufferfish" | "squid" | "dolphin" | "nautilus" => surface_water,
+            "tropical_fish" => water_at(y - 1) && w.block_at(x, y + 1, z).is_some_and(|s| blocks::block_of_state(s).name == "minecraft:water") && (biome_in_tag(biome(), "minecraft:allows_tropical_fish_spawns_at_any_height") || surface_water),
+            "glow_squid" => y <= sea - 33 && sky_light(w, x, y, z).max(block_light(w, x, y, z)) == 0 && blocks::block_of_state(here).name == "minecraft:water",
+            // Monsters with their own rules.
+            "slime" => !peaceful && self.slime_may_spawn(world, x, y, z, &mut rng),
+            "drowned" => {
+                let can = water_at(y - 1) && monster(&mut rng) && water_at(y);
+                if biome_in_tag(biome(), "minecraft:more_frequent_drowned_spawns") {
+                    rng.gen_range(0..15) == 0 && can
+                } else {
+                    rng.gen_range(0..40) == 0 && y < sea - 5 && can
                 }
-                raw_brightness(w, x, y, z) <= rng.gen_range(0..=7)
             }
-            "CREATURE" => {
-                let below = w.block_at(x, y - 1, z).unwrap_or(blocks::AIR);
-                let below_ok = paper_data::synced::tag("minecraft:block", "minecraft:animals_spawnable_on").is_some_and(|ids| ids.contains(&(blocks::block_id_of_state(below) as i32)));
-                below_ok && (generation || raw_brightness(w, x, y, z) > 8)
+            "guardian" | "elder_guardian" => (rng.gen_range(0..20) == 0 || !sees_sky_from_below_water(w, x, y, z, sea)) && !peaceful && water_at(y) && water_at(y - 1),
+            "husk" | "parched" | "camel_husk" => monster(&mut rng) && sky_light(w, x, y, z) >= 15,
+            "stray" => {
+                // Under open sky, above any powder snow it is in.
+                let mut top = y;
+                while w.block_at(x, top + 1, z).is_some_and(|s| blocks::block_of_state(s).name == "minecraft:powder_snow") {
+                    top += 1;
+                }
+                monster(&mut rng) && sky_light(w, x, top, z) >= 15
             }
+            "ghast" => !peaceful && rng.gen_range(0..20) == 0,
+            "zombified_piglin" => !peaceful && below_name != "minecraft:nether_wart_block",
+            "piglin" | "hoglin" => below_name != "minecraft:nether_wart_block",
+            "magma_cube" | "blaze" => !peaceful,
+            // `checkPatrollingMonsterSpawnRules`: any darkness, little block light.
+            "pillager" => !peaceful && block_light(w, x, y, z) <= 8,
+            _ if info.category == "MONSTER" => monster(&mut rng),
+            // Other animals: on grass, in daylight (`checkAnimalSpawnRules`).
+            _ if info.category == "CREATURE" => below_in("minecraft:animals_spawnable_on") && bright,
             _ => true,
         }
     }
 
-    /// Animals placed when a chunk is first generated (`spawnMobsForChunkGeneration`).
-    pub(super) fn spawn_for_chunk_generation(&mut self, world: usize, chunk: ChunkPos) {
+    /// `Slime.checkSlimeSpawnRules` in natural spawning: in swamps by night at the surface,
+    /// more often under a full moon, or deep down in slime chunks.
+    fn slime_may_spawn(&self, world: usize, x: i32, y: i32, z: i32, rng: &mut rand::rngs::ThreadRng) -> bool {
+        let w = &self.worlds[world];
+        if biome_in_tag(self.biome_at(world, x, y, z), "minecraft:allows_surface_slime_spawns") && y > 50 && y < 70 && rng.gen::<f32>() < 0.5 && rng.gen::<f32>() < moon_brightness(w) && raw_brightness(w, x, y, z) <= rng.gen_range(0..8) {
+            return true;
+        }
+        rng.gen_range(0..10) == 0 && is_slime_chunk(w.seed, x >> 4, z >> 4) && y < 40
+    }
+
+    /// Where a mob of a type stands at the top of a column (`NaturalSpawner.getTopNonCollidingPos`):
+    /// on the type's heightmap (leaves count only for ocelots and parrots), under the roof in
+    /// dimensions with one, and down into a block that can be walked through for mobs that
+    /// stand on the ground.
+    fn top_spawn_y(&self, world: usize, info: &entity_types::EntityTypeInfo, x: i32, z: i32) -> Option<i32> {
+        let w = &self.worlds[world];
+        let mut y = if info.spawn_heightmap == "MOTION_BLOCKING" { w.top_y(x, z)? } else { w.top_y_no_leaves(x, z)? };
+        if paper_data::synced::dimension_type(&w.dimension).is_some_and(|d| d.has_ceiling) {
+            loop {
+                y -= 1;
+                if y <= w.min_y {
+                    return None;
+                }
+                if w.block_at(x, y, z).is_some_and(blocks::is_air) {
+                    break;
+                }
+            }
+            loop {
+                y -= 1;
+                if !(w.block_at(x, y, z).is_some_and(blocks::is_air) && y > w.min_y) {
+                    break;
+                }
+            }
+        }
+        // `ON_GROUND.adjustSpawnPosition`: into the block below if it can be walked through
+        // (`isPathfindable(LAND)`: not a full block; fluids other than lava).
+        if info.spawn_location == "ON_GROUND" {
+            if let Some(below) = w.block_at(x, y - 1, z) {
+                let lava = survival::fluid_of(below).is_some_and(|(f, _)| f == Fluid::Lava);
+                if blocks::flags(below) & blocks::FLAG_FULL_CUBE == 0 && !lava {
+                    y -= 1;
+                }
+            }
+        }
+        Some(y)
+    }
+
+    /// Animals placed when a chunk is first generated (`spawnMobsForChunkGeneration`): groups
+    /// of the biome's creatures, each group with the biome's chance after the one before.
+    pub fn spawn_for_chunk_generation(&mut self, world: usize, chunk: ChunkPos) {
         if !self.worlds[world].rules.bool("spawn_mobs") {
             return;
         }
         let mut rng = rand::thread_rng();
         let (x0, z0) = (chunk.x * 16, chunk.z * 16);
-        let biome = {
-            let top = self.worlds[world].top_y(x0 + 8, z0 + 8).unwrap_or(64);
-            self.biome_at(world, x0 + 8, top, z0 + 8)
-        };
-        let spawners = self.biome_spawners(biome, "creature");
-        if spawners.is_empty() {
-            return;
-        }
+        // The biome at the top of the chunk's corner (`spawnOriginalMobs`).
+        let top = self.worlds[world].min_y + self.worlds[world].height - 1;
+        let biome = self.biome_at(world, x0, top, z0);
+        let spawns = self.biome_spawns(biome);
+        let Some(spawners) = spawns.by_category.get("creature") else { return };
         let total: i32 = spawners.iter().map(|s| s.weight).sum();
-        while rng.gen::<f32>() < 0.1 && total > 0 {
+        while rng.gen::<f32>() < spawns.creature_probability && total > 0 {
             let mut pick = rng.gen_range(0..total);
             let Some(entry) = spawners.iter().find(|s| {
                 pick -= s.weight;
@@ -1299,14 +1467,15 @@ impl Server {
             }) else {
                 break;
             };
+            let Some(info) = entity_types::by_name(&entry.entity) else { continue };
             let count = entry.min + rng.gen_range(0..=(entry.max - entry.min).max(0));
             let (mut x, mut z) = (x0 + rng.gen_range(0..16), z0 + rng.gen_range(0..16));
             let (sx, sz) = (x, z);
             for _ in 0..count {
                 for _ in 0..4 {
-                    if let Some(top) = self.worlds[world].top_y(x, z) {
-                        if self.can_spawn_at(world, &entry.entity, x, top, z, "CREATURE", true) {
-                            self.spawn_mob(world, &entry.entity, Vec3::new(x as f64 + 0.5, top as f64, z as f64 + 0.5), SpawnReason::ChunkGeneration);
+                    if let Some(y) = self.top_spawn_y(world, info, x, z) {
+                        if self.can_spawn_at(world, &entry.entity, x, y, z, SpawnReason::ChunkGeneration) {
+                            self.spawn_mob(world, &entry.entity, Vec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5), SpawnReason::ChunkGeneration);
                             break;
                         }
                     }
@@ -1353,24 +1522,143 @@ impl Server {
     }
 }
 
+/// Whether a block is in a block tag.
+fn block_in_tag(state: u32, tag: &str) -> bool {
+    paper_data::synced::tag("minecraft:block", tag).is_some_and(|ids| ids.contains(&(blocks::block_id_of_state(state) as i32)))
+}
+
+/// Whether a biome is in a biome tag.
+fn biome_in_tag(biome: &str, tag: &str) -> bool {
+    let Some(id) = paper_data::synced::id("minecraft:worldgen/biome", biome) else { return false };
+    paper_data::synced::tag("minecraft:worldgen/biome", tag).is_some_and(|ids| ids.contains(&id))
+}
+
+/// `BlockState.isValidSpawn` of the block a mob would stand on: a sturdy top that gives out
+/// less than 14 light. Leaves only hold ocelots and parrots, ice only polar bears, magma
+/// blocks only mobs that do not burn, and nothing spawns on glass, bedrock or barriers.
+fn valid_spawn_on(state: u32, info: &entity_types::EntityTypeInfo) -> bool {
+    if block_in_tag(state, "minecraft:leaves") {
+        return matches!(info.name.as_str(), "minecraft:ocelot" | "minecraft:parrot");
+    }
+    match blocks::block_of_state(state).name {
+        "minecraft:ice" | "minecraft:frosted_ice" => info.name == "minecraft:polar_bear",
+        "minecraft:magma_block" => info.fire_immune,
+        "minecraft:bedrock" | "minecraft:barrier" | "minecraft:glass" | "minecraft:tinted_glass" => false,
+        name if name.ends_with("_stained_glass") => false,
+        _ => paper_data::physics::is_face_sturdy(state, 1) && blocks::luminance(state) < 14,
+    }
+}
+
+/// `NaturalSpawner.isValidEmptySpawnBlock`: a block a mob may spawn inside. Not a full block,
+/// no fluid, no rails, nothing that gives out redstone power, nothing that would hurt it.
+fn empty_for_spawn(w: &World, x: i32, y: i32, z: i32, info: &entity_types::EntityTypeInfo) -> bool {
+    let Some(state) = w.block_at(x, y, z) else { return false };
+    if blocks::flags(state) & blocks::FLAG_FULL_CUBE != 0 || survival::fluid_of(state).is_some() || block_in_tag(state, "minecraft:prevent_mob_spawning_inside") || is_signal_source(state) {
+        return false;
+    }
+    // `EntityType.isBlockDangerous`, with the blocks some types are immune to.
+    let name = blocks::block_of_state(state).name;
+    let immune = match name {
+        "minecraft:powder_snow" => matches!(info.name.as_str(), "minecraft:stray" | "minecraft:polar_bear" | "minecraft:snow_golem"),
+        "minecraft:sweet_berry_bush" => info.name == "minecraft:fox",
+        "minecraft:wither_rose" => matches!(info.name.as_str(), "minecraft:wither" | "minecraft:wither_skeleton"),
+        _ => false,
+    };
+    let burning = matches!(name, "minecraft:fire" | "minecraft:soul_fire" | "minecraft:magma_block" | "minecraft:lava_cauldron") || (name.ends_with("campfire") && blocks::property(state, "lit") == Some("true"));
+    immune || !(burning && !info.fire_immune || matches!(name, "minecraft:wither_rose" | "minecraft:sweet_berry_bush" | "minecraft:cactus" | "minecraft:powder_snow"))
+}
+
+/// `BlockState.isSignalSource`: blocks that give out redstone power.
+fn is_signal_source(state: u32) -> bool {
+    let name = blocks::block_of_state(state).name;
+    name.ends_with("_button")
+        || name.ends_with("_pressure_plate")
+        || name.ends_with("lightning_rod")
+        || matches!(
+            name,
+            "minecraft:redstone_wire"
+                | "minecraft:redstone_torch"
+                | "minecraft:redstone_wall_torch"
+                | "minecraft:redstone_block"
+                | "minecraft:lever"
+                | "minecraft:repeater"
+                | "minecraft:comparator"
+                | "minecraft:tripwire_hook"
+                | "minecraft:daylight_detector"
+                | "minecraft:observer"
+                | "minecraft:target"
+                | "minecraft:detector_rail"
+                | "minecraft:trapped_chest"
+                | "minecraft:lectern"
+                | "minecraft:sculk_sensor"
+                | "minecraft:calibrated_sculk_sensor"
+        )
+}
+
+/// `containsAnyLiquid`: some block in a box holds a fluid.
+fn contains_fluid(w: &World, b: &Aabb) -> bool {
+    let (x0, y0, z0) = (b.min.x.floor() as i32, b.min.y.floor() as i32, b.min.z.floor() as i32);
+    let (x1, y1, z1) = (b.max.x.ceil() as i32, b.max.y.ceil() as i32, b.max.z.ceil() as i32);
+    (x0..x1).any(|x| (y0..y1).any(|y| (z0..z1).any(|z| w.block_at(x, y, z).and_then(survival::fluid_of).is_some())))
+}
+
+/// `Monster.isDarkEnoughToSpawn`, with the dimension's limits: in the overworld no block light
+/// and darkness below a random level up to 7, in the nether darkness of 7 or less whatever
+/// the block light, in the end any light but no block light. Thunder darkens the sky more.
+fn dark_enough(w: &World, x: i32, y: i32, z: i32, rng: &mut impl Rng) -> bool {
+    if sky_light(w, x, y, z) > rng.gen_range(0..32) {
+        return false;
+    }
+    let (block_limit, light_test) = match w.dimension.as_str() {
+        "minecraft:the_nether" => (15, 7),
+        "minecraft:the_end" => (0, 15),
+        _ => (0, rng.gen_range(0..=7)),
+    };
+    if block_limit < 15 && block_light(w, x, y, z) > block_limit {
+        return false;
+    }
+    let darken = if w.weather.is_thundering() { 10 } else { sky_darken(w) };
+    light_test >= (sky_light(w, x, y, z) - darken).max(block_light(w, x, y, z))
+}
+
+/// `canSeeSkyFromBelowWater`: open sky over a block and the water above it.
+fn sees_sky_from_below_water(w: &World, x: i32, y: i32, z: i32, sea: i32) -> bool {
+    if y >= sea {
+        return sky_light(w, x, y, z) >= 15;
+    }
+    sky_light(w, x, sea, z) >= 15 && ((y + 1)..sea).all(|yy| w.block_at(x, yy, z).is_none_or(|s| blocks::opacity(s) == 0 || survival::fluid_of(s).is_some()))
+}
+
+/// How bright the moon is tonight (`DimensionType.MOON_BRIGHTNESS_PER_PHASE`): full every
+/// eighth night.
+fn moon_brightness(w: &World) -> f32 {
+    const PHASES: [f32; 8] = [1.0, 0.75, 0.5, 0.25, 0.0, 0.25, 0.5, 0.75];
+    PHASES[(w.day_time / 24000).rem_euclid(8) as usize]
+}
+
+/// Slime chunks (`WorldgenRandom.seedSlimeChunk`): one chunk in ten, chosen by the world seed,
+/// where slimes spawn below Y 40.
+pub fn is_slime_chunk(seed: i64, cx: i32, cz: i32) -> bool {
+    use paper_worldgen::random::Random;
+    let seed = seed
+        .wrapping_add(cx.wrapping_mul(cx).wrapping_mul(4_987_142) as i64)
+        .wrapping_add(cx.wrapping_mul(5_947_611) as i64)
+        .wrapping_add((cz.wrapping_mul(cz) as i64).wrapping_mul(4_392_871))
+        .wrapping_add(cz.wrapping_mul(389_711) as i64)
+        ^ 987_234_911;
+    paper_worldgen::random::LegacyRandom::new(seed).next_bounded(10) == 0
+}
+
 fn category_key(category: &str) -> &'static str {
     match category {
         "MONSTER" => "MONSTER",
         "CREATURE" => "CREATURE",
         "AMBIENT" => "AMBIENT",
+        "AXOLOTLS" => "AXOLOTLS",
+        "UNDERGROUND_WATER_CREATURE" => "UNDERGROUND_WATER_CREATURE",
         "WATER_AMBIENT" => "WATER_AMBIENT",
         "WATER_CREATURE" => "WATER_CREATURE",
         _ => "MISC",
-    }
-}
-
-/// Spawners used when the vanilla data is unavailable (plains).
-fn default_spawners(category: &str) -> Vec<SpawnerEntry> {
-    let e = |entity: &str, weight, min, max| SpawnerEntry { entity: entity.into(), weight, min, max };
-    match category {
-        "monster" => vec![e("minecraft:spider", 100, 4, 4), e("minecraft:zombie", 95, 4, 4), e("minecraft:skeleton", 100, 4, 4), e("minecraft:creeper", 100, 4, 4), e("minecraft:enderman", 10, 1, 4)],
-        "creature" => vec![e("minecraft:sheep", 12, 4, 4), e("minecraft:pig", 10, 4, 4), e("minecraft:chicken", 10, 4, 4), e("minecraft:cow", 8, 4, 4)],
-        _ => Vec::new(),
     }
 }
 

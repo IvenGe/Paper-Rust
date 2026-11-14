@@ -107,17 +107,17 @@ fn blazes_shoot_bursts_of_three_fireballs() {
     let (mut alice, _) = join(&server);
     // Sixteen blocks off, so each fireball is in flight for a while.
     let blaze = spawn(&server, "minecraft:blaze", Vec3::new(8.5, -60.0, 24.5));
-    // The burst is over within a second: look every tick or two.
-    let mut seen = std::collections::HashSet::new();
+    // Alice is shown each fireball as it is shot, with the blaze as its owner. (Asking the
+    // server for the fireballs in flight could miss one that hit something at once.)
+    let small_fireball = paper_data::entity_types::by_name("minecraft:small_fireball").unwrap().id;
+    let mut shots = 0;
     let deadline = Instant::now() + TIMEOUT;
-    while seen.len() < 3 {
-        assert!(Instant::now() < deadline, "timed out waiting for a burst of three ({} seen)", seen.len());
-        for (fireball, owner) in fireballs(&server, "minecraft:small_fireball") {
-            if owner == Some(blaze) {
-                seen.insert(fireball);
-            }
+    while shots < 3 {
+        assert!(Instant::now() < deadline, "timed out waiting for a burst of three ({shots} seen)");
+        if alice.find(Duration::from_millis(200), |a: &play::AddEntity| a.entity_type.0 == small_fireball && a.data.0 == blaze).is_some() {
+            shots += 1;
         }
-        alice.drain(Duration::from_millis(10));
+        // Only packets that are not the blaze's fireballs are left over.
         alice.clear_backlog();
     }
     server.stop();

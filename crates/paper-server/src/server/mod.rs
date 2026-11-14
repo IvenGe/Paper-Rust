@@ -211,8 +211,8 @@ pub struct Server {
     pub recipes: Option<Arc<recipes::Recipes>>,
     /// `minecraft:damage_type` entries (death messages, exhaustion, difficulty scaling).
     pub damage_types: HashMap<String, survival::DamageTypeInfo>,
-    /// Biome spawner lists by `biome|category`, read from the vanilla data on demand.
-    pub spawner_cache: HashMap<String, Vec<mobs::SpawnerEntry>>,
+    /// What each biome spawns, read from the vanilla data on demand.
+    pub spawner_cache: HashMap<String, Arc<mobs::BiomeSpawns>>,
     /// What each brewing stand started brewing with (vanilla keeps it only in memory too).
     pub brewing_ingredients: HashMap<(usize, paper_protocol::codec::BlockPos), i32>,
     /// End gateways cooling down after a teleport: (world, gateway) -> tick it was used.
