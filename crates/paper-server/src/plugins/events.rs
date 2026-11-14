@@ -586,6 +586,7 @@ pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: cra
         crate::server::mobs::SpawnReason::Egg => "SPAWNER_EGG",
         crate::server::mobs::SpawnReason::Spawner => "SPAWNER",
         crate::server::mobs::SpawnReason::Breeding => "BREEDING",
+        crate::server::mobs::SpawnReason::Bucket => "BUCKET",
     };
     let args = bmap! {
         "entity" => id as i64,

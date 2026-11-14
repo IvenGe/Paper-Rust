@@ -572,9 +572,9 @@ impl Server {
                     self.set_block_and_update(world, front, placed);
                 }
                 // A bucket of fish lets its fish out too (`MobBucketItem.checkExtraContent`).
-                if let Some(mob) = name.strip_suffix("_bucket").filter(|m| !matches!(*m, "minecraft:water" | "minecraft:lava")) {
+                if let Some((mob, _)) = super::animals::mob_in_bucket(name) {
                     let at = Vec3::new(front.x as f64 + 0.5, front.y as f64, front.z as f64 + 0.5);
-                    self.spawn_mob(world, mob, at, super::mobs::SpawnReason::Egg);
+                    self.release_bucket_mob(world, &stack, mob, at);
                 }
                 self.dispensed(world, pos, facing, 1000);
                 Some(ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1))

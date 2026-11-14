@@ -437,6 +437,39 @@ impl Server {
 
     /// A spawn egg used on a block (`SpawnEggItem.useOn`): on a spawner it sets what spawns;
     /// elsewhere the mob appears on the clicked face. Returns whether it was used.
+    /// A spawn egg used while looking at water or lava (`SpawnEggItem.use`): the mob appears
+    /// in it.
+    pub(super) fn use_spawn_egg_on_fluid(&mut self, player: i32, hand: i32, yaw: f32, pitch: f32) -> bool {
+        let Some(p) = self.players.get(&player) else { return false };
+        let slot = if hand == 1 { OFFHAND_SLOT } else { HOTBAR_START + p.held_slot as usize };
+        let Some(stack) = p.inventory[slot].0.clone() else { return false };
+        let Some(entity) = item_name(&stack).strip_suffix("_spawn_egg") else { return false };
+        if entity_types::by_name(entity).is_none() || !matches!(p.game_mode, GameMode::Survival | GameMode::Creative) {
+            return false;
+        }
+        let (world, creative) = (p.world, p.game_mode == GameMode::Creative);
+        let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
+        let Some((hit, _, Some(_))) = super::portals::raycast(&self.worlds[world], eye, Vec3::from_rotation(yaw, pitch), 4.5, true) else { return false };
+        let liquid = self.worlds[world].block_at(hit.x, hit.y, hit.z).is_some_and(|s| matches!(blocks::block_of_state(s).name, "minecraft:water" | "minecraft:lava"));
+        if !liquid {
+            return false;
+        }
+        let at = Vec3::new(hit.x as f64 + 0.5, hit.y as f64, hit.z as f64 + 0.5);
+        let Some(id) = self.spawn_mob(world, entity, at, SpawnReason::Egg) else { return false };
+        if let Some(label) = super::workstations::custom_name_of(&stack) {
+            if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+                e.custom_name = Some(label);
+                e.metadata_dirty = true;
+            }
+        }
+        if !creative {
+            let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
+            self.set_inventory_slot(player, slot, rest);
+        }
+        self.award_stat(player, "minecraft:used", item_name(&stack), 1);
+        true
+    }
+
     pub(super) fn use_spawn_egg(&mut self, player: i32, use_on: &paper_protocol::packets::play::UseItemOn) -> bool {
         let Some(p) = self.players.get(&player) else { return false };
         let hand = use_on.hand.0;

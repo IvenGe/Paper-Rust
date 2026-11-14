@@ -79,6 +79,8 @@ pub enum SpawnReason {
     Spawner,
     /// Born to two animals.
     Breeding,
+    /// Let out of a bucket.
+    Bucket,
 }
 
 // --- light and sky ---------------------------------------------------------------------------

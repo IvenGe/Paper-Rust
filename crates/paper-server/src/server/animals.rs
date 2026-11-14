@@ -14,6 +14,22 @@ use paper_protocol::packets::{encode_packet, play};
 use paper_protocol::types::{ItemStack, Slot};
 use rand::Rng;
 
+/// Mobs a water bucket picks up (`Bucketable`): the mob, its bucket, and the sounds of filling
+/// and emptying it.
+pub const BUCKETED: [(&str, &str, &str, &str); 6] = [
+    ("minecraft:cod", "minecraft:cod_bucket", "minecraft:item.bucket.fill_fish", "minecraft:item.bucket.empty_fish"),
+    ("minecraft:salmon", "minecraft:salmon_bucket", "minecraft:item.bucket.fill_fish", "minecraft:item.bucket.empty_fish"),
+    ("minecraft:pufferfish", "minecraft:pufferfish_bucket", "minecraft:item.bucket.fill_fish", "minecraft:item.bucket.empty_fish"),
+    ("minecraft:tropical_fish", "minecraft:tropical_fish_bucket", "minecraft:item.bucket.fill_fish", "minecraft:item.bucket.empty_fish"),
+    ("minecraft:axolotl", "minecraft:axolotl_bucket", "minecraft:item.bucket.fill_axolotl", "minecraft:item.bucket.empty_axolotl"),
+    ("minecraft:tadpole", "minecraft:tadpole_bucket", "minecraft:item.bucket.fill_tadpole", "minecraft:item.bucket.empty_tadpole"),
+];
+
+/// The mob a bucket holds, and the sound of letting it out.
+pub fn mob_in_bucket(bucket: &str) -> Option<(&'static str, &'static str)> {
+    BUCKETED.iter().find(|(_, b, ..)| *b == bucket).map(|(mob, _, _, empty)| (*mob, *empty))
+}
+
 /// The item tag of what an animal is bred with (`isFood`).
 pub fn food_tag(name: &str) -> Option<&'static str> {
     Some(match name {
@@ -106,6 +122,93 @@ impl Server {
         }
     }
 
+    /// Puts a mob into a water bucket (`Bucketable.bucketMobPickup`), keeping what vanilla
+    /// keeps of it (`saveDefaultDataToBucketTag` and the variants of tropical fish and
+    /// axolotls, the ages of axolotls and tadpoles).
+    fn bucket_mob(&mut self, id: i32, hand: i32, world: usize, target: i32, bucket: &str, sound: &str) {
+        let Some(e) = self.worlds[world].entities.get(&target) else { return };
+        let (Some(m), Some(item)) = (e.mob(), items::id(bucket)) else { return };
+        let mut stack = ItemStack::new(item as i32, 1);
+        let mut data = paper_nbt::Compound::new();
+        if e.no_gravity {
+            data.insert("NoGravity", paper_nbt::Tag::Byte(1));
+        }
+        data.insert("Health", paper_nbt::Tag::Float(m.living.health));
+        match e.info.name.as_str() {
+            "minecraft:tropical_fish" => {
+                data.insert("BucketVariantTag", paper_nbt::Tag::Int(m.variant));
+            }
+            "minecraft:axolotl" => {
+                data.insert("Variant", paper_nbt::Tag::Int(m.variant));
+                data.insert("Age", paper_nbt::Tag::Int(m.age));
+            }
+            "minecraft:tadpole" => {
+                data.insert("Age", paper_nbt::Tag::Int(m.age));
+            }
+            _ => {}
+        }
+        let mut bytes = Vec::new();
+        paper_nbt::write_network_compound(&mut bytes, &data);
+        super::enchanting::set_component(&mut stack, "minecraft:bucket_entity_data", bytes);
+        if let Some(name) = &e.custom_name {
+            let mut bytes = Vec::new();
+            paper_nbt::write_network(&mut bytes, &name.to_nbt());
+            super::enchanting::set_component(&mut stack, "minecraft:custom_name", bytes);
+        }
+        let pos = e.pos;
+        self.play_sound(world, pos, sound, super::survival::category::NEUTRAL, 1.0, 1.0, None);
+        if let Some(e) = self.worlds[world].entities.get_mut(&target) {
+            e.removed = true;
+        }
+        // In creative the water bucket stays and the full one is added
+        // (`createFilledResult` without preventing duplicates).
+        if self.players.get(&id).is_some_and(|p| p.game_mode == GameMode::Creative) {
+            if self.add_to_inventory(id, &stack) > 0 {
+                self.player_drop(id, Slot(Some(stack)), false);
+            }
+        } else {
+            self.fill_held(id, hand, stack);
+        }
+    }
+
+    /// Lets a bucket's mob out where its water went (`MobBucketItem.checkExtraContent`), as
+    /// it was when it was bucketed; it then stays (`fromBucket`).
+    pub(super) fn release_bucket_mob(&mut self, world: usize, bucket: &ItemStack, mob: &str, at: Vec3) -> Option<i32> {
+        let id = self.spawn_mob(world, mob, at, SpawnReason::Bucket)?;
+        let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:bucket_entity_data").map(|i| i as i32);
+        let data = bucket
+            .added
+            .iter()
+            .find(|(t, _)| Some(*t) == ty)
+            .and_then(|(_, bytes)| paper_nbt::read_network(&mut &bytes[..], 1 << 21).ok().flatten())
+            .and_then(|tag| tag.as_compound().cloned());
+        let name = super::workstations::custom_name_of(bucket);
+        let e = self.worlds[world].entities.get_mut(&id)?;
+        if name.is_some() {
+            e.custom_name = name;
+        }
+        e.no_gravity |= data.as_ref().and_then(|d| d.bool("NoGravity")) == Some(true);
+        e.metadata_dirty = true;
+        if let Some(m) = e.mob_mut() {
+            m.persistent = true;
+            if let Some(d) = &data {
+                if let Some(health) = d.f64("Health") {
+                    m.living.health = (health as f32).clamp(0.0, m.living.max_health);
+                }
+                if let Some(variant) = d.i32("BucketVariantTag").or_else(|| d.i32("Variant")) {
+                    m.variant = variant;
+                }
+                if let Some(age) = d.i32("Age") {
+                    m.age = age;
+                    if mob == "minecraft:axolotl" {
+                        m.baby = age < 0;
+                    }
+                }
+            }
+        }
+        Some(id)
+    }
+
     /// Right-click on an entity (`Mob.mobInteract` for what this server knows).
     pub(super) fn handle_interact(&mut self, id: i32, target: i32, hand: i32) {
         let Some(p) = self.players.get(&id) else { return };
@@ -142,6 +245,13 @@ impl Server {
         }
         let Some(stack) = held else { return };
         let item = item_name(&stack);
+        // A water bucket scoops up fish, axolotls and tadpoles.
+        if item == "minecraft:water_bucket" {
+            if let Some((_, bucket, sound, _)) = BUCKETED.iter().find(|(mob, ..)| *mob == name) {
+                self.bucket_mob(id, hand, world, target, bucket, sound);
+                return;
+            }
+        }
 
         // Name tags name mobs, which then stay.
         if item == "minecraft:name_tag" {

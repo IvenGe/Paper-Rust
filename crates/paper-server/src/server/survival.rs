@@ -1135,6 +1135,10 @@ impl Server {
             self.throw_ender_eye(id, slot);
             return;
         }
+        if name.ends_with("_spawn_egg") {
+            self.use_spawn_egg_on_fluid(id, hand, yaw, pitch);
+            return;
+        }
         // Snowballs, eggs, ender pearls, bottles o' enchanting and splash potions are thrown.
         if super::throwing::throwable(name).is_some() {
             self.throw_held(id, hand);

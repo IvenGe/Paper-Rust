@@ -173,6 +173,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                         Some("SPAWNER_EGG") => SpawnReason::Egg,
                         Some("NATURAL") => SpawnReason::Natural,
                         Some("SPAWNER") => SpawnReason::Spawner,
+                        Some("BUCKET") => SpawnReason::Bucket,
                         _ => SpawnReason::Plugin,
                     };
                     server.spawn_mob(world, &ty, pos, reason).ok_or_else(|| anyhow!("cannot spawn {ty}"))?

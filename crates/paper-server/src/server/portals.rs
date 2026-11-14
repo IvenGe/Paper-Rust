@@ -693,10 +693,12 @@ impl Server {
         let slot = if hand == 1 { OFFHAND_SLOT } else { HOTBAR_START + p.held_slot as usize };
         let Some(stack) = p.inventory[slot].0.clone() else { return false };
         let item = items::get(stack.item as u32).map_or("", |i| i.name);
+        let bucketed = super::animals::mob_in_bucket(item);
         let content = match item {
             "minecraft:bucket" => None,
             "minecraft:water_bucket" => Some(Fluid::Water),
             "minecraft:lava_bucket" => Some(Fluid::Lava),
+            _ if bucketed.is_some() => Some(Fluid::Water),
             _ => return false,
         };
         if !matches!(p.game_mode, GameMode::Survival | GameMode::Creative) {
@@ -721,6 +723,7 @@ impl Server {
                 self.play_sound(world, Vec3::new(hit.x as f64 + 0.5, hit.y as f64 + 0.5, hit.z as f64 + 0.5), sound, category::BLOCKS, 1.0, 1.0, None);
                 let filled = ItemStack::new(items::id(filled).unwrap_or(0) as i32, 1);
                 self.fill_container_item(id, slot, &stack, filled, creative);
+                self.award_stat(id, "minecraft:used", item, 1);
                 true
             }
             Some(fluid) => {
@@ -749,20 +752,29 @@ impl Server {
                         self.drop_block_loot(world, target, existing, None, None);
                     }
                     self.set_block_and_update(world, target, state);
-                    let sound = if fluid == Fluid::Lava { "minecraft:item.bucket.empty_lava" } else { "minecraft:item.bucket.empty" };
+                    let sound = match bucketed {
+                        _ if fluid == Fluid::Lava => "minecraft:item.bucket.empty_lava",
+                        Some((_, sound)) => sound,
+                        None => "minecraft:item.bucket.empty",
+                    };
                     self.play_sound(world, at, sound, category::BLOCKS, 1.0, 1.0, None);
+                }
+                // A bucket of fish lets its fish out where the water went.
+                if let Some((mob, _)) = bucketed {
+                    self.release_bucket_mob(world, &stack, mob, Vec3::new(target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5));
                 }
                 if !creative {
                     let empty = ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1);
                     self.set_inventory_slot(id, slot, Slot(Some(empty)));
                 }
+                self.award_stat(id, "minecraft:used", item, 1);
                 true
             }
         }
     }
 
-    /// Replaces one item of `stack` in `slot` with `filled` (`ItemUtils.createFilledResult`).
-    /// A glass bottle used on water fills with it (`BottleItem.use`).
+    /// A glass bottle (`BottleItem.use`) fills with dragon's breath from a cloud of the
+    /// dragon's nearby (which shrinks), or else with water it is used on.
     pub(super) fn use_bottle(&mut self, id: i32, hand: i32, yaw: f32, pitch: f32) -> bool {
         let Some(p) = self.players.get(&id) else { return false };
         let slot = if hand == 1 { OFFHAND_SLOT } else { HOTBAR_START + p.held_slot as usize };
@@ -772,13 +784,34 @@ impl Server {
         }
         let (world, creative) = (p.world, p.game_mode == GameMode::Creative);
         let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
+        let at = Vec3::new(p.loc.x, p.loc.y, p.loc.z);
+        let reach = crate::world::entity::Aabb::of_entity(at, 0.6, 1.8).inflate(2.0, 2.0, 2.0);
+        let breath = self.worlds[world]
+            .entities
+            .values()
+            .find(|e| !e.removed && matches!(e.kind, crate::world::entity::EntityKind::Cloud { breath: true, radius, .. } if crate::world::entity::Aabb::of_entity(e.pos, radius as f64 * 2.0, 0.5).intersects(&reach)))
+            .map(|e| e.id);
+        if let Some(cloud) = breath {
+            if let Some(e) = self.worlds[world].entities.get_mut(&cloud) {
+                if let crate::world::entity::EntityKind::Cloud { radius, .. } = &mut e.kind {
+                    *radius -= 0.5;
+                }
+                e.metadata_dirty = true;
+            }
+            self.play_sound(world, at, "minecraft:item.bottle.fill_dragonbreath", category::NEUTRAL, 1.0, 1.0, None);
+            let breath = ItemStack::new(items::id("minecraft:dragon_breath").unwrap_or(0) as i32, 1);
+            self.fill_container_item(id, slot, &stack, breath, creative);
+            self.award_stat(id, "minecraft:used", "minecraft:glass_bottle", 1);
+            return true;
+        }
         let Some((_, _, Some(Fluid::Water))) = raycast(&self.worlds[world], eye, Vec3::from_rotation(yaw, pitch), 4.5, true) else { return false };
-        let at = self.players.get(&id).map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z)).unwrap_or(eye);
         self.play_sound(world, at, "minecraft:item.bottle.fill", category::NEUTRAL, 1.0, 1.0, None);
         self.fill_container_item(id, slot, &stack, super::machines::water_bottle(), creative);
+        self.award_stat(id, "minecraft:used", "minecraft:glass_bottle", 1);
         true
     }
 
+    /// Replaces one item of `stack` in `slot` with `filled` (`ItemUtils.createFilledResult`).
     pub(super) fn fill_container_item(&mut self, id: i32, slot: usize, stack: &ItemStack, filled: ItemStack, creative: bool) {
         if creative {
             let has = self.players.get(&id).is_some_and(|p| p.inventory.iter().any(|s| s.0.as_ref().is_some_and(|s| s.item == filled.item)));
@@ -801,7 +834,7 @@ impl Server {
 /// Steps along a ray through blocks (`ClipContext`): returns the first block hit, the face
 /// it was entered through as an offset, and the fluid if the block is a fluid source (when
 /// `fluids` is set, sources stop the ray).
-fn raycast(world: &crate::world::World, from: Vec3, dir: Vec3, range: f64, fluids: bool) -> Option<(BlockPos, (i32, i32, i32), Option<Fluid>)> {
+pub(super) fn raycast(world: &crate::world::World, from: Vec3, dir: Vec3, range: f64, fluids: bool) -> Option<(BlockPos, (i32, i32, i32), Option<Fluid>)> {
     let to = from.add(dir.scale(range));
     let (mut x, mut y, mut z) = (from.x.floor() as i32, from.y.floor() as i32, from.z.floor() as i32);
     let step = |d: f64| if d > 0.0 { 1 } else if d < 0.0 { -1 } else { 0 };

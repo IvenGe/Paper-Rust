@@ -284,19 +284,18 @@ Not yet:
 * World generation: sculk sensors, shriekers and catalysts from world generation have no
   block entities on the server.
 * The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
-  portal, its breath cannot be bottled, and its fireballs cannot be hit back.
+  portal, and its fireballs cannot be hit back.
 * Gameplay: boats and minecarts cannot be ridden, there is no horse inventory window, donkeys,
   mules and llamas carry no chests, parrots do not ride on shoulders, cats do not sleep on
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Dispensers do not place shulker boxes, build golems or withers, or launch
-  fireworks, wind charges, boats or minecarts. Spawn eggs are not
-  used on water (for fish and squid), and buckets do not catch fish.
+  fireworks, wind charges, boats or minecarts.
 * Statistics of what the server does not do yet (fishing, raids, note blocks, bells,
   cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
-  used or broken only when placed, eaten or drunk, thrown, used as spawn eggs or worn out as
-  tools.
+  used or broken only when placed, eaten or drunk, thrown, used as spawn eggs, buckets or
+  bottles, or worn out as tools.
 * Plugin API: creating worlds, registry and tag lifecycle events,
   dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,
