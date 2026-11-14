@@ -806,6 +806,14 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
                 if let Some(i) = info.data_index("DATA_ID_TYPE_VARIANT") {
                     m = m.varint(i, mob.variant);
                 }
+                if let Some(i) = info.data_index("DATA_ID_CHEST") {
+                    if mob.chest.is_some() || !spawning {
+                        m = m.boolean(i, mob.chest.is_some());
+                    }
+                }
+                if let Some(i) = info.data_index("DATA_STRENGTH_ID") {
+                    m = m.varint(i, mob.strength);
+                }
             }
             if let Some(i) = info.data_index("DATA_CARRY_STATE") {
                 if mob.carried.is_some() || !spawning {

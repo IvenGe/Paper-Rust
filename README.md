@@ -123,7 +123,10 @@ What works:
   steer (their client moves the mount; carrots and warped fungi on sticks steer and boost
   pigs and striders) and get off with the sneak key. Horses have random health, speed,
   jump and coat, buck their rider off until their temper (raised by feeding) lets them be
-  tamed, wear horse armour and eat to heal and grow. Wolves (bones), cats (fish) and
+  tamed, wear horse armour and eat to heal and grow. Tamed ones open their inventory when
+  their rider asks or a player sneaks and clicks them: saddle, armour (carpets for llamas)
+  and the chests that donkeys, mules and llamas carry (llamas' by their strength), all saved
+  with them and dropped when they die. Wolves (bones), cats (fish) and
   parrots (seeds) are tamed, sit when told, follow their owner (teleporting when far
   behind), heal from their food, and wolves wear dyed collars and armour and join their
   owner's fights; pets never turn on their owner. Owners, saddles and pets are saved.
@@ -285,8 +288,7 @@ Not yet:
   block entities on the server.
 * The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
   portal, and its fireballs cannot be hit back.
-* Gameplay: boats and minecarts cannot be ridden, there is no horse inventory window, donkeys,
-  mules and llamas carry no chests, parrots do not ride on shoulders, cats do not sleep on
+* Gameplay: boats and minecarts cannot be ridden, parrots do not ride on shoulders, cats do not sleep on
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the

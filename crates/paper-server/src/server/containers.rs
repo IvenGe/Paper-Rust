@@ -51,6 +51,8 @@ pub enum MenuKind {
     /// A custom inventory made by a plugin (`Bukkit.createInventory`); its slots are kept in
     /// `Server::plugin_data` (see `plugins::inventory`) and clicks go to the plugin host.
     Custom { id: u64 },
+    /// A mount's inventory: what its saddle and body armour slots take, and its chest.
+    Mount { world: usize, id: i32, saddle: super::menu::SlotKind, body: super::menu::SlotKind },
 }
 
 /// Who a trading window trades with.
@@ -451,6 +453,10 @@ impl Server {
             return false;
         }
         self.close_menu_with_reason(id, false, "OPEN_NEW");
+        let mount_columns = match &menu_kind {
+            MenuKind::Mount { world, id: mount, .. } => self.worlds[*world].entities.get(mount).and_then(|e| e.mob()).and_then(|m| m.chest.as_ref()).map_or(0, |c| c.len() as i32 / 3),
+            _ => 0,
+        };
         let Some(player) = self.players.get_mut(&id) else { return false };
         let window_id = player.next_window_id;
         player.next_window_id = player.next_window_id % 100 + 1;
@@ -461,7 +467,11 @@ impl Server {
             _ => Vec::new(),
         };
         player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid, anvil: Default::default(), trade_selection: None, active_offer: None });
-        player.conn.send(&play::OpenScreen { window_id: VarInt(window_id), menu_type: VarInt(menu_type(menu_name)), title });
+        match &menu_kind {
+            // A mount's window has a packet of its own: the client builds it from the mount.
+            MenuKind::Mount { id: mount, .. } => player.conn.send(&play::MountScreenOpen { container_id: VarInt(window_id), inventory_columns: VarInt(mount_columns), entity_id: *mount }),
+            _ => player.conn.send(&play::OpenScreen { window_id: VarInt(window_id), menu_type: VarInt(menu_type(menu_name)), title }),
+        }
         self.send_menu_contents(id);
         // Lid animation and sound.
         if let MenuKind::Container { world, positions } = &menu_kind {
@@ -618,6 +628,7 @@ impl Server {
             Some(MenuKind::Brewing { .. }) => Layout::brewing(),
             Some(MenuKind::Furnace { recipe_type, .. }) => Layout::furnace(recipe_type),
             Some(MenuKind::Crafter { .. }) => Layout::crafter(),
+            Some(MenuKind::Mount { saddle, body, .. }) => Layout::mount(*saddle, *body, size.saturating_sub(2)),
         }
     }
 
@@ -631,6 +642,12 @@ impl Server {
             MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => menu.craft_grid.clone(),
             MenuKind::Furnace { world, pos, .. } | MenuKind::Brewing { world, pos } => self.container_items(*world, *pos),
             MenuKind::Custom { id } => self.plugin_data.inventories.get(id).map(|i| i.items.clone()).unwrap_or_default(),
+            MenuKind::Mount { world, id: mount, .. } => {
+                let m = self.worlds[*world].entities.get(mount).and_then(|e| e.mob());
+                let mut slots = vec![m.map_or(Slot::EMPTY, |m| m.equipment[7].clone()), m.map_or(Slot::EMPTY, |m| m.equipment[6].clone())];
+                slots.extend(m.and_then(|m| m.chest.clone()).unwrap_or_default());
+                slots
+            }
             MenuKind::Crafter { world, pos } => {
                 let mut slots = self.container_items(*world, *pos);
                 slots.extend(player.inventory[9..45].iter().cloned());
@@ -677,6 +694,21 @@ impl Server {
             MenuKind::Furnace { world, pos, .. } => self.set_container_items(*world, *pos, &slots[..3]),
             MenuKind::Brewing { world, pos } => self.set_container_items(*world, *pos, &slots[..5]),
             MenuKind::Crafter { .. } => {}
+            MenuKind::Mount { world, id: mount, .. } => {
+                if let Some(e) = self.worlds[*world].entities.get_mut(mount) {
+                    if let Some(m) = e.mob_mut() {
+                        m.equipment[7] = slots[0].clone();
+                        m.equipment[6] = slots[1].clone();
+                        if let Some(chest) = m.chest.as_mut() {
+                            let n = chest.len().min(container_len.saturating_sub(2));
+                            chest[..n].clone_from_slice(&slots[2..2 + n]);
+                        }
+                        m.persistent = true;
+                    }
+                    e.equipment_dirty = true;
+                    e.metadata_dirty = true;
+                }
+            }
             MenuKind::Custom { id } => {
                 if let Some(custom) = self.plugin_data.inventories.get_mut(id) {
                     custom.items.clone_from_slice(&slots[..container_len]);

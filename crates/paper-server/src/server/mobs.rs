@@ -346,6 +346,8 @@ impl Server {
             collar: 14,
             temper: 0,
             boost: 0,
+            chest: None,
+            strength: 3,
             dragon: (name == super::dragon::DRAGON).then(|| Box::new(super::dragon::DragonBrain::new(super::dragon::Phase::HoldingPattern))),
         };
         // Equipment and variants picked when spawning (`finalizeSpawn`).

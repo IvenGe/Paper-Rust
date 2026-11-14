@@ -668,6 +668,16 @@ packet! {
     }
 }
 
+packet! {
+    /// Opens a mount's inventory window (`ClientboundMountScreenOpenPacket`): the window, the
+    /// columns of the mount's chest (0 without one) and the mount.
+    MountScreenOpen = play::clientbound::MOUNT_SCREEN_OPEN {
+        container_id: VarInt,
+        inventory_columns: VarInt,
+        entity_id: i32,
+    }
+}
+
 /// Absolute entity position and rotation ("teleport entity" in older documentation).
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityPositionSync {

@@ -491,7 +491,12 @@ impl Server {
         }
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let Some(mob) = e.mob() else { return };
-        let equipment: Vec<Slot> = mob.equipment.iter().filter(|s| !s.is_empty()).cloned().collect();
+        let equipment: Vec<Slot> = mob.equipment[..6].iter().filter(|s| !s.is_empty()).cloned().collect();
+        // Saddles and body armour (put on by players) always drop with the loot; a chest and
+        // what it holds drop even without it (`AbstractChestedHorse.dropEquipment`).
+        let worn: Vec<Slot> = mob.equipment[6..].iter().filter(|s| !s.is_empty()).cloned().collect();
+        let chest_item = Slot::of(items::id("minecraft:chest").unwrap_or(0) as i32, 1);
+        let chest: Vec<Slot> = mob.chest.as_ref().map(|c| std::iter::once(chest_item).chain(c.iter().filter(|s| !s.is_empty()).cloned()).collect()).unwrap_or_default();
         // Loot and experience are worked out before EntityDeathEvent, which may change them.
         // Baby animals drop nothing; baby monsters (zombies) drop as adults, with 2.5 times
         // the experience.
@@ -505,7 +510,7 @@ impl Server {
             } else {
                 Vec::new()
             };
-            let drops: Vec<Slot> = loot.into_iter().chain(equipment.into_iter().filter(|_| rand::thread_rng().gen::<f32>() < 0.085)).collect();
+            let drops: Vec<Slot> = loot.into_iter().chain(equipment.into_iter().filter(|_| rand::thread_rng().gen::<f32>() < 0.085)).chain(worn).collect();
             let xp = if killer.is_some() && info.experience > 0 {
                 let xp = if info.category == "MONSTER" { info.experience } else { info.experience + rand::thread_rng().gen_range(0..3) };
                 if baby { (xp as f64 * 2.5) as i32 } else { xp }
@@ -516,6 +521,7 @@ impl Server {
         } else {
             (Vec::new(), 0)
         };
+        let drops: Vec<Slot> = drops.into_iter().chain(chest).collect();
         // Plugin hook: EntityDeathEvent can cancel the death and change the drops.
         let Some((drops, xp)) = crate::plugins::events::on_entity_death(self, world, id, &damage, drops, xp) else {
             // A plugin cancelled the death: back to half a heart.

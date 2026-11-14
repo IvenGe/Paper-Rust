@@ -7,6 +7,8 @@
 //! What is not here: boats and minecarts (their entities exist but do nothing), the horse
 //! inventory window, and chest-carrying donkeys, mules and llamas.
 
+use super::containers::MenuKind;
+use super::menu::SlotKind;
 use super::player::Location;
 use super::survival::category;
 use super::Server;
@@ -22,6 +24,16 @@ pub fn is_horse(name: &str) -> bool {
         name,
         "minecraft:horse" | "minecraft:donkey" | "minecraft:mule" | "minecraft:skeleton_horse" | "minecraft:zombie_horse" | "minecraft:llama" | "minecraft:trader_llama" | "minecraft:camel" | "minecraft:camel_husk"
     )
+}
+
+/// How many columns of chest a donkey, mule or llama carries (`getInventoryColumns`): five,
+/// or a llama's strength; none for the others.
+pub fn chest_columns(name: &str, strength: i32) -> i32 {
+    match name {
+        "minecraft:donkey" | "minecraft:mule" => 5,
+        "minecraft:llama" | "minecraft:trader_llama" => strength.clamp(1, 5),
+        _ => 0,
+    }
 }
 
 /// Whether a mob can wear a saddle (`canUseSlot(SADDLE)`); horses must be tamed first.
@@ -276,6 +288,7 @@ impl Server {
     /// Every tick: riders get off what died or went away, and sit on what they ride; pigs
     /// and striders count down their boosts; untamed horses buck.
     pub(super) fn tick_riding(&mut self) {
+        self.check_mount_menus();
         // Players whose vehicle is gone, or who left its world.
         let stale: Vec<i32> = self.players.values().filter(|p| p.vehicle.is_some_and(|v| self.worlds[p.world].entities.get(&v).is_none_or(|e| !e.is_alive() || !e.passengers.contains(&p.entity_id)))).map(|p| p.entity_id).collect();
         for id in stale {
@@ -387,6 +400,7 @@ impl Server {
         let name = e.info.name.clone();
         let Some(mob) = e.mob() else { return false };
         let (baby, tamed, saddled, ridden) = (mob.baby, mob.tamed || always_tame(&name), !mob.equipment[SADDLE_SLOT].is_empty(), !e.passengers.is_empty());
+        let chested = mob.chest.is_some();
         let sneaking = self.players.get(&player).is_some_and(|p| p.sneaking);
         let pos = e.pos;
         let held_name = held.map(item_name).unwrap_or("");
@@ -407,9 +421,18 @@ impl Server {
                 if ridden || baby {
                     return false;
                 }
+                // Sneaking opens a tamed one's inventory (`openCustomInventoryScreen`).
+                if sneaking && tamed {
+                    return self.open_mount_inventory(player, world, target);
+                }
                 if let Some(stack) = held {
                     if !n.contains("llama") && self.horse_food(world, target, stack) {
                         self.use_held(player, hand);
+                        return true;
+                    }
+                    // A chest for a tamed donkey, mule or llama.
+                    if held_name == "minecraft:chest" && chest_columns(n, 1) > 0 && tamed && !chested {
+                        self.equip_chest(world, target, player, hand);
                         return true;
                     }
                     if equip_slot.as_deref() == Some("saddle") && takes_saddle(n) {
@@ -417,9 +440,11 @@ impl Server {
                             self.equip(world, target, player, hand, SADDLE_SLOT, "minecraft:entity.horse.saddle");
                             return true;
                         }
-                    } else if equip_slot.as_deref() == Some("body") && tamed && n == "minecraft:horse" && held_name.ends_with("_horse_armor") {
+                    } else if equip_slot.as_deref() == Some("body") && tamed && super::menu::may_wear(stack.item as u32, n) {
+                        // Horse armour, or a carpet on a llama.
                         if mob_slot_empty(self, world, target, BODY_SLOT) {
-                            self.equip(world, target, player, hand, BODY_SLOT, "minecraft:entity.horse.armor");
+                            let sound = if n.contains("llama") { "minecraft:entity.llama.swag" } else { "minecraft:entity.horse.armor" };
+                            self.equip(world, target, player, hand, BODY_SLOT, sound);
                             return true;
                         }
                     } else if !tamed {
@@ -428,13 +453,68 @@ impl Server {
                         return true;
                     }
                 }
-                if sneaking && tamed {
-                    return false;
-                }
                 self.mount(world, player, target)
             }
             _ => false,
         }
+    }
+
+    /// A tamed horse's (donkey's, llama's, camel's) inventory window: saddle, body armour and
+    /// chest. Someone else riding it keeps it to themselves. Returns whether it opened.
+    pub(super) fn open_mount_inventory(&mut self, player: i32, world: usize, mount: i32) -> bool {
+        let Some(e) = self.worlds[world].entities.get(&mount) else { return false };
+        let Some(m) = e.mob() else { return false };
+        let name: &'static str = e.info.name.as_str();
+        if !is_horse(name) || !(m.tamed || always_tame(name)) || m.baby || e.passengers.iter().any(|p| *p != player) {
+            return false;
+        }
+        let type_id = e.info.id;
+        let in_tag = |tag: &str| paper_data::synced::tag("minecraft:entity_type", tag).is_some_and(|ids| ids.contains(&type_id));
+        let worn = |slot: &'static str, active: bool| if active { SlotKind::Worn(slot, name) } else { SlotKind::Locked };
+        let saddle = worn("saddle", in_tag("minecraft:can_equip_saddle"));
+        let body = worn("body", in_tag("minecraft:can_wear_horse_armor") || name.contains("llama"));
+        self.open_menu(player, MenuKind::Mount { world, id: mount, saddle, body }, "", paper_protocol::text::Component::text(String::new()))
+    }
+
+    /// The vehicle's inventory, asked for from the saddle (`OPEN_INVENTORY`).
+    pub(super) fn open_vehicle_inventory(&mut self, player: i32) {
+        if let Some((world, vehicle)) = self.vehicle_of(player) {
+            self.open_mount_inventory(player, world, vehicle);
+        }
+    }
+
+    /// Mount windows close once the mount is gone, dead or out of reach (`stillValid`).
+    fn check_mount_menus(&mut self) {
+        let stale: Vec<i32> = self
+            .players
+            .values()
+            .filter(|p| match p.open_menu.as_ref().map(|m| &m.kind) {
+                Some(MenuKind::Mount { world, id, .. }) => *world != p.world || self.worlds[*world].entities.get(id).is_none_or(|e| !e.is_alive() || e.pos.distance_squared(Vec3::new(p.loc.x, p.loc.y, p.loc.z)) > 64.0),
+                _ => false,
+            })
+            .map(|p| p.entity_id)
+            .collect();
+        for id in stale {
+            self.close_menu(id, true);
+        }
+    }
+
+    /// Puts a chest on a donkey, mule or llama (`AbstractChestedHorse.equipChest`).
+    fn equip_chest(&mut self, world: usize, target: i32, player: i32, hand: i32) {
+        let Some(e) = self.worlds[world].entities.get_mut(&target) else { return };
+        let (name, pos) = (e.info.name.as_str(), e.pos);
+        let Some(m) = e.mob_mut() else { return };
+        m.chest = Some(vec![Slot::EMPTY; chest_columns(name, m.strength) as usize * 3]);
+        m.persistent = true;
+        e.metadata_dirty = true;
+        self.use_held(player, hand);
+        let sound = match name {
+            "minecraft:donkey" => "minecraft:entity.donkey.chest",
+            "minecraft:mule" => "minecraft:entity.mule.chest",
+            _ => "minecraft:entity.llama.chest",
+        };
+        let pitch = (rand::thread_rng().gen::<f32>() - rand::thread_rng().gen::<f32>()) * 0.2 + 1.0;
+        self.play_sound(world, pos, sound, category::NEUTRAL, 1.0, pitch, None);
     }
 
     /// Puts one of the held item on a mob's equipment slot.
@@ -567,6 +647,11 @@ pub fn randomize_horse(name: &str, mob: &mut crate::world::entity::Mob, rng: &mu
         "minecraft:donkey" | "minecraft:mule" | "minecraft:llama" | "minecraft:trader_llama" => {
             let h = health(rng);
             mob.attributes.set_base("max_health", h);
+            // `Llama.setRandomStrength`: 1 to 3, now and then up to 5.
+            if name.contains("llama") {
+                let most = if rng.gen::<f32>() < 0.04 { 5 } else { 3 };
+                mob.strength = 1 + rng.gen_range(0..most);
+            }
         }
         _ => return,
     }

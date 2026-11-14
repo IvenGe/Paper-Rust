@@ -406,6 +406,10 @@ pub struct Mob {
     pub temper: i32,
     /// Pigs and striders: the length of the boost a stick gave (`DATA_BOOST_TIME`).
     pub boost: i32,
+    /// Donkeys, mules and llamas: the chest they carry and what is in it (`ChestedHorse`).
+    pub chest: Option<Vec<Slot>>,
+    /// Llamas: how many columns their chest has, 1 to 5 (`Strength`).
+    pub strength: i32,
     /// The ender dragon's phases, flight and parts.
     pub dragon: Option<Box<crate::server::dragon::DragonBrain>>,
 }

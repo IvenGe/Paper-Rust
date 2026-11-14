@@ -681,16 +681,7 @@ impl Server {
         if equippable.and_then(|e| e.get("dispensable")).and_then(serde_json::Value::as_bool) == Some(false) {
             return false;
         }
-        let allowed = equippable.and_then(|e| e.get("allowed_entities"));
-        let may_wear = |entity: &str| match allowed {
-            None => true,
-            Some(serde_json::Value::String(s)) => match s.strip_prefix('#') {
-                Some(tag) => paper_data::registries::id("minecraft:entity_type", entity).is_some_and(|id| paper_data::synced::tag("minecraft:entity_type", tag).is_some_and(|ids| ids.contains(&(id as i32)))),
-                None => s == entity,
-            },
-            Some(serde_json::Value::Array(list)) => list.iter().any(|v| v.as_str() == Some(entity)),
-            Some(_) => false,
-        };
+        let may_wear = |entity: &str| super::menu::may_wear(stack.item as u32, entity);
         let cell = Aabb::new(Vec3::new(front.x as f64, front.y as f64, front.z as f64), Vec3::new(front.x as f64 + 1.0, front.y as f64 + 1.0, front.z as f64 + 1.0));
         let one = Slot(Some(stack.with_count(1)));
         // Players wear armour, heads and elytra.

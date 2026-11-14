@@ -157,6 +157,23 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 c.insert("Tame", Tag::Byte(mob.tamed as i8));
                 c.insert("Temper", Tag::Int(mob.temper));
                 c.insert("Variant", Tag::Int(mob.variant));
+                // Donkeys', mules' and llamas' chests (slots count from 0 within the chest).
+                if let Some(chest) = &mob.chest {
+                    c.insert("ChestedHorse", Tag::Byte(1));
+                    let items = chest
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| {
+                            let mut entry = item_to_nbt(s)?;
+                            entry.insert("Slot", Tag::Byte(i as i8));
+                            Some(Tag::Compound(entry))
+                        })
+                        .collect();
+                    c.insert("Items", Tag::List(items));
+                }
+                if e.info.name.contains("llama") {
+                    c.insert("Strength", Tag::Int(mob.strength));
+                }
             } else if crate::server::taming::is_tameable(&e.info.name) {
                 c.insert("Sitting", Tag::Byte(mob.sitting as i8));
                 if matches!(e.info.name.as_str(), "minecraft:wolf" | "minecraft:cat") {
@@ -240,6 +257,17 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 collar: c.i32("CollarColor").unwrap_or(14),
                 temper: c.i32("Temper").unwrap_or(0),
                 boost: 0,
+                chest: c.bool("ChestedHorse").unwrap_or(false).then(|| {
+                    let size = crate::server::riding::chest_columns(&info.name, c.i32("Strength").unwrap_or(3)) as usize * 3;
+                    let mut items = vec![Slot::EMPTY; size];
+                    for entry in c.list("Items").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
+                        if let Some(slot) = entry.i32("Slot").filter(|s| (0..size as i32).contains(s)) {
+                            items[slot as usize] = item_from_nbt(entry);
+                        }
+                    }
+                    items
+                }),
+                strength: c.i32("Strength").unwrap_or(3).clamp(1, 5),
                 dragon: (info.name == crate::server::dragon::DRAGON).then(|| {
                     let mut brain = crate::server::dragon::DragonBrain::new(crate::server::dragon::Phase::from_id(c.i32("DragonPhase").unwrap_or(0)));
                     brain.death_time = c.i32("DragonDeathTime").unwrap_or(0);
@@ -302,6 +330,8 @@ mod tests {
             collar: 14,
             temper: 0,
             boost: 0,
+            chest: None,
+            strength: 3,
             dragon: None,
         };
         mob.living.health = 13.5;

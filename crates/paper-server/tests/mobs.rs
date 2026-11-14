@@ -283,6 +283,9 @@ fn horses_buck_until_tamed_and_then_take_saddles() {
     assert_eq!(server.handle.run(move |s| s.controller_of(0, horse)).unwrap(), None);
     alice.send(&play::PlayerInput { flags: play::input_flags::SNEAK });
     wait_until("Alice to get off", TIMEOUT, || vehicle(&server, id).is_none());
+    // She lets go of the sneak key (sneaking and clicking a tamed horse opens its inventory).
+    alice.send(&play::PlayerInput { flags: 0 });
+    wait_until("Alice to stand up", TIMEOUT, || !server.handle.run(move |s| s.players[&id].sneaking).unwrap());
     next_to(&server, id, horse);
     hold(&server, id, Slot::of(item("minecraft:saddle"), 1));
     alice.send(&interact(horse));

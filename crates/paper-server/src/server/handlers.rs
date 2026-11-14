@@ -165,6 +165,7 @@ impl Server {
                 }
             }
             Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::LEAVE_BED => self.wake_up(id),
+            Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::OPEN_VEHICLE_INVENTORY => self.open_vehicle_inventory(id),
             Serverbound::PlayerCommand(p) => {
                 let sprinting = match p.action.0 {
                     play::player_command::START_SPRINTING => Some(true),

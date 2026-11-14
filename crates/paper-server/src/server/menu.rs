@@ -32,6 +32,27 @@ pub enum SlotKind {
     BrewIngredient,
     /// A brewing stand's fuel (blaze powder).
     BrewFuel,
+    /// What the given kind of entity may wear in an equipment slot (`slot`, entity), one at
+    /// a time: a mount's saddle and body armour.
+    Worn(&'static str, &'static str),
+    /// A slot the window shows but nothing can go in (a donkey's armour slot).
+    Locked,
+}
+
+/// Whether an item's `equippable` component lets this kind of entity wear it
+/// (`allowed_entities`; anyone if it names no one).
+pub fn may_wear(item: u32, entity: &str) -> bool {
+    let data = paper_data::item_data::by_id(item);
+    let allowed = data.raw.as_ref().and_then(|r| r.get("equippable")).and_then(|e| e.get("allowed_entities"));
+    match allowed {
+        None => true,
+        Some(serde_json::Value::String(s)) => match s.strip_prefix('#') {
+            Some(tag) => paper_data::registries::id("minecraft:entity_type", entity).is_some_and(|id| paper_data::synced::tag("minecraft:entity_type", tag).is_some_and(|ids| ids.contains(&(id as i32)))),
+            None => s == entity,
+        },
+        Some(serde_json::Value::Array(list)) => list.iter().any(|v| v.as_str() == Some(entity)),
+        Some(_) => false,
+    }
 }
 
 /// The shape of a menu.
@@ -65,6 +86,8 @@ pub enum MenuShape {
     Merchant,
     /// A crafter: nine slots, the player's inventory, then the result it would make.
     Crafter,
+    /// A mount's window: saddle, body armour, its chest, then the player's inventory.
+    Mount,
 }
 
 impl Layout {
@@ -136,6 +159,16 @@ impl Layout {
         let mut kinds = vec![SlotKind::Normal; 46];
         kinds[45] = SlotKind::CraftResult;
         Layout { kinds, main: 9..36, hotbar: 36..45, offhand: None, container: 0..9, crafting: None, furnace: None, kind: MenuShape::Crafter }
+    }
+
+    /// A mount's window (`HorseInventoryMenu`): its saddle and body armour slots, `chest`
+    /// slots of its chest, then the player's inventory.
+    pub fn mount(saddle: SlotKind, body: SlotKind, chest: usize) -> Layout {
+        let size = 2 + chest;
+        let mut kinds = vec![SlotKind::Normal; size + 36];
+        kinds[0] = saddle;
+        kinds[1] = body;
+        Layout { kinds, main: size..size + 27, hotbar: size + 27..size + 36, offhand: None, container: 0..size, crafting: None, furnace: None, kind: MenuShape::Mount }
     }
 
     /// `MerchantMenu`: payment A, payment B, result.
@@ -215,12 +248,14 @@ impl Menu<'_> {
             SlotKind::Bottle => super::brewing::fits_bottle_slot(stack),
             SlotKind::BrewIngredient => super::brewing::is_ingredient(stack),
             SlotKind::BrewFuel => super::brewing::is_fuel(stack),
+            SlotKind::Worn(slot, entity) => paper_data::item_data::by_id(stack.item as u32).equip_slot.as_deref() == Some(slot) && may_wear(stack.item as u32, entity),
+            SlotKind::Locked => false,
         }
     }
 
     fn slot_limit(&self, index: usize, stack: &ItemStack) -> i32 {
         match self.layout.kinds[index] {
-            SlotKind::Armor(_) | SlotKind::Single | SlotKind::Bottle => 1,
+            SlotKind::Armor(_) | SlotKind::Single | SlotKind::Bottle | SlotKind::Worn(..) => 1,
             _ => max_stack(stack),
         }
     }
@@ -359,6 +394,24 @@ impl Menu<'_> {
                     self.move_into(&mut item, 9..45, true);
                 } else {
                     self.move_into(&mut item, 0..9, false);
+                }
+            }
+            // `AbstractMountInventoryMenu.quickMoveStack`: out of the mount into the inventory;
+            // from the inventory onto the body slot, the saddle slot, then into the chest, and
+            // otherwise between the inventory and the hotbar.
+            MenuShape::Mount => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if self.slots[1].is_empty() && self.may_place(1, &item) {
+                    self.move_into(&mut item, 1..2, false);
+                } else if self.slots[0].is_empty() && self.may_place(0, &item) {
+                    self.move_into(&mut item, 0..1, false);
+                } else if l.container.end > 2 && self.move_into(&mut item, 2..l.container.end, false) {
+                    // Into the chest.
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
                 }
             }
             MenuShape::Container => {
