@@ -16,15 +16,17 @@ use super::piece::{PieceBase, PlaceCtx};
 use super::processor::Processor;
 use super::template::{block_entity_kind, PlaceSettings, Template};
 use super::transform::{transform_pos, Mirror, Rotation};
+use super::persist::{get_bool, get_i32, get_str, read_base};
 use super::{GenCtx, Loader, Piece, StructureGen};
 use crate::chunk::Heightmap;
 use crate::data::JsonExt;
+use crate::generator::WorldGenerator;
 use crate::feature::world::{Dir, Pos};
 use crate::providers::{GenContext, HeightProvider};
 use crate::random::{Random, WorldgenRandom};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use paper_data::blocks;
-use paper_nbt::Compound;
+use paper_nbt::{Compound, Tag};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
@@ -67,6 +69,18 @@ impl PortalPlacement {
         }
     }
 
+    /// `getName`.
+    fn name(self) -> &'static str {
+        match self {
+            Self::OnLandSurface => "on_land_surface",
+            Self::PartlyBuried => "partly_buried",
+            Self::OnOceanFloor => "on_ocean_floor",
+            Self::InMountain => "in_mountain",
+            Self::Underground => "underground",
+            Self::InNether => "in_nether",
+        }
+    }
+
     fn heightmap(self) -> Heightmap {
         if self == Self::OnOceanFloor {
             Heightmap::OceanFloorWg
@@ -98,6 +112,51 @@ pub(crate) struct TemplatePiece {
     kind: TemplateKind,
     ignore_entities: bool,
     waterlog: bool,
+    /// The fields of the piece type it saves besides the template position and name
+    /// (`Rot`, `isBeached`, ...), fixed when the piece is made.
+    fields: Compound,
+}
+
+/// `Rotation.name()`.
+pub(crate) fn rotation_name(r: Rotation) -> &'static str {
+    match r {
+        Rotation::None => "NONE",
+        Rotation::Clockwise90 => "CLOCKWISE_90",
+        Rotation::Clockwise180 => "CLOCKWISE_180",
+        Rotation::CounterClockwise90 => "COUNTERCLOCKWISE_90",
+    }
+}
+
+/// `Mirror.name()`.
+pub(crate) fn mirror_name(m: Mirror) -> &'static str {
+    match m {
+        Mirror::None => "NONE",
+        Mirror::LeftRight => "LEFT_RIGHT",
+        Mirror::FrontBack => "FRONT_BACK",
+    }
+}
+
+fn fields(pairs: &[(&str, Tag)]) -> Compound {
+    let mut c = Compound::new();
+    for (k, v) in pairs {
+        c.insert(*k, v.clone());
+    }
+    c
+}
+
+/// The template position and name of a saved template piece (`TPX`, `TPY`, `TPZ`,
+/// `Template`).
+fn saved_template(t: &Compound) -> (Pos, String) {
+    (Pos::new(get_i32(t, "TPX"), get_i32(t, "TPY"), get_i32(t, "TPZ")), crate::data::full_id(get_str(t, "Template")))
+}
+
+/// The template of a saved piece among a structure's templates.
+fn find_template<'a>(list: impl IntoIterator<Item = &'a Arc<Template>>, id: &str) -> Result<Arc<Template>> {
+    list.into_iter().find(|t| t.id == id).cloned().ok_or_else(|| anyhow!("unknown template {id}"))
+}
+
+fn saved_rotation(t: &Compound, key: &str) -> Rotation {
+    Rotation::parse(get_str(t, key)).unwrap_or_default()
 }
 
 impl TemplatePiece {
@@ -105,7 +164,13 @@ impl TemplatePiece {
     fn new(kind_id: &'static str, template: Arc<Template>, position: Pos, rotation: Rotation, mirror: Mirror, pivot: Pos, processors: Vec<Arc<Processor>>, kind: TemplateKind) -> Self {
         let bbox = template.bounding_box(position, rotation, pivot, mirror);
         let base = PieceBase::new(kind_id, 0, bbox).with_orientation(Some(Dir::North));
-        Self { base, template, position: Mutex::new((position, false)), rotation, mirror, pivot, processors, kind, ignore_entities: false, waterlog: true }
+        Self { base, template, position: Mutex::new((position, false)), rotation, mirror, pivot, processors, kind, ignore_entities: false, waterlog: true, fields: Compound::new() }
+    }
+
+    /// A piece read back keeps its generation depth.
+    fn with_depth(mut self, t: &Compound) -> Self {
+        self.base.gen_depth = get_i32(t, "GD");
+        self
     }
 
     /// A woodland mansion piece (`WoodlandMansionPiece`): ignores entities, skips structure
@@ -113,7 +178,17 @@ impl TemplatePiece {
     pub(crate) fn mansion(template: Arc<Template>, position: Pos, rotation: Rotation, mirror: Mirror, structure_block: Arc<Processor>) -> Self {
         let mut p = Self::new("minecraft:wmp", template, position, rotation, mirror, Pos::new(0, 0, 0), vec![structure_block], TemplateKind::Mansion);
         p.ignore_entities = true;
+        p.fields = fields(&[("Rot", rotation_name(rotation).into()), ("Mi", mirror_name(mirror).into())]);
         p
+    }
+
+    /// A woodland mansion piece read back (`Template`, `Rot`, `Mi`).
+    pub(crate) fn load_mansion(t: &Compound, templates: &std::collections::HashMap<&'static str, Arc<Template>>, structure_block: Arc<Processor>) -> Result<Self> {
+        let (tp, _) = saved_template(t);
+        let name = get_str(t, "Template");
+        let template = templates.get(name.strip_prefix("minecraft:woodland_mansion/").unwrap_or(name)).cloned().ok_or_else(|| anyhow!("unknown woodland mansion template {name}"))?;
+        let mirror = Mirror::parse(get_str(t, "Mi")).unwrap_or_default();
+        Ok(Self::mansion(template, tp, saved_rotation(t, "Rot"), mirror, structure_block).with_depth(t))
     }
 
     fn settings(&self, bbox: BoundingBox) -> PlaceSettings<'static> {
@@ -252,6 +327,24 @@ impl Piece for TemplatePiece {
         self.base.bbox.move_by(dx, dy, dz);
         let p = &mut self.position.get_mut().unwrap_or_else(|e| e.into_inner()).0;
         *p = Pos::new(p.x + dx, p.y + dy, p.z + dz);
+    }
+
+    /// `TemplateStructurePiece.addAdditionalSaveData` and the piece type's fields.
+    fn save(&self, t: &mut Compound) {
+        let p = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
+        t.insert("TPX", p.x);
+        t.insert("TPY", p.y);
+        t.insert("TPZ", p.z);
+        let id = self.template.id.as_str();
+        let name = match self.kind {
+            TemplateKind::EndCity => id.strip_prefix("minecraft:end_city/").unwrap_or(id),
+            TemplateKind::Mansion => id.strip_prefix("minecraft:woodland_mansion/").unwrap_or(id),
+            _ => id,
+        };
+        t.insert("Template", name);
+        for (k, v) in self.fields.iter() {
+            t.insert(k.clone(), v.clone());
+        }
     }
 
     fn post_process(&self, ctx: &mut PlaceCtx) {
@@ -423,7 +516,31 @@ impl Shipwreck {
     }
 }
 
+impl Shipwreck {
+    fn piece(&self, template: Arc<Template>, position: Pos, rotation: Rotation, beached: bool) -> TemplatePiece {
+        let too_big = template.size.0 > 32 || template.size.1 > 32;
+        let mut p = TemplatePiece::new("minecraft:shipwreck", template, position, rotation, Mirror::None, Pos::new(4, 0, 15), vec![self.ignore.clone()], TemplateKind::Shipwreck { beached, too_big });
+        p.fields = fields(&[("Rot", rotation_name(rotation).into()), ("isBeached", beached.into())]);
+        p
+    }
+}
+
 impl StructureGen for Shipwreck {
+    /// `ShipwreckPiece`'s NBT constructor. A position below the initial 90 was settled.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let (tp, name) = saved_template(t);
+                let template = find_template(&self.templates, &name)?;
+                let mut p = self.piece(template, tp, saved_rotation(t, "Rot"), get_bool(t, "isBeached")).with_depth(t);
+                let too_big = matches!(p.kind, TemplateKind::Shipwreck { too_big: true, .. });
+                *p.position.get_mut().unwrap_or_else(|e| e.into_inner()) = (tp, too_big || tp.y != 90);
+                Ok(Box::new(p) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         let hm = if self.beached { Heightmap::WorldSurfaceWg } else { Heightmap::OceanFloorWg };
         let stub = ctx.on_top_of_chunk_center(hm)?;
@@ -434,7 +551,7 @@ impl StructureGen for Shipwreck {
         let offset = Pos::new(ctx.min_block_x(), 90, ctx.min_block_z());
         let template = pick(&self.templates, &mut ctx.r).clone();
         let too_big = template.size.0 > 32 || template.size.1 > 32;
-        let mut piece = TemplatePiece::new("minecraft:shipwreck", template, offset, rotation, Mirror::None, Pos::new(4, 0, 15), vec![self.ignore.clone()], TemplateKind::Shipwreck { beached: self.beached, too_big });
+        let mut piece = self.piece(template, offset, rotation, self.beached);
         if too_big {
             let bb = piece.base.bbox;
             let height = if self.beached {
@@ -524,10 +641,7 @@ impl OceanRuin {
 
     fn add_piece(&self, pieces: &mut Vec<Box<dyn Piece>>, pos: Pos, rotation: Rotation, r: &mut WorldgenRandom, large: bool, integrity: f32) {
         let lists = if large { &self.big } else { &self.small };
-        let mut push = |template: Arc<Template>, integrity: f32| {
-            let processors = vec![Arc::new(Processor::BlockRot { blocks: None, integrity }), self.ignore.clone(), self.archaeology.clone()];
-            pieces.push(Box::new(TemplatePiece::new("minecraft:orp", template, pos, rotation, Mirror::None, Pos::new(0, 0, 0), processors, TemplateKind::OceanRuin { large })));
-        };
+        let mut push = |template: Arc<Template>, integrity: f32| pieces.push(Box::new(self.piece(template, pos, rotation, large, integrity)));
         if !self.cold {
             push(pick(&lists[0], r).clone(), integrity);
         } else {
@@ -548,7 +662,30 @@ fn next_int(r: &mut WorldgenRandom, min: i32, max: i32) -> i32 {
     }
 }
 
+impl OceanRuin {
+    fn piece(&self, template: Arc<Template>, pos: Pos, rotation: Rotation, large: bool, integrity: f32) -> TemplatePiece {
+        let processors = vec![Arc::new(Processor::BlockRot { blocks: None, integrity }), self.ignore.clone(), self.archaeology.clone()];
+        let mut p = TemplatePiece::new("minecraft:orp", template, pos, rotation, Mirror::None, Pos::new(0, 0, 0), processors, TemplateKind::OceanRuin { large });
+        let biome = if self.cold { "COLD" } else { "WARM" };
+        p.fields = fields(&[("Rot", rotation_name(rotation).into()), ("Integrity", integrity.into()), ("BiomeType", biome.into()), ("IsLarge", large.into())]);
+        p
+    }
+}
+
 impl StructureGen for OceanRuin {
+    /// `OceanRuinPiece`'s NBT constructor.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let (tp, name) = saved_template(t);
+                let template = find_template(self.small.iter().chain(&self.big).flatten(), &name)?;
+                let integrity = t.get("Integrity").and_then(Tag::as_f64).unwrap_or(1.0) as f32;
+                Ok(Box::new(self.piece(template, tp, saved_rotation(t, "Rot"), get_bool(t, "IsLarge"), integrity).with_depth(t)) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         let stub = ctx.on_top_of_chunk_center(Heightmap::OceanFloorWg)?;
         if !ctx.valid_biome(stub) {
@@ -646,7 +783,27 @@ impl StructureGen for NetherFossil {
         }
         let rotation = Rotation::random(&mut ctx.r);
         let template = pick(&self.templates, &mut ctx.r).clone();
-        Some(vec![Box::new(TemplatePiece::new("minecraft:nefos", template, pos, rotation, Mirror::None, Pos::new(0, 0, 0), vec![self.ignore.clone()], TemplateKind::NetherFossil))])
+        Some(vec![Box::new(self.piece(template, pos, rotation))])
+    }
+
+    /// `NetherFossilPiece`'s NBT constructor.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let (tp, name) = saved_template(t);
+                let template = find_template(&self.templates, &name)?;
+                Ok(Box::new(self.piece(template, tp, saved_rotation(t, "Rot")).with_depth(t)) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+}
+
+impl NetherFossil {
+    fn piece(&self, template: Arc<Template>, pos: Pos, rotation: Rotation) -> TemplatePiece {
+        let mut p = TemplatePiece::new("minecraft:nefos", template, pos, rotation, Mirror::None, Pos::new(0, 0, 0), vec![self.ignore.clone()], TemplateKind::NetherFossil);
+        p.fields = fields(&[("Rot", rotation_name(rotation).into())]);
+        p
     }
 }
 
@@ -754,6 +911,8 @@ const GIANT_PORTALS: &[&str] = &["ruined_portal/giant_portal_1", "ruined_portal/
 /// `RuinedPortalStructure.Setup` with its processors.
 struct PortalSetup {
     placement: PortalPlacement,
+    mossiness: f32,
+    blackstone: bool,
     air_pocket_probability: f32,
     can_be_cold: bool,
     overgrown: bool,
@@ -817,6 +976,8 @@ impl RuinedPortal {
             }
             setups.push(PortalSetup {
                 placement,
+                mossiness: mossiness as f32,
+                blackstone,
                 air_pocket_probability: s.f64_or("air_pocket_probability", 0.0) as f32,
                 can_be_cold: s.get("can_be_cold").and_then(Value::as_bool).unwrap_or(false),
                 overgrown: s.get("overgrown").and_then(Value::as_bool).unwrap_or(false),
@@ -914,9 +1075,57 @@ impl StructureGen for RuinedPortal {
         }
         let gen = ctx.gen;
         let cold = setup.can_be_cold && gen.biomes.get(ctx.cols.biome_at(origin)).cold_enough_to_snow(origin.x, origin.y, origin.z, gen.sea_level);
+        Some(vec![Box::new(Self::piece(setup, template, origin, rotation, mirror, cold, air_pocket))])
+    }
+
+    /// `RuinedPortalPiece`'s NBT constructor: the processors of the setup with the saved
+    /// placement, mossiness and blackstone.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let (tp, name) = saved_template(t);
+                let template = find_template(self.portals.iter().chain(&self.giant), &name)?;
+                let placement = PortalPlacement::parse(get_str(t, "VerticalPlacement"));
+                let empty = Compound::new();
+                let props = t.compound("Properties").unwrap_or(&empty);
+                let mossiness = props.get("mossiness").and_then(Tag::as_f64).unwrap_or(0.0) as f32;
+                let blackstone = get_bool(props, "replace_with_blackstone");
+                let setup = self
+                    .setups
+                    .iter()
+                    .find(|s| s.placement == placement && (s.mossiness - mossiness).abs() < 1e-6 && s.blackstone == blackstone)
+                    .ok_or_else(|| anyhow!("no ruined portal setup like the saved one"))?;
+                let mirror = Mirror::parse(get_str(t, "Mirror")).unwrap_or_default();
+                let p = Self::piece(setup, template, tp, saved_rotation(t, "Rotation"), mirror, get_bool(props, "cold"), get_bool(props, "air_pocket"));
+                Ok(Box::new(p.with_depth(t)) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+}
+
+impl RuinedPortal {
+    #[allow(clippy::too_many_arguments)]
+    fn piece(setup: &PortalSetup, template: Arc<Template>, origin: Pos, rotation: Rotation, mirror: Mirror, cold: bool, air_pocket: bool) -> TemplatePiece {
+        let pivot = Pos::new(template.size.0 / 2, 0, template.size.2 / 2);
         let props = PortalProperties { placement: setup.placement, cold, overgrown: setup.overgrown, vines: setup.vines };
         let processors = setup.processors[cold as usize][air_pocket as usize].clone();
-        Some(vec![Box::new(TemplatePiece::new("minecraft:rupo", template, origin, rotation, mirror, pivot, processors, TemplateKind::RuinedPortal(props)))])
+        let mut p = TemplatePiece::new("minecraft:rupo", template, origin, rotation, mirror, pivot, processors, TemplateKind::RuinedPortal(props));
+        let saved_props = fields(&[
+            ("cold", cold.into()),
+            ("mossiness", setup.mossiness.into()),
+            ("air_pocket", air_pocket.into()),
+            ("overgrown", setup.overgrown.into()),
+            ("vines", setup.vines.into()),
+            ("replace_with_blackstone", setup.blackstone.into()),
+        ]);
+        p.fields = fields(&[
+            ("Rotation", rotation_name(rotation).into()),
+            ("Mirror", mirror_name(mirror).into()),
+            ("VerticalPlacement", setup.placement.name().into()),
+            ("Properties", saved_props.into()),
+        ]);
+        p
     }
 }
 
@@ -1119,11 +1328,28 @@ impl EndCity {
         let processor = if overwrite { self.structure_block.clone() } else { self.structure_and_air.clone() };
         let mut p = TemplatePiece::new("minecraft:ecp", template, position, rotation, Mirror::None, Pos::new(0, 0, 0), vec![processor], TemplateKind::EndCity);
         p.ignore_entities = true;
+        p.fields = fields(&[("Rot", rotation_name(rotation).into()), ("OW", overwrite.into())]);
         p
     }
 }
 
 impl StructureGen for EndCity {
+    /// `EndCityPiece`'s NBT constructor (`Template` is the short name).
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let (tp, _) = saved_template(t);
+                let name = get_str(t, "Template");
+                let name = name.strip_prefix("minecraft:end_city/").unwrap_or(name);
+                if !self.templates.contains_key(name) {
+                    return Err(anyhow!("unknown end city template {name}"));
+                }
+                Ok(Box::new(self.piece(name, tp, saved_rotation(t, "Rot"), get_bool(t, "OW")).with_depth(t)) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         let (x, z) = (ctx.min_block_x() + 7, ctx.min_block_z() + 7);
         let (min_y, max_y) = (ctx.min_y() - 1, ctx.max_y());
@@ -1175,14 +1401,25 @@ impl Igloo {
     }
 
     fn piece(&self, which: IglooPart, position: Pos, rotation: Rotation, depth: i32) -> TemplatePiece {
+        let offset = match which {
+            IglooPart::Top => Pos::new(0, 0, 0),
+            IglooPart::Middle => Pos::new(2, -3, 4),
+            IglooPart::Bottom => Pos::new(0, -3, -2),
+        };
+        let pos = Pos::new(position.x + offset.x, position.y + offset.y - depth, position.z + offset.z);
+        self.piece_at(which, pos, rotation)
+    }
+
+    /// The piece of a part with its template position.
+    fn piece_at(&self, which: IglooPart, pos: Pos, rotation: Rotation) -> TemplatePiece {
         let (template, pivot, offset) = match which {
             IglooPart::Top => (&self.top, Pos::new(3, 5, 5), Pos::new(0, 0, 0)),
             IglooPart::Middle => (&self.middle, Pos::new(1, 3, 1), Pos::new(2, -3, 4)),
             IglooPart::Bottom => (&self.bottom, Pos::new(3, 6, 7), Pos::new(0, -3, -2)),
         };
-        let pos = Pos::new(position.x + offset.x, position.y + offset.y - depth, position.z + offset.z);
         let mut p = TemplatePiece::new("minecraft:iglu", template.clone(), pos, rotation, Mirror::None, pivot, vec![self.structure_block.clone()], TemplateKind::Igloo { part: which, offset });
         p.waterlog = false;
+        p.fields = fields(&[("Rot", rotation_name(rotation).into())]);
         p
     }
 }
@@ -1195,6 +1432,23 @@ pub(crate) enum IglooPart {
 }
 
 impl StructureGen for Igloo {
+    /// `IglooPiece`'s NBT constructor.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let (tp, name) = saved_template(t);
+                let part = match name.as_str() {
+                    "minecraft:igloo/top" => IglooPart::Top,
+                    "minecraft:igloo/middle" => IglooPart::Middle,
+                    "minecraft:igloo/bottom" => IglooPart::Bottom,
+                    _ => return Err(anyhow!("unknown igloo template {name}")),
+                };
+                Ok(Box::new(self.piece_at(part, tp, saved_rotation(t, "Rot")).with_depth(t)) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         let stub = ctx.on_top_of_chunk_center(Heightmap::WorldSurfaceWg)?;
         if !ctx.valid_biome(stub) {
@@ -1265,6 +1519,10 @@ impl Piece for BuriedTreasurePiece {
 pub(crate) struct BuriedTreasure;
 
 impl StructureGen for BuriedTreasure {
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children.iter().map(|t| Ok(Box::new(BuriedTreasurePiece { base: read_base(t, &["minecraft:btp"])? }) as Box<dyn Piece>)).collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         let stub = ctx.on_top_of_chunk_center(Heightmap::OceanFloorWg)?;
         if !ctx.valid_biome(stub) {

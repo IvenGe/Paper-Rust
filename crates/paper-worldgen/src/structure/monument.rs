@@ -16,10 +16,13 @@
 //! (see [`crate::WorldGenerator::structure_spawns_at`]), not from generation.
 
 use super::bbox::BoundingBox;
+use super::persist::read_base;
 use super::piece::{mob, st, PieceBase, PlaceCtx};
 use super::{GenCtx, Loader, Piece, StructureGen};
 use crate::chunk::Heightmap;
 use crate::feature::world::Dir;
+use crate::generator::WorldGenerator;
+use paper_nbt::Compound;
 use crate::random::{Random, WorldgenRandom};
 use anyhow::Result;
 use paper_data::blocks;
@@ -77,6 +80,18 @@ impl StructureGen for OceanMonument {
         let dir = Dir::random_horizontal(&mut ctx.r);
         let building = MonumentBuilding::new(&mut ctx.r, x, z, dir);
         Some(vec![Box::new(building)])
+    }
+
+    /// `regeneratePiecesAfterLoad`: vanilla saves the building alone and rebuilds it, with
+    /// its rooms, from the seed and the saved orientation.
+    fn load_pieces(&self, gen: &WorldGenerator, x: i32, z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        let Some(first) = children.first() else { return Ok(Vec::new()) };
+        let base = read_base(first, &["minecraft:omb"])?;
+        let mut r = WorldgenRandom::legacy(0);
+        r.set_large_feature_seed(gen.seed, x, z);
+        let random_dir = Dir::random_horizontal(&mut r);
+        let dir = base.orientation.unwrap_or(random_dir);
+        Ok(vec![Box::new(MonumentBuilding::new(&mut r, base.bbox.min_x, base.bbox.min_z, dir))])
     }
 }
 

@@ -18,7 +18,9 @@
 //! new world.
 //!
 //! The algorithms are ported from Pumpkin (https://github.com/Pumpkin-MC/Pumpkin, GPL-3.0),
-//! which reproduces vanilla's output; see the crate README. Structures are not generated.
+//! which reproduces vanilla's output; see the crate README. Structures are generated, and
+//! their starts are saved with chunks and read back
+//! ([`WorldGenerator::save_structures`], [`WorldGenerator::load_structures`]).
 
 // File headers credit Pumpkin as "Pumpkin (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0".
 #![allow(rustdoc::bare_urls)]

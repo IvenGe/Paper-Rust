@@ -170,8 +170,56 @@ vanilla's `finalizeSpawn`, which the server should run. Not done: the neighbour 
 updates vanilla runs after placing non-jigsaw templates and post-processing of placed
 blocks (vanilla's `markPosForPostprocessing`). Pieces that settle their height when first
 placed (shipwrecks, swamp huts, jungle temples, desert pyramids) keep it in the shared
-start for the generator's lifetime (vanilla also saves it with the chunk); like vanilla,
-the settled height depends on which chunk is decorated first.
+start for the generator's lifetime and save it with the chunk (below); like vanilla, the
+settled height depends on which chunk is decorated first.
+
+### Saving structure starts
+
+A start's pieces settle state while they are placed: the height of temples and
+shipwrecks, the chests and spawners already placed. Recomputing the starts from the seed
+after a restart would lose it, and a structure half placed before the restart would
+continue at another height. So a server saves the starts with their chunk and hands them
+back to the generator when it reads the chunk, in vanilla's chunk NBT format:
+
+* `save_structures(cx, cz)` returns the `structures` compound vanilla saves in a chunk:
+  `starts` (the chunk's starts by structure id: `id`, `ChunkX`, `ChunkZ`, `references`
+  and the pieces as `Children`, each with `id`, `BB`, `O`, `GD` and its type's fields)
+  and `References` (per structure, the packed positions of the start chunks reaching into
+  the chunk).
+* `load_structures(cx, cz, &structures)` reads such a compound (saved by this crate or by
+  vanilla) and puts its starts into the generator's start cache, replacing what it would
+  compute there; sets that could start in the chunk but have no saved start get none.
+  Every piece type is read back from its fields (ocean monuments are rebuilt from the
+  seed, as vanilla does; jigsaw pieces find their pool element among the pools' elements
+  by its encoding). A start that cannot be read (a pool element or piece type unknown
+  here, e.g. from a data pack) is computed from the seed instead and reported.
+* `structure_start_chunks(cx, cz)` lists the chunks within 8 chunks whose starts can reach
+  into a chunk (the placement candidates `createReferences` looks at).
+
+```rust
+// Saving a chunk.
+chunk_nbt.insert("structures", gen.save_structures(cx, cz));
+
+// Reading a chunk from disk (once per chunk read).
+if let Some(structures) = chunk_nbt.compound("structures") {
+    gen.load_structures(cx, cz, structures);
+}
+
+// Before generating or decorating a chunk: the saved starts that reach into it must be
+// loaded first, so new chunks continue the structures of old ones.
+for (sx, sz) in gen.structure_start_chunks(cx, cz) {
+    if !structures_loaded.contains(&(sx, sz)) && storage.contains(sx, sz) {
+        if let Some(structures) = storage.read(sx, sz)?.compound("structures") {
+            gen.load_structures(sx, sz, structures);
+        }
+        structures_loaded.insert((sx, sz));
+    }
+}
+```
+
+`References` need not be read back: they are recomputed from the starts. Loading a chunk's
+structures again after its start was used would bring back the older state; the server
+should load them once per chunk it reads from disk.
 
 ### Verification
 
@@ -198,6 +246,13 @@ the settled height depends on which chunk is decorated first.
   position, rotation and mirror) match the Java layouts Pumpkin's test records for four
   seeds; the test places a mansion of seed 0 and checks its blocks, loot chests, mobs and
   foundation.
+* Saved starts: every start of the dump (176) and starts of the structures it lacks
+  (temples, an igloo, a mansion, an ancient city, an outpost, villages) are saved, read
+  back by a new generator with the same pieces and saved again unchanged; a desert
+  pyramid placed in one chunk, saved and loaded continues identically in its other
+  chunks, where without loading one of them settles it two blocks lower. No chunk NBT
+  saved by vanilla was available here, so reading vanilla's own saves is untested beyond
+  following its format.
 * Desert pyramids, jungle temples, swamp huts, igloos, fossils and the other jigsaw
   structures have no reference here; tests check that they are found and place blocks.
 * Feature types the fixtures do not exercise are checked against Pumpkin (structures off)

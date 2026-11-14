@@ -7,9 +7,13 @@
 //! (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0, whose layouts match vanilla's.
 
 use super::piece::{st, with_bool, with_dir, PieceBase, PlaceCtx};
+use super::persist::{get_bool, get_i32, read_base};
 use super::{BoundingBox, GenCtx, Piece, StructureGen};
 use crate::feature::world::{Dir, Pos};
+use crate::generator::WorldGenerator;
 use crate::random::{LegacyRandom, Random, WorldgenRandom};
+use anyhow::Result;
+use paper_nbt::Compound;
 use paper_data::blocks::AIR;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -288,7 +292,41 @@ impl Builder {
     }
 }
 
+/// The fortress piece types (the start is saved as a bridge crossing).
+const PIECE_IDS: [&str; 14] = [
+    "minecraft:nebs", "minecraft:nebef", "minecraft:nebcr", "minecraft:nerc", "minecraft:nesr", "minecraft:nemt", "minecraft:nece", "minecraft:necsr",
+    "minecraft:nesc", "minecraft:nescsc", "minecraft:nescrt", "minecraft:nesclt", "minecraft:neccs", "minecraft:nectb",
+];
+
 impl StructureGen for Fortress {
+    /// The NBT constructors of the `NetherFortressPieces` (`Seed` of the bridge end fillers,
+    /// `Chest` of the corridor turns, `Mob` of the monster throne).
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let base = read_base(t, &PIECE_IDS)?;
+                let kind = match base.kind {
+                    "minecraft:nebef" => Kind::BridgeEndFiller { seed: get_i32(t, "Seed") },
+                    "minecraft:nebcr" => Kind::BridgeCrossing,
+                    "minecraft:nerc" => Kind::RoomCrossing,
+                    "minecraft:nesr" => Kind::StairsRoom,
+                    "minecraft:nemt" => Kind::MonsterThrone { spawner: AtomicBool::new(get_bool(t, "Mob")) },
+                    "minecraft:nece" => Kind::CastleEntrance,
+                    "minecraft:necsr" => Kind::StalkRoom,
+                    "minecraft:nesc" => Kind::SmallCorridor,
+                    "minecraft:nescsc" => Kind::SmallCorridorCrossing,
+                    "minecraft:nescrt" => Kind::SmallCorridorRightTurn { chest: AtomicBool::new(get_bool(t, "Chest")) },
+                    "minecraft:nesclt" => Kind::SmallCorridorLeftTurn { chest: AtomicBool::new(get_bool(t, "Chest")) },
+                    "minecraft:neccs" => Kind::CorridorStairs,
+                    "minecraft:nectb" => Kind::TBalcony,
+                    _ => Kind::BridgeStraight,
+                };
+                Ok(Box::new(FPiece { base, kind }) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         if !ctx.valid_biome(Pos::new(ctx.min_block_x(), 64, ctx.min_block_z())) {
             return None;
@@ -320,6 +358,21 @@ impl StructureGen for Fortress {
 impl Piece for FPiece {
     fn base(&self) -> &PieceBase {
         &self.base
+    }
+
+    fn save(&self, t: &mut Compound) {
+        match &self.kind {
+            Kind::BridgeEndFiller { seed } => {
+                t.insert("Seed", *seed);
+            }
+            Kind::MonsterThrone { spawner } => {
+                t.insert("Mob", spawner.load(Ordering::Relaxed));
+            }
+            Kind::SmallCorridorRightTurn { chest } | Kind::SmallCorridorLeftTurn { chest } => {
+                t.insert("Chest", chest.load(Ordering::Relaxed));
+            }
+            _ => {}
+        }
     }
 
     fn base_mut(&mut self) -> &mut PieceBase {

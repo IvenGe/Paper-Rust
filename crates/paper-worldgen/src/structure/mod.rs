@@ -20,12 +20,14 @@ mod legacy;
 mod mansion;
 mod mineshaft;
 mod monument;
+mod persist;
 pub(crate) mod processor;
 mod stronghold;
 mod temple;
 pub(crate) mod template;
 
 pub use bbox::BoundingBox;
+pub use persist::LoadedStructures;
 pub(crate) use beard::Beardifier;
 
 use crate::biome::Biomes;
@@ -39,6 +41,7 @@ use piece::{PieceBase, PlaceCtx};
 use placement::{Placement, PlacementKind, Rings};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// `GenerationStep.Decoration`, by name.
@@ -145,6 +148,9 @@ pub(crate) trait Piece: Send + Sync {
     fn translate(&mut self, dx: i32, dy: i32, dz: i32) {
         self.base_mut().bbox.move_by(dx, dy, dz);
     }
+    /// `addAdditionalSaveData`: the piece type's own fields in its chunk NBT (the common
+    /// `id`, `BB`, `O` and `GD` are written by the caller).
+    fn save(&self, _tag: &mut paper_nbt::Compound) {}
 }
 
 impl AsRef<PieceBase> for dyn Piece {
@@ -236,6 +242,11 @@ pub(crate) trait StructureGen: Send + Sync {
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>>;
     /// `Structure.afterPlace`.
     fn after_place(&self, _start: &StructureStart, _ctx: &mut PlaceCtx) {}
+    /// Reads a start's pieces back from their NBT (`Children`), as vanilla's
+    /// `PiecesContainer.load` with each `StructurePieceType`'s NBT constructor.
+    fn load_pieces(&self, _gen: &WorldGenerator, _chunk_x: i32, _chunk_z: i32, _children: &[&paper_nbt::Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        Err(anyhow!("cannot read the pieces of this structure"))
+    }
 }
 
 /// A structure type this crate does not generate.
@@ -325,6 +336,8 @@ pub struct StructureStart {
     /// The bounding box of all pieces, inflated by 12 for structures that adapt the
     /// terrain (`getBoundingBox`).
     pub bbox: BoundingBox,
+    /// `references` (maps and `/locate` that skip known structures count them).
+    references: AtomicI32,
 }
 
 impl StructureStart {
@@ -427,14 +440,23 @@ impl StartCache {
         Self { shards: (0..Self::SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
     }
 
-    fn get_or_compute(&self, key: (u16, i32, i32), f: impl FnOnce() -> Option<Arc<StructureStart>>) -> Option<Arc<StructureStart>> {
+    fn shard(&self, key: (u16, i32, i32)) -> &StartShard {
         let h = (key.0 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (key.1 as u32 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ (key.2 as u32 as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
-        let shard = &self.shards[(h >> 58) as usize % Self::SHARDS];
+        &self.shards[(h >> 58) as usize % Self::SHARDS]
+    }
+
+    fn get_or_compute(&self, key: (u16, i32, i32), f: impl FnOnce() -> Option<Arc<StructureStart>>) -> Option<Arc<StructureStart>> {
         let cell = {
-            let mut m = shard.lock().unwrap_or_else(|e| e.into_inner());
+            let mut m = self.shard(key).lock().unwrap_or_else(|e| e.into_inner());
             m.entry(key).or_default().clone()
         };
         cell.get_or_init(f).clone()
+    }
+
+    /// Replaces the start of a key (users of the previous one keep it).
+    fn put(&self, key: (u16, i32, i32), start: Option<Arc<StructureStart>>) {
+        let mut m = self.shard(key).lock().unwrap_or_else(|e| e.into_inner());
+        m.insert(key, Arc::new(OnceLock::from(start)));
     }
 }
 
@@ -673,7 +695,12 @@ impl Structures {
 
     /// The start of `set` in a chunk (`createStructures` for one set), cached.
     pub(crate) fn start(&self, gen: &WorldGenerator, set: usize, x: i32, z: i32) -> Option<Arc<StructureStart>> {
-        self.starts.get_or_compute((set as u16, x, z), || {
+        self.starts.get_or_compute((set as u16, x, z), || self.compute(gen, set, x, z))
+    }
+
+    /// The start of `set` in a chunk, computed from the seed.
+    fn compute(&self, gen: &WorldGenerator, set: usize, x: i32, z: i32) -> Option<Arc<StructureStart>> {
+        {
             if !self.is_structure_chunk(gen, set, x, z) {
                 return None;
             }
@@ -703,7 +730,7 @@ impl Structures {
                 total -= option.1;
             }
             None
-        })
+        }
     }
 
     /// `tryGenerateStructure`: `Structure.generate` and the validity check.
@@ -716,7 +743,7 @@ impl Structures {
         }
         let bb = BoundingBox::encapsulating(pieces.iter().map(|p| p.bbox()))?;
         let bbox = if def.adaptation != TerrainAdjustment::None { bb.inflated(12) } else { bb };
-        Some(Arc::new(StructureStart { structure, id: def.id.clone(), chunk_x: x, chunk_z: z, pieces, bbox }))
+        Some(Arc::new(StructureStart { structure, id: def.id.clone(), chunk_x: x, chunk_z: z, pieces, bbox, references: AtomicI32::new(0) }))
     }
 
     /// Candidate start chunks of a set within `range` chunks of a chunk.

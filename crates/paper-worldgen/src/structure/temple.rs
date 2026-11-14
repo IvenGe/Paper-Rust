@@ -8,8 +8,12 @@
 
 use super::bbox::BoundingBox;
 use super::piece::{mob, st, with, with_bool, with_dir, PieceBase, PlaceCtx, Selector};
+use super::persist::{get_bool, get_i32, read_base};
 use super::{GenCtx, Piece, StructureGen};
 use crate::chunk::Heightmap;
+use crate::generator::WorldGenerator;
+use anyhow::Result;
+use paper_nbt::Compound;
 use crate::feature::world::{Dir, Pos};
 use crate::random::{Random, WorldgenRandom};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,8 +36,11 @@ struct JungleFlags {
 /// `ScatteredFeaturePiece`.
 struct Scattered {
     base: PieceBase,
-    /// The vertical move applied when the height was settled (`heightPosition`).
-    settled: Mutex<Option<i32>>,
+    /// `width`, `height`, `depth`.
+    size: (i32, i32, i32),
+    /// Once the height is settled: the vertical move applied to `base`'s box and the ground
+    /// height found (`heightPosition`).
+    settled: Mutex<Option<(i32, i32)>>,
     kind: Kind,
 }
 
@@ -41,7 +48,15 @@ impl Scattered {
     #[allow(clippy::too_many_arguments)]
     fn new(kind_id: &'static str, x: i32, y: i32, z: i32, width: i32, height: i32, depth: i32, dir: Dir, kind: Kind) -> Self {
         let base = PieceBase::new(kind_id, 0, BoundingBox::make(x, y, z, dir, width, height, depth)).with_orientation(Some(dir));
-        Self { base, settled: Mutex::new(None), kind }
+        Self { base, size: (width, height, depth), settled: Mutex::new(None), kind }
+    }
+
+    /// The NBT constructor: the saved box is already moved when `HPos` is set.
+    fn load(t: &Compound, id: &'static str, kind: Kind) -> Result<Box<dyn Piece>> {
+        let base = read_base(t, &[id])?;
+        let hpos = t.get("HPos").and_then(paper_nbt::Tag::as_i64).unwrap_or(-1) as i32;
+        let size = (get_i32(t, "Width"), get_i32(t, "Height"), get_i32(t, "Depth"));
+        Ok(Box::new(Self { base, size, settled: Mutex::new((hpos >= 0).then_some((0, hpos))), kind }))
     }
 
     /// `updateHeightPositionToLowestGroundHeight`: the piece's base with its settled height.
@@ -55,10 +70,10 @@ impl Scattered {
                     lowest = lowest.min(ctx.w.height_at(Heightmap::MotionBlockingNoLeaves, x, z));
                 }
             }
-            *settled = Some(lowest - bb.min_y + offset);
+            *settled = Some((lowest - bb.min_y + offset, lowest));
         }
         let mut base = self.base.clone();
-        base.bbox.move_by(0, settled.unwrap_or(0), 0);
+        base.bbox.move_by(0, settled.map_or(0, |s| s.0), 0);
         base
     }
 
@@ -80,10 +95,10 @@ impl Scattered {
             if count == 0 {
                 return None;
             }
-            *settled = Some(total / count - bb.min_y + offset);
+            *settled = Some((total / count - bb.min_y + offset, total / count));
         }
         let mut base = self.base.clone();
-        base.bbox.move_by(0, settled.unwrap_or(0), 0);
+        base.bbox.move_by(0, settled.map_or(0, |s| s.0), 0);
         Some(base)
     }
 }
@@ -111,8 +126,33 @@ impl Piece for Scattered {
     }
 
     fn bbox(&self) -> BoundingBox {
-        let dy = self.settled.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or(0);
+        let dy = self.settled.lock().unwrap_or_else(|e| e.into_inner()).map_or(0, |s| s.0);
         self.base.bbox.moved(0, dy, 0)
+    }
+
+    fn save(&self, t: &mut Compound) {
+        t.insert("Width", self.size.0);
+        t.insert("Height", self.size.1);
+        t.insert("Depth", self.size.2);
+        t.insert("HPos", self.settled.lock().unwrap_or_else(|e| e.into_inner()).map_or(-1, |s| s.1));
+        let flag = |b: &AtomicBool| b.load(Ordering::Relaxed);
+        match &self.kind {
+            Kind::SwampHut { witch, cat } => {
+                t.insert("Witch", flag(witch));
+                t.insert("Cat", flag(cat));
+            }
+            Kind::JungleTemple(f) => {
+                t.insert("placedMainChest", flag(&f.placed_main_chest));
+                t.insert("placedHiddenChest", flag(&f.placed_hidden_chest));
+                t.insert("placedTrap1", flag(&f.placed_trap1));
+                t.insert("placedTrap2", flag(&f.placed_trap2));
+            }
+            Kind::DesertPyramid(chests) => {
+                for (i, c) in chests.iter().enumerate() {
+                    t.insert(format!("hasPlacedChest{i}"), flag(c));
+                }
+            }
+        }
     }
 
     fn post_process(&self, ctx: &mut PlaceCtx) {
@@ -153,6 +193,13 @@ impl StructureGen for SwampHut {
         let kind = Kind::SwampHut { witch: AtomicBool::new(false), cat: AtomicBool::new(false) };
         Some(vec![Box::new(Scattered::new("minecraft:tesh", ctx.min_block_x(), 64, ctx.min_block_z(), 7, 7, 9, dir, kind))])
     }
+
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| Scattered::load(t, "minecraft:tesh", Kind::SwampHut { witch: AtomicBool::new(get_bool(t, "Witch")), cat: AtomicBool::new(get_bool(t, "Cat")) }))
+            .collect()
+    }
 }
 
 /// `SinglePieceStructure.findGenerationPoint`'s checks: the stub on top of the chunk center.
@@ -183,6 +230,21 @@ impl StructureGen for JungleTemple {
             placed_trap2: AtomicBool::new(false),
         };
         Some(vec![Box::new(Scattered::new("minecraft:tejp", ctx.min_block_x(), 64, ctx.min_block_z(), 12, 10, 15, dir, Kind::JungleTemple(flags)))])
+    }
+
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let flags = JungleFlags {
+                    placed_main_chest: AtomicBool::new(get_bool(t, "placedMainChest")),
+                    placed_hidden_chest: AtomicBool::new(get_bool(t, "placedHiddenChest")),
+                    placed_trap1: AtomicBool::new(get_bool(t, "placedTrap1")),
+                    placed_trap2: AtomicBool::new(get_bool(t, "placedTrap2")),
+                };
+                Scattered::load(t, "minecraft:tejp", Kind::JungleTemple(flags))
+            })
+            .collect()
     }
 }
 
@@ -712,6 +774,16 @@ impl StructureGen for DesertPyramid {
         let dir = Dir::random_horizontal(&mut ctx.r);
         let kind = Kind::DesertPyramid(std::array::from_fn(|_| AtomicBool::new(false)));
         Some(vec![Box::new(Scattered::new("minecraft:tedp", ctx.min_block_x(), 64, ctx.min_block_z(), 21, 15, 21, dir, kind))])
+    }
+
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let chests = std::array::from_fn(|i| AtomicBool::new(get_bool(t, &format!("hasPlacedChest{i}"))));
+                Scattered::load(t, "minecraft:tedp", Kind::DesertPyramid(chests))
+            })
+            .collect()
     }
 
     /// `DesertPyramidStructure.afterPlace`: suspicious sand at 5 to 7 of the sand positions

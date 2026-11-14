@@ -21,8 +21,10 @@ use super::template::Template;
 use super::transform::{transform_pos, Mirror, Rotation};
 use super::{GenCtx, Loader, Piece, StructureGen, StructureStart};
 use crate::feature::world::{Dir, Pos};
+use crate::generator::WorldGenerator;
 use crate::random::{Random, WorldgenRandom};
 use anyhow::Result;
+use paper_nbt::Compound;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -87,6 +89,11 @@ impl StructureGen for WoodlandMansion {
             })
             .collect();
         Some(pieces)
+    }
+
+    /// `WoodlandMansionPiece`'s NBT constructor.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children.iter().map(|t| Ok(Box::new(TemplatePiece::load_mansion(t, &self.templates, self.structure_block.clone())?) as Box<dyn Piece>)).collect()
     }
 
     /// `WoodlandMansionStructure.afterPlace`: cobblestone under the pieces down to the

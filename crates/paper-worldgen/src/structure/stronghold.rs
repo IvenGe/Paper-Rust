@@ -6,9 +6,13 @@
 //! of Pumpkin (https://github.com/Pumpkin-MC/Pumpkin), GPL-3.0, whose layouts match vanilla's.
 
 use super::piece::{st, with, with_bool, with_dir, PieceBase, PlaceCtx, Selector};
+use super::persist::{get_bool, get_i32, get_str, read_base};
 use super::{BoundingBox, GenCtx, Piece, StructureGen};
 use crate::feature::world::{Dir, Pos};
+use crate::generator::WorldGenerator;
 use crate::random::{Random, WorldgenRandom};
+use anyhow::Result;
+use paper_nbt::Compound;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) struct Stronghold;
@@ -405,7 +409,59 @@ impl Builder {
     }
 }
 
+/// The stronghold piece types.
+const PIECE_IDS: [&str; 13] = [
+    "minecraft:shstart", "minecraft:shsd", "minecraft:shs", "minecraft:shcc", "minecraft:shssd", "minecraft:shlt", "minecraft:shrt", "minecraft:shrc",
+    "minecraft:shph", "minecraft:shli", "minecraft:sh5c", "minecraft:shpr", "minecraft:shfc",
+];
+
+impl Door {
+    /// `SmallDoorType` by name.
+    fn name(self) -> &'static str {
+        match self {
+            Door::Opening => "OPENING",
+            Door::WoodDoor => "WOOD_DOOR",
+            Door::Grates => "GRATES",
+            Door::IronDoor => "IRON_DOOR",
+        }
+    }
+
+    fn parse(s: &str) -> Door {
+        match s {
+            "WOOD_DOOR" => Door::WoodDoor,
+            "GRATES" => Door::Grates,
+            "IRON_DOOR" => Door::IronDoor,
+            _ => Door::Opening,
+        }
+    }
+}
+
 impl StructureGen for Stronghold {
+    /// The NBT constructors of the `StrongholdPieces` (`EntryDoor` and each piece's fields).
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let base = read_base(t, &PIECE_IDS)?;
+                let kind = match base.kind {
+                    "minecraft:shstart" | "minecraft:shsd" => Kind::StairsDown { source: get_bool(t, "Source") },
+                    "minecraft:shs" => Kind::Straight { left: get_bool(t, "Left"), right: get_bool(t, "Right") },
+                    "minecraft:shcc" => Kind::ChestCorridor { chest: AtomicBool::new(get_bool(t, "Chest")) },
+                    "minecraft:shssd" => Kind::StraightStairsDown,
+                    "minecraft:shlt" => Kind::LeftTurn,
+                    "minecraft:shrt" => Kind::RightTurn,
+                    "minecraft:shrc" => Kind::RoomCrossing { kind: get_i32(t, "Type") },
+                    "minecraft:shph" => Kind::PrisonHall,
+                    "minecraft:shli" => Kind::Library { tall: get_bool(t, "Tall") },
+                    "minecraft:sh5c" => Kind::FiveCrossing { left_low: get_bool(t, "leftLow"), left_high: get_bool(t, "leftHigh"), right_low: get_bool(t, "rightLow"), right_high: get_bool(t, "rightHigh") },
+                    "minecraft:shpr" => Kind::PortalRoom { spawner: AtomicBool::new(get_bool(t, "Mob")) },
+                    _ => Kind::FillerCorridor { steps: get_i32(t, "Steps") },
+                };
+                Ok(Box::new(ShPiece { base, entry: Door::parse(get_str(t, "EntryDoor")), kind }) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         if !ctx.valid_biome(Pos::new(ctx.min_block_x(), 0, ctx.min_block_z())) {
             return None;
@@ -520,6 +576,41 @@ impl ShPiece {
 impl Piece for ShPiece {
     fn base(&self) -> &PieceBase {
         &self.base
+    }
+
+    fn save(&self, t: &mut Compound) {
+        t.insert("EntryDoor", self.entry.name());
+        match &self.kind {
+            Kind::StairsDown { source } => {
+                t.insert("Source", *source);
+            }
+            Kind::Straight { left, right } => {
+                t.insert("Left", *left);
+                t.insert("Right", *right);
+            }
+            Kind::ChestCorridor { chest } => {
+                t.insert("Chest", chest.load(Ordering::Relaxed));
+            }
+            Kind::RoomCrossing { kind } => {
+                t.insert("Type", *kind);
+            }
+            Kind::Library { tall } => {
+                t.insert("Tall", *tall);
+            }
+            Kind::FiveCrossing { left_low, left_high, right_low, right_high } => {
+                t.insert("leftLow", *left_low);
+                t.insert("leftHigh", *left_high);
+                t.insert("rightLow", *right_low);
+                t.insert("rightHigh", *right_high);
+            }
+            Kind::PortalRoom { spawner } => {
+                t.insert("Mob", spawner.load(Ordering::Relaxed));
+            }
+            Kind::FillerCorridor { steps } => {
+                t.insert("Steps", *steps);
+            }
+            Kind::StraightStairsDown | Kind::LeftTurn | Kind::RightTurn | Kind::PrisonHall => {}
+        }
     }
 
     fn base_mut(&mut self) -> &mut PieceBase {
