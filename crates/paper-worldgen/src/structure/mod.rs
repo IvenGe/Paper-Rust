@@ -15,8 +15,11 @@ pub(crate) mod placement;
 pub mod transform;
 
 mod fortress;
+mod jigsaw;
 mod mineshaft;
+pub(crate) mod processor;
 mod stronghold;
+pub(crate) mod template;
 
 pub use bbox::BoundingBox;
 pub(crate) use beard::Beardifier;
@@ -130,6 +133,10 @@ pub(crate) trait Piece: Send + Sync {
     fn jigsaw(&self) -> Option<&JigsawInfo> {
         None
     }
+    /// For jigsaw pieces: the element's template, the position and the rotation.
+    fn jigsaw_details(&self) -> Option<(Option<&str>, Pos, transform::Rotation)> {
+        None
+    }
     /// `move`.
     fn translate(&mut self, dx: i32, dy: i32, dz: i32) {
         self.base_mut().bbox.move_by(dx, dy, dz);
@@ -197,11 +204,17 @@ impl<'a> GenCtx<'a> {
         self.biomes & (1u128 << b) != 0
     }
 
-    /// `couldStructureExistInColumn` at the chunk center over the whole height.
+    /// `couldStructureExistInColumn`: a valid biome at some quart of the column.
+    pub fn could_exist_in_column(&mut self, x: i32, z: i32, min_y: i32, max_y: i32) -> bool {
+        let (qx, qz) = (x >> 2, z >> 2);
+        (min_y >> 2..=max_y >> 2).any(|qy| self.biomes & (1u128 << self.cols.biome_at_quart(qx, qy, qz)) != 0)
+    }
+
+    /// `couldValidBiomeExistOnTopOfChunkCenter`.
     pub fn could_valid_biome_exist_on_top_of_chunk_center(&mut self) -> bool {
-        let (qx, qz) = (self.middle_block_x() >> 2, self.middle_block_z() >> 2);
-        let (min_q, max_q) = ((self.min_y() - 1) >> 2, self.max_y() >> 2);
-        (min_q..=max_q).any(|qy| self.biomes & (1u128 << self.cols.biome_at_quart(qx, qy, qz)) != 0)
+        let (x, z) = (self.middle_block_x(), self.middle_block_z());
+        let (min_y, max_y) = (self.min_y() - 1, self.max_y());
+        self.could_exist_in_column(x, z, min_y, max_y)
     }
 
     /// `onTopOfChunkCenter`: the first occupied block at the chunk center, if a valid
@@ -305,7 +318,17 @@ impl StructureStart {
                     Some(crate::feature::world::Dir::East) => 3,
                     _ => -1,
                 };
-                PieceInfo { bbox: p.bbox(), kind: b.kind, gen_depth: b.gen_depth, orientation, jigsaw: p.jigsaw().cloned() }
+                let details = p.jigsaw_details();
+                PieceInfo {
+                    bbox: p.bbox(),
+                    kind: b.kind,
+                    gen_depth: b.gen_depth,
+                    orientation,
+                    jigsaw: p.jigsaw().cloned(),
+                    element: details.and_then(|d| d.0.map(str::to_owned)),
+                    position: details.map(|d| [d.1.x, d.1.y, d.1.z]),
+                    rotation: details.map(|d| d.2),
+                }
             })
             .collect()
     }
@@ -319,6 +342,12 @@ pub struct PieceInfo {
     pub gen_depth: i32,
     pub orientation: i32,
     pub jigsaw: Option<JigsawInfo>,
+    /// Jigsaw pieces: the template of the element (`location`), if it has one.
+    pub element: Option<String>,
+    /// Jigsaw pieces: the element's position.
+    pub position: Option<[i32; 3]>,
+    /// Jigsaw pieces: the element's rotation.
+    pub rotation: Option<transform::Rotation>,
 }
 
 impl StructureStart {
@@ -365,6 +394,11 @@ pub struct Structures {
 pub(crate) struct Loader<'a, 'd> {
     pub data: &'a DataReader<'d>,
     pub biomes: &'a Biomes,
+    pub parser: crate::feature::parse::Parser<'a, 'd>,
+    pub procs: processor::ProcessorLists,
+    pub templates: template::Templates,
+    pub pools: jigsaw::PoolLoader,
+    pub builtins: Arc<processor::BuiltinProcessors>,
 }
 
 impl Loader<'_, '_> {
@@ -417,8 +451,16 @@ impl Loader<'_, '_> {
 }
 
 impl Structures {
-    pub(crate) fn load(data: &DataReader, biomes: &Biomes, possible: &[u8], seed: i64) -> Result<Self> {
-        let loader = Loader { data, biomes };
+    pub(crate) fn load(data: &DataReader, biomes: &Biomes, possible: &[u8], seed: i64, blocks: &mut crate::feature::blockinfo::Blocks) -> Result<Self> {
+        let mut loader = Loader {
+            data,
+            biomes,
+            parser: crate::feature::parse::Parser::new(data, blocks, biomes),
+            procs: Default::default(),
+            templates: Default::default(),
+            pools: Default::default(),
+            builtins: Arc::new(processor::BuiltinProcessors::new()),
+        };
         let mut possible_bits = 0u128;
         for b in possible {
             possible_bits |= 1u128 << b;
@@ -445,8 +487,10 @@ impl Structures {
         let mut defs = Vec::with_capacity(ids.len());
         for id in &ids {
             let json = data.worldgen("structure", id)?;
-            defs.push(Self::load_def(&loader, id, &json).with_context(|| format!("structure {id}"))?);
+            defs.push(Self::load_def(&mut loader, id, &json).with_context(|| format!("structure {id}"))?);
         }
+        let Loader { data, parser, procs, templates, pools, .. } = &mut loader;
+        pools.finish(data, parser, procs, templates).context("loading template pools")?;
         let mut steps = vec![Vec::new(); STEPS.len()];
         for (i, d) in defs.iter().enumerate() {
             steps[d.step].push(i);
@@ -475,7 +519,7 @@ impl Structures {
         Ok(Self { defs, sets, steps, rings, starts: StartCache::new(), enabled: true })
     }
 
-    fn load_def(l: &Loader, id: &str, json: &Value) -> Result<StructureDef> {
+    fn load_def(l: &mut Loader, id: &str, json: &Value) -> Result<StructureDef> {
         let kind = json.str_field("type")?;
         let kind = kind.strip_prefix("minecraft:").unwrap_or(kind).to_owned();
         let biomes = l.biome_set(json.field("biomes")?)?;
@@ -489,6 +533,7 @@ impl Structures {
                 mesa: json.get("mineshaft_type").and_then(Value::as_str) == Some("mesa"),
                 blocking: l.biome_set(&Value::String("#minecraft:mineshaft_blocking".into()))?,
             })),
+            "jigsaw" => Some(Box::new(jigsaw::Jigsaw::parse(json, &mut l.pools, l.builtins.clone())?)),
             _ => None,
         };
         let supported = generator.is_some();

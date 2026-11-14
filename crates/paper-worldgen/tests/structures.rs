@@ -8,6 +8,7 @@
 mod common;
 
 use common::generator;
+use paper_worldgen::structure::transform::Rotation;
 use paper_worldgen::Dimension;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -38,24 +39,56 @@ fn check_starts(dimension: Dimension, key: &str) -> BTreeMap<String, usize> {
         };
         let b = s.bbox;
         let ours = [b.min_x, b.min_y, b.min_z, b.max_x, b.max_y, b.max_z];
-        if ours != bb(&start["bb"]) {
-            failures.push(format!("{id} at ({x}, {z}): bounding box {ours:?}, vanilla {:?}", bb(&start["bb"])));
-            continue;
-        }
         let pieces = s.pieces();
         let expected = start["p"].as_array().unwrap();
-        if pieces.len() != expected.len() {
-            failures.push(format!("{id} at ({x}, {z}): {} pieces, vanilla {}", pieces.len(), expected.len()));
-            continue;
-        }
         let mut bad = None;
+        if ours != bb(&start["bb"]) {
+            bad = Some(format!("{id} at ({x}, {z}): bounding box {ours:?}, vanilla {:?}", bb(&start["bb"])));
+        } else if pieces.len() != expected.len() {
+            bad = Some(format!("{id} at ({x}, {z}): {} pieces, vanilla {}", pieces.len(), expected.len()));
+        }
         for (i, (p, e)) in pieces.iter().zip(expected).enumerate() {
             let pb = [p.bbox.min_x, p.bbox.min_y, p.bbox.min_z, p.bbox.max_x, p.bbox.max_y, p.bbox.max_z];
             let kind = p.kind.strip_prefix("minecraft:").unwrap_or(p.kind);
             if pb != bb(&e["bb"]) || kind != e["t"].as_str().unwrap() || p.gen_depth as i64 != e["d"].as_i64().unwrap() || p.orientation as i64 != e["o"].as_i64().unwrap() {
-                bad = Some(format!("{id} at ({x}, {z}) piece {i}: {kind} {pb:?} depth {} orientation {}, vanilla {e}", p.gen_depth, p.orientation));
+                bad = Some(format!("{}{id} at ({x}, {z}) piece {i}: {kind} {pb:?} depth {} orientation {}, vanilla {e}", bad.map(|b| b + "; ").unwrap_or_default(), p.gen_depth, p.orientation));
                 break;
             }
+            if let Some(pos) = e.get("pos") {
+                let jig = p.jigsaw.as_ref().expect("jigsaw piece");
+                let rot = match p.rotation {
+                    Some(Rotation::None) => "NONE",
+                    Some(Rotation::Clockwise90) => "CLOCKWISE_90",
+                    Some(Rotation::Clockwise180) => "CLOCKWISE_180",
+                    Some(Rotation::CounterClockwise90) => "COUNTERCLOCKWISE_90",
+                    None => "?",
+                };
+                let junctions: Vec<Value> = jig
+                    .junctions
+                    .iter()
+                    .map(|j| serde_json::json!([j.source_x, j.source_ground_y, j.source_z, j.delta_y, if j.dest_rigid { "rigid" } else { "terrain_matching" }]))
+                    .collect();
+                let ours = serde_json::json!({
+                    "pos": p.position.unwrap(),
+                    "loc": p.element.clone(),
+                    "rot": rot,
+                    "gld": jig.ground_level_delta,
+                    "j": junctions,
+                });
+                let theirs = serde_json::json!({"pos": pos, "loc": e.get("loc"), "rot": e["rot"], "gld": e["gld"], "j": e["j"]});
+                if ours != theirs {
+                    bad = Some(format!("{}{id} at ({x}, {z}) piece {i}: {ours}, vanilla {theirs}", bad.map(|b| b + "; ").unwrap_or_default()));
+                    break;
+                }
+            }
+        }
+        if let (Some(_), Ok(dir)) = (&bad, std::env::var("STRUCTURE_DUMP_DIR")) {
+            let ours: Vec<Value> = pieces
+                .iter()
+                .map(|p| serde_json::json!({"bb": [p.bbox.min_x, p.bbox.min_y, p.bbox.min_z, p.bbox.max_x, p.bbox.max_y, p.bbox.max_z], "pos": p.position, "loc": p.element, "j": p.jigsaw.as_ref().map(|j| j.junctions.iter().map(|j| [j.source_x, j.source_ground_y, j.source_z, j.delta_y]).collect::<Vec<_>>())}))
+                .collect();
+            let file = format!("{dir}/{}_{x}_{z}.json", id.replace(':', "_"));
+            std::fs::write(file, serde_json::to_string(&serde_json::json!({"ours": ours, "vanilla": expected})).unwrap()).unwrap();
         }
         match bad {
             Some(m) => failures.push(m),

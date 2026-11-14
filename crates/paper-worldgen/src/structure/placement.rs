@@ -360,8 +360,21 @@ mod tests {
 
     #[test]
     fn hash_set_order() {
-        // Small sets keep the slot order of fastutil's 32 slot table, read top down.
-        let keys = [pack_chunk(1, 2), pack_chunk(-3, 4), 0, pack_chunk(5, -6)];
+        // Small sets keep the slot order of fastutil's 32 slot table, read top down (keys
+        // picked to land in distinct slots, so no probing is involved).
+        let mut keys = vec![0];
+        let mut used = Vec::new();
+        for x in 1..64 {
+            let k = pack_chunk(x, -2 * x);
+            let slot = (mix(k) as usize) & 31;
+            if !used.contains(&slot) {
+                used.push(slot);
+                keys.push(k);
+            }
+            if keys.len() == 4 {
+                break;
+            }
+        }
         let order = long_open_hash_set_order(&keys);
         assert_eq!(order.len(), 4);
         assert_eq!(order[0], 0);

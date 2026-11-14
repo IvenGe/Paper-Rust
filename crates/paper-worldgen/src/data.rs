@@ -52,6 +52,11 @@ impl<'a> DataReader<'a> {
         Ok(value)
     }
 
+    /// The raw bytes of the file at `path` (not cached).
+    pub fn bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.source.read(path)
+    }
+
     pub fn exists(&self, path: &str) -> bool {
         self.cache.borrow().contains_key(path) || self.source.read(path).is_some()
     }

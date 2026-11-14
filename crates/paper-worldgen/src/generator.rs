@@ -192,9 +192,9 @@ impl WorldGenerator {
             frozen_oceans,
         };
         let carvers = crate::carver::Carvers::load(data, &biomes, &possible)?;
-        let decoration = crate::feature::Decoration::load(data, &biomes, dimension, &possible).context("loading features")?;
+        let mut decoration = crate::feature::Decoration::load(data, &biomes, dimension, &possible).context("loading features")?;
         let spawn_targets = crate::spawn::parse_spawn_targets(&settings).context("reading spawn targets")?;
-        let structures = crate::structure::Structures::load(data, &biomes, &possible, seed).context("loading structures")?;
+        let structures = crate::structure::Structures::load(data, &biomes, &possible, seed, &mut decoration.blocks).context("loading structures")?;
 
         Ok(Self {
             dimension,

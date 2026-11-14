@@ -1,14 +1,10 @@
-//! The features stage compared with vanilla 26.3 (whole-chunk hashes after decoration).
-//!
-//! Vanilla's feature-stage chunks include structures, which this crate does not generate.
-//! Chunks without structure pieces are compared with vanilla; for the others the reference
-//! is Pumpkin (commit e9dc12e9) with structures disabled, which is not a vanilla reference
-//! but pins down everything except the structures.
+//! The features stage compared with vanilla 26.3 (whole-chunk hashes after decoration,
+//! structure pieces included).
 
 mod common;
 
 use common::generator;
-use paper_worldgen::{Dimension, ProtoChunk, Region};
+use paper_worldgen::{Dimension, ProtoChunk, Region, WorldGenerator};
 use sha2::{Digest, Sha256};
 
 fn hashes(chunk: &ProtoChunk) -> (String, Vec<String>) {
@@ -31,8 +27,9 @@ fn hashes(chunk: &ProtoChunk) -> (String, Vec<String>) {
     (hex, sections)
 }
 
-/// Feature-stage references that are Pumpkin without structures (the vanilla chunk has
-/// structure pieces): (dimension, x, z, sha256).
+/// Feature-stage SHA-256 of Pumpkin (commit e9dc12e9) with structures disabled for the
+/// fixture chunks vanilla placed structure pieces in. Not vanilla references: they check
+/// that turning structures off leaves the features as they were.
 const PUMPKIN_WITHOUT_STRUCTURES: &[(Dimension, i32, i32, &str)] = &[
     (Dimension::Overworld, -13, -7, "d244af3cd3f013c678097da142b795a4c2ea215be20cfb04e240fddb49474762"),
     (Dimension::Overworld, 14, 5, "0bb46d1f47b9f4e66892d1f3dd44cab87c5b8ecbee24262d9495409c6195eb72"),
@@ -41,9 +38,21 @@ const PUMPKIN_WITHOUT_STRUCTURES: &[(Dimension, i32, i32, &str)] = &[
     (Dimension::Nether, 14, 5, "545ab037d4aa8b08c14d4bf0bfe22b0956959165187c0f8c939e08e9b953409e"),
 ];
 
+#[test]
+fn structures_disabled() {
+    let mut failures = Vec::new();
+    for &(dimension, cx, cz, expected) in PUMPKIN_WITHOUT_STRUCTURES {
+        let Some(g) = common::generator_without_structures(dimension, 0) else { return };
+        let (sha, _) = hashes(&decorated(g, cx, cz));
+        if sha != expected {
+            failures.push(format!("{dimension:?} ({cx}, {cz})"));
+        }
+    }
+    assert!(failures.is_empty(), "differ from Pumpkin without structures: {}", failures.join(", "));
+}
+
 /// Decorates `(cx, cz)` with freshly generated neighbours and returns the center chunk.
-pub fn decorated(dimension: Dimension, cx: i32, cz: i32) -> Option<ProtoChunk> {
-    let g = generator(dimension, 0)?;
+pub fn decorated(g: &WorldGenerator, cx: i32, cz: i32) -> ProtoChunk {
     let mut chunks = Vec::new();
     for dz in -1..=1 {
         for dx in -1..=1 {
@@ -52,7 +61,7 @@ pub fn decorated(dimension: Dimension, cx: i32, cz: i32) -> Option<ProtoChunk> {
     }
     let mut region = Region::new(cx, cz, chunks);
     g.decorate(cx, cz, &mut region);
-    Some(region.into_chunks().swap_remove(4))
+    region.into_chunks().swap_remove(4)
 }
 
 /// Compares every chunk of a fixture; returns (matched, compared) and prints mismatches.
@@ -60,20 +69,13 @@ fn check(file: &str, dimension: Dimension) -> (usize, Vec<String>) {
     let data = common::json_fixture(file);
     let mut matched = 0;
     let mut failures = Vec::new();
-    if generator(dimension, 0).is_none() {
-        return (0, failures);
-    }
+    let Some(g) = generator(dimension, 0) else { return (0, failures) };
     for entry in data.as_array().unwrap() {
         let (cx, cz) = (entry["x"].as_i64().unwrap() as i32, entry["z"].as_i64().unwrap() as i32);
-        let chunk = decorated(dimension, cx, cz).unwrap();
+        let chunk = decorated(g, cx, cz);
         let (sha, sections) = hashes(&chunk);
-        let pumpkin = PUMPKIN_WITHOUT_STRUCTURES.iter().find(|p| p.0 == dimension && (p.1, p.2) == (cx, cz));
         let expected = &entry["stages"]["minecraft:features"];
-        let ok = match pumpkin {
-            Some(p) => sha == p.3,
-            None => sha == expected["hash"].as_str().unwrap(),
-        };
-        if ok {
+        if sha == expected["hash"].as_str().unwrap() {
             matched += 1;
             eprintln!("{dimension:?} ({cx}, {cz}): match");
             continue;
@@ -85,8 +87,7 @@ fn check(file: &str, dimension: Dimension) -> (usize, Vec<String>) {
             .filter(|(_, (a, b))| a.as_str() != b.as_str().unwrap())
             .map(|(i, _)| i)
             .collect();
-        let what = if pumpkin.is_some() { "differs from Pumpkin without structures; vanilla sections differing" } else { "sections differing" };
-        let msg = format!("{dimension:?} ({cx}, {cz}) {what}: {bad:?}");
+        let msg = format!("{dimension:?} ({cx}, {cz}) sections differing: {bad:?}");
         eprintln!("{msg}");
         failures.push(msg);
     }
@@ -112,8 +113,8 @@ fn end_features() {
 }
 
 /// Chunks outside the fixtures with features the fixtures do not cover, against Pumpkin
-/// (commit e9dc12e9) with structures disabled. Not vanilla references: they pin the ported
-/// behaviour down.
+/// (commit e9dc12e9) with structures disabled (and compared with structures disabled here).
+/// Not vanilla references: they pin the ported behaviour down.
 const PUMPKIN_CROSS_CHECK: &[(Dimension, i32, i32, &str)] = &[
     // End spikes (one per pillar), the arrival platform, a return gateway, chorus plants,
     // small end islands and the main island's center.
@@ -154,8 +155,8 @@ const PUMPKIN_CROSS_CHECK: &[(Dimension, i32, i32, &str)] = &[
 fn pumpkin_cross_check() {
     let mut failures = Vec::new();
     for &(dimension, cx, cz, expected) in PUMPKIN_CROSS_CHECK {
-        let Some(chunk) = decorated(dimension, cx, cz) else { return };
-        let (sha, _) = hashes(&chunk);
+        let Some(g) = common::generator_without_structures(dimension, 0) else { return };
+        let (sha, _) = hashes(&decorated(g, cx, cz));
         if sha != expected {
             failures.push(format!("{dimension:?} ({cx}, {cz})"));
         }
@@ -183,7 +184,7 @@ fn end_spike_crystals() {
 fn decoration_changes_blocks() {
     let Some(g) = generator(Dimension::Overworld, 0) else { return };
     let before = g.generate_terrain(8, 8);
-    let after = decorated(Dimension::Overworld, 8, 8).unwrap();
+    let after = decorated(g, 8, 8);
     let changed = before.blocks.iter().zip(&after.blocks).filter(|(a, b)| a != b).count();
     eprintln!("blocks changed by decoration: {changed}; unsupported: {:?}", g.unsupported_features());
     assert!(changed > 100);
