@@ -160,7 +160,10 @@ What works:
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
-    item flags, the persistent data container; other components are kept intact) and
+    item flags, the persistent data container; other components are kept intact), the
+    special metas of heads (`SkullMeta`), potions and tipped arrows (`PotionMeta`, and
+    `PotionType` data), suspicious stew, fireworks and firework stars, banners, written and
+    writable books, block data (`BlockDataMeta`), maps (id and colour), ominous bottles, and
     inventories: the player inventory, ender chests, chests, barrels and furnaces (as block
     states), custom inventories from `Bukkit.createInventory` opened with
     `Player.openInventory`, open windows and the cursor;
@@ -195,8 +198,9 @@ Not yet:
   entities.
 * Plugin API: creating worlds, registry and tag lifecycle events,
   attributes, statistics, books (`openBook`), resource packs, dialogs, signed chat messages, entity AI and passengers, the data component API
-  for components without plain values, most special item metas (skulls, potions, books,
-  banners, ...), inventories of other block types and anvils, enchanting or merchant views,
+  for components without plain values, the remaining special item metas (bundles,
+  crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
+  fish, ...), inventories of other block types and anvils, enchanting or merchant views,
   stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the
   `/scoreboard` and `/team` commands, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:

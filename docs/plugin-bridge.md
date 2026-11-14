@@ -96,12 +96,14 @@ strings, worlds by name, other entities by entity id.
 An item stack is `null` (empty) or a map: `item` (`minecraft:diamond_sword`), `count`, `raw`
 (every added data component as `[component type id, network bytes]`), `removed` (ids of
 default components the stack removes), and the text components the server can translate also
-as JSON: `name` (custom name), `item_name`, `lore` (a list). When the host sends a stack back,
-`name`, `item_name` or `lore` replace the raw bytes of the same component unless they encode
-the same text, so a stack that went through the host unchanged keeps its exact bytes and
-still stacks with its twins. The host decodes the other components it understands from the
-bytes (enchantments, damage, unbreakable, custom model data, tooltip display, custom data and
-the persistent data container in it, ...) and passes unknown ones through untouched.
+as JSON: `name` (custom name), `item_name`, `lore` (a list), and `book` for a written book's
+content (`title`, `author`, `generation`, `pages` as JSON, `resolved`). When the host sends a
+stack back, these replace the raw bytes of the same component unless they encode the same
+text, so a stack that went through the host unchanged keeps its exact bytes and still stacks
+with its twins. The host decodes the other components it understands from the bytes
+(enchantments, damage, unbreakable, custom model data, tooltip display, custom data and the
+persistent data container in it, profiles, potion contents, fireworks, banner patterns, block
+states, writable book pages, ...; see `MetaCodecs`) and passes unknown ones through untouched.
 
 ### Inventories
 

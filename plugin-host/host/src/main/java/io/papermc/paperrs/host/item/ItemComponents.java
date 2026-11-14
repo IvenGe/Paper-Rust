@@ -48,6 +48,17 @@ public final class ItemComponents {
     public static final String TOOLTIP_STYLE = "minecraft:tooltip_style";
     public static final String STORED_ENCHANTMENTS = "minecraft:stored_enchantments";
     public static final String DYED_COLOR = "minecraft:dyed_color";
+    public static final String WRITTEN_BOOK = "minecraft:written_book_content";
+
+    /**
+     * A written book's content, with the pages as JSON text: the server encodes text
+     * components, so books cross the bridge like lore.
+     */
+    public record WrittenBook(String title, String author, int generation, List<String> pages, boolean resolved) {
+        public WrittenBook {
+            pages = List.copyOf(pages);
+        }
+    }
 
     /** Added components: type id to network bytes. */
     private final TreeMap<Integer, byte[]> raw = new TreeMap<>();
@@ -55,6 +66,7 @@ public final class ItemComponents {
     private @Nullable String name;
     private @Nullable String itemName;
     private @Nullable List<String> lore;
+    private @Nullable WrittenBook book;
     /** Default components removed from the stack. */
     private final TreeSet<Integer> removed = new TreeSet<>();
 
@@ -67,6 +79,7 @@ public final class ItemComponents {
         out.name = this.name;
         out.itemName = this.itemName;
         out.lore = this.lore == null ? null : new ArrayList<>(this.lore);
+        out.book = this.book;
         out.removed.addAll(this.removed);
         return out;
     }
@@ -111,6 +124,15 @@ public final class ItemComponents {
             }
             out.lore = lore;
         }
+        if (value.get("book") instanceof Map<?, ?> book) {
+            final Map<String, Object> b = Values.map(book);
+            final List<String> pages = new ArrayList<>();
+            for (Object page : Values.list(b.get("pages"))) {
+                pages.add(String.valueOf(page));
+            }
+            out.book = new WrittenBook(Values.str(b, "title", ""), Values.str(b, "author", ""), Values.i32(b, "generation", 0), pages,
+                Values.bool(b, "resolved", false));
+        }
         for (Object id : Values.list(value.get("removed"))) {
             out.removed.add(((Number) id).intValue());
         }
@@ -133,6 +155,10 @@ public final class ItemComponents {
         if (this.lore != null) {
             out.put("lore", new ArrayList<Object>(this.lore));
         }
+        if (this.book != null) {
+            out.put("book", Values.of("title", this.book.title(), "author", this.book.author(), "generation", this.book.generation(),
+                "pages", new ArrayList<Object>(this.book.pages()), "resolved", this.book.resolved()));
+        }
         if (!this.removed.isEmpty()) {
             final List<Object> removed = new ArrayList<>();
             for (int id : this.removed) {
@@ -143,7 +169,7 @@ public final class ItemComponents {
     }
 
     public boolean isEmpty() {
-        return this.raw.isEmpty() && this.name == null && this.itemName == null && this.lore == null && this.removed.isEmpty();
+        return this.raw.isEmpty() && this.name == null && this.itemName == null && this.lore == null && this.book == null && this.removed.isEmpty();
     }
 
     /** The type names of added components. */
@@ -160,6 +186,9 @@ public final class ItemComponents {
         }
         if (this.lore != null) {
             out.add(LORE);
+        }
+        if (this.book != null) {
+            out.add(WRITTEN_BOOK);
         }
         return out;
     }
@@ -179,6 +208,7 @@ public final class ItemComponents {
             case CUSTOM_NAME -> this.name != null || this.raw.containsKey(typeId(type));
             case ITEM_NAME -> this.itemName != null || this.raw.containsKey(typeId(type));
             case LORE -> this.lore != null || this.raw.containsKey(typeId(type));
+            case WRITTEN_BOOK -> this.book != null || this.raw.containsKey(typeId(type));
             default -> this.raw.containsKey(typeId(type));
         };
     }
@@ -225,6 +255,7 @@ public final class ItemComponents {
             case CUSTOM_NAME -> this.name = null;
             case ITEM_NAME -> this.itemName = null;
             case LORE -> this.lore = null;
+            case WRITTEN_BOOK -> this.book = null;
             default -> {
             }
         }
@@ -263,6 +294,19 @@ public final class ItemComponents {
     public void setLoreJson(final @Nullable List<String> json) {
         this.raw.remove(typeId(LORE));
         this.lore = json == null ? null : new ArrayList<>(json);
+    }
+
+    public @Nullable WrittenBook writtenBook() {
+        return this.book;
+    }
+
+    /** Sets (or with {@code null} unsets) the written book content. */
+    public void setWrittenBook(final @Nullable WrittenBook book) {
+        this.raw.remove(typeId(WRITTEN_BOOK));
+        this.book = book;
+        if (book != null) {
+            this.removed.remove(typeId(WRITTEN_BOOK));
+        }
     }
 
     // --- simple values ----------------------------------------------------------------------
@@ -477,6 +521,14 @@ public final class ItemComponents {
             out.put(LORE, lines);
             text.add(typeId(LORE));
         }
+        if (this.book != null) {
+            final List<Object> pages = new ArrayList<>();
+            for (String page : this.book.pages()) {
+                pages.add(io.papermc.paperrs.host.Components.fromJson(page));
+            }
+            out.put(WRITTEN_BOOK, List.of(this.book.title(), this.book.author(), this.book.generation(), pages, this.book.resolved()));
+            text.add(typeId(WRITTEN_BOOK));
+        }
         this.raw.forEach((id, bytes) -> {
             if (!text.contains(id)) {
                 out.put(id, java.nio.ByteBuffer.wrap(bytes));
@@ -538,6 +590,18 @@ public final class ItemComponents {
             return Float.intBitsToFloat(this.int32());
         }
 
+        public long int64() {
+            return (long) this.int32() << 32 | this.int32() & 0xFFFFFFFFL;
+        }
+
+        public java.util.UUID uuid() {
+            return new java.util.UUID(this.int64(), this.int64());
+        }
+
+        public boolean atEnd() {
+            return this.pos >= this.bytes.length;
+        }
+
         public String string() {
             final int length = this.varInt();
             if (length < 0 || this.pos + length > this.bytes.length) {
@@ -572,6 +636,16 @@ public final class ItemComponents {
 
         public void float32(final float f) {
             this.int32(Float.floatToIntBits(f));
+        }
+
+        public void int64(final long v) {
+            this.int32((int) (v >>> 32));
+            this.int32((int) v);
+        }
+
+        public void uuid(final java.util.UUID id) {
+            this.int64(id.getMostSignificantBits());
+            this.int64(id.getLeastSignificantBits());
         }
 
         public void string(final String s) {

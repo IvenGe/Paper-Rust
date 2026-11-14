@@ -14,6 +14,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The version data tables, read from the same JSON files the Rust server is built from
@@ -42,6 +44,13 @@ public final class HostData {
     private final Map<String, ItemInfo> itemsByName = new HashMap<>();
     /** Registry id -> tag id -> entry ids. */
     private final Map<String, Map<String, List<String>>> tags = new HashMap<>();
+    /** Potion -> its effects (effect, duration, amplifier). */
+    private final Map<String, List<PotionEffectInfo>> potions = new HashMap<>();
+    private final Set<String> instantEffects = new java.util.HashSet<>();
+
+    /** An effect a potion gives: {@code minecraft:mob_effect} name, duration in ticks, amplifier. */
+    public record PotionEffectInfo(String effect, int duration, int amplifier) {
+    }
 
     private HostData() {
         JsonObject builtin = read("paper-rs-data/registries.json").getAsJsonObject();
@@ -91,6 +100,20 @@ public final class HostData {
                 i.get("block").isJsonNull() ? null : i.get("block").getAsString(), maxDamage);
             this.items.add(info);
             this.itemsByName.put(info.name(), info);
+        }
+
+        for (Map.Entry<String, JsonElement> potion : read("paper-rs-data/potions.json").getAsJsonObject().getAsJsonObject("potions").entrySet()) {
+            List<PotionEffectInfo> effects = new ArrayList<>();
+            for (JsonElement effect : potion.getValue().getAsJsonArray()) {
+                JsonArray e = effect.getAsJsonArray();
+                effects.add(new PotionEffectInfo(e.get(0).getAsString(), e.get(1).getAsInt(), e.get(2).getAsInt()));
+            }
+            this.potions.put(potion.getKey(), List.copyOf(effects));
+        }
+        for (Map.Entry<String, JsonElement> effect : read("paper-rs-data/effects.json").getAsJsonObject().getAsJsonObject("effects").entrySet()) {
+            if (effect.getValue().getAsJsonObject().get("instantaneous").getAsBoolean()) {
+                this.instantEffects.add(effect.getKey());
+            }
         }
 
         JsonObject tagsJson = read("paper-rs-data/tags.json").getAsJsonObject();
@@ -178,6 +201,15 @@ public final class HostData {
 
     public ItemInfo item(int id) {
         return id >= 0 && id < this.items.size() ? this.items.get(id) : null;
+    }
+
+    /** The effects of a potion ({@code minecraft:strong_healing}), or null if there is no such potion. */
+    public @Nullable List<PotionEffectInfo> potionEffects(String potion) {
+        return this.potions.get(potion);
+    }
+
+    public boolean isInstantEffect(String effect) {
+        return this.instantEffects.contains(effect);
     }
 
     /** Tags of a registry ({@code minecraft:block}); empty if it has none. */

@@ -16,6 +16,7 @@ import org.bukkit.inventory.meta.FireworkEffectMeta;
 import org.bukkit.inventory.meta.FireworkMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.MapMeta;
+import org.bukkit.inventory.meta.OminousBottleMeta;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.inventory.meta.Repairable;
 import org.bukkit.inventory.meta.SkullMeta;
@@ -124,6 +125,11 @@ public final class MetaKinds {
         BlockState clone();
     }
 
+    public interface OminousBottle extends OminousBottleMeta, Damageable, Repairable, BlockDataMeta {
+        @Override
+        OminousBottle clone();
+    }
+
     /** The meta interface for an item, as Paper's {@code CraftItemMetas} picks it. */
     public static Class<? extends ItemMeta> of(final Material material) {
         final String key = material.getKey().getKey();
@@ -137,8 +143,11 @@ public final class MetaKinds {
         if (key.endsWith("_helmet") || key.endsWith("_chestplate") || key.endsWith("_leggings") || key.endsWith("_boots")) {
             return Armor.class;
         }
-        if (key.equals("player_head")) {
+        if (key.endsWith("_head") || key.endsWith("_skull")) {
             return Skull.class;
+        }
+        if (key.equals("ominous_bottle")) {
+            return OminousBottle.class;
         }
         if (key.equals("potion") || key.equals("splash_potion") || key.equals("lingering_potion") || key.equals("tipped_arrow")) {
             return Potion.class;

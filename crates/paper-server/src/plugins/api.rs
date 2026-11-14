@@ -187,6 +187,11 @@ pub fn item_value(slot: &Slot) -> Value {
                     out.set("lore", Value::List(lines.iter().map(component_value).collect()));
                 }
             }
+            "minecraft:written_book_content" => {
+                if let Ok(book) = WrittenBook::read(data) {
+                    out.set("book", book.value());
+                }
+            }
             _ => {}
         }
         raw.push(Value::List(vec![(*ty).into(), Value::Bytes(data.clone())]));
@@ -198,6 +203,70 @@ pub fn item_value(slot: &Slot) -> Value {
         out.set("removed", Value::List(stack.removed.iter().map(|r| Value::from(*r)).collect()));
     }
     out
+}
+
+/// `minecraft:written_book_content` as the host sees it: the pages as JSON text, like lore.
+/// The chat-filtered variants of the title and pages are not kept.
+#[derive(Debug, PartialEq)]
+struct WrittenBook {
+    title: String,
+    author: String,
+    generation: i32,
+    pages: Vec<Component>,
+    resolved: bool,
+}
+
+impl WrittenBook {
+    fn read(data: &[u8]) -> Result<Self> {
+        let mut r = paper_protocol::codec::Reader::new(data);
+        let title = r.string(32767)?;
+        r.option(|r| r.string(32767))?;
+        let author = r.string(32767)?;
+        let generation = r.varint()?;
+        let pages = r.list(100, |r| {
+            let page = r.component()?;
+            r.option(|r| r.component())?;
+            Ok(page)
+        })?;
+        let resolved = r.bool()?;
+        Ok(Self { title, author, generation, pages, resolved })
+    }
+
+    fn write(&self) -> Vec<u8> {
+        use paper_protocol::codec::WriteExt;
+        let mut out = Vec::new();
+        out.put_string(&self.title);
+        out.put_bool(false);
+        out.put_string(&self.author);
+        out.put_varint(self.generation);
+        out.put_list(&self.pages, |w, page| {
+            w.put_component(page);
+            w.put_bool(false);
+        });
+        out.put_bool(self.resolved);
+        out
+    }
+
+    fn value(&self) -> Value {
+        bmap! {
+            "title" => self.title.clone(),
+            "author" => self.author.clone(),
+            "generation" => self.generation,
+            "pages" => Value::List(self.pages.iter().map(component_value).collect()),
+            "resolved" => self.resolved,
+        }
+    }
+
+    fn from_value(value: &Value) -> Option<Self> {
+        value.str("title")?;
+        Some(Self {
+            title: value.str("title").unwrap_or_default().to_owned(),
+            author: value.str("author").unwrap_or_default().to_owned(),
+            generation: value.i32("generation").unwrap_or(0),
+            pages: value.list("pages").map(|pages| pages.iter().filter_map(component_from).collect()).unwrap_or_default(),
+            resolved: value.bool("resolved").unwrap_or(false),
+        })
+    }
 }
 
 /// The inverse of [`item_value`]. A text component given as JSON replaces the raw bytes of
@@ -240,6 +309,11 @@ pub fn slot_from(value: &Value) -> Result<Slot> {
             let mut data = Vec::new();
             data.put_list(&lines, |w, c| w.put_component(c));
             added.insert(id, data);
+        }
+    }
+    if let (Some(book), Some(id)) = (WrittenBook::from_value(value.get("book")), component_id("minecraft:written_book_content")) {
+        if added.get(&id).and_then(|bytes| WrittenBook::read(bytes).ok()).as_ref() != Some(&book) {
+            added.insert(id, book.write());
         }
     }
     stack.added = added.into_iter().collect();

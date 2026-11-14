@@ -102,6 +102,7 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "effects" -> this.effects((Player) sender);
                 case "bossbar" -> this.bossbar((Player) sender);
                 case "blockdata" -> this.blockData((Player) sender);
+                case "metas" -> this.metas((Player) sender);
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
@@ -119,6 +120,81 @@ final class ApiTests implements Listener, CommandExecutor {
             sender.sendMessage(args[0] + ": FAIL " + e);
         }
         return true;
+    }
+
+    // --- special item metas ---------------------------------------------------------------------
+
+    /** Special metas survive a trip through the server: each item goes into the inventory and is read back. */
+    private void metas(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final PlayerInventory inventory = player.getInventory();
+        final java.util.function.BiFunction<Integer, ItemStack, ItemMeta> roundTrip = (slot, stack) -> {
+            inventory.setItem(slot, stack);
+            final ItemStack back = inventory.getItem(slot);
+            return back == null ? null : back.getItemMeta();
+        };
+
+        final ItemStack head = ItemStack.of(Material.PLAYER_HEAD);
+        head.editMeta(org.bukkit.inventory.meta.SkullMeta.class, m -> m.setOwningPlayer(player));
+        final ItemMeta headMeta = roundTrip.apply(9, head);
+        check(failures, headMeta instanceof org.bukkit.inventory.meta.SkullMeta m && m.hasOwner() && player.getName().equals(m.getOwner())
+            && m.getOwningPlayer() != null && player.getUniqueId().equals(m.getOwningPlayer().getUniqueId()), "skull " + headMeta);
+
+        final ItemStack potion = ItemStack.of(Material.POTION);
+        potion.editMeta(org.bukkit.inventory.meta.PotionMeta.class, m -> {
+            m.setBasePotionType(org.bukkit.potion.PotionType.STRONG_HEALING);
+            m.addCustomEffect(new org.bukkit.potion.PotionEffect(org.bukkit.potion.PotionEffectType.SPEED, 200, 1), true);
+            m.setColor(org.bukkit.Color.RED);
+        });
+        final ItemMeta potionMeta = roundTrip.apply(10, potion);
+        check(failures, potionMeta instanceof org.bukkit.inventory.meta.PotionMeta m && m.getBasePotionType() == org.bukkit.potion.PotionType.STRONG_HEALING
+            && m.hasCustomEffect(org.bukkit.potion.PotionEffectType.SPEED) && org.bukkit.Color.RED.equals(m.getColor())
+            && m.getAllEffects().size() == 2 && org.bukkit.potion.PotionType.STRONG_HEALING.isInstant(), "potion " + potionMeta);
+
+        final ItemStack rocket = ItemStack.of(Material.FIREWORK_ROCKET);
+        final org.bukkit.FireworkEffect star = org.bukkit.FireworkEffect.builder().with(org.bukkit.FireworkEffect.Type.STAR)
+            .withColor(org.bukkit.Color.RED).withFade(org.bukkit.Color.BLUE).trail(true).build();
+        rocket.editMeta(org.bukkit.inventory.meta.FireworkMeta.class, m -> {
+            m.setPower(2);
+            m.addEffect(star);
+        });
+        final ItemMeta rocketMeta = roundTrip.apply(11, rocket);
+        check(failures, rocketMeta instanceof org.bukkit.inventory.meta.FireworkMeta m && m.getPower() == 2 && m.getEffects().equals(List.of(star)), "firework " + rocketMeta);
+
+        final ItemStack banner = ItemStack.of(Material.WHITE_BANNER);
+        final org.bukkit.block.banner.Pattern stripe = new org.bukkit.block.banner.Pattern(org.bukkit.DyeColor.RED, org.bukkit.block.banner.PatternType.STRIPE_TOP);
+        banner.editMeta(org.bukkit.inventory.meta.BannerMeta.class, m -> m.addPattern(stripe));
+        final ItemMeta bannerMeta = roundTrip.apply(12, banner);
+        check(failures, bannerMeta instanceof org.bukkit.inventory.meta.BannerMeta m && m.getPatterns().equals(List.of(stripe)), "banner " + bannerMeta);
+
+        final ItemStack book = ItemStack.of(Material.WRITTEN_BOOK);
+        book.editMeta(org.bukkit.inventory.meta.BookMeta.class, m -> {
+            m.setTitle("Guide");
+            m.setAuthor(player.getName());
+            m.addPages(Component.text("Page one", NamedTextColor.GOLD), Component.text("Page two"));
+        });
+        final ItemMeta bookMeta = roundTrip.apply(13, book);
+        check(failures, bookMeta instanceof org.bukkit.inventory.meta.BookMeta m && "Guide".equals(m.getTitle()) && player.getName().equals(m.getAuthor())
+            && m.getPageCount() == 2 && Component.text("Page one", NamedTextColor.GOLD).equals(m.page(1)), "book " + bookMeta);
+        check(failures, inventory.getItem(13).isSimilar(book), "book similar");
+
+        final ItemStack draft = ItemStack.of(Material.WRITABLE_BOOK);
+        draft.editMeta(org.bukkit.inventory.meta.WritableBookMeta.class, m -> m.addPage("draft"));
+        final ItemMeta draftMeta = roundTrip.apply(14, draft);
+        check(failures, draftMeta instanceof org.bukkit.inventory.meta.WritableBookMeta m && m.getPages().equals(List.of("draft")), "writable " + draftMeta);
+
+        final ItemStack stairs = ItemStack.of(Material.OAK_STAIRS);
+        stairs.editMeta(org.bukkit.inventory.meta.BlockDataMeta.class, m -> m.setBlockData(Bukkit.createBlockData("minecraft:oak_stairs[half=top]")));
+        final ItemMeta stairsMeta = roundTrip.apply(15, stairs);
+        check(failures, stairsMeta instanceof org.bukkit.inventory.meta.BlockDataMeta m && m.hasBlockData()
+            && ((org.bukkit.block.data.type.Stairs) m.getBlockData(Material.OAK_STAIRS)).getHalf() == org.bukkit.block.data.Bisected.Half.TOP, "block data " + stairsMeta);
+
+        final ItemStack stew = ItemStack.of(Material.SUSPICIOUS_STEW);
+        stew.editMeta(org.bukkit.inventory.meta.SuspiciousStewMeta.class, m -> m.addCustomEffect(new org.bukkit.potion.PotionEffect(org.bukkit.potion.PotionEffectType.NIGHT_VISION, 100, 0), true));
+        final ItemMeta stewMeta = roundTrip.apply(16, stew);
+        check(failures, stewMeta instanceof org.bukkit.inventory.meta.SuspiciousStewMeta m && m.getCustomEffects().size() == 1
+            && m.getCustomEffects().get(0).getDuration() == 100, "stew " + stewMeta);
+        report(player, "metas", failures);
     }
 
     // --- block data ---------------------------------------------------------------------------

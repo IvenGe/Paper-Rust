@@ -86,7 +86,13 @@ class ProxySignatureTest {
 
     @Test
     void itemMetasMatchTheApi() {
-        check(HostItemMeta.class, MetaKinds.EnchantmentStorage.class, MetaKinds.LeatherArmor.class, MetaKinds.Base.class);
+        final List<Class<?>> kinds = new ArrayList<>();
+        for (Class<?> kind : MetaKinds.class.getDeclaredClasses()) {
+            if (kind.isInterface()) {
+                kinds.add(kind);
+            }
+        }
+        check(HostItemMeta.class, kinds.toArray(Class<?>[]::new));
     }
 
     @Test

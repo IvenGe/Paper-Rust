@@ -87,4 +87,56 @@ public final class HostUnsafeValues extends AbstractUnsafeValues {
     public <B extends Keyed> B get(final RegistryKey<B> registry, final NamespacedKey key) {
         return RegistryAccess.registryAccess().getRegistry(registry).get(key);
     }
+
+    /** {@code PotionType} data: the potion's effects, and whether stronger or longer versions exist. */
+    @Override
+    public org.bukkit.potion.PotionType.InternalPotionData getInternalPotionData(final NamespacedKey key) {
+        final io.papermc.paperrs.host.data.HostData data = io.papermc.paperrs.host.data.HostData.get();
+        final java.util.List<io.papermc.paperrs.host.data.HostData.PotionEffectInfo> effects = data.potionEffects(key.toString());
+        if (effects == null) {
+            throw new IllegalArgumentException("Unknown potion " + key);
+        }
+        final java.util.List<org.bukkit.potion.PotionEffect> list = new java.util.ArrayList<>();
+        for (final io.papermc.paperrs.host.data.HostData.PotionEffectInfo e : effects) {
+            final org.bukkit.potion.PotionEffectType type = org.bukkit.Registry.MOB_EFFECT.get(NamespacedKey.fromString(e.effect()));
+            if (type != null) {
+                list.add(new org.bukkit.potion.PotionEffect(type, e.duration(), e.amplifier()));
+            }
+        }
+        final java.util.List<org.bukkit.potion.PotionEffect> potionEffects = java.util.List.copyOf(list);
+        final boolean instant = effects.stream().anyMatch(e -> data.isInstantEffect(e.effect()));
+        final boolean upgradeable = data.potionEffects(key.getNamespace() + ":strong_" + key.getKey()) != null;
+        final boolean extendable = data.potionEffects(key.getNamespace() + ":long_" + key.getKey()) != null;
+        return new org.bukkit.potion.PotionType.InternalPotionData() {
+            @Override
+            public org.bukkit.potion.PotionEffectType getEffectType() {
+                return potionEffects.isEmpty() ? null : potionEffects.get(0).getType();
+            }
+
+            @Override
+            public java.util.List<org.bukkit.potion.PotionEffect> getPotionEffects() {
+                return potionEffects;
+            }
+
+            @Override
+            public boolean isInstant() {
+                return instant;
+            }
+
+            @Override
+            public boolean isUpgradeable() {
+                return upgradeable;
+            }
+
+            @Override
+            public boolean isExtendable() {
+                return extendable;
+            }
+
+            @Override
+            public int getMaxLevel() {
+                return upgradeable ? 2 : 1;
+            }
+        };
+    }
 }

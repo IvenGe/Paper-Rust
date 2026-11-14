@@ -267,6 +267,32 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert_eq!(paper_server::server::survival::item_damage(&stack), 10, "and its damage");
     assert_eq!(ender, Slot::of(item("minecraft:emerald"), 2), "the ender chest");
 
+    // Special item metas: the server holds what the plugin wrote.
+    alice.command("apitest metas");
+    expect_line(&mut alice, "metas: ok");
+    let (head, potion, book) = server
+        .handle
+        .run(|s| {
+            let p = s.player_by_name("Alice").unwrap();
+            (p.inventory[9].clone(), p.inventory[10].clone(), p.inventory[13].clone())
+        })
+        .unwrap();
+    let component = |slot: &Slot, name: &str| slot.0.as_ref().and_then(|s| s.added.iter().find(|(t, _)| *t == component_id(name)).map(|(_, d)| d.clone()));
+    let profile = component(&head, "minecraft:profile").expect("the head has a profile");
+    assert!(profile.windows(5).any(|w| w == b"Alice"), "the profile names Alice: {profile:?}");
+    assert_eq!(paper_server::server::effects::potion_of(potion.0.as_ref().unwrap()).as_deref(), Some("minecraft:strong_healing"));
+    let content = component(&book, "minecraft:written_book_content").expect("the book has content");
+    assert!(content.starts_with(b"\x05Guide"), "title first: {content:?}");
+    server
+        .handle
+        .run(|s| {
+            let id = s.player_by_name("Alice").unwrap().entity_id;
+            for slot in 9..=16 {
+                s.set_inventory_slot(id, slot, Slot::EMPTY);
+            }
+        })
+        .unwrap();
+
     // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
     alice.command("apitest unsupported");
     expect_line(&mut alice, "unsupported: ItemMeta#getAttributeModifiers is not supported by Paper-RS yet");

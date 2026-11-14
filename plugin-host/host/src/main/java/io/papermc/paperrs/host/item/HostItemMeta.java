@@ -19,7 +19,11 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemRarity;
+import org.bukkit.inventory.meta.BookMeta;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.MapMeta;
+import org.bukkit.inventory.meta.PotionMeta;
+import org.bukkit.inventory.meta.SuspiciousStewMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.jetbrains.annotations.Nullable;
 
@@ -544,19 +548,832 @@ public final class HostItemMeta implements HostProxies.Backed {
         this.components.setVarInt(ItemComponents.REPAIR_COST, cost == 0 ? null : cost);
     }
 
-    // --- leather colour -----------------------------------------------------------------------
+    // --- colours: leather (dyed_color), potions (potion_contents) and maps (map_color) -------------
 
-    public Color getColor() {
+    private boolean is(final Class<?> meta) {
+        return meta.isAssignableFrom(this.kind);
+    }
+
+    public @Nullable Color getColor() {
+        if (this.is(PotionMeta.class)) {
+            final Integer rgb = this.potion().color();
+            return rgb == null ? null : Color.fromRGB(rgb & 0xFFFFFF);
+        }
+        if (this.is(MapMeta.class)) {
+            final Integer rgb = this.components.int32(MetaCodecs.MAP_COLOR);
+            return rgb == null ? null : Color.fromRGB(rgb & 0xFFFFFF);
+        }
         final Integer rgb = this.components.int32(ItemComponents.DYED_COLOR);
         return rgb == null ? Color.fromRGB(0xA06540) : Color.fromRGB(rgb & 0xFFFFFF);
     }
 
     public void setColor(final @Nullable Color color) {
-        this.components.setInt32(ItemComponents.DYED_COLOR, color == null ? null : color.asRGB());
+        if (this.is(PotionMeta.class)) {
+            final MetaCodecs.PotionContents p = this.potion();
+            this.setPotion(new MetaCodecs.PotionContents(p.potion(), color == null ? null : color.asRGB(), p.effects(), p.customName()));
+        } else if (this.is(MapMeta.class)) {
+            this.components.setInt32(MetaCodecs.MAP_COLOR, color == null ? null : color.asRGB());
+        } else {
+            this.components.setInt32(ItemComponents.DYED_COLOR, color == null ? null : color.asRGB());
+        }
+    }
+
+    public boolean hasColor() {
+        if (this.is(PotionMeta.class)) {
+            return this.potion().color() != null;
+        }
+        return this.components.has(this.is(MapMeta.class) ? MetaCodecs.MAP_COLOR : ItemComponents.DYED_COLOR);
     }
 
     public boolean isDyed() {
         return this.components.has(ItemComponents.DYED_COLOR);
+    }
+
+    // --- skulls -------------------------------------------------------------------------------
+
+    private MetaCodecs.@Nullable Profile profile() {
+        final byte[] raw = this.components.raw(MetaCodecs.PROFILE);
+        return raw == null ? null : MetaCodecs.readProfile(raw);
+    }
+
+    private void setProfile(final MetaCodecs.@Nullable Profile profile) {
+        this.components.setRaw(MetaCodecs.PROFILE, profile == null ? null : MetaCodecs.writeProfile(profile));
+    }
+
+    private static MetaCodecs.Profile profileOf(final com.destroystokyo.paper.profile.PlayerProfile profile) {
+        final List<MetaCodecs.Property> properties = new ArrayList<>();
+        for (final com.destroystokyo.paper.profile.ProfileProperty p : profile.getProperties()) {
+            properties.add(new MetaCodecs.Property(p.getName(), p.getValue(), p.getSignature()));
+        }
+        return MetaCodecs.Profile.of(profile.getName(), profile.getId(), properties);
+    }
+
+    public boolean hasOwner() {
+        return this.profile() != null;
+    }
+
+    public @Nullable String getOwner() {
+        final MetaCodecs.Profile p = this.profile();
+        return p == null ? null : p.name();
+    }
+
+    public boolean setOwner(final @Nullable String name) {
+        if (name != null && name.length() > 16) {
+            return false;
+        }
+        final org.bukkit.entity.Player online = name == null ? null : org.bukkit.Bukkit.getPlayerExact(name);
+        this.setProfile(name == null ? null : online != null ? profileOf(online.getPlayerProfile()) : MetaCodecs.Profile.of(name, null, List.of()));
+        return true;
+    }
+
+    public org.bukkit.@Nullable OfflinePlayer getOwningPlayer() {
+        final MetaCodecs.Profile p = this.profile();
+        if (p == null) {
+            return null;
+        }
+        if (p.id() != null) {
+            return org.bukkit.Bukkit.getOfflinePlayer(p.id());
+        }
+        return p.name() == null ? null : org.bukkit.Bukkit.getOfflinePlayer(p.name());
+    }
+
+    public boolean setOwningPlayer(final org.bukkit.@Nullable OfflinePlayer owner) {
+        if (owner == null) {
+            this.setProfile(null);
+        } else if (owner instanceof org.bukkit.entity.Player player) {
+            this.setProfile(profileOf(player.getPlayerProfile()));
+        } else {
+            this.setProfile(MetaCodecs.Profile.of(owner.getName(), owner.getUniqueId(), List.of()));
+        }
+        return true;
+    }
+
+    public com.destroystokyo.paper.profile.@Nullable PlayerProfile getPlayerProfile() {
+        final MetaCodecs.Profile p = this.profile();
+        if (p == null) {
+            return null;
+        }
+        final io.papermc.paperrs.host.HostPlayerProfile out = new io.papermc.paperrs.host.HostPlayerProfile(p.id(), p.name());
+        for (final MetaCodecs.Property property : p.properties()) {
+            out.setProperty(new com.destroystokyo.paper.profile.ProfileProperty(property.name(), property.value(), property.signature()));
+        }
+        return out;
+    }
+
+    public void setPlayerProfile(final com.destroystokyo.paper.profile.@Nullable PlayerProfile profile) {
+        this.setProfile(profile == null ? null : profileOf(profile));
+    }
+
+    @SuppressWarnings("deprecation")
+    public org.bukkit.profile.@Nullable PlayerProfile getOwnerProfile() {
+        return this.getPlayerProfile();
+    }
+
+    @SuppressWarnings("deprecation")
+    public void setOwnerProfile(final org.bukkit.profile.@Nullable PlayerProfile profile) {
+        if (profile == null) {
+            this.setProfile(null);
+        } else if (profile instanceof com.destroystokyo.paper.profile.PlayerProfile paper) {
+            this.setPlayerProfile(paper);
+        } else {
+            this.setProfile(MetaCodecs.Profile.of(profile.getName(), profile.getUniqueId(), List.of()));
+        }
+    }
+
+    public @Nullable NamespacedKey getNoteBlockSound() {
+        final String sound = this.components.identifier(MetaCodecs.NOTE_BLOCK_SOUND);
+        return sound == null ? null : NamespacedKey.fromString(sound);
+    }
+
+    public void setNoteBlockSound(final @Nullable NamespacedKey sound) {
+        this.components.setIdentifier(MetaCodecs.NOTE_BLOCK_SOUND, sound == null ? null : sound.toString());
+    }
+
+    // --- potions and suspicious stew -----------------------------------------------------------
+
+    private static List<String> registry(final String id) {
+        return HostData.get().registry(id);
+    }
+
+    private static int effectId(final org.bukkit.potion.PotionEffectType type) {
+        final int id = registry("minecraft:mob_effect").indexOf(type.getKey().toString());
+        if (id < 0) {
+            throw new IllegalArgumentException("Unknown effect " + type.getKey());
+        }
+        return id;
+    }
+
+    private static org.bukkit.potion.@Nullable PotionEffectType effectType(final int id) {
+        final List<String> effects = registry("minecraft:mob_effect");
+        return id >= 0 && id < effects.size() ? org.bukkit.Registry.MOB_EFFECT.get(NamespacedKey.fromString(effects.get(id))) : null;
+    }
+
+    private static org.bukkit.potion.@Nullable PotionEffect effectOf(final MetaCodecs.Effect e) {
+        final org.bukkit.potion.PotionEffectType type = effectType(e.type());
+        final MetaCodecs.Detail d = e.detail();
+        return type == null ? null : new org.bukkit.potion.PotionEffect(type, d.duration(), d.amplifier(), d.ambient(), d.particles(), d.icon());
+    }
+
+    private static MetaCodecs.Effect effectOf(final org.bukkit.potion.PotionEffect e) {
+        return new MetaCodecs.Effect(effectId(e.getType()), new MetaCodecs.Detail(e.getAmplifier(), e.getDuration(), e.isAmbient(), e.hasParticles(), e.hasIcon(), null));
+    }
+
+    private MetaCodecs.PotionContents potion() {
+        final byte[] raw = this.components.raw(MetaCodecs.POTION_CONTENTS);
+        return raw == null ? MetaCodecs.PotionContents.EMPTY : MetaCodecs.readPotion(raw);
+    }
+
+    private void setPotion(final MetaCodecs.PotionContents p) {
+        this.components.setRaw(MetaCodecs.POTION_CONTENTS, p.isEmpty() ? null : MetaCodecs.writePotion(p));
+    }
+
+    @SuppressWarnings("deprecation")
+    public void setBasePotionData(final org.bukkit.potion.@Nullable PotionData data) {
+        this.setBasePotionType(data == null ? null : data.getType());
+    }
+
+    @SuppressWarnings("deprecation")
+    public org.bukkit.potion.@Nullable PotionData getBasePotionData() {
+        final org.bukkit.potion.PotionType type = this.getBasePotionType();
+        return type == null ? null : new org.bukkit.potion.PotionData(type);
+    }
+
+    public org.bukkit.potion.@Nullable PotionType getBasePotionType() {
+        final Integer id = this.potion().potion();
+        final List<String> potions = registry("minecraft:potion");
+        if (id == null || id < 0 || id >= potions.size()) {
+            return null;
+        }
+        final NamespacedKey key = NamespacedKey.fromString(potions.get(id));
+        for (final org.bukkit.potion.PotionType type : org.bukkit.potion.PotionType.values()) {
+            if (type.getKey().equals(key)) {
+                return type;
+            }
+        }
+        return null;
+    }
+
+    public void setBasePotionType(final org.bukkit.potion.@Nullable PotionType type) {
+        final MetaCodecs.PotionContents p = this.potion();
+        final Integer id = type == null ? null : registry("minecraft:potion").indexOf(type.getKey().toString());
+        if (id != null && id < 0) {
+            throw new IllegalArgumentException("Unknown potion " + type.getKey());
+        }
+        this.setPotion(new MetaCodecs.PotionContents(id, p.color(), p.effects(), p.customName()));
+    }
+
+    public boolean hasBasePotionType() {
+        return this.potion().potion() != null;
+    }
+
+    public boolean hasCustomEffects() {
+        return this.is(SuspiciousStewMeta.class) ? this.components.has(MetaCodecs.STEW_EFFECTS) && !this.stew().isEmpty() : !this.potion().effects().isEmpty();
+    }
+
+    public List<org.bukkit.potion.PotionEffect> getCustomEffects() {
+        final List<org.bukkit.potion.PotionEffect> out = new ArrayList<>();
+        if (this.is(SuspiciousStewMeta.class)) {
+            for (final MetaCodecs.StewEffect e : this.stew()) {
+                final org.bukkit.potion.PotionEffectType type = effectType(e.type());
+                if (type != null) {
+                    out.add(new org.bukkit.potion.PotionEffect(type, e.duration(), 0));
+                }
+            }
+            return List.copyOf(out);
+        }
+        for (final MetaCodecs.Effect e : this.potion().effects()) {
+            final org.bukkit.potion.PotionEffect effect = effectOf(e);
+            if (effect != null) {
+                out.add(effect);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    public List<org.bukkit.potion.PotionEffect> getAllEffects() {
+        final List<org.bukkit.potion.PotionEffect> out = new ArrayList<>();
+        final org.bukkit.potion.PotionType base = this.getBasePotionType();
+        if (base != null) {
+            out.addAll(base.getPotionEffects());
+        }
+        out.addAll(this.getCustomEffects());
+        return List.copyOf(out);
+    }
+
+    public boolean addCustomEffect(final org.bukkit.potion.PotionEffect effect, final boolean overwrite) {
+        if (effect == null) {
+            throw new IllegalArgumentException("Potion effect cannot be null");
+        }
+        if (this.is(SuspiciousStewMeta.class)) {
+            final List<MetaCodecs.StewEffect> stew = new ArrayList<>(this.stew());
+            final int id = effectId(effect.getType());
+            for (int i = 0; i < stew.size(); i++) {
+                if (stew.get(i).type() == id) {
+                    if (!overwrite || stew.get(i).duration() == effect.getDuration()) {
+                        return false;
+                    }
+                    stew.set(i, new MetaCodecs.StewEffect(id, effect.getDuration()));
+                    this.setStew(stew);
+                    return true;
+                }
+            }
+            stew.add(new MetaCodecs.StewEffect(id, effect.getDuration()));
+            this.setStew(stew);
+            return true;
+        }
+        final MetaCodecs.PotionContents p = this.potion();
+        final List<MetaCodecs.Effect> effects = new ArrayList<>(p.effects());
+        final MetaCodecs.Effect added = effectOf(effect);
+        for (int i = 0; i < effects.size(); i++) {
+            if (effects.get(i).type() == added.type()) {
+                final MetaCodecs.Detail old = effects.get(i).detail();
+                if (!overwrite || old.amplifier() == effect.getAmplifier() && old.duration() == effect.getDuration() && old.ambient() == effect.isAmbient()) {
+                    return false;
+                }
+                effects.set(i, added);
+                this.setPotion(new MetaCodecs.PotionContents(p.potion(), p.color(), effects, p.customName()));
+                return true;
+            }
+        }
+        effects.add(added);
+        this.setPotion(new MetaCodecs.PotionContents(p.potion(), p.color(), effects, p.customName()));
+        return true;
+    }
+
+    public boolean addCustomEffect(final io.papermc.paper.potion.SuspiciousEffectEntry entry, final boolean overwrite) {
+        return this.addCustomEffect(new org.bukkit.potion.PotionEffect(entry.effect(), entry.duration(), 0), overwrite);
+    }
+
+    public boolean removeCustomEffect(final org.bukkit.potion.PotionEffectType type) {
+        final int id = effectId(type);
+        if (this.is(SuspiciousStewMeta.class)) {
+            final List<MetaCodecs.StewEffect> stew = new ArrayList<>(this.stew());
+            final boolean removed = stew.removeIf(e -> e.type() == id);
+            this.setStew(stew);
+            return removed;
+        }
+        final MetaCodecs.PotionContents p = this.potion();
+        final List<MetaCodecs.Effect> effects = new ArrayList<>(p.effects());
+        final boolean removed = effects.removeIf(e -> e.type() == id);
+        this.setPotion(new MetaCodecs.PotionContents(p.potion(), p.color(), effects, p.customName()));
+        return removed;
+    }
+
+    public boolean hasCustomEffect(final org.bukkit.potion.PotionEffectType type) {
+        final int id = effectId(type);
+        return this.is(SuspiciousStewMeta.class) ? this.stew().stream().anyMatch(e -> e.type() == id) : this.potion().effects().stream().anyMatch(e -> e.type() == id);
+    }
+
+    public boolean setMainEffect(final org.bukkit.potion.PotionEffectType type) {
+        final MetaCodecs.PotionContents p = this.potion();
+        final List<MetaCodecs.Effect> effects = new ArrayList<>(p.effects());
+        final int id = effectId(type);
+        int index = -1;
+        for (int i = 0; i < effects.size(); i++) {
+            if (effects.get(i).type() == id) {
+                index = i;
+            }
+        }
+        if (index <= 0) {
+            return false;
+        }
+        java.util.Collections.swap(effects, 0, index);
+        this.setPotion(new MetaCodecs.PotionContents(p.potion(), p.color(), effects, p.customName()));
+        return true;
+    }
+
+    public boolean clearCustomEffects() {
+        if (this.is(SuspiciousStewMeta.class)) {
+            final boolean had = this.hasCustomEffects();
+            this.components.unset(MetaCodecs.STEW_EFFECTS);
+            return had;
+        }
+        final MetaCodecs.PotionContents p = this.potion();
+        this.setPotion(new MetaCodecs.PotionContents(p.potion(), p.color(), List.of(), p.customName()));
+        return !p.effects().isEmpty();
+    }
+
+    /** The potion's colour: its own, or else Paper's mix of its effects' colours (which needs effect colours Paper-RS does not have). */
+    public Color computeEffectiveColor() {
+        final Color color = this.hasColor() ? this.getColor() : null;
+        if (color != null) {
+            return color;
+        }
+        if (this.getAllEffects().isEmpty()) {
+            return Color.fromRGB(0x385DC6);
+        }
+        throw io.papermc.paperrs.host.Unsupported.method("PotionMeta#computeEffectiveColor (for a potion without a custom colour)");
+    }
+
+    public boolean hasCustomPotionName() {
+        return this.potion().customName() != null;
+    }
+
+    public @Nullable String getCustomPotionName() {
+        return this.potion().customName();
+    }
+
+    public void setCustomPotionName(final @Nullable String name) {
+        final MetaCodecs.PotionContents p = this.potion();
+        this.setPotion(new MetaCodecs.PotionContents(p.potion(), p.color(), p.effects(), name));
+    }
+
+    private List<MetaCodecs.StewEffect> stew() {
+        final byte[] raw = this.components.raw(MetaCodecs.STEW_EFFECTS);
+        return raw == null ? List.of() : MetaCodecs.readStew(raw);
+    }
+
+    private void setStew(final List<MetaCodecs.StewEffect> effects) {
+        this.components.setRaw(MetaCodecs.STEW_EFFECTS, effects.isEmpty() ? null : MetaCodecs.writeStew(effects));
+    }
+
+    // --- fireworks ------------------------------------------------------------------------------
+
+    private static final org.bukkit.FireworkEffect.Type[] SHAPES = {
+        org.bukkit.FireworkEffect.Type.BALL, org.bukkit.FireworkEffect.Type.BALL_LARGE, org.bukkit.FireworkEffect.Type.STAR,
+        org.bukkit.FireworkEffect.Type.CREEPER, org.bukkit.FireworkEffect.Type.BURST};
+
+    private static org.bukkit.FireworkEffect effectOf(final MetaCodecs.Explosion e) {
+        final org.bukkit.FireworkEffect.Builder b = org.bukkit.FireworkEffect.builder()
+            .with(e.shape() >= 0 && e.shape() < SHAPES.length ? SHAPES[e.shape()] : org.bukkit.FireworkEffect.Type.BALL)
+            .flicker(e.twinkle()).trail(e.trail());
+        for (final int c : e.colors()) {
+            b.withColor(Color.fromRGB(c & 0xFFFFFF));
+        }
+        for (final int c : e.fades()) {
+            b.withFade(Color.fromRGB(c & 0xFFFFFF));
+        }
+        return b.build();
+    }
+
+    private static MetaCodecs.Explosion explosionOf(final org.bukkit.FireworkEffect e) {
+        final List<Integer> colors = new ArrayList<>();
+        for (final Color c : e.getColors()) {
+            colors.add(c.asRGB());
+        }
+        final List<Integer> fades = new ArrayList<>();
+        for (final Color c : e.getFadeColors()) {
+            fades.add(c.asRGB());
+        }
+        return new MetaCodecs.Explosion(java.util.Arrays.asList(SHAPES).indexOf(e.getType()), colors, fades, e.hasTrail(), e.hasFlicker());
+    }
+
+    private MetaCodecs.Fireworks fireworks() {
+        final byte[] raw = this.components.raw(MetaCodecs.FIREWORKS);
+        return raw == null ? new MetaCodecs.Fireworks(0, List.of()) : MetaCodecs.readFireworks(raw);
+    }
+
+    private void setFireworks(final MetaCodecs.Fireworks f) {
+        this.components.setRaw(MetaCodecs.FIREWORKS, MetaCodecs.writeFireworks(f));
+    }
+
+    public void addEffect(final org.bukkit.FireworkEffect effect) {
+        if (effect == null) {
+            throw new IllegalArgumentException("FireworkEffect cannot be null");
+        }
+        final MetaCodecs.Fireworks f = this.fireworks();
+        final List<MetaCodecs.Explosion> explosions = new ArrayList<>(f.explosions());
+        explosions.add(explosionOf(effect));
+        this.setFireworks(new MetaCodecs.Fireworks(f.flight(), explosions));
+    }
+
+    public void addEffects(final org.bukkit.FireworkEffect... effects) {
+        for (final org.bukkit.FireworkEffect effect : effects) {
+            this.addEffect(effect);
+        }
+    }
+
+    public void addEffects(final Iterable<org.bukkit.FireworkEffect> effects) {
+        for (final org.bukkit.FireworkEffect effect : effects) {
+            this.addEffect(effect);
+        }
+    }
+
+    public List<org.bukkit.FireworkEffect> getEffects() {
+        final List<org.bukkit.FireworkEffect> out = new ArrayList<>();
+        for (final MetaCodecs.Explosion e : this.fireworks().explosions()) {
+            out.add(effectOf(e));
+        }
+        return List.copyOf(out);
+    }
+
+    public int getEffectsSize() {
+        return this.fireworks().explosions().size();
+    }
+
+    public void removeEffect(final int index) {
+        final MetaCodecs.Fireworks f = this.fireworks();
+        final List<MetaCodecs.Explosion> explosions = new ArrayList<>(f.explosions());
+        explosions.remove(index);
+        this.setFireworks(new MetaCodecs.Fireworks(f.flight(), explosions));
+    }
+
+    public void clearEffects() {
+        this.setFireworks(new MetaCodecs.Fireworks(this.fireworks().flight(), List.of()));
+    }
+
+    public boolean hasEffects() {
+        return !this.fireworks().explosions().isEmpty();
+    }
+
+    public boolean hasPower() {
+        return this.components.has(MetaCodecs.FIREWORKS);
+    }
+
+    public int getPower() {
+        return this.fireworks().flight();
+    }
+
+    public void setPower(final int power) {
+        if (power < 0 || power > 255) {
+            throw new IllegalArgumentException("Power cannot be less than 0 or greater than 255: " + power);
+        }
+        this.setFireworks(new MetaCodecs.Fireworks(power, this.fireworks().explosions()));
+    }
+
+    public void setEffect(final org.bukkit.@Nullable FireworkEffect effect) {
+        this.components.setRaw(MetaCodecs.FIREWORK_EXPLOSION, effect == null ? null : MetaCodecs.writeExplosion(explosionOf(effect)));
+    }
+
+    public boolean hasEffect() {
+        return this.components.has(MetaCodecs.FIREWORK_EXPLOSION);
+    }
+
+    public org.bukkit.@Nullable FireworkEffect getEffect() {
+        final byte[] raw = this.components.raw(MetaCodecs.FIREWORK_EXPLOSION);
+        return raw == null ? null : effectOf(MetaCodecs.readExplosion(raw));
+    }
+
+    // --- banners --------------------------------------------------------------------------------
+
+    private List<MetaCodecs.Layer> layers() {
+        final byte[] raw = this.components.raw(MetaCodecs.BANNER_PATTERNS);
+        return raw == null ? List.of() : MetaCodecs.readBanner(raw);
+    }
+
+    private static org.bukkit.block.banner.Pattern patternOf(final MetaCodecs.Layer layer) {
+        final List<String> patterns = registry("minecraft:banner_pattern");
+        final org.bukkit.block.banner.PatternType type = layer.pattern() >= 0 && layer.pattern() < patterns.size()
+            ? org.bukkit.Registry.BANNER_PATTERN.get(NamespacedKey.fromString(patterns.get(layer.pattern()))) : null;
+        if (type == null) {
+            throw io.papermc.paperrs.host.Unsupported.feature("Banner patterns defined inline (" + layer.assetId() + ")");
+        }
+        return new org.bukkit.block.banner.Pattern(org.bukkit.DyeColor.values()[layer.color()], type);
+    }
+
+    private static MetaCodecs.Layer layerOf(final org.bukkit.block.banner.Pattern pattern) {
+        final int id = registry("minecraft:banner_pattern").indexOf(pattern.getPattern().getKey().toString());
+        if (id < 0) {
+            throw new IllegalArgumentException("Unknown banner pattern " + pattern.getPattern().getKey());
+        }
+        return new MetaCodecs.Layer(id, null, null, pattern.getColor().ordinal());
+    }
+
+    public List<org.bukkit.block.banner.Pattern> getPatterns() {
+        final List<org.bukkit.block.banner.Pattern> out = new ArrayList<>();
+        for (final MetaCodecs.Layer layer : this.layers()) {
+            out.add(patternOf(layer));
+        }
+        return out;
+    }
+
+    public void setPatterns(final List<org.bukkit.block.banner.Pattern> patterns) {
+        final List<MetaCodecs.Layer> layers = new ArrayList<>();
+        for (final org.bukkit.block.banner.Pattern pattern : patterns) {
+            layers.add(layerOf(pattern));
+        }
+        this.components.setRaw(MetaCodecs.BANNER_PATTERNS, layers.isEmpty() ? null : MetaCodecs.writeBanner(layers));
+    }
+
+    public void addPattern(final org.bukkit.block.banner.Pattern pattern) {
+        final List<org.bukkit.block.banner.Pattern> patterns = this.getPatterns();
+        patterns.add(pattern);
+        this.setPatterns(patterns);
+    }
+
+    public org.bukkit.block.banner.Pattern getPattern(final int index) {
+        return this.getPatterns().get(index);
+    }
+
+    public org.bukkit.block.banner.Pattern removePattern(final int index) {
+        final List<org.bukkit.block.banner.Pattern> patterns = this.getPatterns();
+        final org.bukkit.block.banner.Pattern removed = patterns.remove(index);
+        this.setPatterns(patterns);
+        return removed;
+    }
+
+    public void setPattern(final int index, final org.bukkit.block.banner.Pattern pattern) {
+        final List<org.bukkit.block.banner.Pattern> patterns = this.getPatterns();
+        patterns.set(index, pattern);
+        this.setPatterns(patterns);
+    }
+
+    public int numberOfPatterns() {
+        return this.layers().size();
+    }
+
+    // --- block data (block_state) -------------------------------------------------------------
+
+    public org.bukkit.block.data.BlockData getBlockData(final Material material) {
+        final org.bukkit.block.data.BlockData data = io.papermc.paperrs.host.world.HostBlockData.defaults(material);
+        final byte[] raw = this.components.raw(MetaCodecs.BLOCK_STATE);
+        if (raw == null) {
+            return data;
+        }
+        final StringBuilder props = new StringBuilder();
+        MetaCodecs.readBlockState(raw).forEach((k, v) -> {
+            // Properties the block does not have are ignored, as in vanilla.
+            try {
+                io.papermc.paperrs.host.world.HostBlockData.parse(material, "[" + k + "=" + v + "]");
+                props.append(props.isEmpty() ? "" : ",").append(k).append('=').append(v);
+            } catch (IllegalArgumentException e) {
+                // skip
+            }
+        });
+        return props.isEmpty() ? data : io.papermc.paperrs.host.world.HostBlockData.parse(material, "[" + props + "]");
+    }
+
+    public void setBlockData(final org.bukkit.block.data.@Nullable BlockData data) {
+        if (data == null) {
+            this.components.unset(MetaCodecs.BLOCK_STATE);
+            return;
+        }
+        // Like CraftBlockData#toStates: only the properties the data was given.
+        final String state = io.papermc.paperrs.host.world.HostBlockData.impl(data).getAsString(true);
+        final Map<String, String> properties = new LinkedHashMap<>();
+        final int bracket = state.indexOf('[');
+        if (bracket >= 0) {
+            for (final String pair : state.substring(bracket + 1, state.length() - 1).split(",")) {
+                final int eq = pair.indexOf('=');
+                properties.put(pair.substring(0, eq), pair.substring(eq + 1));
+            }
+        }
+        this.components.setRaw(MetaCodecs.BLOCK_STATE, properties.isEmpty() ? null : MetaCodecs.writeBlockState(properties));
+    }
+
+    // --- books ----------------------------------------------------------------------------------
+
+    private boolean written() {
+        return this.is(BookMeta.class);
+    }
+
+    private ItemComponents.WrittenBook book() {
+        final ItemComponents.WrittenBook book = this.components.writtenBook();
+        return book != null ? book : new ItemComponents.WrittenBook("", "", 0, List.of(), false);
+    }
+
+    private void setBook(final ItemComponents.WrittenBook book) {
+        this.components.setWrittenBook(book);
+    }
+
+    /** The pages as text components (a writable book's are plain text). */
+    public List<Component> pages() {
+        final List<Component> out = new ArrayList<>();
+        if (this.written()) {
+            for (final String json : this.book().pages()) {
+                out.add(Components.fromJson(json));
+            }
+        } else {
+            for (final String page : this.writablePages()) {
+                out.add(Component.text(page));
+            }
+        }
+        return out;
+    }
+
+    private List<String> writablePages() {
+        final byte[] raw = this.components.raw(MetaCodecs.WRITABLE_BOOK);
+        return raw == null ? List.of() : MetaCodecs.readPages(raw);
+    }
+
+    private void setPagesText(final List<Component> pages) {
+        if (pages.size() > 100) {
+            throw new IllegalArgumentException("Book cannot have more than 100 pages");
+        }
+        if (this.written()) {
+            final ItemComponents.WrittenBook b = this.book();
+            final List<String> json = new ArrayList<>();
+            for (final Component page : pages) {
+                json.add(Components.toJson(page));
+            }
+            this.setBook(new ItemComponents.WrittenBook(b.title(), b.author(), b.generation(), json, b.resolved()));
+        } else {
+            final List<String> plain = new ArrayList<>();
+            for (final Component page : pages) {
+                plain.add(Components.toLegacy(page));
+            }
+            this.components.setRaw(MetaCodecs.WRITABLE_BOOK, plain.isEmpty() ? null : MetaCodecs.writePages(plain));
+        }
+    }
+
+    public boolean hasPages() {
+        return !this.pages().isEmpty();
+    }
+
+    public int getPageCount() {
+        return this.pages().size();
+    }
+
+    /** {@code getPage} counts from 1. */
+    public String getPage(final int page) {
+        final List<Component> pages = this.pages();
+        if (page < 1 || page > pages.size()) {
+            throw new IllegalArgumentException("Invalid page number " + page + "/" + pages.size());
+        }
+        return this.written() ? Components.toLegacy(pages.get(page - 1)) : this.writablePages().get(page - 1);
+    }
+
+    public void setPage(final int page, final String data) {
+        this.page(page, this.written() ? Components.legacy(data) : Component.text(data));
+    }
+
+    public List<String> getPages() {
+        if (!this.written()) {
+            return List.copyOf(this.writablePages());
+        }
+        final List<String> out = new ArrayList<>();
+        for (final Component page : this.pages()) {
+            out.add(Components.toLegacy(page));
+        }
+        return List.copyOf(out);
+    }
+
+    public void setPages(final List<String> pages) {
+        final List<Component> out = new ArrayList<>();
+        for (final String page : pages) {
+            out.add(this.written() ? Components.legacy(page) : Component.text(page));
+        }
+        this.setPagesText(out);
+    }
+
+    public void setPages(final String... pages) {
+        this.setPages(List.of(pages));
+    }
+
+    public void addPage(final String... pages) {
+        final List<String> all = new ArrayList<>(this.getPages());
+        all.addAll(List.of(pages));
+        this.setPages(all);
+    }
+
+    public Component page(final int page) {
+        final List<Component> pages = this.pages();
+        if (page < 1 || page > pages.size()) {
+            throw new IllegalArgumentException("Invalid page number " + page + "/" + pages.size());
+        }
+        return pages.get(page - 1);
+    }
+
+    public void page(final int page, final Component data) {
+        final List<Component> pages = new ArrayList<>(this.pages());
+        if (page < 1 || page > pages.size()) {
+            throw new IllegalArgumentException("Invalid page number " + page + "/" + pages.size());
+        }
+        pages.set(page - 1, data == null ? Component.empty() : data);
+        this.setPagesText(pages);
+    }
+
+    public void addPages(final Component... pages) {
+        final List<Component> all = new ArrayList<>(this.pages());
+        all.addAll(List.of(pages));
+        this.setPagesText(all);
+    }
+
+    public BookMeta pages(final List<Component> pages) {
+        this.setPagesText(pages);
+        return (BookMeta) this.self;
+    }
+
+    public boolean hasTitle() {
+        return this.components.writtenBook() != null && !this.book().title().isEmpty();
+    }
+
+    public @Nullable String getTitle() {
+        return this.hasTitle() ? this.book().title() : null;
+    }
+
+    public boolean setTitle(final @Nullable String title) {
+        if (title != null && title.length() > 32) {
+            return false;
+        }
+        final ItemComponents.WrittenBook b = this.book();
+        this.setBook(new ItemComponents.WrittenBook(title == null ? "" : title, b.author(), b.generation(), b.pages(), b.resolved()));
+        return true;
+    }
+
+    public @Nullable Component title() {
+        return this.hasTitle() ? Components.legacy(this.book().title()) : null;
+    }
+
+    public BookMeta title(final @Nullable Component title) {
+        this.setTitle(title == null ? null : Components.toLegacy(title));
+        return (BookMeta) this.self;
+    }
+
+    public boolean hasAuthor() {
+        return this.components.writtenBook() != null && !this.book().author().isEmpty();
+    }
+
+    public @Nullable String getAuthor() {
+        return this.hasAuthor() ? this.book().author() : null;
+    }
+
+    public void setAuthor(final @Nullable String author) {
+        final ItemComponents.WrittenBook b = this.book();
+        this.setBook(new ItemComponents.WrittenBook(b.title(), author == null ? "" : author, b.generation(), b.pages(), b.resolved()));
+    }
+
+    public @Nullable Component author() {
+        return this.hasAuthor() ? Components.legacy(this.book().author()) : null;
+    }
+
+    public BookMeta author(final @Nullable Component author) {
+        this.setAuthor(author == null ? null : Components.toLegacy(author));
+        return (BookMeta) this.self;
+    }
+
+    public boolean hasGeneration() {
+        return this.components.writtenBook() != null;
+    }
+
+    public BookMeta.@Nullable Generation getGeneration() {
+        return this.hasGeneration() ? BookMeta.Generation.values()[Math.min(this.book().generation(), BookMeta.Generation.values().length - 1)] : null;
+    }
+
+    public void setGeneration(final BookMeta.@Nullable Generation generation) {
+        final ItemComponents.WrittenBook b = this.book();
+        this.setBook(new ItemComponents.WrittenBook(b.title(), b.author(), generation == null ? 0 : generation.ordinal(), b.pages(), b.resolved()));
+    }
+
+    // --- maps and ominous bottles ---------------------------------------------------------------
+
+    public boolean hasMapId() {
+        return this.components.has(MetaCodecs.MAP_ID);
+    }
+
+    public int getMapId() {
+        final Integer id = this.components.varInt(MetaCodecs.MAP_ID);
+        return id == null ? -1 : id;
+    }
+
+    public void setMapId(final int id) {
+        this.components.setVarInt(MetaCodecs.MAP_ID, id);
+    }
+
+    public boolean hasAmplifier() {
+        return this.components.has(MetaCodecs.OMINOUS_BOTTLE_AMPLIFIER);
+    }
+
+    public int getAmplifier() {
+        final Integer amplifier = this.components.varInt(MetaCodecs.OMINOUS_BOTTLE_AMPLIFIER);
+        return amplifier == null ? 0 : amplifier;
+    }
+
+    public void setAmplifier(final int amplifier) {
+        if (amplifier < 0 || amplifier > 4) {
+            throw new IllegalArgumentException("Amplifier must be in range [0, 4] but is " + amplifier);
+        }
+        this.components.setVarInt(MetaCodecs.OMINOUS_BOTTLE_AMPLIFIER, amplifier);
     }
 
     // --- object -------------------------------------------------------------------------------
