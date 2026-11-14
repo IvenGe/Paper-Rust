@@ -990,11 +990,6 @@ public final class HostPlayer extends AbstractPlayer {
     }
 
     @Override
-    public double getHealthScale() {
-        return 20;
-    }
-
-    @Override
     public boolean isDead() {
         return this.getHealth() <= 0;
     }
@@ -1057,21 +1052,6 @@ public final class HostPlayer extends AbstractPlayer {
         if (!flight) {
             this.state.put("flying", false);
         }
-    }
-
-    @Override
-    public boolean isInvisible() {
-        return false;
-    }
-
-    @Override
-    public boolean canSee(final Player player) {
-        return true;
-    }
-
-    @Override
-    public boolean canSee(final Entity entity) {
-        return true;
     }
 
     // --- permissions ------------------------------------------------------------------------
@@ -1361,11 +1341,6 @@ public final class HostPlayer extends AbstractPlayer {
     }
 
     @Override
-    public int getMaximumAir() {
-        return 300;
-    }
-
-    @Override
     public int getLevel() {
         return Values.i32(this.state, "xp_level", 0);
     }
@@ -1434,6 +1409,1242 @@ public final class HostPlayer extends AbstractPlayer {
     public void removeMetadata(final String metadataKey, final Plugin owningPlugin) {
         this.server.playerMetadata().removeMetadata(this, metadataKey, owningPlugin);
     }
+
+    // --- Bukkit's player and entity state (see plugins/player.rs) ------------------------------
+
+    /** {@code player.set}: changes plain player state; the server answers with the new state. */
+    private void set(final Object... kv) {
+        this.refresh(this.server.call("player.set", this.args(kv)));
+    }
+
+    private static void checkSpeed(final float value) {
+        com.google.common.base.Preconditions.checkArgument(value <= 1f && value >= -1f, "Speed value (%s) need to be between -1f and 1f", value);
+    }
+
+    @Override
+    public float getWalkSpeed() {
+        return (float) Values.f64(this.state, "walk_speed", 0.2);
+    }
+
+    @Override
+    public void setWalkSpeed(final float value) {
+        checkSpeed(value);
+        this.set("walk_speed", (double) value);
+    }
+
+    @Override
+    public float getFlySpeed() {
+        return (float) Values.f64(this.state, "fly_speed", 0.1);
+    }
+
+    @Override
+    public void setFlySpeed(final float value) {
+        checkSpeed(value);
+        this.set("fly_speed", (double) value);
+    }
+
+    @Override
+    public boolean isSleepingIgnored() {
+        return Values.bool(this.state, "sleeping_ignored", false);
+    }
+
+    @Override
+    public void setSleepingIgnored(final boolean isSleeping) {
+        this.set("sleeping_ignored", isSleeping);
+    }
+
+    @Override
+    public boolean isSleeping() {
+        return this.state.get("sleeping") != null;
+    }
+
+    @Override
+    public boolean isDeeplySleeping() {
+        return this.isSleeping() && this.getSleepTicks() >= 100;
+    }
+
+    @Override
+    public int getSleepTicks() {
+        return Values.i32(this.state, "sleep_ticks", 0);
+    }
+
+    @Override
+    public Location getBedLocation() {
+        com.google.common.base.Preconditions.checkState(this.isSleeping(), "Not sleeping");
+        final List<Object> bed = Values.list(this.state.get("sleeping"));
+        return new Location(this.getWorld(), ((Number) bed.get(0)).intValue(), ((Number) bed.get(1)).intValue(), ((Number) bed.get(2)).intValue());
+    }
+
+    // time and weather this player sees
+
+    @Override
+    public void setPlayerTime(final long time, final boolean relative) {
+        this.set("time", time, "relative", relative);
+    }
+
+    @Override
+    public long getPlayerTime() {
+        return Values.i64(this.state, "player_time", 0);
+    }
+
+    @Override
+    public long getPlayerTimeOffset() {
+        return Values.i64(this.state, "player_time_offset", 0);
+    }
+
+    @Override
+    public boolean isPlayerTimeRelative() {
+        return Values.bool(this.state, "player_time_relative", true);
+    }
+
+    @Override
+    public void resetPlayerTime() {
+        this.set("reset_time", true);
+    }
+
+    @Override
+    public void setPlayerWeather(final org.bukkit.WeatherType type) {
+        this.set("weather", type.name());
+    }
+
+    @Override
+    public org.bukkit.@Nullable WeatherType getPlayerWeather() {
+        final Object weather = this.state.get("player_weather");
+        return weather == null ? null : org.bukkit.WeatherType.valueOf(weather.toString());
+    }
+
+    @Override
+    public void resetPlayerWeather() {
+        this.set("reset_weather", true);
+    }
+
+    // entity flags
+
+    @Override
+    public boolean isInvulnerable() {
+        return Values.bool(this.state, "invulnerable", false);
+    }
+
+    @Override
+    public void setInvulnerable(final boolean flag) {
+        this.set("invulnerable", flag);
+    }
+
+    @Override
+    public boolean isGlowing() {
+        return Values.bool(this.state, "glowing", false);
+    }
+
+    @Override
+    public void setGlowing(final boolean flag) {
+        this.set("glowing", flag);
+    }
+
+    @Override
+    public boolean isSilent() {
+        return Values.bool(this.state, "silent", false);
+    }
+
+    @Override
+    public void setSilent(final boolean flag) {
+        this.set("silent", flag);
+    }
+
+    @Override
+    public boolean hasGravity() {
+        return !Values.bool(this.state, "no_gravity", false);
+    }
+
+    @Override
+    public void setGravity(final boolean gravity) {
+        this.set("gravity", gravity);
+    }
+
+    @Override
+    public boolean isInvisible() {
+        return Values.bool(this.state, "invisible", false);
+    }
+
+    @Override
+    public void setInvisible(final boolean invisible) {
+        this.set("invisible", invisible);
+    }
+
+    @Override
+    public @Nullable Component customName() {
+        return Components.fromJson(this.state.get("custom_name"));
+    }
+
+    @Override
+    public void customName(final @Nullable Component customName) {
+        if (customName == null) {
+            this.set("clear_custom_name", true);
+        } else {
+            this.set("custom_name", Components.toJson(customName));
+        }
+    }
+
+    @Override
+    public @Nullable String getCustomName() {
+        final Component name = this.customName();
+        return name == null ? null : Components.toLegacy(name);
+    }
+
+    @Override
+    public void setCustomName(final @Nullable String name) {
+        this.customName(name == null ? null : Components.legacy(name));
+    }
+
+    @Override
+    public boolean isCustomNameVisible() {
+        return Values.bool(this.state, "custom_name_visible", false);
+    }
+
+    @Override
+    public void setCustomNameVisible(final boolean flag) {
+        this.set("custom_name_visible", flag);
+    }
+
+    @Override
+    public Set<String> getScoreboardTags() {
+        final Set<String> tags = new java.util.LinkedHashSet<>();
+        for (final Object tag : Values.list(this.state.get("tags"))) {
+            tags.add(String.valueOf(tag));
+        }
+        return tags;
+    }
+
+    @Override
+    public boolean addScoreboardTag(final String tag) {
+        final Set<String> tags = this.getScoreboardTags();
+        if (tags.size() >= 1024 || tags.contains(tag)) {
+            return false;
+        }
+        this.set("add_tag", tag);
+        return true;
+    }
+
+    @Override
+    public boolean removeScoreboardTag(final String tag) {
+        if (!this.getScoreboardTags().contains(tag)) {
+            return false;
+        }
+        this.set("remove_tag", tag);
+        return true;
+    }
+
+    @Override
+    public int getTicksLived() {
+        return Math.max(1, Values.i32(this.state, "ticks_lived", 1));
+    }
+
+    @Override
+    public void setTicksLived(final int value) {
+        com.google.common.base.Preconditions.checkArgument(value > 0, "Age value (%s) must be greater than 0", value);
+        this.set("ticks_lived", value);
+    }
+
+    @Override
+    public int getPortalCooldown() {
+        return Values.i32(this.state, "portal_cooldown", 0);
+    }
+
+    @Override
+    public void setPortalCooldown(final int cooldown) {
+        com.google.common.base.Preconditions.checkArgument(cooldown >= 0, "Portal cooldown (%s) must be beq 0", cooldown);
+        this.set("portal_cooldown", cooldown);
+    }
+
+    @Override
+    public void setSneaking(final boolean sneak) {
+        this.set("sneaking", sneak);
+    }
+
+    @Override
+    public void setSprinting(final boolean sprinting) {
+        this.set("sprinting", sprinting);
+    }
+
+    @Override
+    public void setVelocity(final Vector velocity) {
+        velocity.checkFinite();
+        this.set("vx", velocity.getX(), "vy", velocity.getY(), "vz", velocity.getZ());
+    }
+
+    @Override
+    public void knockback(final double strength, final double directionX, final double directionZ) {
+        com.google.common.base.Preconditions.checkArgument(strength > 0, "Knockback strength must be > 0");
+        // LivingEntity.knockback: half the current motion, pushed away from the direction.
+        final Vector now = this.getVelocity();
+        final Vector push = new Vector(directionX, 0, directionZ).normalize().multiply(strength);
+        this.setVelocity(new Vector(now.getX() / 2 - push.getX(), this.isOnGround() ? Math.min(0.4, now.getY() / 2 + strength) : now.getY(), now.getZ() / 2 - push.getZ()));
+    }
+
+    @Override
+    public org.bukkit.entity.Pose getPose() {
+        if (this.isDead()) {
+            return org.bukkit.entity.Pose.DYING;
+        }
+        if (this.isSleeping()) {
+            return org.bukkit.entity.Pose.SLEEPING;
+        }
+        return this.isSneaking() ? org.bukkit.entity.Pose.SNEAKING : org.bukkit.entity.Pose.STANDING;
+    }
+
+    // air, fire, freezing, damage ticks
+
+    @Override
+    public int getMaximumAir() {
+        return Values.i32(this.state, "max_air", 300);
+    }
+
+    @Override
+    public void setMaximumAir(final int ticks) {
+        this.set("max_air", ticks);
+    }
+
+    @Override
+    public void setRemainingAir(final int ticks) {
+        this.set("air", ticks);
+    }
+
+    @Override
+    public void setFireTicks(final int ticks) {
+        this.set("fire_ticks", ticks);
+    }
+
+    @Override
+    public int getMaxFireTicks() {
+        // Player.getFireImmuneTicks
+        return 20;
+    }
+
+    @Override
+    public int getFreezeTicks() {
+        return Values.i32(this.state, "freeze_ticks", 0);
+    }
+
+    @Override
+    public void setFreezeTicks(final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(0 <= ticks, "Ticks (%s) cannot be less than 0", ticks);
+        this.set("freeze_ticks", ticks);
+    }
+
+    @Override
+    public int getMaxFreezeTicks() {
+        return 140;
+    }
+
+    @Override
+    public boolean isFrozen() {
+        return this.getFreezeTicks() >= this.getMaxFreezeTicks();
+    }
+
+    private boolean freezeLocked;
+
+    @Override
+    public void lockFreezeTicks(final boolean locked) {
+        this.freezeLocked = locked;
+    }
+
+    @Override
+    public boolean isFreezeTickingLocked() {
+        return this.freezeLocked;
+    }
+
+    @Override
+    public float getFallDistance() {
+        return (float) Values.f64(this.state, "fall_distance", 0);
+    }
+
+    @Override
+    public void setFallDistance(final float distance) {
+        this.set("fall_distance", (double) distance);
+    }
+
+    @Override
+    public int getNoDamageTicks() {
+        return Values.i32(this.state, "no_damage_ticks", 0);
+    }
+
+    @Override
+    public void setNoDamageTicks(final int ticks) {
+        this.set("no_damage_ticks", ticks);
+    }
+
+    @Override
+    public int getMaximumNoDamageTicks() {
+        return Values.i32(this.state, "max_no_damage_ticks", 20);
+    }
+
+    @Override
+    public void setMaximumNoDamageTicks(final int ticks) {
+        this.set("max_no_damage_ticks", ticks);
+    }
+
+    @Override
+    public double getLastDamage() {
+        return Values.f64(this.state, "last_damage", 0);
+    }
+
+    @Override
+    public void setLastDamage(final double damage) {
+        this.set("last_damage", damage);
+    }
+
+    @Override
+    public int getArrowsInBody() {
+        return Values.i32(this.state, "arrows_in_body", 0);
+    }
+
+    @Override
+    public void setArrowsInBody(final int count, final boolean fireEvent) {
+        com.google.common.base.Preconditions.checkArgument(count >= 0, "New arrow amount must be >= 0");
+        this.set("arrows_in_body", count);
+    }
+
+    @Override
+    public int getBeeStingersInBody() {
+        return Values.i32(this.state, "stingers_in_body", 0);
+    }
+
+    @Override
+    public void setBeeStingersInBody(final int count) {
+        com.google.common.base.Preconditions.checkArgument(count >= 0, "New bee stinger amount must be >= 0");
+        this.set("stingers_in_body", count);
+    }
+
+    @Override
+    public double getAbsorptionAmount() {
+        return Values.f64(this.state, "absorption", 0);
+    }
+
+    @Override
+    public void setAbsorptionAmount(final double amount) {
+        com.google.common.base.Preconditions.checkArgument(amount >= 0 && Double.isFinite(amount), "amount < 0 or non-finite");
+        this.set("absorption", amount);
+    }
+
+    @Override
+    public float getExhaustion() {
+        return (float) Values.f64(this.state, "exhaustion", 0);
+    }
+
+    @Override
+    public void setExhaustion(final float value) {
+        this.set("exhaustion", (double) value);
+    }
+
+    @Override
+    public void heal(final double amount, final org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason reason) {
+        com.google.common.base.Preconditions.checkArgument(amount > 0, "amount must be greater than 0");
+        this.setHealth(Math.min(this.getMaxHealth(), this.getHealth() + amount));
+    }
+
+    @Override
+    public @Nullable Player getKiller() {
+        final Object killer = this.state.get("killer");
+        return killer == null ? null : this.server.getPlayer(UUID.fromString(killer.toString()));
+    }
+
+    private org.bukkit.event.entity.@Nullable EntityDamageEvent lastDamageCause;
+
+    @Override
+    public org.bukkit.event.entity.@Nullable EntityDamageEvent getLastDamageCause() {
+        return this.lastDamageCause;
+    }
+
+    @Override
+    public void setLastDamageCause(final org.bukkit.event.entity.@Nullable EntityDamageEvent event) {
+        this.lastDamageCause = event;
+    }
+
+    // health scale
+
+    @Override
+    public void setHealthScale(final double scale) {
+        com.google.common.base.Preconditions.checkArgument(scale > 0, "Must be greater than 0");
+        this.set("health_scale", scale, "health_scaled", true);
+    }
+
+    @Override
+    public double getHealthScale() {
+        return Values.f64(this.state, "health_scale", 20.0);
+    }
+
+    @Override
+    public void setHealthScaled(final boolean scale) {
+        this.set("health_scaled", scale);
+    }
+
+    @Override
+    public boolean isHealthScaled() {
+        return this.state.get("health_scale") != null;
+    }
+
+    // experience
+
+    @Override
+    public void setExp(final float exp) {
+        com.google.common.base.Preconditions.checkArgument(exp >= 0.0 && exp <= 1.0, "Experience progress must be between 0.0 and 1.0 (%s)", exp);
+        this.set("xp_progress", (double) exp);
+    }
+
+    @Override
+    public void setLevel(final int level) {
+        com.google.common.base.Preconditions.checkArgument(level >= 0, "Experience level must not be negative (%s)", level);
+        this.set("xp_level", level);
+    }
+
+    @Override
+    public void setTotalExperience(final int exp) {
+        com.google.common.base.Preconditions.checkArgument(exp >= 0, "Total experience points must not be negative (%s)", exp);
+        this.set("xp_total", exp);
+    }
+
+    @Override
+    public void giveExpLevels(final int amount) {
+        // Player.giveExperienceLevels: below zero resets the experience.
+        final int level = this.getLevel() + amount;
+        if (level < 0) {
+            this.set("xp_level", 0, "xp_progress", 0.0, "xp_total", 0);
+        } else {
+            this.set("xp_level", level);
+        }
+    }
+
+    /** {@code Player.getXpNeededForNextLevel}. */
+    private static int xpNeeded(final int level) {
+        return level >= 30 ? 112 + (level - 30) * 9 : level >= 15 ? 37 + (level - 15) * 5 : 7 + level * 2;
+    }
+
+    @Override
+    public int getExpToLevel() {
+        return xpNeeded(this.getLevel());
+    }
+
+    @Override
+    public int getExperiencePointsNeededForNextLevel() {
+        return xpNeeded(this.getLevel());
+    }
+
+    @Override
+    public int calculateTotalExperiencePoints() {
+        int points = 0;
+        for (int level = 0; level < this.getLevel(); level++) {
+            points += xpNeeded(level);
+        }
+        return points + Math.round(xpNeeded(this.getLevel()) * this.getExp());
+    }
+
+    @Override
+    public void setExperienceLevelAndProgress(final int totalExperience) {
+        com.google.common.base.Preconditions.checkArgument(totalExperience >= 0, "totalExperience must be a positive integer");
+        int level = 0;
+        int left = totalExperience;
+        while (left >= xpNeeded(level)) {
+            left -= xpNeeded(level);
+            level++;
+        }
+        this.set("xp_level", level, "xp_progress", (double) left / xpNeeded(level));
+    }
+
+    @Override
+    public void sendExperienceChange(final float progress) {
+        this.sendExperienceChange(progress, this.getLevel());
+    }
+
+    @Override
+    public void sendExperienceChange(final float progress, final int level) {
+        com.google.common.base.Preconditions.checkArgument(progress >= 0.0 && progress <= 1.0, "Experience progress must be between 0.0 and 1.0 (%s)", progress);
+        com.google.common.base.Preconditions.checkArgument(level >= 0, "Experience level must not be negative (%s)", level);
+        this.server.send("player.send_experience", this.args("progress", (double) progress, "level", level));
+    }
+
+    @Override
+    public void sendHealthUpdate() {
+        this.sendHealthUpdate(this.getHealth(), this.getFoodLevel(), this.getSaturation());
+    }
+
+    @Override
+    public void sendHealthUpdate(final double health, final int foodLevel, final float saturation) {
+        this.server.send("player.send_health", this.args("health", health, "food", foodLevel, "saturation", (double) saturation));
+    }
+
+    // compass, respawn point
+
+    @Override
+    public Location getCompassTarget() {
+        final List<Object> target = Values.list(this.state.get("compass_target"));
+        if (target.size() < 4) {
+            return this.getWorld().getSpawnLocation();
+        }
+        final World world = this.server.getWorld(String.valueOf(target.get(0)));
+        return new Location(world, ((Number) target.get(1)).intValue(), ((Number) target.get(2)).intValue(), ((Number) target.get(3)).intValue(),
+            target.size() > 4 ? ((Number) target.get(4)).floatValue() : 0f, 0f);
+    }
+
+    @Override
+    public void setCompassTarget(final Location loc) {
+        com.google.common.base.Preconditions.checkArgument(loc != null, "Location cannot be null");
+        final World world = loc.getWorld() != null ? loc.getWorld() : this.getWorld();
+        this.set("compass_target", List.of(world.getName(), loc.getBlockX(), loc.getBlockY(), loc.getBlockZ(), (double) loc.getYaw()));
+    }
+
+    private @Nullable Location respawnBlock() {
+        final List<Object> respawn = Values.list(this.state.get("respawn"));
+        if (respawn.size() < 4) {
+            return null;
+        }
+        final World world = this.server.getWorld(String.valueOf(respawn.get(0)));
+        return world == null ? null : new Location(world, ((Number) respawn.get(1)).intValue(), ((Number) respawn.get(2)).intValue(), ((Number) respawn.get(3)).intValue());
+    }
+
+    @Override
+    public @Nullable Location getPotentialRespawnLocation() {
+        return this.respawnBlock();
+    }
+
+    @Override
+    public @Nullable Location getRespawnLocation(final boolean loadLocationAndValidate) {
+        final Location block = this.respawnBlock();
+        if (block == null || !loadLocationAndValidate) {
+            return block;
+        }
+        // ServerPlayer.findRespawnAndUseSpawnBlock: the bed or anchor must still be there; the
+        // player stands up next to it (BedBlock.findStandUpPosition, simplified).
+        final org.bukkit.Material type = block.getBlock().getType();
+        if (!org.bukkit.Tag.BEDS.isTagged(type) && type != org.bukkit.Material.RESPAWN_ANCHOR) {
+            return null;
+        }
+        final int[][] around = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+        for (final int dy : new int[] {0, 1, -1}) {
+            for (final int[] d : around) {
+                final org.bukkit.block.Block feet = block.getBlock().getRelative(d[0], dy, d[1]);
+                if (feet.isPassable() && feet.getRelative(0, 1, 0).isPassable() && feet.getRelative(0, -1, 0).getType().isSolid()) {
+                    return feet.getLocation().add(0.5, 0, 0.5);
+                }
+            }
+        }
+        return block.clone().add(0.5, 0.5625, 0.5);
+    }
+
+    @Override
+    public void setRespawnLocation(final @Nullable Location location, final boolean force) {
+        if (location == null) {
+            this.set("respawn", List.of());
+            return;
+        }
+        final World world = location.getWorld() != null ? location.getWorld() : this.getWorld();
+        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ()));
+    }
+
+    // inventory
+
+    @Override
+    public void updateInventory() {
+        this.server.send("player.update_inventory", this.args());
+    }
+
+    private static String cooldownGroup(final org.bukkit.Material material) {
+        return material.getKey().toString();
+    }
+
+    @Override
+    public boolean hasCooldown(final org.bukkit.Material material) {
+        return this.getCooldown(material) > 0;
+    }
+
+    @Override
+    public int getCooldown(final org.bukkit.Material material) {
+        com.google.common.base.Preconditions.checkArgument(material != null, "Material cannot be null");
+        return this.cooldown(cooldownGroup(material));
+    }
+
+    @Override
+    public void setCooldown(final org.bukkit.Material material, final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(material != null, "Material cannot be null");
+        com.google.common.base.Preconditions.checkArgument(material.isItem(), "Material %s is not an item", material);
+        this.setCooldown(material.key(), ticks);
+    }
+
+    @Override
+    public boolean hasCooldown(final org.bukkit.inventory.ItemStack item) {
+        return this.getCooldown(item) > 0;
+    }
+
+    @Override
+    public int getCooldown(final org.bukkit.inventory.ItemStack item) {
+        return this.cooldown(cooldownGroup(item.getType()));
+    }
+
+    @Override
+    public void setCooldown(final org.bukkit.inventory.ItemStack item, final int ticks) {
+        this.setCooldown(item.getType().key(), ticks);
+    }
+
+    @Override
+    public int getCooldown(final net.kyori.adventure.key.Key key) {
+        return this.cooldown(key.asString());
+    }
+
+    @Override
+    public void setCooldown(final net.kyori.adventure.key.Key key, final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(ticks >= 0, "Cannot have negative cooldown");
+        this.server.call("player.cooldown", this.args("group", key.asString(), "ticks", ticks));
+    }
+
+    private int cooldown(final String group) {
+        return ((Number) this.server.call("player.cooldown", this.args("group", group))).intValue();
+    }
+
+    // attack strength
+
+    private double attackSpeed() {
+        final org.bukkit.attribute.AttributeInstance speed = this.getAttribute(org.bukkit.attribute.Attribute.ATTACK_SPEED);
+        return speed == null ? 4.0 : speed.getValue();
+    }
+
+    @Override
+    public float getCooldownPeriod() {
+        return (float) (1.0 / this.attackSpeed() * 20.0);
+    }
+
+    @Override
+    public float getCooledAttackStrength(final float adjustTicks) {
+        final float ticks = Values.i32(this.state, "ticks_since_swing", 100) + adjustTicks;
+        return Math.max(0f, Math.min(1f, ticks / this.getCooldownPeriod()));
+    }
+
+    @Override
+    public float getAttackCooldown() {
+        return this.getCooledAttackStrength(0.5f);
+    }
+
+    @Override
+    public void resetCooldown() {
+        this.set("reset_attack_cooldown", true);
+    }
+
+    // using items
+
+    private @Nullable List<Object> usingItem() {
+        final List<Object> using = Values.list(this.state.get("using_item"));
+        return using.size() < 2 ? null : using;
+    }
+
+    @Override
+    public boolean isHandRaised() {
+        return this.usingItem() != null;
+    }
+
+    @Override
+    public org.bukkit.inventory.EquipmentSlot getHandRaised() {
+        final List<Object> using = this.usingItem();
+        return using != null && ((Number) using.get(0)).intValue() == 1 ? org.bukkit.inventory.EquipmentSlot.OFF_HAND : org.bukkit.inventory.EquipmentSlot.HAND;
+    }
+
+    @Override
+    public org.bukkit.inventory.ItemStack getActiveItem() {
+        if (!this.isHandRaised()) {
+            return org.bukkit.inventory.ItemStack.empty();
+        }
+        return this.getInventory().getItem(this.getHandRaised()).clone();
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable ItemStack getItemInUse() {
+        return this.isHandRaised() ? this.getActiveItem() : null;
+    }
+
+    @Override
+    public int getActiveItemUsedTime() {
+        final List<Object> using = this.usingItem();
+        return using == null ? 0 : ((Number) using.get(1)).intValue();
+    }
+
+    @Override
+    public void clearActiveItem() {
+        this.set("clear_active_item", true);
+    }
+
+    @Override
+    public org.bukkit.inventory.MainHand getMainHand() {
+        return "LEFT".equals(this.state.get("main_hand")) ? org.bukkit.inventory.MainHand.LEFT : org.bukkit.inventory.MainHand.RIGHT;
+    }
+
+    // seeing other players and entities (CraftPlayer.hideEntity0 / showEntity0)
+
+    /** Entities this player does not see, and the plugins hiding each (null: the old API). */
+    private final Map<UUID, Set<@Nullable Plugin>> hiddenBy = new java.util.HashMap<>();
+
+    private void hide(final @Nullable Plugin plugin, final Entity entity) {
+        com.google.common.base.Preconditions.checkArgument(entity != null, "Entity hidden cannot be null");
+        if (entity.equals(this)) {
+            return;
+        }
+        final Set<@Nullable Plugin> by = this.hiddenBy.computeIfAbsent(entity.getUniqueId(), u -> new java.util.HashSet<>());
+        final boolean first = by.isEmpty();
+        by.add(plugin);
+        if (first) {
+            this.server.call("player.hide_entity", this.args("target", entity.getUniqueId().toString()));
+            this.server.getPluginManager().callEvent(new org.bukkit.event.player.PlayerHideEntityEvent(this, entity));
+        }
+    }
+
+    private void show(final @Nullable Plugin plugin, final Entity entity) {
+        com.google.common.base.Preconditions.checkArgument(entity != null, "Entity show cannot be null");
+        final Set<@Nullable Plugin> by = this.hiddenBy.get(entity.getUniqueId());
+        if (by == null || !by.remove(plugin) || !by.isEmpty()) {
+            return;
+        }
+        this.hiddenBy.remove(entity.getUniqueId());
+        this.server.call("player.show_entity", this.args("target", entity.getUniqueId().toString()));
+        this.server.getPluginManager().callEvent(new org.bukkit.event.player.PlayerShowEntityEvent(this, entity));
+    }
+
+    @Override
+    public void hidePlayer(final Player player) {
+        this.hide(null, player);
+    }
+
+    @Override
+    public void showPlayer(final Player player) {
+        this.show(null, player);
+    }
+
+    @Override
+    public void showPlayer(final Plugin plugin, final Player player) {
+        this.show(plugin, player);
+    }
+
+    @Override
+    public void hideEntity(final Plugin plugin, final Entity entity) {
+        com.google.common.base.Preconditions.checkArgument(plugin != null, "Plugin cannot be null");
+        com.google.common.base.Preconditions.checkArgument(plugin.isEnabled(), "Plugin (%s) cannot be disabled", plugin.getName());
+        this.hide(plugin, entity);
+    }
+
+    @Override
+    public void showEntity(final Plugin plugin, final Entity entity) {
+        com.google.common.base.Preconditions.checkArgument(plugin != null, "Plugin cannot be null");
+        this.show(plugin, entity);
+    }
+
+    @Override
+    public boolean canSee(final Player player) {
+        return this.canSee((Entity) player);
+    }
+
+    @Override
+    public boolean canSee(final Entity entity) {
+        return !this.hiddenBy.containsKey(entity.getUniqueId());
+    }
+
+    // titles, tab list, sounds
+
+    @Override
+    public void sendTitle(final com.destroystokyo.paper.Title title) {
+        com.google.common.base.Preconditions.checkNotNull(title, "Title is null");
+        this.setTitleTimes(title.getFadeIn(), title.getStay(), title.getFadeOut());
+        if (title.getSubtitle() != null) {
+            this.setSubtitle(title.getSubtitle());
+        }
+        this.server.send("player.send_title", this.args("title", Components.toJson(bungee(title.getTitle()))));
+    }
+
+    @Override
+    public void updateTitle(final com.destroystokyo.paper.Title title) {
+        this.sendTitle(title);
+    }
+
+    @Override
+    public void hideTitle() {
+        this.clearTitle();
+    }
+
+    @Override
+    public void setTitleTimes(final int fadeInTicks, final int stayTicks, final int fadeOutTicks) {
+        this.server.send("player.send_title", this.args("fade_in", fadeInTicks, "stay", stayTicks, "fade_out", fadeOutTicks));
+    }
+
+    @Override
+    public void setSubtitle(final net.md_5.bungee.api.chat.BaseComponent[] subtitle) {
+        this.server.send("player.send_title", this.args("subtitle", Components.toJson(bungee(subtitle))));
+    }
+
+    @Override
+    public void setSubtitle(final net.md_5.bungee.api.chat.BaseComponent subtitle) {
+        this.setSubtitle(new net.md_5.bungee.api.chat.BaseComponent[] {subtitle});
+    }
+
+    private static Component bungee(final net.md_5.bungee.api.chat.BaseComponent @Nullable [] components) {
+        if (components == null || components.length == 0) {
+            return Component.empty();
+        }
+        return net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson().deserialize(net.md_5.bungee.chat.ComponentSerializer.toString(components));
+    }
+
+    @Override
+    public @Nullable String getPlayerListHeader() {
+        return this.listHeader.equals(Component.empty()) ? null : Components.toLegacy(this.listHeader);
+    }
+
+    @Override
+    public @Nullable String getPlayerListFooter() {
+        return this.listFooter.equals(Component.empty()) ? null : Components.toLegacy(this.listFooter);
+    }
+
+    @Override
+    public void setPlayerListHeader(final @Nullable String header) {
+        this.sendPlayerListHeaderAndFooter(header == null ? Component.empty() : Components.legacy(header), this.listFooter);
+    }
+
+    @Override
+    public void setPlayerListFooter(final @Nullable String footer) {
+        this.sendPlayerListHeaderAndFooter(this.listHeader, footer == null ? Component.empty() : Components.legacy(footer));
+    }
+
+    @Override
+    public void setPlayerListHeaderFooter(final @Nullable String header, final @Nullable String footer) {
+        this.sendPlayerListHeaderAndFooter(header == null ? Component.empty() : Components.legacy(header), footer == null ? Component.empty() : Components.legacy(footer));
+    }
+
+    @Override
+    public void setPlayerListHeaderFooter(final net.md_5.bungee.api.chat.BaseComponent @Nullable [] header, final net.md_5.bungee.api.chat.BaseComponent @Nullable [] footer) {
+        this.sendPlayerListHeaderAndFooter(bungee(header), bungee(footer));
+    }
+
+    @Override
+    public void setPlayerListHeaderFooter(final net.md_5.bungee.api.chat.@Nullable BaseComponent header, final net.md_5.bungee.api.chat.@Nullable BaseComponent footer) {
+        this.setPlayerListHeaderFooter(header == null ? null : new net.md_5.bungee.api.chat.BaseComponent[] {header},
+            footer == null ? null : new net.md_5.bungee.api.chat.BaseComponent[] {footer});
+    }
+
+    private static String soundKey(final org.bukkit.Sound sound) {
+        return ((net.kyori.adventure.key.Keyed) sound).key().asString();
+    }
+
+    private void sound(final double x, final double y, final double z, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final @Nullable Long seed) {
+        final Map<String, Object> args = this.args("sound", sound, "category", category.ordinal(), "x", x, "y", y, "z", z, "volume", (double) volume, "pitch", (double) pitch);
+        if (seed != null) {
+            args.put("seed", seed);
+        }
+        this.server.send("player.play_sound", args);
+    }
+
+    @Override
+    public void playSound(final Location location, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        if (location == null || sound == null || category == null) {
+            return;
+        }
+        this.sound(location.getX(), location.getY(), location.getZ(), sound, category, volume, pitch, null);
+    }
+
+    @Override
+    public void playSound(final Location location, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        if (location == null || sound == null || category == null) {
+            return;
+        }
+        this.sound(location.getX(), location.getY(), location.getZ(), sound, category, volume, pitch, seed);
+    }
+
+    @Override
+    public void playSound(final Location location, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        if (location == null || sound == null || category == null) {
+            return;
+        }
+        this.sound(location.getX(), location.getY(), location.getZ(), soundKey(sound), category, volume, pitch, null);
+    }
+
+    @Override
+    public void playSound(final Location location, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        if (location == null || sound == null || category == null) {
+            return;
+        }
+        this.sound(location.getX(), location.getY(), location.getZ(), soundKey(sound), category, volume, pitch, seed);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        if (entity == null || sound == null || category == null) {
+            return;
+        }
+        this.playSound(entity.getLocation(), sound, category, volume, pitch);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        if (entity == null || sound == null || category == null) {
+            return;
+        }
+        this.playSound(entity.getLocation(), sound, category, volume, pitch, seed);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        if (entity == null || sound == null || category == null) {
+            return;
+        }
+        this.playSound(entity.getLocation(), sound, category, volume, pitch);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        if (entity == null || sound == null || category == null) {
+            return;
+        }
+        this.playSound(entity.getLocation(), sound, category, volume, pitch, seed);
+    }
+
+    @Override
+    public void stopSound(final String sound, final org.bukkit.@Nullable SoundCategory category) {
+        final Map<String, Object> args = this.args("sound", sound);
+        if (category != null) {
+            args.put("category", category.ordinal());
+        }
+        this.server.send("player.stop_sound", args);
+    }
+
+    @Override
+    public void stopSound(final org.bukkit.SoundCategory category) {
+        this.server.send("player.stop_sound", this.args("category", category.ordinal()));
+    }
+
+    @Override
+    public void swingHand(final org.bukkit.inventory.EquipmentSlot hand, final io.papermc.paper.datacomponent.item.SwingAnimation animation) {
+        com.google.common.base.Preconditions.checkArgument(hand == org.bukkit.inventory.EquipmentSlot.HAND || hand == org.bukkit.inventory.EquipmentSlot.OFF_HAND, "Unknown hand: %s", hand);
+        this.server.send("player.swing", this.args("hand", hand == org.bukkit.inventory.EquipmentSlot.OFF_HAND ? 1 : 0));
+    }
+
+    // packets for this client only
+
+    @Override
+    public void sendHurtAnimation(final float yaw) {
+        this.server.send("player.hurt_animation", this.args("yaw", (double) yaw));
+    }
+
+    @Override
+    public void playHurtAnimation(final float yaw) {
+        this.server.send("player.hurt_animation", this.args("yaw", (double) yaw, "everyone", true));
+    }
+
+    @Override
+    public void sendBlockDamage(final Location loc, final float progress, final int sourceId) {
+        com.google.common.base.Preconditions.checkArgument(loc != null, "loc must not be null");
+        com.google.common.base.Preconditions.checkArgument(progress >= 0.0 && progress <= 1.0, "progress must be between 0.0 and 1.0 (inclusive)");
+        // There are 0 - 9 damage states; -1 removes the overlay.
+        final int stage = progress == 0 ? -1 : (int) (9 * progress);
+        this.server.send("player.block_damage", this.args("x", loc.getBlockX(), "y", loc.getBlockY(), "z", loc.getBlockZ(), "stage", stage, "source", sourceId));
+    }
+
+    @Override
+    public void sendBlockDamage(final Location loc, final float progress, final Entity source) {
+        com.google.common.base.Preconditions.checkArgument(source != null, "source must not be null");
+        this.sendBlockDamage(loc, progress, source.getEntityId());
+    }
+
+    private static int equipmentSlotId(final org.bukkit.inventory.EquipmentSlot slot) {
+        return switch (slot) {
+            case HAND -> 0;
+            case OFF_HAND -> 1;
+            case FEET -> 2;
+            case LEGS -> 3;
+            case CHEST -> 4;
+            case HEAD -> 5;
+            case BODY -> 6;
+            case SADDLE -> 7;
+        };
+    }
+
+    @Override
+    public void sendEquipmentChange(final org.bukkit.entity.LivingEntity entity, final org.bukkit.inventory.EquipmentSlot slot, final org.bukkit.inventory.@Nullable ItemStack item) {
+        this.sendEquipmentChange(entity, java.util.Collections.singletonMap(slot, item));
+    }
+
+    @Override
+    public void sendEquipmentChange(final org.bukkit.entity.LivingEntity entity, final Map<org.bukkit.inventory.EquipmentSlot, org.bukkit.inventory.ItemStack> items) {
+        com.google.common.base.Preconditions.checkArgument(entity != null, "Entity cannot be null");
+        com.google.common.base.Preconditions.checkArgument(items != null, "items cannot be null");
+        final List<Object> equipment = new java.util.ArrayList<>();
+        for (final Map.Entry<org.bukkit.inventory.EquipmentSlot, org.bukkit.inventory.ItemStack> e : items.entrySet()) {
+            final Map<String, Object> value = io.papermc.paperrs.host.item.HostItemStack.toValue(e.getValue());
+            equipment.add(java.util.Arrays.asList(equipmentSlotId(e.getKey()), value));
+        }
+        this.server.send("player.equipment_change", this.args("entity", entity.getEntityId(), "equipment", equipment));
+    }
+
+    @Override
+    public void showDemoScreen() {
+        this.server.send("player.game_event", this.args("event", 5, "value", 0.0));
+    }
+
+    @Override
+    public void showElderGuardian(final boolean silent) {
+        this.server.send("player.game_event", this.args("event", 10, "value", silent ? 0.0 : 1.0));
+    }
+
+    @Override
+    public void showWinScreen() {
+        this.server.send("player.game_event", this.args("event", 4, "value", 1.0));
+    }
+
+    @Override
+    public boolean hasSeenWinScreen() {
+        return Values.bool(this.state, "seen_credits", false);
+    }
+
+    @Override
+    public void setHasSeenWinScreen(final boolean hasSeenWinScreen) {
+        this.set("seen_credits", hasSeenWinScreen);
+    }
+
+    @Override
+    public void transfer(final String host, final int port) {
+        this.server.send("player.transfer", this.args("host", host, "port", port));
+    }
+
+    private @Nullable Entity spectatorTarget;
+
+    @Override
+    public @Nullable Entity getSpectatorTarget() {
+        return this.spectatorTarget;
+    }
+
+    @Override
+    public void setSpectatorTarget(final @Nullable Entity entity) {
+        com.google.common.base.Preconditions.checkArgument(this.getGameMode() == GameMode.SPECTATOR, "Player must be in spectator mode");
+        this.spectatorTarget = entity;
+        this.server.send("player.camera", this.args("target", entity == null ? this.entityId : entity.getEntityId()));
+    }
+
+    // client options
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T getClientOption(final com.destroystokyo.paper.ClientOption<T> option) {
+        final Object value;
+        if (option == com.destroystokyo.paper.ClientOption.LOCALE) {
+            value = Values.str(this.state, "locale", "en_us");
+        } else if (option == com.destroystokyo.paper.ClientOption.VIEW_DISTANCE) {
+            value = this.getClientViewDistance();
+        } else if (option == com.destroystokyo.paper.ClientOption.CHAT_VISIBILITY) {
+            final int mode = Values.i32(this.state, "chat_visibility", 0);
+            value = switch (mode) {
+                case 0 -> com.destroystokyo.paper.ClientOption.ChatVisibility.FULL;
+                case 1 -> com.destroystokyo.paper.ClientOption.ChatVisibility.SYSTEM;
+                case 2 -> com.destroystokyo.paper.ClientOption.ChatVisibility.HIDDEN;
+                default -> com.destroystokyo.paper.ClientOption.ChatVisibility.UNKNOWN;
+            };
+        } else if (option == com.destroystokyo.paper.ClientOption.CHAT_COLORS_ENABLED) {
+            value = Values.bool(this.state, "chat_colors", true);
+        } else if (option == com.destroystokyo.paper.ClientOption.SKIN_PARTS) {
+            final int raw = Values.i32(this.state, "skin_parts", 0x7F);
+            value = new com.destroystokyo.paper.SkinParts() {
+                @Override public boolean hasCapeEnabled() { return (raw & 0x01) != 0; }
+                @Override public boolean hasJacketEnabled() { return (raw & 0x02) != 0; }
+                @Override public boolean hasLeftSleeveEnabled() { return (raw & 0x04) != 0; }
+                @Override public boolean hasRightSleeveEnabled() { return (raw & 0x08) != 0; }
+                @Override public boolean hasLeftPantsEnabled() { return (raw & 0x10) != 0; }
+                @Override public boolean hasRightPantsEnabled() { return (raw & 0x20) != 0; }
+                @Override public boolean hasHatsEnabled() { return (raw & 0x40) != 0; }
+                @Override public int getRaw() { return raw; }
+                @Override public com.destroystokyo.paper.SkinParts.Mutable mutableCopy() {
+                    final com.destroystokyo.paper.SkinParts.Mutable copy = com.destroystokyo.paper.SkinParts.allParts();
+                    copy.setCapeEnabled(this.hasCapeEnabled());
+                    copy.setJacketEnabled(this.hasJacketEnabled());
+                    copy.setLeftSleeveEnabled(this.hasLeftSleeveEnabled());
+                    copy.setRightSleeveEnabled(this.hasRightSleeveEnabled());
+                    copy.setLeftPantsEnabled(this.hasLeftPantsEnabled());
+                    copy.setRightPantsEnabled(this.hasRightPantsEnabled());
+                    copy.setHatsEnabled(this.hasHatsEnabled());
+                    return copy;
+                }
+            };
+        } else if (option == com.destroystokyo.paper.ClientOption.MAIN_HAND) {
+            value = this.getMainHand();
+        } else if (option == com.destroystokyo.paper.ClientOption.TEXT_FILTERING_ENABLED) {
+            value = Values.bool(this.state, "text_filtering", false);
+        } else if (option == com.destroystokyo.paper.ClientOption.ALLOW_SERVER_LISTINGS) {
+            value = this.isAllowingServerListings();
+        } else if (option == com.destroystokyo.paper.ClientOption.PARTICLE_VISIBILITY) {
+            value = com.destroystokyo.paper.ClientOption.ParticleVisibility.values()[Math.clamp(Values.i32(this.state, "particle_status", 0), 0, 2)];
+        } else {
+            throw new IllegalArgumentException("Unknown client option " + option);
+        }
+        return (T) value;
+    }
+
+    @Override
+    public boolean isAllowingServerListings() {
+        return Values.bool(this.state, "allow_server_listings", true);
+    }
+
+    @Override
+    public int getProtocolVersion() {
+        return io.papermc.paperrs.host.HostVersions.PROTOCOL_VERSION;
+    }
+
+    @Override
+    public @Nullable InetSocketAddress getHAProxyAddress() {
+        return null;
+    }
+
+    @Override
+    public java.util.Collection<org.bukkit.entity.EnderPearl> getEnderPearls() {
+        return List.of();
+    }
+
+    // where the player looks (CraftLivingEntity.getLineOfSight, with Bukkit's BlockIterator)
+
+    private List<org.bukkit.block.Block> lineOfSight(final @Nullable Set<org.bukkit.Material> transparent, int maxDistance, final int maxLength) {
+        final Set<org.bukkit.Material> see = transparent != null ? transparent : Set.of(org.bukkit.Material.AIR, org.bukkit.Material.CAVE_AIR, org.bukkit.Material.VOID_AIR);
+        if (maxDistance > 120) {
+            maxDistance = 120;
+        }
+        final java.util.ArrayList<org.bukkit.block.Block> blocks = new java.util.ArrayList<>();
+        final java.util.Iterator<org.bukkit.block.Block> itr = new org.bukkit.util.BlockIterator(this, maxDistance);
+        while (itr.hasNext()) {
+            final org.bukkit.block.Block block = itr.next();
+            blocks.add(block);
+            if (maxLength != 0 && blocks.size() > maxLength) {
+                blocks.removeFirst();
+            }
+            if (!see.contains(block.getType())) {
+                break;
+            }
+        }
+        return blocks;
+    }
+
+    @Override
+    public List<org.bukkit.block.Block> getLineOfSight(final @Nullable Set<org.bukkit.Material> transparent, final int maxDistance) {
+        return this.lineOfSight(transparent, maxDistance, 0);
+    }
+
+    @Override
+    public org.bukkit.block.Block getTargetBlock(final @Nullable Set<org.bukkit.Material> transparent, final int maxDistance) {
+        final List<org.bukkit.block.Block> blocks = this.lineOfSight(transparent, maxDistance, 1);
+        return blocks.getFirst();
+    }
+
+    @Override
+    public List<org.bukkit.block.Block> getLastTwoTargetBlocks(final @Nullable Set<org.bukkit.Material> transparent, final int maxDistance) {
+        return this.lineOfSight(transparent, maxDistance, 2);
+    }
+
+    /** No border of the player's own (CraftPlayer's {@code clientWorldBorder}) is supported yet. */
+    @Override
+    public org.bukkit.@Nullable WorldBorder getWorldBorder() {
+        return null;
+    }
+
+    @Override
+    public io.papermc.paper.threadedregions.scheduler.EntityScheduler getScheduler() {
+        return this.scheduler;
+    }
+
+    private final HostEntityScheduler scheduler = new HostEntityScheduler(this);
 
     @Override
     public Player.Spigot spigot() {

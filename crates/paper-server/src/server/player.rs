@@ -105,6 +105,83 @@ pub struct DigEffects {
     pub punched: bool,
 }
 
+/// Player state only the plugin API changes (Bukkit's player and entity setters), with
+/// vanilla's defaults.
+#[derive(Clone, Debug)]
+pub struct ApiState {
+    /// `abilities.walkSpeed` and `flySpeed` (Bukkit's speeds are twice these).
+    pub walk_speed: f32,
+    pub fly_speed: f32,
+    /// `Player.setSleepingIgnored`: not counted when the night is skipped.
+    pub sleeping_ignored: bool,
+    /// `Player.setPlayerTime`: the time this player sees, as (time, relative): an offset from
+    /// the world's time that moves with it, or a fixed time of day.
+    pub time: Option<(i64, bool)>,
+    /// `Player.setPlayerWeather`: `Some(true)` rain, `Some(false)` clear for this player.
+    pub weather: Option<bool>,
+    /// `Player.setCompassTarget`: where this player's compass points (world, block, yaw).
+    pub compass_target: Option<(usize, paper_protocol::codec::BlockPos, f32)>,
+    pub invulnerable: bool,
+    pub glowing: bool,
+    pub silent: bool,
+    pub no_gravity: bool,
+    pub invisible: bool,
+    pub custom_name: Option<Component>,
+    pub custom_name_visible: bool,
+    /// Scoreboard tags (`Tags`).
+    pub tags: Vec<String>,
+    pub max_air: i32,
+    /// `LivingEntity.setMaximumNoDamageTicks` (Paper's `invulnerableDuration`).
+    pub max_no_damage_ticks: i32,
+    pub freeze_ticks: i32,
+    pub arrows_in_body: i32,
+    pub stingers_in_body: i32,
+    /// `Player.setDeathScreenScore` (`DATA_SCORE_ID`).
+    pub score: i32,
+    /// `Player.hideEntity`/`hidePlayer`: entities (by UUID) this player does not see.
+    pub hidden: HashSet<Uuid>,
+    /// `Player.setHealthScale` while health is scaled.
+    pub health_scale: Option<f64>,
+    /// The server tick the player joined at (`Entity.getTicksLived` counts from it).
+    pub joined_tick: u64,
+    /// The tab list's header and footer as last set by a plugin.
+    pub tab_list: Option<(Component, Component)>,
+    /// In water, in lava, eyes under water, as of the last tick (`isInWater`, ...).
+    pub fluids: (bool, bool, bool),
+}
+
+impl Default for ApiState {
+    fn default() -> Self {
+        ApiState {
+            walk_speed: 0.1,
+            fly_speed: 0.05,
+            sleeping_ignored: false,
+            time: None,
+            weather: None,
+            compass_target: None,
+            invulnerable: false,
+            glowing: false,
+            silent: false,
+            no_gravity: false,
+            invisible: false,
+            custom_name: None,
+            custom_name_visible: false,
+            tags: Vec::new(),
+            max_air: 300,
+            max_no_damage_ticks: 20,
+            freeze_ticks: 0,
+            arrows_in_body: 0,
+            stingers_in_body: 0,
+            score: 0,
+            hidden: HashSet::new(),
+            health_scale: None,
+            joined_tick: 0,
+            tab_list: None,
+            fluids: (false, false, false),
+        }
+    }
+}
+
 pub struct Player {
     pub entity_id: i32,
     pub profile: GameProfile,
@@ -244,6 +321,8 @@ pub struct Player {
     pub attributes: crate::world::attributes::Attributes,
     /// The client's last answer to a resource pack offer (0 loaded ... 7 discarded).
     pub resource_pack_status: Option<i32>,
+    /// What only plugins change (see [`ApiState`]).
+    pub api: ApiState,
 }
 
 impl Player {
@@ -286,6 +365,11 @@ impl Player {
             flags |= abilities::INSTANT_BREAK;
         }
         flags
+    }
+
+    /// The abilities packet: flags, and the flying and walking speeds.
+    pub fn abilities_packet(&self) -> paper_protocol::packets::play::PlayerAbilities {
+        paper_protocol::packets::play::PlayerAbilities { flags: self.ability_flags(), flying_speed: self.api.fly_speed, fov_modifier: self.api.walk_speed }
     }
 
     /// Applies the flight rules of the current game mode.

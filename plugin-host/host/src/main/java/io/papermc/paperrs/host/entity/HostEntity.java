@@ -129,6 +129,26 @@ public final class HostEntity implements HostProxies.Backed {
         HostAttributeInstance.register(this.server, this.id, attribute);
     }
 
+    private @Nullable HostEntityScheduler scheduler;
+
+    /** Folia's entity scheduler: tasks on the main thread while the entity is valid. */
+    public io.papermc.paper.threadedregions.scheduler.EntityScheduler getScheduler() {
+        if (this.scheduler == null) {
+            this.scheduler = new HostEntityScheduler(this.self());
+        }
+        return this.scheduler;
+    }
+
+    private org.bukkit.event.entity.@Nullable EntityDamageEvent lastDamageCause;
+
+    public org.bukkit.event.entity.@Nullable EntityDamageEvent getLastDamageCause() {
+        return this.lastDamageCause;
+    }
+
+    public void setLastDamageCause(final org.bukkit.event.entity.@Nullable EntityDamageEvent event) {
+        this.lastDamageCause = event;
+    }
+
     public int getEntityId() {
         return this.id;
     }

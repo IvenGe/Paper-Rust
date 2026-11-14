@@ -392,9 +392,15 @@ impl Server {
         p.moved_this_tick = false;
         let w = &self.worlds[world];
 
+        // Outside the world border, past its safe zone (`LivingEntity.baseTick`).
+        let outside = w.border.distance_inside(pos.x, pos.z) + w.border.damage_safe_zone;
+        let border_damage = (outside < 0.0 && w.border.damage_per_block > 0.0).then(|| (-outside * w.border.damage_per_block).floor().max(1.0) as f32);
         // Falling out of the world.
         if pos.y < (w.min_y - 64) as f64 {
             self.hurt_player(id, Damage::new("minecraft:out_of_world"), 4.0);
+        }
+        if let Some(amount) = border_damage {
+            self.hurt_player(id, Damage::new("minecraft:outside_border"), amount);
         }
         let Some(p) = self.players.get(&id) else { return };
         if p.dead {
@@ -408,6 +414,9 @@ impl Server {
         let inside = blocks_inside(w, &area);
         let below = w.block_at(pos.x.floor() as i32, (pos.y - 0.2).floor() as i32, pos.z.floor() as i32).unwrap_or(blocks::AIR);
         let suffocating = in_wall(w, eye, 0.6);
+        if let Some(p) = self.players.get_mut(&id) {
+            p.api.fluids = (in_water, in_lava, eye_in_water);
+        }
 
         // Water puts fires out and breaks falls.
         if in_water {
@@ -494,7 +503,7 @@ impl Server {
                 }
             }
         } else if p.air < 300 {
-            p.air = (p.air + 4).min(300);
+            p.air = (p.air + 4).min(p.api.max_air);
         }
         if let Some(p) = self.players.get_mut(&id) {
             if p.air != air_before {
@@ -578,7 +587,13 @@ impl Server {
         let now = (p.health, p.food, p.saturation == 0.0);
         if p.sent_health != Some(now) {
             p.sent_health = Some(now);
-            p.conn.send(&play::SetHealth { health: p.health, food: VarInt(p.food), saturation: p.saturation });
+            // `Player.setHealthScale`: the client shows health out of the scale
+            // (`CraftPlayer.getScaledHealth`).
+            let health = match p.api.health_scale {
+                Some(scale) => (p.health as f64 * scale / p.max_health() as f64) as f32,
+                None => p.health,
+            };
+            p.conn.send(&play::SetHealth { health, food: VarInt(p.food), saturation: p.saturation });
             p.metadata_dirty = true;
         }
     }
@@ -711,8 +726,9 @@ impl Server {
         }
         let world = p.world;
         let rules = &self.worlds[world].rules;
-        // Creative and spectator players only take damage that bypasses invulnerability.
-        if matches!(p.game_mode, GameMode::Creative | GameMode::Spectator) && !damage.is("bypasses_invulnerability") {
+        // Creative and spectator players, and those a plugin made invulnerable
+        // (`Entity.setInvulnerable`), only take damage that bypasses invulnerability.
+        if (matches!(p.game_mode, GameMode::Creative | GameMode::Spectator) || p.api.invulnerable) && !damage.is("bypasses_invulnerability") {
             return false;
         }
         if damage.is("is_drowning") && !rules.bool("drowning_damage")
@@ -1075,10 +1091,11 @@ impl Server {
         p.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         p.conn.send(&play::SetDefaultSpawnPosition { dimension: w.dimension.clone(), pos: w.spawn, yaw: w.spawn_yaw, pitch: 0.0 });
         p.conn.send(&play::ChangeDifficulty { difficulty: self.difficulty.id(), locked: false });
-        p.conn.send(&play::PlayerAbilities { flags: p.ability_flags(), flying_speed: 0.05, fov_modifier: 0.1 });
+        p.conn.send(&p.abilities_packet());
         p.conn.send(&play::SetHeldSlot { slot: VarInt(p.held_slot as i32) });
         p.conn.send(&play::EntityEvent { entity_id: id, status: 24 + p.op_level.min(4) as i8 });
-        p.conn.send_payload(self.time_payload(world));
+        p.conn.send_payload(self.time_payload_for(world, p));
+        p.conn.send(&self.border_packet(world));
         self.send_weather(id);
         if old_world != world {
             p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });

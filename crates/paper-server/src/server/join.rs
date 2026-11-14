@@ -126,6 +126,7 @@ impl Server {
             enchantment_seed: rand::random(),
             attributes: crate::world::attributes::Attributes::of_type("minecraft:player"),
             resource_pack_status: None,
+            api: super::player::ApiState { joined_tick: self.tick, ..Default::default() },
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {
@@ -140,6 +141,7 @@ impl Server {
             player.inventory = saved.inventory;
             player.ender_items = saved.ender_items;
             player.pdc = saved.pdc;
+            player.api = super::player::ApiState { joined_tick: player.api.joined_tick, ..saved.api };
             player.xp_level = saved.xp_level;
             player.xp_progress = saved.xp_progress;
             player.xp_total = saved.xp_total;
@@ -180,7 +182,7 @@ impl Server {
             enforces_secure_chat: false,
         });
         player.conn.send(&play::ChangeDifficulty { difficulty: self.difficulty.id(), locked: false });
-        player.conn.send(&play::PlayerAbilities { flags: player.ability_flags(), flying_speed: 0.05, fov_modifier: 0.1 });
+        player.conn.send(&player.abilities_packet());
         player.conn.send(&play::SetHeldSlot { slot: VarInt(player.held_slot as i32) });
         // Entity status 24-28 tells the client its operator permission level (0-4).
         player.conn.send(&play::EntityEvent { entity_id, status: 24 + player.op_level.min(4) as i8 });
@@ -208,6 +210,7 @@ impl Server {
         self.broadcast(&play::PlayerInfoUpdate { actions, entries: vec![own_entry] });
 
         player.conn.send_payload(self.time_payload(world_index));
+        player.conn.send(&self.border_packet(world_index));
         let rain = &self.worlds[world_index].weather;
         if rain.is_raining() {
             player.conn.send(&play::GameEvent { event: play::game_event::START_RAINING, value: 0.0 });

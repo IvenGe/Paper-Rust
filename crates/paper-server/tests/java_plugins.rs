@@ -461,6 +461,22 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     // legacy materials; legacy constants it names still convert, from the legacy id table.
     alice.command("apitest legacy");
     expect_line(&mut alice, "legacy: ok");
+    // Player state through the API: speeds reach the client's abilities, the player's own
+    // time and weather replace the world's for that client.
+    alice.clear_backlog();
+    alice.command("apitest playerstate");
+    alice.find(TIMEOUT, |a: &play::PlayerAbilities| (a.fov_modifier - 0.2).abs() < 1e-6 && (a.flying_speed - 0.15).abs() < 1e-6).expect("both speeds in the abilities");
+    let time: play::SetTime = alice.find(TIMEOUT, |t: &play::SetTime| t.clocks.first().is_some_and(|c| c.time % 24000 == 6000 && c.rate == 0.0)).expect("the player's fixed time");
+    assert_eq!(time.clocks.len(), 1);
+    alice.find(TIMEOUT, |g: &play::GameEvent| g.event == play::game_event::START_RAINING).expect("the player's own rain");
+    expect_line(&mut alice, "playerstate: ok");
+    // A world's border and weather: border changes reach the world's players.
+    alice.clear_backlog();
+    alice.command("apitest worldstate");
+    alice.find(TIMEOUT, |c: &play::SetBorderCenter| c.center_x == 100.0 && c.center_z == 50.0).expect("the new border center");
+    alice.find(TIMEOUT, |b: &play::SetBorderSize| b.size == 200.0).expect("the new border size");
+    alice.find(TIMEOUT, |l: &play::SetBorderLerpSize| l.old_size == 200.0 && l.new_size == 100.0 && l.lerp_time.0 == 400).expect("the border moving");
+    expect_line(&mut alice, "worldstate: ok");
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

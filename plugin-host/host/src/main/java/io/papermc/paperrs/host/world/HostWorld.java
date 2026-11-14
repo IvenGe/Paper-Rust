@@ -362,14 +362,313 @@ public final class HostWorld extends AbstractWorld {
         return this.server.difficulty();
     }
 
+    // --- weather (CraftWorld: the events first, then the server's weather) -----------------
+
     @Override
     public boolean hasStorm() {
-        return false;
+        return Values.bool(this.info(), "raining", false);
+    }
+
+    @Override
+    public void setStorm(final boolean hasStorm) {
+        if (this.hasStorm() == hasStorm) {
+            this.weather("raining", hasStorm, "rain_time", 0, "clear_time", 0);
+            return;
+        }
+        final org.bukkit.event.weather.WeatherChangeEvent event = new org.bukkit.event.weather.WeatherChangeEvent(this, hasStorm, org.bukkit.event.weather.WeatherChangeEvent.Cause.PLUGIN);
+        if (!event.callEvent()) {
+            return;
+        }
+        this.weather("raining", hasStorm, "rain_time", 0, "clear_time", 0);
+    }
+
+    @Override
+    public int getWeatherDuration() {
+        return Values.i32(this.info(), "rain_time", 0);
+    }
+
+    @Override
+    public void setWeatherDuration(final int duration) {
+        this.weather("rain_time", duration);
     }
 
     @Override
     public boolean isThundering() {
+        return Values.bool(this.info(), "thundering", false);
+    }
+
+    @Override
+    public void setThundering(final boolean thundering) {
+        if (this.isThundering() != thundering) {
+            final org.bukkit.event.weather.ThunderChangeEvent event = new org.bukkit.event.weather.ThunderChangeEvent(this, thundering, org.bukkit.event.weather.ThunderChangeEvent.Cause.PLUGIN);
+            if (!event.callEvent()) {
+                return;
+            }
+        }
+        this.weather("thundering", thundering, "thunder_time", 0, "clear_time", 0);
+    }
+
+    @Override
+    public int getThunderDuration() {
+        return Values.i32(this.info(), "thunder_time", 0);
+    }
+
+    @Override
+    public void setThunderDuration(final int duration) {
+        this.weather("thunder_time", duration);
+    }
+
+    @Override
+    public boolean isClearWeather() {
+        return !this.hasStorm() && !this.isThundering();
+    }
+
+    @Override
+    public void setClearWeatherDuration(final int duration) {
+        this.weather("clear_time", duration);
+    }
+
+    @Override
+    public int getClearWeatherDuration() {
+        return Values.i32(this.info(), "clear_time", 0);
+    }
+
+    private void weather(final Object... kv) {
+        final Map<String, Object> args = Values.of(kv);
+        args.put("world", this.name);
+        this.server.call("world.set_weather", args);
+    }
+
+    private final HostWorldBorder border = new HostWorldBorder(this);
+
+    // --- chunks (CraftWorld) ----------------------------------------------------------------
+
+    private Map<String, Object> chunkArgs(final int x, final int z, final Object... kv) {
+        final Map<String, Object> args = Values.of(kv);
+        args.put("world", this.name);
+        args.put("x", x);
+        args.put("z", z);
+        return args;
+    }
+
+    /** Loads (or generates) the chunk now, as {@code CraftWorld.getChunkAt}. */
+    @Override
+    public org.bukkit.Chunk getChunkAt(final int x, final int z) {
+        this.server.call("world.load_chunk", this.chunkArgs(x, z, "generate", true));
+        return new HostChunk(this, x, z);
+    }
+
+    @Override
+    public org.bukkit.Chunk getChunkAt(final int x, final int z, final boolean generate) {
+        return generate ? this.getChunkAt(x, z) : new HostChunk(this, x, z);
+    }
+
+    @Override
+    public org.bukkit.Chunk getChunkAt(final Block block) {
+        com.google.common.base.Preconditions.checkArgument(block != null, "null block");
+        return this.getChunkAt(block.getX() >> 4, block.getZ() >> 4);
+    }
+
+    @Override
+    public boolean isChunkLoaded(final org.bukkit.Chunk chunk) {
+        com.google.common.base.Preconditions.checkArgument(chunk != null, "null chunk");
+        return this.isChunkLoaded(chunk.getX(), chunk.getZ());
+    }
+
+    @Override
+    public org.bukkit.Chunk[] getLoadedChunks() {
+        final List<Object> loaded = Values.list(this.server.call("world.loaded_chunks", Values.of("world", this.name)));
+        final org.bukkit.Chunk[] out = new org.bukkit.Chunk[loaded.size()];
+        for (int i = 0; i < out.length; i++) {
+            final List<Object> p = Values.list(loaded.get(i));
+            out[i] = new HostChunk(this, ((Number) p.get(0)).intValue(), ((Number) p.get(1)).intValue());
+        }
+        return out;
+    }
+
+    @Override
+    public int getChunkCount() {
+        return Values.list(this.server.call("world.loaded_chunks", Values.of("world", this.name))).size();
+    }
+
+    @Override
+    public void loadChunk(final org.bukkit.Chunk chunk) {
+        this.loadChunk(chunk.getX(), chunk.getZ(), true);
+    }
+
+    @Override
+    public boolean isChunkGenerated(final int x, final int z) {
+        return Boolean.TRUE.equals(this.server.call("world.is_chunk_generated", this.chunkArgs(x, z)));
+    }
+
+    @Override
+    public boolean isChunkInUse(final int x, final int z) {
+        return Boolean.TRUE.equals(this.server.call("world.chunk_in_use", this.chunkArgs(x, z)));
+    }
+
+    @Override
+    public boolean loadChunk(final int x, final int z, final boolean generate) {
+        return Boolean.TRUE.equals(this.server.call("world.load_chunk", this.chunkArgs(x, z, "generate", generate)));
+    }
+
+    /** The chunk goes when nothing keeps it (the next unload pass); in use, it stays. */
+    @Override
+    public boolean unloadChunk(final int x, final int z, final boolean save) {
+        return !this.isChunkLoaded(x, z) || !this.isChunkInUse(x, z);
+    }
+
+    @Override
+    public boolean unloadChunkRequest(final int x, final int z) {
+        return true;
+    }
+
+    @Override
+    public boolean refreshChunk(final int x, final int z) {
+        return true;
+    }
+
+    @Override
+    public Collection<Player> getPlayersSeeingChunk(final org.bukkit.Chunk chunk) {
+        return this.getPlayersSeeingChunk(chunk.getX(), chunk.getZ());
+    }
+
+    @Override
+    public Collection<Player> getPlayersSeeingChunk(final int x, final int z) {
+        final List<Player> out = new ArrayList<>();
+        for (final Object uuid : Values.list(this.server.call("world.players_seeing_chunk", this.chunkArgs(x, z)))) {
+            final Player player = this.server.getPlayer(UUID.fromString(uuid.toString()));
+            if (player != null) {
+                out.add(player);
+            }
+        }
+        return out;
+    }
+
+    private List<Object> forceLoad(final int x, final int z, final @Nullable Boolean forced) {
+        final Map<String, Object> args = this.chunkArgs(x, z);
+        if (forced != null) {
+            args.put("forced", forced);
+        }
+        return Values.list(this.server.call("world.force_load", args));
+    }
+
+    @Override
+    public boolean isChunkForceLoaded(final int x, final int z) {
+        for (final Object p : this.forceLoad(x, z, null)) {
+            final List<Object> pos = Values.list(p);
+            if (((Number) pos.get(0)).intValue() == x && ((Number) pos.get(1)).intValue() == z) {
+                return true;
+            }
+        }
         return false;
+    }
+
+    @Override
+    public void setChunkForceLoaded(final int x, final int z, final boolean forced) {
+        this.forceLoad(x, z, forced);
+    }
+
+    @Override
+    public Collection<org.bukkit.Chunk> getForceLoadedChunks() {
+        final List<org.bukkit.Chunk> out = new ArrayList<>();
+        for (final Object p : this.forceLoad(0, 0, null)) {
+            final List<Object> pos = Values.list(p);
+            out.add(new HostChunk(this, ((Number) pos.get(0)).intValue(), ((Number) pos.get(1)).intValue()));
+        }
+        return out;
+    }
+
+    /** Plugin chunk tickets by chunk key; the server holds one ticket per chunk with any. */
+    private final Map<Long, java.util.Set<org.bukkit.plugin.Plugin>> pluginTickets = new java.util.HashMap<>();
+
+    @Override
+    public boolean addPluginChunkTicket(final int x, final int z, final org.bukkit.plugin.Plugin plugin) {
+        com.google.common.base.Preconditions.checkArgument(plugin != null, "null plugin");
+        com.google.common.base.Preconditions.checkArgument(plugin.isEnabled(), "plugin is not enabled");
+        final java.util.Set<org.bukkit.plugin.Plugin> plugins = this.pluginTickets.computeIfAbsent(org.bukkit.Chunk.getChunkKey(x, z), k -> new java.util.HashSet<>());
+        if (!plugins.add(plugin)) {
+            return false;
+        }
+        if (plugins.size() == 1) {
+            this.server.call("world.chunk_ticket", this.chunkArgs(x, z, "add", true));
+        }
+        return true;
+    }
+
+    @Override
+    public boolean removePluginChunkTicket(final int x, final int z, final org.bukkit.plugin.Plugin plugin) {
+        com.google.common.base.Preconditions.checkNotNull(plugin, "null plugin");
+        final long key = org.bukkit.Chunk.getChunkKey(x, z);
+        final java.util.Set<org.bukkit.plugin.Plugin> plugins = this.pluginTickets.get(key);
+        if (plugins == null || !plugins.remove(plugin)) {
+            return false;
+        }
+        if (plugins.isEmpty()) {
+            this.pluginTickets.remove(key);
+            this.server.call("world.chunk_ticket", this.chunkArgs(x, z, "add", false));
+        }
+        return true;
+    }
+
+    @Override
+    public void removePluginChunkTickets(final org.bukkit.plugin.Plugin plugin) {
+        com.google.common.base.Preconditions.checkNotNull(plugin, "null plugin");
+        for (final long key : List.copyOf(this.pluginTickets.keySet())) {
+            this.removePluginChunkTicket((int) key, (int) (key >> 32), plugin);
+        }
+    }
+
+    @Override
+    public Collection<org.bukkit.plugin.Plugin> getPluginChunkTickets(final int x, final int z) {
+        return List.copyOf(this.pluginTickets.getOrDefault(org.bukkit.Chunk.getChunkKey(x, z), java.util.Set.of()));
+    }
+
+    @Override
+    public Map<org.bukkit.plugin.Plugin, Collection<org.bukkit.Chunk>> getPluginChunkTickets() {
+        final Map<org.bukkit.plugin.Plugin, Collection<org.bukkit.Chunk>> out = new java.util.HashMap<>();
+        for (final Map.Entry<Long, java.util.Set<org.bukkit.plugin.Plugin>> e : this.pluginTickets.entrySet()) {
+            final org.bukkit.Chunk chunk = new HostChunk(this, (int) (long) e.getKey(), (int) (e.getKey() >> 32));
+            for (final org.bukkit.plugin.Plugin plugin : e.getValue()) {
+                out.computeIfAbsent(plugin, p -> new ArrayList<>()).add(chunk);
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public Collection<org.bukkit.Chunk> getIntersectingChunks(final BoundingBox box) {
+        final List<org.bukkit.Chunk> out = new ArrayList<>();
+        for (int x = (int) Math.floor(box.getMinX()) >> 4; x <= (int) Math.floor(box.getMaxX()) >> 4; x++) {
+            for (int z = (int) Math.floor(box.getMinZ()) >> 4; z <= (int) Math.floor(box.getMaxZ()) >> 4; z++) {
+                out.add(this.getChunkAt(x, z));
+            }
+        }
+        return out;
+    }
+
+    /** The chunk is loaded on the main thread now, and the callback gets it right after. */
+    @Override
+    public void getChunkAtAsync(final int x, final int z, final boolean gen, final boolean urgent, final Consumer<? super org.bukkit.Chunk> cb) {
+        if (!gen && !this.isChunkGenerated(x, z)) {
+            cb.accept(null);
+            return;
+        }
+        cb.accept(this.getChunkAt(x, z));
+    }
+
+    @Override
+    public void getChunksAtAsync(final int minX, final int minZ, final int maxX, final int maxZ, final boolean urgent, final Runnable cb) {
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                this.getChunkAt(x, z);
+            }
+        }
+        cb.run();
+    }
+
+    @Override
+    public org.bukkit.WorldBorder getWorldBorder() {
+        return this.border;
     }
 
     @Override

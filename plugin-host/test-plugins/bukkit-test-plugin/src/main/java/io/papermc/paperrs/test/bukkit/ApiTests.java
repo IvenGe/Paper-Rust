@@ -127,6 +127,8 @@ final class ApiTests implements Listener, CommandExecutor {
                 }
                 case "villagers" -> this.villagers((Player) sender);
                 case "legacy" -> this.legacy(sender);
+                case "playerstate" -> this.playerState((Player) sender);
+                case "worldstate" -> this.worldState((Player) sender);
                 case "merchant" -> this.merchant((Player) sender);
                 case "career" -> this.career((Player) sender);
                 case "riding" -> this.riding((Player) sender);
@@ -266,6 +268,133 @@ final class ApiTests implements Listener, CommandExecutor {
      * {@code LEGACY_} constants in {@code Material.values()} (nor in an enum switch), while the
      * legacy constants it does name still convert.
      */
+    /** The world border and the weather of a world. */
+    private void worldState(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final org.bukkit.World world = player.getWorld();
+        final org.bukkit.WorldBorder border = world.getWorldBorder();
+        check(failures, border.getSize() == border.getMaxSize() && border.isInside(player.getLocation()), "default border " + border.getSize());
+        border.setCenter(100, 50);
+        border.setSize(200);
+        check(failures, border.getSize() == 200 && border.getCenter().getX() == 100 && border.getCenter().getZ() == 50, "border " + border.getSize() + " at " + border.getCenter());
+        check(failures, border.isInside(new org.bukkit.Location(world, 150, 64, 100)) && !border.isInside(new org.bukkit.Location(world, 250, 64, 50)), "inside the border");
+        border.setDamageAmount(1.5);
+        border.setWarningDistance(7);
+        check(failures, border.getDamageAmount() == 1.5 && border.getWarningDistance() == 7, "border damage and warning");
+        border.changeSize(100, 400);
+        check(failures, border.getSize() <= 200 && border.getSize() > 100, "border moving " + border.getSize());
+        border.reset();
+        check(failures, border.getSize() == border.getMaxSize() && border.getCenter().getX() == 0, "border reset");
+        world.setStorm(true);
+        world.setThundering(true);
+        check(failures, world.hasStorm() && world.isThundering() && !world.isClearWeather(), "storm");
+        world.setWeatherDuration(1200);
+        check(failures, world.getWeatherDuration() == 1200, "weather duration " + world.getWeatherDuration());
+        world.setStorm(false);
+        world.setThundering(false);
+        check(failures, world.isClearWeather(), "clear");
+        // Chunks: loading a far chunk now (as getChunkAt does on Paper), forced chunks, tickets.
+        check(failures, !world.isChunkGenerated(500, 500) && !world.isChunkLoaded(40, 40), "far chunks not there yet");
+        final org.bukkit.Chunk far = world.getChunkAt(40, 40);
+        check(failures, far.isLoaded() && far.isGenerated() && world.isChunkLoaded(40, 40), "far chunk loaded");
+        check(failures, far.getBlock(0, -61, 0).getType() == Material.GRASS_BLOCK && far.getBlock(3, -64, 3).getType() == Material.BEDROCK, "far chunk's blocks " + far.getBlock(0, -61, 0).getType());
+        check(failures, java.util.Arrays.asList(world.getLoadedChunks()).contains(far) && player.getLocation().getChunk().isLoaded(), "loaded chunks");
+        world.setChunkForceLoaded(41, 41, true);
+        check(failures, world.isChunkForceLoaded(41, 41) && world.getForceLoadedChunks().contains(world.getChunkAt(41, 41, false)), "forced chunk");
+        world.setChunkForceLoaded(41, 41, false);
+        check(failures, !world.isChunkForceLoaded(41, 41), "forced chunk released");
+        check(failures, world.addPluginChunkTicket(42, 42, this.plugin) && !world.addPluginChunkTicket(42, 42, this.plugin) && world.getPluginChunkTickets(42, 42).contains(this.plugin), "plugin ticket");
+        check(failures, world.removePluginChunkTicket(42, 42, this.plugin) && world.getPluginChunkTickets(42, 42).isEmpty(), "plugin ticket removed");
+        report(player, "worldstate", failures);
+    }
+
+    /** Bukkit's player and entity setters that are plain state, read back. */
+    @SuppressWarnings("deprecation")
+    private void playerState(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        player.setWalkSpeed(0.4f);
+        player.setFlySpeed(0.3f);
+        check(failures, Math.abs(player.getWalkSpeed() - 0.4f) < 1e-6 && Math.abs(player.getFlySpeed() - 0.3f) < 1e-6, "speeds " + player.getWalkSpeed() + " " + player.getFlySpeed());
+        try {
+            player.setWalkSpeed(2f);
+            failures.add("walk speed 2 accepted");
+        } catch (IllegalArgumentException expected) {
+            // "Speed value (2.0) need to be between -1f and 1f"
+        }
+        player.setPlayerTime(6000, false);
+        check(failures, player.getPlayerTimeOffset() == 6000 && !player.isPlayerTimeRelative() && player.getPlayerTime() % 24000 == 6000, "player time " + player.getPlayerTime());
+        player.setPlayerWeather(org.bukkit.WeatherType.DOWNFALL);
+        check(failures, player.getPlayerWeather() == org.bukkit.WeatherType.DOWNFALL, "player weather");
+        player.setInvulnerable(true);
+        final double health = player.getHealth();
+        player.damage(4);
+        check(failures, player.isInvulnerable() && player.getHealth() == health, "invulnerable " + player.getHealth());
+        player.setInvulnerable(false);
+        player.setGlowing(true);
+        player.setSilent(true);
+        player.setGravity(false);
+        player.setCustomName("Champion");
+        check(failures, player.isGlowing() && player.isSilent() && !player.hasGravity() && "Champion".equals(player.getCustomName()), "flags and name");
+        player.setGlowing(false);
+        player.setSilent(false);
+        player.setGravity(true);
+        player.setCustomName(null);
+        check(failures, player.addScoreboardTag("vip") && !player.addScoreboardTag("vip") && player.getScoreboardTags().contains("vip"), "tags " + player.getScoreboardTags());
+        check(failures, player.removeScoreboardTag("vip") && player.getScoreboardTags().isEmpty(), "tag removed");
+        player.setFireTicks(100);
+        player.setFallDistance(5f);
+        player.setMaximumAir(400);
+        player.setRemainingAir(350);
+        player.setFreezeTicks(10);
+        player.setExhaustion(1.5f);
+        check(failures, player.getFireTicks() == 100 && player.getFallDistance() == 5f && player.getMaximumAir() == 400 && player.getRemainingAir() == 350
+            && player.getFreezeTicks() == 10 && player.getExhaustion() == 1.5f, "air, fire, falling " + player.getFireTicks() + " " + player.getRemainingAir());
+        player.setFireTicks(0);
+        player.setFreezeTicks(0);
+        player.setFallDistance(0f);
+        player.setLevel(5);
+        player.setExp(0.5f);
+        check(failures, player.getLevel() == 5 && player.getExp() == 0.5f && player.getExpToLevel() == 17, "experience " + player.getLevel() + " " + player.getExp());
+        player.setLevel(0);
+        player.setExp(0f);
+        final org.bukkit.Location target = player.getLocation().add(100, 0, 50);
+        player.setCompassTarget(target);
+        check(failures, player.getCompassTarget().getBlockX() == target.getBlockX() && player.getCompassTarget().getBlockZ() == target.getBlockZ(), "compass target");
+        player.setRespawnLocation(target, true);
+        check(failures, player.getPotentialRespawnLocation() != null && player.getPotentialRespawnLocation().getBlockX() == target.getBlockX() && player.getRespawnLocation() == null,
+            "respawn point (no bed there)");
+        player.setRespawnLocation(null);
+        player.setCooldown(Material.ENDER_PEARL, 40);
+        check(failures, player.hasCooldown(Material.ENDER_PEARL) && player.getCooldown(Material.ENDER_PEARL) > 30, "cooldown " + player.getCooldown(Material.ENDER_PEARL));
+        player.setCooldown(Material.ENDER_PEARL, 0);
+        player.setHealthScale(40);
+        check(failures, player.isHealthScaled() && player.getHealthScale() == 40, "health scale");
+        player.setHealthScaled(false);
+        check(failures, !player.isHealthScaled(), "health not scaled");
+        final org.bukkit.entity.Pig pig = player.getWorld().spawn(player.getLocation().add(3, 0, 0), org.bukkit.entity.Pig.class);
+        player.hideEntity(this.plugin, pig);
+        check(failures, !player.canSee(pig), "pig hidden");
+        player.showEntity(this.plugin, pig);
+        check(failures, player.canSee(pig), "pig shown");
+        final boolean[] ran = {false};
+        check(failures, pig.getScheduler().run(this.plugin, task -> ran[0] = true, null) != null && player.getScheduler().run(this.plugin, task -> { }, null) != null, "entity schedulers");
+        pig.remove();
+        check(failures, player.getClientOption(com.destroystokyo.paper.ClientOption.LOCALE) != null && player.getClientOption(com.destroystokyo.paper.ClientOption.MAIN_HAND) != null, "client options");
+        check(failures, player.getTargetBlock(null, 10) != null && !player.getLineOfSight(null, 10).isEmpty(), "line of sight");
+        player.setSleepingIgnored(true);
+        check(failures, player.isSleepingIgnored(), "sleeping ignored");
+        player.setSleepingIgnored(false);
+        player.updateInventory();
+        player.setPlayerListHeaderFooter("Head", "Foot");
+        check(failures, "Head".equals(player.getPlayerListHeader()) && "Foot".equals(player.getPlayerListFooter()), "tab list");
+        player.sendExperienceChange(0.25f, 3);
+        player.sendTitle(new com.destroystokyo.paper.Title("Hello", "World"));
+        final String part = player.getName().substring(1, 3);
+        check(failures, Bukkit.matchPlayer(part).contains(player) && player.getUniqueId().equals(Bukkit.getPlayerUniqueId(player.getName())), "matchPlayer " + part);
+        check(failures, Bukkit.isOwnedByCurrentRegion(player) && Bukkit.isGlobalTickThread() && Bukkit.getSpawnLimit(org.bukkit.entity.SpawnCategory.MONSTER) == 70, "regions and limits");
+        report(player, "playerstate", failures);
+    }
+
     @SuppressWarnings("deprecation")
     private void legacy(final CommandSender sender) {
         final List<String> failures = new ArrayList<>();

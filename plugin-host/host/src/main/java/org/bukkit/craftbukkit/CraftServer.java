@@ -927,6 +927,285 @@ public final class CraftServer extends AbstractServer {
         return this.hasWhitelist();
     }
 
+    // --- more of Bukkit's Server (CraftServer's behaviour) --------------------------------
+
+    @Override
+    public List<Player> matchPlayer(final String partialName) {
+        com.google.common.base.Preconditions.checkArgument(partialName != null, "partialName cannot be null");
+        final List<Player> matched = new java.util.ArrayList<>();
+        for (final Player player : this.getOnlinePlayers()) {
+            final String name = player.getName();
+            if (partialName.equalsIgnoreCase(name)) {
+                // An exact match wins.
+                matched.clear();
+                matched.add(player);
+                break;
+            }
+            if (name.toLowerCase(Locale.ROOT).contains(partialName.toLowerCase(Locale.ROOT))) {
+                matched.add(player);
+            }
+        }
+        return matched;
+    }
+
+    @Override
+    public @Nullable UUID getPlayerUniqueId(final String playerName) {
+        final Player online = this.getPlayerExact(playerName);
+        if (online != null) {
+            return online.getUniqueId();
+        }
+        final OfflinePlayer cached = this.getOfflinePlayerIfCached(playerName);
+        return cached == null ? null : cached.getUniqueId();
+    }
+
+    // One main thread: it owns every region (Folia's checks, as Paper answers them).
+    @Override
+    public boolean isGlobalTickThread() {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final World world, final io.papermc.paper.math.Position position) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final World world, final io.papermc.paper.math.Position position, final int squareRadiusChunks) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final org.bukkit.Location location) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final org.bukkit.Location location, final int squareRadiusChunks) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final World world, final int chunkX, final int chunkZ) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final World world, final int chunkX, final int chunkZ, final int squareRadiusChunks) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final World world, final int minChunkX, final int minChunkZ, final int maxChunkX, final int maxChunkZ) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isOwnedByCurrentRegion(final org.bukkit.entity.Entity entity) {
+        return this.isPrimaryThread();
+    }
+
+    @Override
+    public boolean isTickingWorlds() {
+        return false;
+    }
+
+    @Override
+    public boolean isPaused() {
+        return false;
+    }
+
+    @Override
+    public void allowPausing(final Plugin plugin, final boolean value) {
+    }
+
+    @Override
+    public org.bukkit.profile.PlayerProfile createPlayerProfile(final @Nullable UUID uniqueId, final @Nullable String name) {
+        return this.createProfile(uniqueId, name);
+    }
+
+    @Override
+    public org.bukkit.profile.PlayerProfile createPlayerProfile(final UUID uniqueId) {
+        return this.createProfile(uniqueId);
+    }
+
+    @Override
+    public org.bukkit.profile.PlayerProfile createPlayerProfile(final String name) {
+        return this.createProfile(name);
+    }
+
+    @Override
+    public PlayerProfile createProfileExact(final @Nullable UUID uuid, final @Nullable String name) {
+        return this.createProfile(uuid, name);
+    }
+
+    @Override
+    public java.util.Set<String> getListeningPluginChannels() {
+        return this.getMessenger().getIncomingChannels();
+    }
+
+    @Override
+    public void sendPluginMessage(final Plugin source, final String channel, final byte[] message) {
+        org.bukkit.plugin.messaging.StandardMessenger.validatePluginMessage(this.getMessenger(), source, channel, message);
+        for (final Player player : this.getOnlinePlayers()) {
+            player.sendPluginMessage(source, channel, message);
+        }
+    }
+
+    private int idleTimeout = -1;
+
+    @Override
+    public int getIdleTimeout() {
+        return this.idleTimeout >= 0 ? this.idleTimeout : Values.i32(this.welcome, "player_idle_timeout", 0);
+    }
+
+    @Override
+    public void setIdleTimeout(final int threshold) {
+        this.idleTimeout = threshold;
+    }
+
+    /** Bukkit's defaults (bukkit.yml {@code spawn-limits}), which Paper-RS's spawning uses. */
+    @Override
+    public int getSpawnLimit(final org.bukkit.entity.SpawnCategory spawnCategory) {
+        com.google.common.base.Preconditions.checkArgument(spawnCategory != null, "SpawnCategory cannot be null");
+        return switch (spawnCategory) {
+            case MONSTER -> 70;
+            case ANIMAL -> 10;
+            case WATER_ANIMAL -> 5;
+            case WATER_AMBIENT -> 20;
+            case WATER_UNDERGROUND_CREATURE -> 5;
+            case AMBIENT -> 15;
+            case AXOLOTL -> 5;
+            default -> -1;
+        };
+    }
+
+    /** bukkit.yml {@code ticks-per}: animals every 400 ticks, the rest every tick. */
+    @Override
+    public int getTicksPerSpawns(final org.bukkit.entity.SpawnCategory spawnCategory) {
+        com.google.common.base.Preconditions.checkArgument(spawnCategory != null, "SpawnCategory cannot be null");
+        return spawnCategory == org.bukkit.entity.SpawnCategory.ANIMAL ? 400 : 1;
+    }
+
+    private String property(final String key, final String def) {
+        final Object value = Values.map(this.welcome.get("properties")).get(key);
+        return value == null ? def : value.toString();
+    }
+
+    @Override
+    public String getWorldType() {
+        return Values.str(this.welcome, "level_type", "minecraft:normal");
+    }
+
+    @Override
+    public boolean getGenerateStructures() {
+        return Values.bool(this.welcome, "generate_structures", true);
+    }
+
+    @Override
+    public int getMaxWorldSize() {
+        return Integer.parseInt(this.property("max-world-size", "29999984"));
+    }
+
+    @Override
+    public boolean getHideOnlinePlayers() {
+        return Values.bool(this.welcome, "hide_online_players", false);
+    }
+
+    @Override
+    public boolean isEnforcingSecureProfiles() {
+        return Boolean.parseBoolean(this.property("enforce-secure-profile", "true")) && this.getOnlineMode();
+    }
+
+    @Override
+    public boolean isAcceptingTransfers() {
+        return Values.bool(this.welcome, "accepts_transfers", false);
+    }
+
+    @Override
+    public boolean forcesDefaultGameMode() {
+        return Values.bool(this.welcome, "force_gamemode", false);
+    }
+
+    @Override
+    public long getConnectionThrottle() {
+        return 4000;
+    }
+
+    @Override
+    public String getShutdownMessage() {
+        return "Server closed";
+    }
+
+    @Override
+    public net.kyori.adventure.text.Component shutdownMessage() {
+        return net.kyori.adventure.text.Component.text(this.getShutdownMessage());
+    }
+
+    @Override
+    public String getResourcePack() {
+        return this.property("resource-pack", "");
+    }
+
+    @Override
+    public String getResourcePackHash() {
+        return this.property("resource-pack-sha1", "").toUpperCase(Locale.ROOT);
+    }
+
+    @Override
+    public String getResourcePackPrompt() {
+        return this.property("resource-pack-prompt", "");
+    }
+
+    @Override
+    public boolean isResourcePackRequired() {
+        return Boolean.parseBoolean(this.property("require-resource-pack", "false"));
+    }
+
+    @Override
+    public int getMaxChainedNeighborUpdates() {
+        return Integer.parseInt(this.property("max-chained-neighbor-updates", "1000000"));
+    }
+
+    @Override
+    public int getPauseWhenEmptyTime() {
+        return Integer.parseInt(this.property("pause-when-empty-seconds", "60"));
+    }
+
+    @Override
+    public java.util.List<String> getInitialEnabledPacks() {
+        return List.of("vanilla");
+    }
+
+    @Override
+    public java.util.List<String> getInitialDisabledPacks() {
+        return List.of();
+    }
+
+    @Override
+    public boolean suggestPlayerNamesWhenNullTabCompletions() {
+        return true;
+    }
+
+    @Override
+    public java.nio.file.Path getLevelDirectory() {
+        return this.getWorldContainer().toPath().resolve(this.getWorlds().getFirst().getName());
+    }
+
+    @Override
+    public long[] getTickTimes() {
+        // The average of the last 100 ticks, as a series (Paper keeps each tick's time).
+        final long mspt = (long) (this.getAverageTickTime() * 1_000_000L);
+        final long[] out = new long[100];
+        java.util.Arrays.fill(out, mspt);
+        return out;
+    }
+
+    @Override
+    @SuppressWarnings({"unchecked", "deprecation"})
+    public <T extends org.bukkit.Keyed> org.bukkit.@Nullable Registry<T> getRegistry(final Class<T> aClass) {
+        return (org.bukkit.Registry<T>) io.papermc.paper.registry.RegistryAccess.registryAccess().getRegistry(aClass);
+    }
+
     @Override
     public double[] getTPS() {
         final List<Object> tps = Values.list(Values.map(this.call("server.status", Values.of())).get("tps"));

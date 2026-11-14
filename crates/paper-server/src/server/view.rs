@@ -36,10 +36,10 @@ fn player_metadata(player: &Player) -> Vec<u8> {
     if player.fire_ticks > 0 {
         bits |= flags::ON_FIRE;
     }
-    if player.effects.iter().any(|e| e.name() == "minecraft:invisibility") {
+    if player.api.invisible || player.effects.iter().any(|e| e.name() == "minecraft:invisibility") {
         bits |= flags::INVISIBLE;
     }
-    if player.effects.iter().any(|e| e.name() == "minecraft:glowing") {
+    if player.api.glowing || player.effects.iter().any(|e| e.name() == "minecraft:glowing") {
         bits |= flags::GLOWING;
     }
     if player.sneaking {
@@ -65,7 +65,16 @@ fn player_metadata(player: &Player) -> Vec<u8> {
     Metadata::new()
         .byte(index::FLAGS, bits)
         .varint(index::AIR_TICKS, player.air)
+        .optional_component(index::CUSTOM_NAME, player.api.custom_name.as_ref())
+        .boolean(index::CUSTOM_NAME_VISIBLE, player.api.custom_name_visible)
+        .boolean(index::SILENT, player.api.silent)
+        .boolean(index::NO_GRAVITY, player.api.no_gravity)
         .pose(index::POSE, pose)
+        .varint(index::FROZEN_TICKS, player.api.freeze_ticks)
+        // `DATA_ARROW_COUNT_ID`, `DATA_STINGER_COUNT_ID`, `DATA_SCORE_ID`
+        .varint(12, player.api.arrows_in_body)
+        .varint(13, player.api.stingers_in_body)
+        .varint(18, player.api.score)
         .byte(index::HAND_STATES, hands)
         .float(index::HEALTH, player.health.max(0.0))
         .byte(index::SKIN_PARTS, player.settings.skin_parts as i8)
@@ -318,11 +327,12 @@ impl Server {
         for &viewer_id in &ids {
             let Some(viewer) = self.players.get(&viewer_id) else { continue };
             let (world, center, radius) = (viewer.world, viewer.view.center, viewer.view.radius);
+            // Players a plugin hid from the viewer (`Player.hidePlayer`) are left out.
             let now_visible: HashSet<i32> = ids
                 .iter()
                 .copied()
                 .filter(|id| *id != viewer_id)
-                .filter(|id| self.players.get(id).is_some_and(|t| t.world == world && ChunkView::contains(center, radius, t.loc.chunk())))
+                .filter(|id| self.players.get(id).is_some_and(|t| t.world == world && ChunkView::contains(center, radius, t.loc.chunk()) && !viewer.api.hidden.contains(&t.uuid())))
                 .collect();
             let appeared: Vec<i32> = now_visible.difference(&viewer.visible).copied().collect();
             let vanished: Vec<i32> = viewer.visible.difference(&now_visible).copied().collect();

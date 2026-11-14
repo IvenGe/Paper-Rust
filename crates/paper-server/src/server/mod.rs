@@ -217,6 +217,8 @@ pub struct Server {
     /// End gateways cooling down after a teleport: (world, gateway) -> tick it was used.
     pub gateway_cooldowns: HashMap<(usize, paper_protocol::codec::BlockPos), u64>,
     tasks: Receiver<MainTask>,
+    /// Tasks put aside while the main thread waited for chunks (`load_chunk_now`).
+    deferred: std::collections::VecDeque<MainTask>,
     status_dirty: bool,
 }
 
@@ -409,6 +411,7 @@ impl Server {
             gateway_cooldowns: HashMap::new(),
             vanilla,
             tasks,
+            deferred: Default::default(),
             status_dirty: true,
         };
         // The main scoreboard lives with the main world.
@@ -541,6 +544,10 @@ impl Server {
     pub fn run(&mut self) {
         let mut next_tick = Instant::now();
         while self.running {
+            // Tasks put aside while waiting for chunks come first.
+            while let Some(task) = self.deferred.pop_front() {
+                self.handle_task(task);
+            }
             // Until the next tick is due, handle tasks the moment they arrive.
             loop {
                 match self.tasks.recv_deadline(next_tick) {
@@ -620,13 +627,16 @@ impl Server {
         }
         // Rain, thunder and what they do (see `weather`).
         self.tick_weather();
+        // World borders moving to a new size (clients move theirs themselves).
+        for world in &mut self.worlds {
+            world.border.tick();
+        }
         // Scheduled block and fluid ticks and block events (see `block_updates`).
         self.tick_block_updates();
         // Clients run their own clock; resynchronise once a second like vanilla.
         if self.tick % 20 == 0 {
             for index in 0..self.worlds.len() {
-                let payload = self.time_payload(index);
-                self.broadcast_payload_in_world(index, payload);
+                self.broadcast_time(index);
             }
         }
 
@@ -734,10 +744,93 @@ impl Server {
         Bytes::from(encode_packet(&play::SetTime { world_age: w.age, clocks }))
     }
 
+    /// The time a player sees (`ServerPlayer.getPlayerTime`): the world's, or the one a
+    /// plugin set (`Player.setPlayerTime`), relative to the world's time or fixed.
+    pub fn player_time(&self, world: usize, player: &Player) -> i64 {
+        let day_time = self.worlds[world].day_time;
+        match player.api.time {
+            Some((offset, true)) => day_time + offset,
+            Some((offset, false)) => day_time - day_time.rem_euclid(24000) + offset,
+            None => day_time,
+        }
+    }
+
+    /// The `SetTime` payload for one player in a world: as the world's unless a plugin gave
+    /// the player its own time, which stands still unless it is relative.
+    fn time_payload_for(&self, world: usize, player: &Player) -> Bytes {
+        let Some((_, relative)) = player.api.time else { return self.time_payload(world) };
+        let w = &self.worlds[world];
+        let time = self.player_time(world, player);
+        let rate = if relative && w.daylight_cycle { 1.0 } else { 0.0 };
+        let clocks = w.clock.map(|clock| play::ClockState { clock, time, fraction: 0.0, rate }).into_iter().collect();
+        Bytes::from(encode_packet(&play::SetTime { world_age: w.age, clocks }))
+    }
+
+    /// Sends the time to everyone in a world, each player's own where a plugin set one.
+    pub fn broadcast_time(&self, world: usize) {
+        let shared = self.time_payload(world);
+        for player in self.players.values().filter(|p| p.world == world) {
+            if player.api.time.is_some() {
+                player.conn.send_payload(self.time_payload_for(world, player));
+            } else {
+                player.conn.send_payload(shared.clone());
+            }
+        }
+    }
+
+    /// Loads or generates a chunk now (`World.getChunkAt` for plugins): drives the chunk
+    /// pipeline until the chunk is ready, handling only chunk results meanwhile and putting
+    /// other tasks aside for the main loop. The chunk stays until the next unload pass finds
+    /// nobody needs it. Returns whether it is ready.
+    pub fn load_chunk_now(&mut self, world: usize, pos: crate::world::chunk::ChunkPos) -> bool {
+        if self.worlds[world].is_ready(pos) {
+            return true;
+        }
+        self.worlds[world].add_ticket(pos);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let workers = self.workers.clone();
+        while !self.worlds[world].is_ready(pos) && Instant::now() < deadline {
+            self.worlds[world].pump(&workers);
+            match self.tasks.recv_timeout(Duration::from_millis(2)) {
+                Ok(task @ MainTask::World { .. }) => self.handle_task(task),
+                Ok(other) => self.deferred.push_back(other),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        self.worlds[world].remove_ticket(pos);
+        let ready = self.worlds[world].is_ready(pos);
+        if !ready {
+            log::warn!("Chunk {},{} of {} took too long to load for a plugin", pos.x, pos.z, self.worlds[world].name);
+        }
+        ready
+    }
+
+    /// `ClientboundInitializeBorderPacket` for a world's border.
+    pub fn border_packet(&self, world: usize) -> play::InitializeBorder {
+        let b = &self.worlds[world].border;
+        play::InitializeBorder {
+            center_x: b.center_x,
+            center_z: b.center_z,
+            old_size: b.size,
+            new_size: if b.lerp_left > 0 { b.lerp_target } else { b.size },
+            lerp_time: paper_protocol::codec::VarLong(b.lerp_left.max(0)),
+            absolute_max_size: paper_protocol::codec::VarInt(29_999_984),
+            warning_blocks: paper_protocol::codec::VarInt(b.warning_blocks),
+            warning_time: paper_protocol::codec::VarInt(b.warning_time),
+        }
+    }
+
+    /// Sends one player the time they see.
+    pub fn send_time(&self, id: i32) {
+        if let Some(p) = self.players.get(&id) {
+            p.conn.send_payload(self.time_payload_for(p.world, p));
+        }
+    }
+
     /// Resends the world time to everyone in a world.
     pub fn resend_time(&self, world: usize) {
-        let payload = self.time_payload(world);
-        self.broadcast_payload_in_world(world, payload);
+        self.broadcast_time(world);
     }
 
     /// Moves a world's spawn point and tells its players.
@@ -807,8 +900,7 @@ impl Server {
         match paper_data::game_rules::get(name).map(|r| r.name.as_str()) {
             Some("minecraft:advance_time") => {
                 w.daylight_cycle = value.as_bool();
-                let payload = self.time_payload(world);
-                self.broadcast_payload_in_world(world, payload);
+                self.broadcast_time(world);
             }
             Some("minecraft:immediate_respawn") => {
                 let packet = play::GameEvent { event: play::game_event::IMMEDIATE_RESPAWN, value: if value.as_bool() { 1.0 } else { 0.0 } };

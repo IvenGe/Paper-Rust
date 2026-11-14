@@ -703,7 +703,7 @@ impl Server {
         player.game_mode = mode;
         player.apply_game_mode_abilities();
         player.conn.send(&play::GameEvent { event: play::game_event::CHANGE_GAME_MODE, value: mode.id() as f32 });
-        player.conn.send(&play::PlayerAbilities { flags: player.ability_flags(), flying_speed: 0.05, fov_modifier: 0.1 });
+        player.conn.send(&player.abilities_packet());
         let entry = super::join::info_entry(player);
         self.broadcast(&play::PlayerInfoUpdate { actions: play::player_info::UPDATE_GAME_MODE, entries: vec![entry] });
     }

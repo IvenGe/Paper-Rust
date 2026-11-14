@@ -47,6 +47,8 @@ pub struct SavedPlayer {
     pub attributes: Vec<Tag>,
     /// Plugins' persistent data (`BukkitValues`).
     pub pdc: Option<Compound>,
+    /// What only plugins set (speeds, tags, flags, custom name).
+    pub api: super::player::ApiState,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -139,6 +141,8 @@ impl Server {
         let mut abilities = Compound::new().with("flying", Tag::Byte(player.flying as i8)).with("mayfly", Tag::Byte(player.allow_flight as i8));
         abilities.insert("instabuild", Tag::Byte((player.game_mode == GameMode::Creative) as i8));
         abilities.insert("invulnerable", Tag::Byte(matches!(player.game_mode, GameMode::Creative | GameMode::Spectator) as i8));
+        abilities.insert("walkSpeed", Tag::Float(player.api.walk_speed));
+        abilities.insert("flySpeed", Tag::Float(player.api.fly_speed));
         let mut c = Compound::new()
             .with("DataVersion", Tag::Int(crate::world::storage::data_version()))
             .with("Pos", Tag::List(vec![Tag::Double(player.loc.x), Tag::Double(player.loc.y), Tag::Double(player.loc.z)]))
@@ -182,6 +186,31 @@ impl Server {
         c.insert("Air", Tag::Short(player.air.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
         c.insert("fall_distance", Tag::Double(player.fall_distance));
         c.insert("seenCredits", Tag::Byte(player.seen_credits as i8));
+        // What plugins set (`Entity.setInvulnerable`, `addScoreboardTag`, ...), as vanilla saves it.
+        if player.api.invulnerable {
+            c.insert("Invulnerable", Tag::Byte(1));
+        }
+        if player.api.silent {
+            c.insert("Silent", Tag::Byte(1));
+        }
+        if player.api.glowing {
+            c.insert("Glowing", Tag::Byte(1));
+        }
+        if player.api.no_gravity {
+            c.insert("NoGravity", Tag::Byte(1));
+        }
+        if let Some(name) = &player.api.custom_name {
+            c.insert("CustomName", name.to_nbt());
+        }
+        if player.api.custom_name_visible {
+            c.insert("CustomNameVisible", Tag::Byte(1));
+        }
+        if !player.api.tags.is_empty() {
+            c.insert("Tags", Tag::List(player.api.tags.iter().cloned().map(Tag::String).collect()));
+        }
+        if player.api.freeze_ticks > 0 {
+            c.insert("TicksFrozen", Tag::Int(player.api.freeze_ticks));
+        }
         let effects: Vec<Tag> = player
             .effects
             .iter()
@@ -306,6 +335,23 @@ impl Server {
             enchantment_seed: c.i32("XpSeed"),
             attributes: c.list("attributes").map(<[Tag]>::to_vec).unwrap_or_default(),
             pdc: c.compound("BukkitValues").cloned(),
+            api: {
+                let abilities = c.compound("abilities");
+                let defaults = super::player::ApiState::default();
+                super::player::ApiState {
+                    walk_speed: abilities.and_then(|a| a.f64("walkSpeed")).map_or(defaults.walk_speed, |v| v as f32),
+                    fly_speed: abilities.and_then(|a| a.f64("flySpeed")).map_or(defaults.fly_speed, |v| v as f32),
+                    invulnerable: c.bool("Invulnerable").unwrap_or(false),
+                    silent: c.bool("Silent").unwrap_or(false),
+                    glowing: c.bool("Glowing").unwrap_or(false),
+                    no_gravity: c.bool("NoGravity").unwrap_or(false),
+                    custom_name: c.get("CustomName").map(paper_protocol::text::Component::from_nbt),
+                    custom_name_visible: c.bool("CustomNameVisible").unwrap_or(false),
+                    tags: c.list("Tags").unwrap_or(&[]).iter().filter_map(|t| t.as_str().map(str::to_owned)).collect(),
+                    freeze_ticks: c.i32("TicksFrozen").unwrap_or(0).max(0),
+                    ..defaults
+                }
+            },
         })
     }
 

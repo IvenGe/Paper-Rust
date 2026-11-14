@@ -105,6 +105,9 @@ pub struct World {
     pub day_time: i64,
     pub daylight_cycle: bool,
     pub weather: Weather,
+    pub border: Border,
+    /// Chunks kept loaded by `World.setChunkForceLoaded` (each holds a ticket).
+    pub forced: HashSet<ChunkPos>,
     pub rules: rules::GameRules,
     /// The wandering trader spawner (`WanderingTraderSpawner`): ticks until it next checks,
     /// ticks until the next try (saved), and the chance of that try in percent (saved).
@@ -151,6 +154,94 @@ pub struct World {
     finalizing: HashSet<ChunkPos>,
     /// Chunks to save as soon as their decoration job gives them back.
     save_on_return: HashSet<ChunkPos>,
+}
+
+/// The world border (`WorldBorder`): a square around a center, which can move to another
+/// size over a number of ticks; players outside it take damage.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Border {
+    pub center_x: f64,
+    pub center_z: f64,
+    /// The size now; while it moves, from where to where with ticks left of the move.
+    pub size: f64,
+    pub lerp_from: f64,
+    pub lerp_target: f64,
+    pub lerp_left: i64,
+    pub lerp_duration: i64,
+    /// Blocks outside the border before damage starts (`BorderSafeZone`).
+    pub damage_safe_zone: f64,
+    pub damage_per_block: f64,
+    pub warning_blocks: i32,
+    /// Seconds of warning before a shrinking border arrives.
+    pub warning_time: i32,
+}
+
+/// Vanilla's largest world border.
+pub const MAX_BORDER_SIZE: f64 = 5.999_996_8E7;
+/// How far a border's center may be from the origin.
+pub const MAX_BORDER_CENTER: f64 = 2.999_998_4E7;
+
+impl Default for Border {
+    fn default() -> Self {
+        Border {
+            center_x: 0.0,
+            center_z: 0.0,
+            size: MAX_BORDER_SIZE,
+            lerp_from: MAX_BORDER_SIZE,
+            lerp_target: MAX_BORDER_SIZE,
+            lerp_left: 0,
+            lerp_duration: 0,
+            damage_safe_zone: 5.0,
+            damage_per_block: 0.2,
+            warning_blocks: 5,
+            warning_time: 15,
+        }
+    }
+}
+
+impl Border {
+    /// Moves the size one tick on (`WorldBorder.tick`).
+    pub fn tick(&mut self) {
+        if self.lerp_left <= 0 {
+            return;
+        }
+        self.lerp_left -= 1;
+        self.size = if self.lerp_left == 0 {
+            self.lerp_target
+        } else {
+            let progress = 1.0 - self.lerp_left as f64 / self.lerp_duration as f64;
+            self.lerp_from + (self.lerp_target - self.lerp_from) * progress
+        };
+    }
+
+    /// `WorldBorder.lerpSizeBetween`, or `setSize` without ticks.
+    pub fn set_size(&mut self, target: f64, ticks: i64) {
+        let target = target.clamp(1.0, MAX_BORDER_SIZE);
+        if ticks <= 0 {
+            self.size = target;
+            self.lerp_from = target;
+            self.lerp_left = 0;
+            self.lerp_duration = 0;
+        } else {
+            self.lerp_from = self.size;
+            self.lerp_left = ticks;
+            self.lerp_duration = ticks;
+        }
+        self.lerp_target = target;
+    }
+
+    /// How far inside the border a point is (negative: outside), as
+    /// `WorldBorder.getDistanceToBorder`.
+    pub fn distance_inside(&self, x: f64, z: f64) -> f64 {
+        let half = self.size / 2.0;
+        let (min_x, max_x) = ((self.center_x - half).max(-MAX_BORDER_CENTER), (self.center_x + half).min(MAX_BORDER_CENTER));
+        let (min_z, max_z) = ((self.center_z - half).max(-MAX_BORDER_CENTER), (self.center_z + half).min(MAX_BORDER_CENTER));
+        (x - min_x).min(max_x - x).min(z - min_z).min(max_z - z)
+    }
+
+    pub fn contains(&self, x: f64, z: f64) -> bool {
+        self.distance_inside(x, z) > 0.0
+    }
 }
 
 /// A world's weather (vanilla's `ServerLevelData` weather and the levels it fades in and
@@ -218,6 +309,8 @@ impl World {
             trader_spawn_chance: 25,
             dragon_fight: None,
             weather: Weather::default(),
+            border: Border::default(),
+            forced: HashSet::new(),
             rules: rules::GameRules::default(),
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
@@ -880,6 +973,7 @@ impl World {
             game_type,
             hardcore,
             weather: self.weather.clone(),
+            border: self.border.clone(),
             trader_spawn_delay: self.trader_spawn_delay,
             trader_spawn_chance: self.trader_spawn_chance,
             dragon_fight: self.dragon_fight.as_ref().map(|f| f.to_nbt()),
@@ -941,6 +1035,7 @@ impl World {
         self.day_time = level.day_time;
         self.daylight_cycle = level.daylight_cycle;
         self.weather = level.weather.clone();
+        self.border = level.border.clone();
         // Vanilla starts over with a day's wait and 25% when nothing was saved.
         self.trader_spawn_delay = if level.trader_spawn_delay > 0 { level.trader_spawn_delay } else { 24000 };
         self.dragon_fight = level.dragon_fight.as_ref().map(|c| dragon_fight::DragonFight::from_nbt(c, self.seed));

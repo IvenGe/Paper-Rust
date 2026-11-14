@@ -72,6 +72,8 @@ What works:
   `/locate structure` and thrown eyes of ender find structures. Sky and block light,
   chunk streaming with the client's flow control, block breaking and placing (with
   orientation for stairs, logs, slabs, doors, beds, ...), world time.
+* **World borders**: each world has one, saved in its `level.dat`, sent to players, moving
+  to a new size over time, with damage outside it.
 * **Block updates**: neighbour and shape updates (wire, fence, pane and stair connections,
   blocks that lose their support break, doors and beds break together), scheduled block and
   fluid ticks (saved with the chunk), water and lava (flowing, falling, infinite water,
@@ -292,6 +294,23 @@ What works:
     `VillagerReplenishTradeEvent`;
   * worlds made by plugins (`Bukkit.createWorld`): normal or flat; overworld, Nether or End;
     opened again from their folders; and players teleported from one world to another;
+  * player state: walking and flying speeds, the time and weather one player sees
+    (`setPlayerTime`, `setPlayerWeather`), being invulnerable, glowing, silent, invisible or
+    without gravity, custom names, scoreboard tags, air, fire, freezing and fall distance,
+    experience (`setLevel`, `setExp`, `giveExpLevels`, ...), the compass target, the respawn
+    point, the health scale, item cooldowns, ignoring sleep, velocity, hiding players and
+    entities from a player (`hidePlayer`, `hideEntity`), Bukkit's title, sound and tab-list
+    methods, what a player looks at (`getTargetBlock`, `getLineOfSight`), client options, and
+    packets for one client (`sendExperienceChange`, `sendBlockDamage`, `sendEquipmentChange`,
+    `sendHurtAnimation`, the demo and credits screens, `transfer`);
+  * world borders (`World.getWorldBorder`: size, moving to a size over time, center, damage,
+    warnings) and weather (`setStorm`, `setThundering` and their durations, with
+    `WeatherChangeEvent` and `ThunderChangeEvent`);
+  * chunks: `getChunkAt` loads or generates the chunk on the spot as on Paper, loaded and
+    generated chunks, force-loaded chunks, plugin chunk tickets, a chunk's entities and block
+    entities, slime chunks;
+  * Folia's entity scheduler (`Entity.getScheduler`) and region checks, `matchPlayer`, player
+    profiles, server-wide plugin messages and the server's settings;
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload));
   * Paper's class rewriting as plugins load (Commodore): fields and enum constants renamed
     since a plugin's api-version, enums that became registries, and `Material.values()`
@@ -323,6 +342,8 @@ Not yet:
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet.
+  Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
+  and `/worldborder` are not there yet.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

@@ -26,6 +26,7 @@ pub mod events;
 pub mod inventory;
 pub mod merchant;
 pub mod offline;
+pub mod player;
 pub mod scoreboard;
 
 use crate::config::{Config, OnHostCrash};

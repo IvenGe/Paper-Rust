@@ -1,6 +1,6 @@
 //! Clientbound play packets.
 
-use crate::codec::{BlockPos, ByteArray, Decode, DecodeError, Encode, Nbt, Reader, RemainingBytes, Result, VarInt, WriteExt};
+use crate::codec::{BlockPos, ByteArray, Decode, DecodeError, Encode, Nbt, Reader, RemainingBytes, Result, VarInt, VarLong, WriteExt};
 use crate::packets::{packet, packet_id};
 use crate::text::Component;
 use crate::types::{Angle, LightData, LpVec3, Property, Slot};
@@ -2123,6 +2123,61 @@ packet! {
         z: f64,
         yaw: f32,
         pitch: f32,
+    }
+}
+
+packet! {
+    /// The whole world border, sent on joining a world. Times are in ticks.
+    InitializeBorder = play::clientbound::INITIALIZE_BORDER {
+        center_x: f64,
+        center_z: f64,
+        old_size: f64,
+        new_size: f64,
+        lerp_time: VarLong,
+        absolute_max_size: VarInt,
+        warning_blocks: VarInt,
+        warning_time: VarInt,
+    }
+}
+
+packet! {
+    SetBorderCenter = play::clientbound::SET_BORDER_CENTER {
+        center_x: f64,
+        center_z: f64,
+    }
+}
+
+packet! {
+    /// The border moving from one size to another over `lerp_time` ticks.
+    SetBorderLerpSize = play::clientbound::SET_BORDER_LERP_SIZE {
+        old_size: f64,
+        new_size: f64,
+        lerp_time: VarLong,
+    }
+}
+
+packet! {
+    SetBorderSize = play::clientbound::SET_BORDER_SIZE {
+        size: f64,
+    }
+}
+
+packet! {
+    SetBorderWarningDelay = play::clientbound::SET_BORDER_WARNING_DELAY {
+        warning_time: VarInt,
+    }
+}
+
+packet! {
+    SetBorderWarningDistance = play::clientbound::SET_BORDER_WARNING_DISTANCE {
+        warning_blocks: VarInt,
+    }
+}
+
+packet! {
+    /// Makes the client look through another entity's eyes (spectating it).
+    SetCamera = play::clientbound::SET_CAMERA {
+        entity_id: VarInt,
     }
 }
 

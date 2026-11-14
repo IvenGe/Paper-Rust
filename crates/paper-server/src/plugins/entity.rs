@@ -111,7 +111,7 @@ fn world_arg(server: &Server, args: &Value) -> Result<usize> {
     }
 }
 
-fn vec_arg(args: &Value, x: &str, y: &str, z: &str) -> Option<Vec3> {
+pub(super) fn vec_arg(args: &Value, x: &str, y: &str, z: &str) -> Option<Vec3> {
     Some(Vec3::new(args.f64(x)?, args.f64(y)?, args.f64(z)?))
 }
 

@@ -97,6 +97,10 @@ final class EntityEvents {
             event = new EntityDamageEvent(target, cause, source, amount);
         }
         event.callEvent();
+        // The cause stays with the entity (CraftEventFactory: setLastDamageCause) when it lands.
+        if (!event.isCancelled()) {
+            target.setLastDamageCause(event);
+        }
         return Values.of("cancelled", event.isCancelled(), "amount", event.getDamage());
     }
 

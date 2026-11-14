@@ -507,7 +507,8 @@ impl Server {
             let w = &self.worlds[overworld];
             (w.dimension.clone(), w.spawn, w.spawn_yaw)
         };
-        let time = self.time_payload(to);
+        let time = self.time_payload_for(to, &self.players[&id]);
+        let border = self.border_packet(to);
         let difficulty = self.difficulty.id();
         let Some(p) = self.players.get_mut(&id) else { return };
         p.world = to;
@@ -521,10 +522,11 @@ impl Server {
         // Keep attributes and entity data, as for a portal trip.
         p.conn.send(&play::Respawn { spawn: spawn_info, data_kept: 3 });
         p.conn.send(&play::ChangeDifficulty { difficulty, locked: false });
-        p.conn.send(&play::PlayerAbilities { flags: p.ability_flags(), flying_speed: 0.05, fov_modifier: 0.1 });
+        p.conn.send(&p.abilities_packet());
         p.conn.send(&play::SetHeldSlot { slot: VarInt(p.held_slot as i32) });
         p.conn.send(&play::SetDefaultSpawnPosition { dimension: spawn_dimension, pos: spawn, yaw: spawn_yaw, pitch: 0.0 });
         p.conn.send_payload(time);
+        p.conn.send(&border);
         p.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
         // The portal travel sound.

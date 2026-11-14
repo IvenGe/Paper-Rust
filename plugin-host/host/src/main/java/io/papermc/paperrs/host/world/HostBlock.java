@@ -23,6 +23,11 @@ public final class HostBlock extends AbstractBlock {
      */
     private @Nullable String pending;
 
+    @Override
+    public org.bukkit.Chunk getChunk() {
+        return this.world.getChunkAt(this);
+    }
+
     public HostBlock(final HostWorld world, final int x, final int y, final int z) {
         this.world = world;
         this.x = x;

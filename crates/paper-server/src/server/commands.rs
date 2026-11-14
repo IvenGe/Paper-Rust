@@ -685,16 +685,14 @@ fn cmd_time(server: &mut Server, source: &CommandSource, args: &[&str]) {
                 },
             };
             server.worlds[world].day_time = time;
-            let payload = server.time_payload(world);
-            server.broadcast_payload_in_world(world, payload);
+            server.broadcast_time(world);
             server.feedback(source, Component::translatable("commands.time.set", vec![Component::text(time.to_string())]));
         }
         ["add", value] => {
             let Ok(delta) = value.parse::<i64>() else { return server.fail(source, "Invalid time") };
             server.worlds[world].day_time = (server.worlds[world].day_time + delta).max(0);
             let time = server.worlds[world].day_time;
-            let payload = server.time_payload(world);
-            server.broadcast_payload_in_world(world, payload);
+            server.broadcast_time(world);
             server.feedback(source, Component::translatable("commands.time.set", vec![Component::text(time.to_string())]));
         }
         ["query", what] => {

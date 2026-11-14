@@ -39,6 +39,14 @@ pub fn welcome(server: &Server) -> Value {
         "allow_flight" => props.allow_flight,
         "spawn_protection" => props.spawn_protection,
         "whitelist" => props.white_list,
+        "level_type" => props.level_type.clone(),
+        "generate_structures" => props.generate_structures,
+        "force_gamemode" => props.force_gamemode,
+        "hide_online_players" => props.hide_online_players,
+        "player_idle_timeout" => props.player_idle_timeout,
+        "accepts_transfers" => props.accepts_transfers,
+        // Other server.properties entries as written (`resource-pack`, ...).
+        "properties" => Value::Map(props.raw.iter().map(|(k, v)| (k.clone(), Value::Str(v.clone()))).collect()),
         "root" => server.config.root.display().to_string(),
         "worlds" => Value::List(server.worlds.iter().map(world_info).collect()),
         // After `/reload` the new host starts with the players already online.
@@ -112,6 +120,22 @@ fn world_info(w: &crate::world::World) -> Value {
         "time" => w.day_time,
         "full_time" => w.age,
         "daylight_cycle" => w.daylight_cycle,
+        "raining" => w.weather.raining,
+        "thundering" => w.weather.thundering,
+        "rain_time" => w.weather.rain_time,
+        "thunder_time" => w.weather.thunder_time,
+        "clear_time" => w.weather.clear_time,
+        "border" => bmap! {
+            "center_x" => w.border.center_x,
+            "center_z" => w.border.center_z,
+            "size" => w.border.size,
+            "target" => w.border.lerp_target,
+            "lerp_left" => w.border.lerp_left,
+            "damage_buffer" => w.border.damage_safe_zone,
+            "damage_amount" => w.border.damage_per_block,
+            "warning_distance" => w.border.warning_blocks,
+            "warning_time" => w.border.warning_time,
+        },
     }
 }
 
@@ -164,6 +188,50 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "xp_progress" => p.xp_progress,
         "xp_total" => p.xp_total,
         "exhaustion" => p.exhaustion,
+        // What plugins set through the API (see `plugins::player`).
+        "walk_speed" => p.api.walk_speed * 2.0,
+        "fly_speed" => p.api.fly_speed * 2.0,
+        "sleeping_ignored" => p.api.sleeping_ignored,
+        "player_time" => server.player_time(p.world, p),
+        "player_time_offset" => p.api.time.map_or(0, |(offset, _)| offset),
+        "player_time_relative" => p.api.time.is_none_or(|(_, relative)| relative),
+        "player_weather" => p.api.weather.map(|rain| if rain { "DOWNFALL" } else { "CLEAR" }),
+        "compass_target" => p.api.compass_target.filter(|(w, _, _)| *w < server.worlds.len()).map(|(w, pos, yaw)| Value::List(vec![server.worlds[w].name.clone().into(), pos.x.into(), pos.y.into(), pos.z.into(), yaw.into()])),
+        "invulnerable" => p.api.invulnerable,
+        "glowing" => p.api.glowing,
+        "silent" => p.api.silent,
+        "no_gravity" => p.api.no_gravity,
+        "invisible" => p.api.invisible,
+        "custom_name" => p.api.custom_name.as_ref().map(component_value),
+        "custom_name_visible" => p.api.custom_name_visible,
+        "tags" => Value::List(p.api.tags.iter().map(|t| Value::Str(t.clone())).collect()),
+        "max_air" => p.api.max_air,
+        "no_damage_ticks" => p.invulnerable_time,
+        "max_no_damage_ticks" => p.api.max_no_damage_ticks,
+        "last_damage" => p.last_hurt,
+        "fall_distance" => p.fall_distance,
+        "absorption" => p.absorption,
+        "health_scale" => p.api.health_scale,
+        "freeze_ticks" => p.api.freeze_ticks,
+        "arrows_in_body" => p.api.arrows_in_body,
+        "stingers_in_body" => p.api.stingers_in_body,
+        "score" => p.api.score,
+        "sleeping" => p.sleeping.map(|b| Value::List(vec![b.x.into(), b.y.into(), b.z.into()])),
+        "sleep_ticks" => p.sleep_ticks,
+        "respawn" => p.respawn.filter(|(w, _)| *w < server.worlds.len()).map(|(w, pos)| Value::List(vec![server.worlds[w].name.clone().into(), pos.x.into(), pos.y.into(), pos.z.into()])),
+        "ticks_lived" => server.tick.saturating_sub(p.api.joined_tick) as i64,
+        "portal_cooldown" => p.portal_cooldown,
+        "chat_visibility" => p.settings.chat_mode,
+        "chat_colors" => p.settings.chat_colors,
+        "text_filtering" => p.settings.text_filtering,
+        "allow_server_listings" => p.settings.allow_server_listings,
+        "particle_status" => p.settings.particle_status,
+        "hidden" => Value::List(p.api.hidden.iter().map(|u| Value::Str(u.to_string())).collect()),
+        "seen_credits" => p.seen_credits,
+        "killer" => p.last_attacker.filter(|(_, at)| server.tick.saturating_sub(*at) <= 100).and_then(|(a, _)| server.players.get(&a)).map(|k| k.uuid().to_string()),
+        "using_item" => p.using_item.map(|(hand, ticks)| Value::List(vec![(hand as i64).into(), (ticks as i64).into()])),
+        "ticks_since_swing" => server.tick.saturating_sub(p.last_swing) as i64,
+        "previous_game_mode" => p.previous_game_mode.map(|m| m.name()),
     }
 }
 
@@ -357,6 +425,12 @@ fn state_value(server: &Server, world: usize, x: i32, y: i32, z: i32) -> Value {
     }
 }
 
+/// Whether a chunk exists: loaded, or saved (`World.isChunkGenerated`).
+fn chunk_generated(server: &Server, world: usize, pos: crate::world::chunk::ChunkPos) -> bool {
+    let w = &server.worlds[world];
+    w.chunks.contains_key(&pos) || w.storage.as_ref().is_some_and(|s| s.has_chunk(pos))
+}
+
 /// Executes one API call from the plugin host.
 pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> {
     match method {
@@ -385,13 +459,18 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             Ok(Value::Null)
         }
         "player.send_title" => {
+            // Only the parts given: the times, the subtitle, then the title, which shows it.
             let id = player_id(server, args)?;
-            let times = play::SetTitlesAnimation { fade_in: args.i32("fade_in").unwrap_or(10), stay: args.i32("stay").unwrap_or(70), fade_out: args.i32("fade_out").unwrap_or(20) };
-            server.send(id, &times);
+            if ["fade_in", "stay", "fade_out"].iter().any(|k| !args.get(k).is_null()) {
+                let times = play::SetTitlesAnimation { fade_in: args.i32("fade_in").unwrap_or(10), stay: args.i32("stay").unwrap_or(70), fade_out: args.i32("fade_out").unwrap_or(20) };
+                server.send(id, &times);
+            }
             if let Some(sub) = component_from(args.get("subtitle")) {
                 server.send(id, &play::SetSubtitleText { text: sub });
             }
-            server.send(id, &play::SetTitleText { text: component_from(args.get("title")).unwrap_or_default() });
+            if let Some(title) = component_from(args.get("title")) {
+                server.send(id, &play::SetTitleText { text: title });
+            }
             Ok(Value::Null)
         }
         "player.clear_title" => {
@@ -492,7 +571,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 }
                 player.flying = flying;
             }
-            player.conn.send(&play::PlayerAbilities { flags: player.ability_flags(), flying_speed: 0.05, fov_modifier: 0.1 });
+            player.conn.send(&player.abilities_packet());
             Ok(Value::Null)
         }
         "player.perform_command" => {
@@ -541,7 +620,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 z: args.f64("z").unwrap_or(player.loc.z),
                 volume: args.f64("volume").unwrap_or(1.0) as f32,
                 pitch: args.f64("pitch").unwrap_or(1.0) as f32,
-                seed: rand::random(),
+                seed: args.i64("seed").unwrap_or_else(rand::random),
             };
             player.conn.send(&packet);
             Ok(Value::Null)
@@ -657,6 +736,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             server.give_experience(id, args.i32("amount").unwrap_or(0));
             Ok(Value::Null)
         }
+        m if super::player::handles(m) => super::player::handle(server, m, args),
         m if m.starts_with("inventory.") => super::inventory::handle(server, m, args),
         m if m.starts_with("entity.") || m == "world.entities" || m == "world.spawn_entity" || m == "world.drop_item" => super::entity::handle(server, m, args),
         m if m.starts_with("scoreboard.") => super::scoreboard::handle(server, m, args),
@@ -714,6 +794,135 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         "world.info" => {
             let world = world_index(server, args)?;
             Ok(world_info(&server.worlds[world]))
+        }
+        "world.set_weather" => {
+            // `World.setStorm`, `setThundering` and the durations; the weather tick fades
+            // the levels and tells the players.
+            let world = world_index(server, args)?;
+            let w = &mut server.worlds[world].weather;
+            if let Some(b) = args.bool("raining") {
+                w.raining = b;
+            }
+            if let Some(b) = args.bool("thundering") {
+                w.thundering = b;
+            }
+            if let Some(t) = args.i32("rain_time") {
+                w.rain_time = t.max(0);
+            }
+            if let Some(t) = args.i32("thunder_time") {
+                w.thunder_time = t.max(0);
+            }
+            if let Some(t) = args.i32("clear_time") {
+                w.clear_time = t.max(0);
+            }
+            Ok(world_info(&server.worlds[world]))
+        }
+        "world.set_border" => {
+            // `WorldBorder`: each change goes to the world's players as vanilla's listeners send it.
+            let world = world_index(server, args)?;
+            let mut packets: Vec<bytes::Bytes> = Vec::new();
+            let b = &mut server.worlds[world].border;
+            if args.bool("reset") == Some(true) {
+                *b = crate::world::Border::default();
+            }
+            if let (Some(x), Some(z)) = (args.f64("center_x"), args.f64("center_z")) {
+                b.center_x = x.clamp(-crate::world::MAX_BORDER_CENTER, crate::world::MAX_BORDER_CENTER);
+                b.center_z = z.clamp(-crate::world::MAX_BORDER_CENTER, crate::world::MAX_BORDER_CENTER);
+                packets.push(paper_protocol::packets::encode_packet(&play::SetBorderCenter { center_x: b.center_x, center_z: b.center_z }).into());
+            }
+            if let Some(size) = args.f64("size") {
+                let ticks = args.i64("ticks").unwrap_or(0);
+                let old = b.size;
+                b.set_size(size, ticks);
+                if ticks > 0 {
+                    packets.push(paper_protocol::packets::encode_packet(&play::SetBorderLerpSize { old_size: old, new_size: b.lerp_target, lerp_time: paper_protocol::codec::VarLong(ticks) }).into());
+                } else {
+                    packets.push(paper_protocol::packets::encode_packet(&play::SetBorderSize { size: b.size }).into());
+                }
+            }
+            if let Some(v) = args.f64("damage_buffer") {
+                b.damage_safe_zone = v.max(0.0);
+            }
+            if let Some(v) = args.f64("damage_amount") {
+                b.damage_per_block = v.max(0.0);
+            }
+            if let Some(v) = args.i32("warning_distance") {
+                b.warning_blocks = v.max(0);
+                packets.push(paper_protocol::packets::encode_packet(&play::SetBorderWarningDistance { warning_blocks: VarInt(b.warning_blocks) }).into());
+            }
+            if let Some(v) = args.i32("warning_time") {
+                b.warning_time = v.max(0);
+                packets.push(paper_protocol::packets::encode_packet(&play::SetBorderWarningDelay { warning_time: VarInt(b.warning_time) }).into());
+            }
+            if args.bool("reset") == Some(true) {
+                packets = vec![paper_protocol::packets::encode_packet(&server.border_packet(world)).into()];
+            }
+            for payload in packets {
+                server.broadcast_payload_in_world(world, payload);
+            }
+            Ok(world_info(&server.worlds[world]))
+        }
+        // --- chunks (CraftWorld's chunk methods) ---
+        "world.load_chunk" => {
+            // `getChunkAt` and `loadChunk`: loaded now, generated unless told not to.
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            if args.bool("generate") == Some(false) && !chunk_generated(server, world, pos) {
+                return Ok(Value::Bool(false));
+            }
+            Ok(Value::Bool(server.load_chunk_now(world, pos)))
+        }
+        "world.is_chunk_generated" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            Ok(Value::Bool(chunk_generated(server, world, pos)))
+        }
+        "world.loaded_chunks" => {
+            let world = world_index(server, args)?;
+            let w = &server.worlds[world];
+            Ok(Value::List(w.chunks.iter().filter(|(_, c)| c.lit).map(|(p, _)| Value::List(vec![p.x.into(), p.z.into()])).collect()))
+        }
+        "world.chunk_in_use" => {
+            // Players (or plugins) keep it: a ticket on it.
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            Ok(Value::Bool(server.worlds[world].has_ticket(pos)))
+        }
+        "world.chunk_ticket" => {
+            // A plugin's ticket (`addPluginChunkTicket`), or a forced chunk.
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            let w = &mut server.worlds[world];
+            if args.bool("add") == Some(true) {
+                w.add_ticket(pos);
+            } else {
+                w.remove_ticket(pos);
+            }
+            Ok(Value::Null)
+        }
+        "world.force_load" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            let w = &mut server.worlds[world];
+            match args.bool("forced") {
+                Some(true) if w.forced.insert(pos) => w.add_ticket(pos),
+                Some(false) if w.forced.remove(&pos) => w.remove_ticket(pos),
+                _ => {}
+            }
+            Ok(Value::List(w.forced.iter().map(|p| Value::List(vec![p.x.into(), p.z.into()])).collect()))
+        }
+        "world.chunk_block_entities" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            let Some(chunk) = server.worlds[world].chunks.get(&pos) else { return Ok(Value::List(Vec::new())) };
+            Ok(Value::List(
+                chunk.block_entities.keys().map(|(y, z, x)| Value::List(vec![(pos.x * 16 + *x as i32).into(), (*y).into(), (pos.z * 16 + *z as i32).into()])).collect(),
+            ))
+        }
+        "world.players_seeing_chunk" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            Ok(Value::List(server.players.values().filter(|p| p.world == world && p.view.sent.contains(&pos)).map(|p| Value::Str(p.uuid().to_string())).collect()))
         }
         "world.is_chunk_loaded" => {
             let world = world_index(server, args)?;

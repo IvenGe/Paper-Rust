@@ -193,7 +193,8 @@ impl Server {
                     p.sleep_ticks = (p.sleep_ticks + 1).min(100);
                 }
             }
-            let active = self.players.values().filter(|p| p.world == world && p.game_mode != GameMode::Spectator).count();
+            // Players a plugin set to ignore sleeping (`setSleepingIgnored`) are not counted.
+            let active = self.players.values().filter(|p| p.world == world && p.game_mode != GameMode::Spectator && !p.api.sleeping_ignored).count();
             let percentage = self.worlds[world].rules.int("players_sleeping_percentage").max(0) as usize;
             let needed = ((active * percentage).div_ceil(100)).max(1);
             let deep = sleepers.iter().filter(|id| self.players.get(id).is_some_and(|p| p.sleep_ticks >= 100)).count();
@@ -209,8 +210,7 @@ impl Server {
                 let w = &mut self.worlds[world];
                 let next = w.day_time + 24000;
                 w.day_time = next - next.rem_euclid(24000);
-                let payload = self.time_payload(world);
-                self.broadcast_payload_in_world(world, payload);
+                self.broadcast_time(world);
                 // Sleeping also clears rain and thunder.
                 if self.worlds[world].rules.bool("advance_weather") {
                     self.reset_weather_cycle(world);

@@ -58,6 +58,12 @@ impl Server {
     pub fn send_weather(&self, id: i32) {
         let Some(p) = self.players.get(&id) else { return };
         let w = &self.worlds[p.world];
+        if let Some(raining) = p.api.weather {
+            // `Player.setPlayerWeather`: this player's own weather.
+            let event = if raining { play::game_event::START_RAINING } else { play::game_event::STOP_RAINING };
+            p.conn.send(&play::GameEvent { event, value: 0.0 });
+            return;
+        }
         if w.weather.is_raining() {
             p.conn.send(&play::GameEvent { event: play::game_event::START_RAINING, value: 0.0 });
             p.conn.send(&play::GameEvent { event: play::game_event::RAIN_LEVEL_CHANGE, value: w.weather.rain_level });
@@ -65,9 +71,13 @@ impl Server {
         }
     }
 
+    /// A weather change to everyone in a world, except players with their own weather
+    /// (`Player.setPlayerWeather`).
     fn broadcast_game_event(&self, world: usize, event: u8, value: f32) {
         let payload = Bytes::from(encode_packet(&play::GameEvent { event, value }));
-        self.broadcast_payload_in_world(world, payload);
+        for player in self.players.values().filter(|p| p.world == world && p.api.weather.is_none()) {
+            player.conn.send_payload(payload.clone());
+        }
     }
 
     /// `setWeatherParameters` (what `/weather` does).

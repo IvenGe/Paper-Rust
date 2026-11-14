@@ -102,6 +102,11 @@ impl RegionFile {
         self.path.with_file_name(format!("c.{}.{}.mcc", pos.x, pos.z))
     }
 
+    /// Whether the region holds data for a chunk.
+    pub fn has(&self, pos: ChunkPos) -> bool {
+        self.offsets[region_index(pos)] != 0
+    }
+
     /// The decompressed NBT of a chunk, or `None` if the region has no data for it.
     pub fn read(&mut self, pos: ChunkPos) -> Result<Option<Vec<u8>>> {
         let entry = self.offsets[region_index(pos)];
@@ -678,6 +683,8 @@ pub struct LevelData {
     pub hardcore: bool,
     /// Rain and thunder with their timers (the levels follow `raining` and `thundering`).
     pub weather: super::Weather,
+    /// The world border (`Border*`, as before borders moved out of `level.dat`).
+    pub border: super::Border,
     /// The wandering trader spawner: ticks until the next try and its chance in percent.
     pub trader_spawn_delay: i32,
     pub trader_spawn_chance: i32,
@@ -753,6 +760,15 @@ impl LevelData {
             .with("clearWeatherTime", Tag::Int(self.weather.clear_time))
             .with("WanderingTraderSpawnDelay", Tag::Int(self.trader_spawn_delay))
             .with("WanderingTraderSpawnChance", Tag::Int(self.trader_spawn_chance))
+            .with("BorderCenterX", Tag::Double(self.border.center_x))
+            .with("BorderCenterZ", Tag::Double(self.border.center_z))
+            .with("BorderSize", Tag::Double(self.border.size))
+            .with("BorderSizeLerpTime", Tag::Long(self.border.lerp_left))
+            .with("BorderSizeLerpTarget", Tag::Double(self.border.lerp_target))
+            .with("BorderSafeZone", Tag::Double(self.border.damage_safe_zone))
+            .with("BorderDamagePerBlock", Tag::Double(self.border.damage_per_block))
+            .with("BorderWarningBlocks", Tag::Double(self.border.warning_blocks as f64))
+            .with("BorderWarningTime", Tag::Double(self.border.warning_time as f64))
 
             .with("paper-rs", Tag::Compound(Compound::new().with("generator", Tag::String(self.generator.clone())).with("daylight_cycle", Tag::Byte(self.daylight_cycle as i8))));
         let mut data = data;
@@ -810,6 +826,24 @@ impl LevelData {
                     clear_time: data.i32("clearWeatherTime").unwrap_or(0),
                     rain_level: if raining { 1.0 } else { 0.0 },
                     thunder_level: if thundering { 1.0 } else { 0.0 },
+                }
+            },
+            border: {
+                let defaults = super::Border::default();
+                let size = data.f64("BorderSize").unwrap_or(defaults.size).clamp(1.0, super::MAX_BORDER_SIZE);
+                let left = data.i64("BorderSizeLerpTime").unwrap_or(0).max(0);
+                super::Border {
+                    center_x: data.f64("BorderCenterX").unwrap_or(0.0),
+                    center_z: data.f64("BorderCenterZ").unwrap_or(0.0),
+                    size,
+                    lerp_from: size,
+                    lerp_target: if left > 0 { data.f64("BorderSizeLerpTarget").unwrap_or(size) } else { size },
+                    lerp_left: left,
+                    lerp_duration: left,
+                    damage_safe_zone: data.f64("BorderSafeZone").unwrap_or(defaults.damage_safe_zone),
+                    damage_per_block: data.f64("BorderDamagePerBlock").unwrap_or(defaults.damage_per_block),
+                    warning_blocks: data.f64("BorderWarningBlocks").map_or(defaults.warning_blocks, |v| v as i32),
+                    warning_time: data.f64("BorderWarningTime").map_or(defaults.warning_time, |v| v as i32),
                 }
             },
             trader_spawn_delay: data.i32("WanderingTraderSpawnDelay").unwrap_or(0),
@@ -1018,6 +1052,14 @@ impl WorldStorage {
         let region = Arc::new(Mutex::new(file));
         regions.insert(key, region.clone());
         Ok(Some(region))
+    }
+
+    /// Whether a chunk was saved (or is waiting to be), without reading it.
+    pub fn has_chunk(&self, pos: ChunkPos) -> bool {
+        if self.pending.lock().contains_key(&pos) {
+            return true;
+        }
+        matches!(self.region(pos, false), Ok(Some(region)) if region.lock().has(pos))
     }
 
     /// Loads a chunk: from the queue of unwritten chunks, else from its region file.
@@ -1310,7 +1352,7 @@ mod tests {
         assert!(storage.load_chunk(ChunkPos::new(0, 0), -64, 384, true).unwrap().is_none());
 
         let weather = crate::world::Weather { raining: true, thundering: false, rain_time: 500, thunder_time: 12000, clear_time: 0, rain_level: 1.0, thunder_level: 0.0 };
-        let level = LevelData { name: "world".into(), seed: -99, generator: "flat".into(), spawn: (1, 2, 3), spawn_yaw: 90.0, age: 1234, day_time: 6000, daylight_cycle: false, game_type: 1, hardcore: false, weather, trader_spawn_delay: 1200, trader_spawn_chance: 50, dragon_fight: None };
+        let level = LevelData { name: "world".into(), seed: -99, generator: "flat".into(), spawn: (1, 2, 3), spawn_yaw: 90.0, age: 1234, day_time: 6000, daylight_cycle: false, game_type: 1, hardcore: false, weather, border: crate::world::Border { center_x: 10.5, size: 1000.0, lerp_from: 1000.0, lerp_target: 1000.0, ..Default::default() }, trader_spawn_delay: 1200, trader_spawn_chance: 50, dragon_fight: None };
         storage.save_level(&level).unwrap();
         io.flush();
         assert_eq!(storage.read_level().unwrap().unwrap(), level);

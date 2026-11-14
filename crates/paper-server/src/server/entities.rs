@@ -641,7 +641,7 @@ impl Server {
                     .iter()
                     .filter(|(pid, center, radius)| {
                         center.distance(e.chunk) <= (*radius).min(e.info.tracking_range.max(1))
-                            && self.players.get(pid).is_some_and(|p| p.view.sent.contains(&e.chunk))
+                            && self.players.get(pid).is_some_and(|p| p.view.sent.contains(&e.chunk) && !p.api.hidden.contains(&e.uuid))
                     })
                     .map(|(pid, _, _)| *pid)
                     .collect();
