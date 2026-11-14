@@ -20,6 +20,7 @@ mod legacy;
 mod mineshaft;
 pub(crate) mod processor;
 mod stronghold;
+mod temple;
 pub(crate) mod template;
 
 pub use bbox::BoundingBox;
@@ -335,6 +336,20 @@ impl StructureStart {
     }
 }
 
+/// A structure found by [`crate::WorldGenerator::locate`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Located {
+    pub structure: String,
+    /// The chunk the start is in.
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+    /// The locate position (`getLocatePos`: the chunk's origin plus the placement's locate
+    /// offset).
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
 /// A piece of a structure start, as [`StructureStart::pieces`] reports it.
 #[derive(Clone, Debug)]
 pub struct PieceInfo {
@@ -547,6 +562,8 @@ impl Structures {
             "end_city" => Some(Box::new(legacy::EndCity::load(l)?)),
             "igloo" => Some(Box::new(legacy::Igloo::load(l)?)),
             "buried_treasure" => Some(Box::new(legacy::BuriedTreasure)),
+            "swamp_hut" => Some(Box::new(temple::SwampHut)),
+            "jungle_temple" => Some(Box::new(temple::JungleTemple)),
             _ => None,
         };
         let supported = generator.is_some();
@@ -779,6 +796,83 @@ impl Structures {
 
     /// The resolved ring positions of the set with the concentric rings placement of
     /// `structure` (all 128 strongholds' chunks, vanilla's `getRingPositionsFor`).
+    /// `ChunkGenerator.findNearestMapStructure` for one structure (without skipping known
+    /// structures): the nearest start among the ring positions of concentric-ring sets, or
+    /// among the random-spread candidates in growing square rings of placement cells, out
+    /// to `radius` cells. Returns (structure set, start chunk x, start chunk z).
+    pub(crate) fn locate(&self, gen: &WorldGenerator, structure: usize, x: i32, z: i32, radius: i32) -> Option<(usize, i32, i32)> {
+        let sets: Vec<usize> = (0..self.sets.len()).filter(|&s| self.sets[s].possible && self.sets[s].entries.iter().any(|(i, _)| *i == structure)).collect();
+        let dist = |px: i32, pz: i32| {
+            let (dx, dz) = (px as f64 - x as f64, pz as f64 - z as f64);
+            dx * dx + dz * dz
+        };
+        let found_at = |set: usize, cx: i32, cz: i32| self.start(gen, set, cx, cz).is_some_and(|s| s.structure == structure);
+        let mut nearest: Option<(f64, (usize, i32, i32))> = None;
+        for &set in &sets {
+            if !matches!(self.sets[set].placement.kind, PlacementKind::ConcentricRings { .. }) {
+                continue;
+            }
+            for (cx, cz) in self.ring_positions(gen, set) {
+                let d = dist((cx << 4) + 8, (cz << 4) + 8);
+                if nearest.is_none_or(|(m, _)| d < m) && found_at(set, cx, cz) {
+                    nearest = Some((d, (set, cx, cz)));
+                }
+            }
+        }
+        let spreads: Vec<(usize, i32)> = sets
+            .iter()
+            .filter_map(|&s| match self.sets[s].placement.kind {
+                PlacementKind::RandomSpread { spacing, .. } => Some((s, spacing)),
+                _ => None,
+            })
+            .collect();
+        if spreads.is_empty() {
+            return nearest.map(|n| n.1);
+        }
+        let (ox, oz) = (x >> 4, z >> 4);
+        for r in 0..=radius {
+            let mut found = false;
+            for &(set, spacing) in &spreads {
+                let p = &self.sets[set].placement;
+                'ring: for gx in -r..=r {
+                    let x_edge = gx == -r || gx == r;
+                    for gz in -r..=r {
+                        if !(x_edge || gz == -r || gz == r) {
+                            continue;
+                        }
+                        let Some((cx, cz)) = p.potential_chunk(gen.seed, ox + spacing * gx, oz + spacing * gz) else { continue };
+                        if found_at(set, cx, cz) {
+                            found = true;
+                            let (lx, _, lz) = p.locate_pos(cx, cz);
+                            let d = dist(lx, lz);
+                            if nearest.is_none_or(|(m, _)| d < m) {
+                                nearest = Some((d, (set, cx, cz)));
+                            }
+                            break 'ring;
+                        }
+                    }
+                }
+            }
+            if found {
+                break;
+            }
+        }
+        nearest.map(|n| n.1)
+    }
+
+    /// The locate position of a start (`StructurePlacement.getLocatePos`).
+    pub(crate) fn locate_pos(&self, set: usize, chunk_x: i32, chunk_z: i32) -> (i32, i32, i32) {
+        self.sets[set].placement.locate_pos(chunk_x, chunk_z)
+    }
+
+    /// The ring positions of the concentric-ring sets that hold `structure`.
+    pub(crate) fn ring_positions_of(&self, gen: &WorldGenerator, structure: usize) -> Vec<(i32, i32)> {
+        (0..self.sets.len())
+            .filter(|&s| self.sets[s].possible && self.sets[s].entries.iter().any(|(i, _)| *i == structure))
+            .flat_map(|s| self.ring_positions(gen, s))
+            .collect()
+    }
+
     pub(crate) fn ring_positions(&self, gen: &WorldGenerator, set: usize) -> Vec<(i32, i32)> {
         let Some(rings) = &self.rings[set] else { return Vec::new() };
         let mut lookup = Self::biome_lookup(gen);

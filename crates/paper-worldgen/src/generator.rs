@@ -271,6 +271,28 @@ impl WorldGenerator {
         self.structures.starts_in_chunk(self, chunk_x, chunk_z)
     }
 
+    /// Finds the nearest start of a structure (`/locate structure`): `structure` is its id
+    /// (`minecraft:village_plains`), `(x, z)` the block position to search from and
+    /// `radius` the search radius in placement cells of random-spread sets (vanilla's
+    /// `/locate` uses 100). Strongholds are searched among all their ring positions.
+    /// Starts are generated as needed (and cached), never placed.
+    pub fn locate(&self, structure: &str, x: i32, z: i32, radius: i32) -> Option<crate::structure::Located> {
+        let id = crate::data::full_id(structure);
+        let index = self.structures.structure_index(&id)?;
+        let (set, cx, cz) = self.structures.locate(self, index, x, z, radius)?;
+        let (lx, ly, lz) = self.structures.locate_pos(set, cx, cz);
+        Some(crate::structure::Located { structure: id, chunk_x: cx, chunk_z: cz, x: lx, y: ly, z: lz })
+    }
+
+    /// The chunks of the concentric rings a structure (strongholds) is placed on, in ring
+    /// order (each the chunk a start is tried in; empty for other structures).
+    pub fn ring_positions(&self, structure: &str) -> Vec<(i32, i32)> {
+        match self.structures.structure_index(&crate::data::full_id(structure)) {
+            Some(i) => self.structures.ring_positions_of(self, i),
+            None => Vec::new(),
+        }
+    }
+
     /// The structures of this dimension that are generated (the others start nowhere).
     pub fn supported_structures(&self) -> Vec<&str> {
         self.structures.supported()

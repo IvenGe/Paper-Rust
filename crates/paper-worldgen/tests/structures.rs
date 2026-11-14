@@ -114,3 +114,68 @@ fn nether_starts() {
 fn end_starts() {
     check_starts(Dimension::End, "the_end");
 }
+
+/// Decorates `(cx, cz)` with freshly generated neighbours.
+fn decorate(g: &paper_worldgen::WorldGenerator, cx: i32, cz: i32) -> paper_worldgen::Region {
+    let mut chunks = Vec::new();
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            chunks.push(g.generate_terrain(cx + dx, cz + dz));
+        }
+    }
+    let mut region = paper_worldgen::Region::new(cx, cz, chunks);
+    g.decorate(cx, cz, &mut region);
+    region
+}
+
+/// Counts the blocks of `name` in the center chunk of a decorated region.
+fn count(region: &paper_worldgen::Region, name: &str) -> usize {
+    let c = region.center();
+    let mut n = 0;
+    for y in c.min_y..c.min_y + c.height {
+        for z in 0..16 {
+            for x in 0..16 {
+                if paper_data::blocks::block_of_state(c.get(x, y, z)).name == name {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
+#[test]
+fn locate_finds_fixture_starts() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    let data = common::json_fixture("structure_starts");
+    for start in data["overworld"].as_array().unwrap() {
+        let id = start["s"].as_str().unwrap();
+        if !matches!(id, "minecraft:village_plains" | "minecraft:trial_chambers" | "minecraft:shipwreck") {
+            continue;
+        }
+        let (x, z) = (start["x"].as_i64().unwrap() as i32, start["z"].as_i64().unwrap() as i32);
+        // Searching from the start's chunk finds that start.
+        let found = g.locate(id, x * 16 + 8, z * 16 + 8, 2).unwrap_or_else(|| panic!("{id} near ({x}, {z})"));
+        assert_eq!((found.chunk_x, found.chunk_z), (x, z), "{id}");
+    }
+    // The nearest stronghold to the origin is a start on its ring.
+    let rings = g.ring_positions("minecraft:stronghold");
+    assert_eq!(rings.len(), 128);
+    let s = g.locate("minecraft:stronghold", 0, 0, 100).expect("a stronghold");
+    assert!(rings.contains(&(s.chunk_x, s.chunk_z)));
+    assert!(g.structure_starts(s.chunk_x, s.chunk_z).iter().any(|st| st.id() == "minecraft:stronghold"));
+}
+
+#[test]
+fn scattered_structures_are_placed() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    for (id, block) in [("minecraft:swamp_hut", "minecraft:spruce_planks"), ("minecraft:jungle_pyramid", "minecraft:mossy_cobblestone"), ("minecraft:igloo", "minecraft:snow_block")] {
+        let Some(found) = g.locate(id, 0, 0, 100) else { panic!("no {id}") };
+        let start = g.structure_starts(found.chunk_x, found.chunk_z).into_iter().find(|s| s.id() == id).unwrap();
+        let piece = start.pieces().last().unwrap().bbox;
+        let region = decorate(g, piece.min_x >> 4, piece.min_z >> 4);
+        let n = count(&region, block);
+        eprintln!("{id} at chunk ({}, {}): {n} {block}", found.chunk_x, found.chunk_z);
+        assert!(n > 0, "{id}: no {block} placed");
+    }
+}
