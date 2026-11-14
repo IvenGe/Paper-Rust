@@ -127,6 +127,9 @@ What works:
   Endermen turn on players who look them in the eyes (not through a carved pumpkin),
   teleport away from water, rain, daylight and arrows (and towards a far target), and pick
   up and put down blocks.
+* **Signs**: the editor opens when a sign is placed and when it is clicked (on the side the
+  player faces); the text is kept and shown to everyone, dyes colour it, glow ink sacs make
+  it glow (ink sacs undo that), and honeycomb waxes the sign against editing.
 * **Riding and pets**: boats and rafts are put on water (by players and dispensers),
   boarded (two to a boat, one beside a chest), steered, float, and break into their item;
   chest boats' chests open with a sneaking click or the rider's inventory key, spill when
@@ -244,7 +247,7 @@ What works:
   `CraftItemEvent`, `PlayerAttemptPickupItemEvent`, `EntityPickupItemEvent`,
   `PlayerDropItemEvent`, `EntityDamageEvent` (and its `ByEntity`/`ByBlock` forms),
   `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`,
-  `PlayerStatisticIncrementEvent`. Players,
+  `PlayerStatisticIncrementEvent`, `SignChangeEvent`. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -303,6 +306,8 @@ What works:
     methods, what a player looks at (`getTargetBlock`, `getLineOfSight`), client options, and
     packets for one client (`sendExperienceChange`, `sendBlockDamage`, `sendEquipmentChange`,
     `sendHurtAnimation`, the demo and credits screens, `transfer`);
+  * signs as block states (`Sign`, `SignSide`: both sides' lines, colour and glow, waxing),
+    and `SignChangeEvent` for what players write;
   * world borders (`World.getWorldBorder`: size, moving to a size over time, center, damage,
     warnings) and weather (`setStorm`, `setThundering` and their durations, with
     `WeatherChangeEvent` and `ThunderChangeEvent`);

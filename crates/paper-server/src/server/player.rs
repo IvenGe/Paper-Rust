@@ -298,6 +298,8 @@ pub struct Player {
     /// the server), the face being hit, the ticks so far, and whether the client punched
     /// it this tick.
     pub dig_effects: Option<DigEffects>,
+    /// The sign (world, block, front side) the player was given to write on.
+    pub editing_sign: Option<(usize, paper_protocol::codec::BlockPos, bool)>,
     /// A block reported broken early, broken when its time is up.
     pub delayed_break: Option<(paper_protocol::codec::BlockPos, u64)>,
     /// Crack stage last shown to others (-1 none).

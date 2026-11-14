@@ -219,6 +219,7 @@ impl Server {
                 self.broadcast_to_viewers(id, &play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(0), animation_type: VarInt(1), duration: VarInt(6) });
             }
             Serverbound::ClientTickEnd => self.dig_effects_tick(id),
+            Serverbound::SignUpdate(p) => self.handle_sign_update(id, p),
             Serverbound::ContainerClose(p) => {
                 let open = player.open_menu.as_ref().map_or(0, |m| m.window_id);
                 if p.window_id.0 == open {
@@ -450,7 +451,7 @@ impl Server {
             let world = player.world;
             let hands_empty = player.inventory[HOTBAR_START + player.held_slot as usize].is_empty() && player.inventory[OFFHAND_SLOT].is_empty();
             let usable = player.game_mode != GameMode::Spectator && (!player.sneaking || hands_empty) && self.within_reach(id, use_on.pos);
-            if usable && (self.try_open_container(id, world, use_on.pos) || self.use_bed(id, use_on.pos)) {
+            if usable && (self.try_open_container(id, world, use_on.pos) || self.use_bed(id, use_on.pos) || self.use_sign(id, world, use_on.pos, use_on.hand.0)) {
                 self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
                 return;
             }
@@ -556,6 +557,9 @@ impl Server {
                 self.set_block_and_update(world, pos, second_state);
             }
             self.block_placed(world, target, state);
+            if super::signs::is_sign(blocks::block_of_state(state).name) {
+                self.sign_placed(id, world, target);
+            }
             if let Some(item) = items::get(stack.item as u32) {
                 self.award_stat(id, "minecraft:used", item.name, 1);
             }

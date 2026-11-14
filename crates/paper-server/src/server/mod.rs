@@ -40,6 +40,7 @@ pub mod taming;
 pub mod throwing;
 pub mod crafter;
 pub mod boats;
+pub mod signs;
 
 /// Suspicious sand and gravel that cannot land break without dropping (`disableDrop`).
 fn falling_drops_nothing(state: u32) -> bool {

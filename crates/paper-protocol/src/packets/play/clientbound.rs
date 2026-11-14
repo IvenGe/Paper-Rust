@@ -67,6 +67,14 @@ packet! {
 }
 
 packet! {
+    /// Opens the sign editor on one side of a sign (26.3: `side` 1 front, 0 back).
+    OpenSignEditor = play::clientbound::OPEN_SIGN_EDITOR {
+        pos: BlockPos,
+        side: VarInt,
+    }
+}
+
+packet! {
     BlockUpdate = play::clientbound::BLOCK_UPDATE {
         pos: BlockPos,
         state: VarInt,

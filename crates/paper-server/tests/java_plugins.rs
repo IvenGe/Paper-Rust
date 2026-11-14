@@ -477,6 +477,29 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.find(TIMEOUT, |b: &play::SetBorderSize| b.size == 200.0).expect("the new border size");
     alice.find(TIMEOUT, |l: &play::SetBorderLerpSize| l.old_size == 200.0 && l.new_size == 100.0 && l.lerp_time.0 == 400).expect("the border moving");
     expect_line(&mut alice, "worldstate: ok");
+    // Signs: plugins read and write both sides (Sign, SignSide); what a player writes goes
+    // through SignChangeEvent, where the plugin shouts "shout ...".
+    alice.command("apitest signs");
+    expect_line(&mut alice, "signs: ok");
+    let id = alice.entity_id;
+    let oak_sign = paper_data::items::id("minecraft:oak_sign").unwrap() as i32;
+    server.handle.run(move |s| s.set_inventory_slot(id, 36, paper_protocol::types::Slot::of(oak_sign, 1))).unwrap();
+    let sign = BlockPos::new(8, -60, 10);
+    alice.clear_backlog();
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: BlockPos::new(8, -61, 10), face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(50) });
+    alice.find(TIMEOUT, |e: &play::OpenSignEditor| e.pos == sign).expect("the sign editor");
+    alice.send(&play::SignUpdate { pos: sign, lines: ["shout hello".into(), "quiet".into(), String::new(), String::new()], front: true });
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        let front = server.handle.run(move |s| s.block_entity_data(0, sign).and_then(|d| d.compound("front_text").cloned())).unwrap();
+        let text = format!("{front:?}");
+        if text.contains("SHOUT HELLO") {
+            assert!(text.contains("quiet"), "{text}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the plugin's line never arrived: {text}");
+        alice.drain(Duration::from_millis(50));
+    }
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

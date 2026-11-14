@@ -190,6 +190,27 @@ pub fn on_block_break(server: &mut Server, id: i32, world: usize, pos: BlockPos,
     }
 }
 
+/// A player wrote on a sign (`SignChangeEvent`): the lines as plugins leave them, or `None` if
+/// a plugin cancelled the change.
+pub fn on_sign_change(server: &mut Server, id: i32, world: usize, pos: BlockPos, front: bool, lines: &[paper_protocol::text::Component]) -> Option<Vec<paper_protocol::text::Component>> {
+    let Some(player) = server.players.get(&id) else { return Some(lines.to_vec()) };
+    let args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "front" => front,
+        "lines" => Value::List(lines.iter().map(super::component_value).collect()),
+    };
+    match fire(server, "SignChangeEvent", "event.sign_change", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(match result.list("lines") {
+            Some(given) => given.iter().map(|l| super::component_from(l).unwrap_or_default()).collect(),
+            None => lines.to_vec(),
+        }),
+        None => Some(lines.to_vec()),
+    }
+}
+
 /// A player is about to place a block. Returns whether the placement may proceed.
 pub fn on_block_place(server: &mut Server, id: i32, world: usize, pos: BlockPos, state: u32, replaced: u32, against: BlockPos, offhand: bool) -> bool {
     let Some(player) = server.players.get(&id) else { return true };

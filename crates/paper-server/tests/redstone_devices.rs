@@ -253,7 +253,9 @@ fn dispensers_use_bone_meal_shears_bottles_and_buckets() {
     pulse(&server, d);
     assert_eq!(count_of(&dispenser_items(&server, d), "minecraft:bone_meal"), 2, "nothing to grow: kept");
 
-    // Shears shear the sheep in front and wear down.
+    // Shears shear the sheep in front and wear down. The sheep stands on stone: on grass it
+    // could eat and grow its wool back before the test looks.
+    set(&server, BlockPos::new(-8, -61, 4), blocks::default_state("minecraft:stone").unwrap());
     let sheep = server
         .handle
         .run(|s| {

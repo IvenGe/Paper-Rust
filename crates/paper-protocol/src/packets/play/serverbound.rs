@@ -349,6 +349,35 @@ packet! {
     }
 }
 
+/// What a player wrote on a sign (26.3: the block, its four lines, then the side, 1 front
+/// and 0 back).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignUpdate {
+    pub pos: BlockPos,
+    pub lines: [String; 4],
+    pub front: bool,
+}
+
+packet_id!(SignUpdate = play::serverbound::SIGN_UPDATE);
+
+impl Encode for SignUpdate {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_position(self.pos);
+        for line in &self.lines {
+            w.put_string(line);
+        }
+        w.put_varint(i32::from(self.front));
+    }
+}
+
+impl Decode for SignUpdate {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let pos = r.position()?;
+        let lines = [r.string(384)?, r.string(384)?, r.string(384)?, r.string(384)?];
+        Ok(Self { pos, lines, front: r.varint()? != 0 })
+    }
+}
+
 /// Status values of [`PlayerAction`]. 26.3 added `CHANGE_DESTROY_DIRECTION` as 1 and moved
 /// the later ones up by one.
 pub mod player_action {
@@ -520,6 +549,7 @@ pub enum Serverbound {
     PlayerLoaded,
     Pong(Pong),
     Punch,
+    SignUpdate(SignUpdate),
     ResourcePack(ResourcePackResponse),
     SetCarriedItem(SetCarriedItem),
     SetCreativeModeSlot(SetCreativeModeSlot),
@@ -580,6 +610,7 @@ impl Serverbound {
             id::PLAYER_LOADED => Serverbound::PlayerLoaded,
             id::PONG => d!(Pong),
             id::PUNCH => Serverbound::Punch,
+            id::SIGN_UPDATE => d!(SignUpdate),
             id::RESOURCE_PACK => d!(ResourcePack),
             id::SET_CARRIED_ITEM => d!(SetCarriedItem),
             id::SET_CREATIVE_MODE_SLOT => d!(SetCreativeModeSlot),

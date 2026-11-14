@@ -802,6 +802,18 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             Ok(Value::Bool(true))
         }
+        "world.sign" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            Ok(server.sign_value(world, paper_protocol::codec::BlockPos::new(x, y, z)).unwrap_or(Value::Null))
+        }
+        "world.set_sign" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            Ok(Value::Bool(server.set_sign_value(world, paper_protocol::codec::BlockPos::new(x, y, z), args)))
+        }
         "world.get_biome" => {
             let world = world_index(server, args)?;
             let (x, y, z) = block_xyz(args)?;

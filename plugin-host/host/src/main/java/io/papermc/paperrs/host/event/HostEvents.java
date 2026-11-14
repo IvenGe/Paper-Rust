@@ -90,6 +90,7 @@ public final class HostEvents {
         GATED.put("EntityDismountEvent", org.bukkit.event.entity.EntityDismountEvent.class);
         GATED.put("EntityTameEvent", org.bukkit.event.entity.EntityTameEvent.class);
         GATED.put("PlayerStatisticIncrementEvent", org.bukkit.event.player.PlayerStatisticIncrementEvent.class);
+        GATED.put("SignChangeEvent", org.bukkit.event.block.SignChangeEvent.class);
     }
 
     private final CraftServer server;
@@ -161,6 +162,21 @@ public final class HostEvents {
                     new org.bukkit.event.player.PlayerResourcePackStatusEvent(this.player(args), Values.uuid(args, "id"), all[status]).callEvent();
                 }
                 yield Values.of();
+            }
+            case "event.sign_change" -> {
+                final List<net.kyori.adventure.text.Component> lines = new ArrayList<>();
+                for (final Object line : Values.list(args.get("lines"))) {
+                    final net.kyori.adventure.text.Component c = io.papermc.paperrs.host.Components.fromJson(line);
+                    lines.add(c == null ? net.kyori.adventure.text.Component.empty() : c);
+                }
+                final org.bukkit.event.block.SignChangeEvent event = new org.bukkit.event.block.SignChangeEvent(this.block(args), this.player(args), lines,
+                    Values.bool(args, "front", true) ? org.bukkit.block.sign.Side.FRONT : org.bukkit.block.sign.Side.BACK);
+                event.callEvent();
+                final List<Object> out = new ArrayList<>();
+                for (final net.kyori.adventure.text.Component line : event.lines()) {
+                    out.add(io.papermc.paperrs.host.Components.toJson(line == null ? net.kyori.adventure.text.Component.empty() : line));
+                }
+                yield Values.of("cancelled", event.isCancelled(), "lines", out);
             }
             case "event.block_break" -> {
                 final BlockBreakEvent event = new BlockBreakEvent(this.block(args), this.player(args));

@@ -129,6 +129,7 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "legacy" -> this.legacy(sender);
                 case "playerstate" -> this.playerState((Player) sender);
                 case "worldstate" -> this.worldState((Player) sender);
+                case "signs" -> this.signs((Player) sender);
                 case "merchant" -> this.merchant((Player) sender);
                 case "career" -> this.career((Player) sender);
                 case "riding" -> this.riding((Player) sender);
@@ -268,6 +269,37 @@ final class ApiTests implements Listener, CommandExecutor {
      * {@code LEGACY_} constants in {@code Material.values()} (nor in an enum switch), while the
      * legacy constants it does name still convert.
      */
+    /** A player's sign text that starts with "shout" is shouted (SignChangeEvent). */
+    @EventHandler
+    public void onSignChange(final org.bukkit.event.block.SignChangeEvent event) {
+        final String first = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(event.line(0));
+        if (first.startsWith("shout")) {
+            event.line(0, Component.text(first.toUpperCase(java.util.Locale.ROOT)));
+        }
+    }
+
+    /** Sign block states: both sides, colour, glow and wax, written with update(). */
+    private void signs(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final org.bukkit.block.Block block = player.getLocation().add(-3, 0, -3).getBlock();
+        block.setType(Material.OAK_SIGN);
+        final org.bukkit.block.Sign sign = (org.bukkit.block.Sign) block.getState();
+        sign.getSide(org.bukkit.block.sign.Side.FRONT).line(0, Component.text("Hello"));
+        sign.getSide(org.bukkit.block.sign.Side.BACK).setLine(1, "Back side");
+        sign.getSide(org.bukkit.block.sign.Side.FRONT).setColor(org.bukkit.DyeColor.BLUE);
+        sign.getSide(org.bukkit.block.sign.Side.FRONT).setGlowingText(true);
+        sign.setWaxed(true);
+        check(failures, sign.update(), "update");
+        final org.bukkit.block.Sign again = (org.bukkit.block.Sign) block.getState();
+        final net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText();
+        check(failures, "Hello".equals(plain.serialize(again.getSide(org.bukkit.block.sign.Side.FRONT).line(0))), "front line " + again.getSide(org.bukkit.block.sign.Side.FRONT).line(0));
+        check(failures, "Back side".equals(again.getSide(org.bukkit.block.sign.Side.BACK).getLine(1)), "back line " + again.getSide(org.bukkit.block.sign.Side.BACK).getLine(1));
+        check(failures, again.getSide(org.bukkit.block.sign.Side.FRONT).getColor() == org.bukkit.DyeColor.BLUE && again.getSide(org.bukkit.block.sign.Side.FRONT).isGlowingText(), "colour and glow");
+        check(failures, again.isWaxed() && "Hello".equals(again.getLine(0)), "waxed, old API");
+        block.setType(Material.AIR);
+        report(player, "signs", failures);
+    }
+
     /** The world border and the weather of a world. */
     private void worldState(final Player player) {
         final List<String> failures = new ArrayList<>();
