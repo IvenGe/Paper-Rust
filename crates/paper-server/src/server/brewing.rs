@@ -253,6 +253,9 @@ impl Server {
             }
             p.conn.send(&play::ContainerSetData { window_id: menu.window_id, property: 0, value: brew_time as i16 });
             p.conn.send(&play::ContainerSetData { window_id: menu.window_id, property: 1, value: fuel as i16 });
+            // 26.3 clients take the totals the bars are drawn against from the server.
+            p.conn.send(&play::ContainerSetData { window_id: menu.window_id, property: 2, value: 400 });
+            p.conn.send(&play::ContainerSetData { window_id: menu.window_id, property: 3, value: 20 });
         }
     }
 

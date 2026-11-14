@@ -310,8 +310,9 @@ fn sleeping_skips_the_night_and_beds_are_respawn_points() {
     assert_eq!(server.handle.run(move |s| s.players[&id].sleeping).unwrap(), Some(head));
 
     // Alone on the server: after five seconds asleep it is morning and she wakes up.
-    let wake: play::Animate = alice.find(Duration::from_secs(10), |a: &play::Animate| a.entity_id.0 == id && a.animation == 2).expect("woken up");
-    assert_eq!(wake.animation, 2);
+    // (26.3 numbers the wake-up animation 0.)
+    let wake: play::Animate = alice.find(Duration::from_secs(10), |a: &play::Animate| a.entity_id.0 == id && a.animation == 0).expect("woken up");
+    assert_eq!(wake.animation, 0);
     let (time, hurt) = server.handle.run(move |s| (s.worlds[0].day_time, s.players[&id].last_damage.as_ref().map(|d| (d.kind, d.attacker.and_then(|a| s.worlds[0].entities.get(&a).map(|e| e.info.name.clone())))))).unwrap();
     assert!(time.rem_euclid(24000) < 100, "morning: {time}, last damage: {hurt:?}");
 

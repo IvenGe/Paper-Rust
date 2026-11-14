@@ -113,6 +113,7 @@ impl Server {
             effects: Vec::new(),
             absorption: 0.0,
             digging: None,
+            dig_effects: None,
             delayed_break: None,
             crack_stage: -1,
             sleeping: None,

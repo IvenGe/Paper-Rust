@@ -218,14 +218,14 @@ impl Server {
         }
         if critical {
             self.play_sound(world, at, "minecraft:entity.player.attack.crit", category::PLAYERS, 1.0, 1.0, None);
-            self.broadcast_animation(world, target, 4);
+            self.broadcast_animation(world, target, 1);
         }
         if !critical && !sweep {
             let sound = if full { "minecraft:entity.player.attack.strong" } else { "minecraft:entity.player.attack.weak" };
             self.play_sound(world, at, sound, category::PLAYERS, 1.0, 1.0, None);
         }
         if enchant > 0.0 {
-            self.broadcast_animation(world, target, 5);
+            self.broadcast_animation(world, target, 2);
         }
         let fire = level("minecraft:fire_aspect");
         if fire > 0 {
@@ -247,7 +247,8 @@ impl Server {
         self.add_exhaustion(id, 0.1);
     }
 
-    /// Plays an `Animate` animation (4 critical hit, 5 magic critical hit) for viewers.
+    /// Plays an `Animate` animation (26.3 ids: 1 critical hit, 2 magic critical hit) for
+    /// viewers.
     fn broadcast_animation(&self, world: usize, entity: i32, animation: u8) {
         let payload = Bytes::from(encode_packet(&play::Animate { entity_id: VarInt(entity), animation }));
         if let Some(p) = self.players.get(&entity) {

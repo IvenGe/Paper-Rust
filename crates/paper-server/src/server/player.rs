@@ -96,6 +96,15 @@ pub struct KeepAlive {
     pub latency: i32,
 }
 
+/// See [`Player::dig_effects`].
+#[derive(Clone, Copy, Debug)]
+pub struct DigEffects {
+    pub pos: paper_protocol::codec::BlockPos,
+    pub face: u8,
+    pub ticks: i32,
+    pub punched: bool,
+}
+
 pub struct Player {
     pub entity_id: i32,
     pub profile: GameProfile,
@@ -208,6 +217,10 @@ pub struct Player {
     pub absorption: f32,
     /// The block being broken and the tick it was started.
     pub digging: Option<(paper_protocol::codec::BlockPos, u64)>,
+    /// The block whose breaking particles the client is shown (26.3 clients leave them to
+    /// the server), the face being hit, the ticks so far, and whether the client punched
+    /// it this tick.
+    pub dig_effects: Option<DigEffects>,
     /// A block reported broken early, broken when its time is up.
     pub delayed_break: Option<(paper_protocol::codec::BlockPos, u64)>,
     /// Crack stage last shown to others (-1 none).

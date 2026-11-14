@@ -128,8 +128,8 @@ impl Server {
         let target = self.stand_up_position(world, head).unwrap_or(Location { x: head.x as f64 + 0.5, y: head.y as f64 + 1.0, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 });
         let target = Location { yaw: self.players[&id].loc.yaw, pitch: self.players[&id].loc.pitch, ..target };
         self.teleport(id, target);
-        // The wake-up animation.
-        let packet = play::Animate { entity_id: VarInt(id), animation: 2 };
+        // The wake-up animation (0 since 26.3, which moved arm swings to their own packet).
+        let packet = play::Animate { entity_id: VarInt(id), animation: 0 };
         self.send(id, &packet);
         self.broadcast_to_viewers(id, &packet);
     }

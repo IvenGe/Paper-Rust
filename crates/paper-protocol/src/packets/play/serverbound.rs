@@ -349,16 +349,19 @@ packet! {
     }
 }
 
-/// Status values of [`PlayerAction`].
+/// Status values of [`PlayerAction`]. 26.3 added `CHANGE_DESTROY_DIRECTION` as 1 and moved
+/// the later ones up by one.
 pub mod player_action {
     pub const START_DESTROY_BLOCK: i32 = 0;
-    pub const ABORT_DESTROY_BLOCK: i32 = 1;
-    pub const STOP_DESTROY_BLOCK: i32 = 2;
-    pub const DROP_ALL_ITEMS: i32 = 3;
-    pub const DROP_ITEM: i32 = 4;
-    pub const RELEASE_USE_ITEM: i32 = 5;
-    pub const SWAP_ITEM_WITH_OFFHAND: i32 = 6;
-    pub const STAB: i32 = 7;
+    /// The face of the block being broken changed.
+    pub const CHANGE_DESTROY_DIRECTION: i32 = 1;
+    pub const ABORT_DESTROY_BLOCK: i32 = 2;
+    pub const STOP_DESTROY_BLOCK: i32 = 3;
+    pub const DROP_ALL_ITEMS: i32 = 4;
+    pub const DROP_ITEM: i32 = 5;
+    pub const RELEASE_USE_ITEM: i32 = 6;
+    pub const SWAP_ITEM_WITH_OFFHAND: i32 = 7;
+    pub const STAB: i32 = 8;
 }
 
 packet! {

@@ -212,8 +212,13 @@ impl Server {
                 }
             }
             Serverbound::Punch => {
+                // Sent every tick while breaking a block, too.
+                if let Some(effects) = player.dig_effects.as_mut() {
+                    effects.punched = true;
+                }
                 self.broadcast_to_viewers(id, &play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(0), animation_type: VarInt(1), duration: VarInt(6) });
             }
+            Serverbound::ClientTickEnd => self.dig_effects_tick(id),
             Serverbound::ContainerClose(p) => {
                 let open = player.open_menu.as_ref().map_or(0, |m| m.window_id);
                 if p.window_id.0 == open {
@@ -241,7 +246,6 @@ impl Server {
             Serverbound::ContainerSlotStateChanged(p) => self.handle_slot_state_changed(id, p.slot_id.0, p.window_id.0, p.new_state),
             Serverbound::ChatAck(_)
             | Serverbound::ChatSessionUpdate(_)
-            | Serverbound::ClientTickEnd
             | Serverbound::ConfigurationAcknowledged
             | Serverbound::CookieResponse(_)
             | Serverbound::Pong(_)
@@ -327,6 +331,26 @@ impl Server {
         }
     }
 
+    /// The end of a client tick: while the player keeps punching the block they are
+    /// breaking, its breaking particles (level event 2019), with the hitting sound every
+    /// fourth tick (2020), as 26.3 servers send them.
+    fn dig_effects_tick(&mut self, id: i32) {
+        let Some(player) = self.players.get_mut(&id) else { return };
+        let Some(effects) = player.dig_effects.as_mut() else { return };
+        if !effects.punched {
+            player.dig_effects = None;
+            return;
+        }
+        effects.punched = false;
+        let ticks = effects.ticks;
+        effects.ticks += 1;
+        if ticks > 0 {
+            let event = if ticks % 4 == 0 { 2020 } else { 2019 };
+            let packet = play::LevelEvent { event, pos: effects.pos, data: i32::from(effects.face), global: false };
+            player.conn.send(&packet);
+        }
+    }
+
     fn handle_player_action(&mut self, id: i32, action: play::PlayerAction) {
         use play::player_action::*;
         let Some(player) = self.players.get_mut(&id) else { return };
@@ -337,8 +361,16 @@ impl Server {
         }
         match action.status.0 {
             RELEASE_USE_ITEM => self.release_using_item(id),
+            CHANGE_DESTROY_DIRECTION => {
+                if let Some(effects) = player.dig_effects.as_mut() {
+                    effects.face = action.face as u8;
+                }
+            }
             START_DESTROY_BLOCK | STOP_DESTROY_BLOCK => {
                 let world = player.world;
+                // `ServerboundPlayerActionPacket`: 26.3 clients only show breaking
+                // particles the server sends (see `tick_end`).
+                player.dig_effects = (action.status.0 == START_DESTROY_BLOCK).then_some(crate::server::player::DigEffects { pos: action.pos, face: action.face as u8, ticks: 0, punched: false });
                 let state = self.worlds[world].block_at(action.pos.x, action.pos.y, action.pos.z).unwrap_or(blocks::AIR);
                 let finishing = action.status.0 == STOP_DESTROY_BLOCK;
                 let allowed = matches!(mode, GameMode::Creative | GameMode::Survival);
@@ -357,6 +389,7 @@ impl Server {
                 self.send(id, &play::BlockChangedAck { sequence: action.sequence });
             }
             ABORT_DESTROY_BLOCK => {
+                player.dig_effects = None;
                 self.abort_digging(id);
                 self.send(id, &play::BlockChangedAck { sequence: action.sequence });
             }

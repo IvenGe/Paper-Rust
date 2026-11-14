@@ -683,6 +683,12 @@ impl Server {
                 p.conn.send(&packet);
             }
         }
+        // 26.3 clients play a splash potion's sound from an event of its own.
+        match event {
+            2002 => self.broadcast_level_event(world, 1053, pos, 0, global),
+            2007 => self.broadcast_level_event(world, 1054, pos, 0, global),
+            _ => {}
+        }
     }
 
     /// Buckets (`BucketItem.use`): an empty bucket scoops up a fluid source; a full one pours
