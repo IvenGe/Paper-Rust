@@ -169,7 +169,13 @@ fn locate_finds_fixture_starts() {
 #[test]
 fn scattered_structures_are_placed() {
     let Some(g) = generator(Dimension::Overworld, 0) else { return };
-    for (id, block) in [("minecraft:swamp_hut", "minecraft:spruce_planks"), ("minecraft:jungle_pyramid", "minecraft:mossy_cobblestone"), ("minecraft:igloo", "minecraft:snow_block")] {
+    let checks = [
+        ("minecraft:swamp_hut", "minecraft:spruce_planks"),
+        ("minecraft:jungle_pyramid", "minecraft:mossy_cobblestone"),
+        ("minecraft:igloo", "minecraft:snow_block"),
+        ("minecraft:desert_pyramid", "minecraft:cut_sandstone"),
+    ];
+    for (id, block) in checks {
         let Some(found) = g.locate(id, 0, 0, 100) else { panic!("no {id}") };
         let start = g.structure_starts(found.chunk_x, found.chunk_z).into_iter().find(|s| s.id() == id).unwrap();
         let piece = start.pieces().last().unwrap().bbox;

@@ -1,7 +1,8 @@
-//! Swamp huts and jungle temples (`ScatteredFeaturePiece`s).
+//! Swamp huts, jungle temples and desert pyramids (`ScatteredFeaturePiece`s).
 //!
-//! Written to vanilla 26.3's `ScatteredFeaturePiece`, `SwampHutStructure`/`SwampHutPiece` and
-//! `JungleTempleStructure`/`JungleTemplePiece`. The pieces settle their height when first
+//! Written to vanilla 26.3's `ScatteredFeaturePiece`, `SwampHutStructure`/`SwampHutPiece`,
+//! `JungleTempleStructure`/`JungleTemplePiece` and `DesertPyramidStructure`/
+//! `DesertPyramidPiece`. The pieces settle their height when first
 //! placed (from the heightmaps of that chunk), as vanilla does. The witch and cat of a swamp
 //! hut are returned as entity NBT; vanilla's `finalizeSpawn` is left to the caller.
 
@@ -18,6 +19,8 @@ use std::sync::Mutex;
 enum Kind {
     SwampHut { witch: AtomicBool, cat: AtomicBool },
     JungleTemple(JungleFlags),
+    /// `hasPlacedChest`, by `get2DDataValue`.
+    DesertPyramid([AtomicBool; 4]),
 }
 
 struct JungleFlags {
@@ -39,6 +42,24 @@ impl Scattered {
     fn new(kind_id: &'static str, x: i32, y: i32, z: i32, width: i32, height: i32, depth: i32, dir: Dir, kind: Kind) -> Self {
         let base = PieceBase::new(kind_id, 0, BoundingBox::make(x, y, z, dir, width, height, depth)).with_orientation(Some(dir));
         Self { base, settled: Mutex::new(None), kind }
+    }
+
+    /// `updateHeightPositionToLowestGroundHeight`: the piece's base with its settled height.
+    fn lowest_ground_height(&self, ctx: &PlaceCtx, offset: i32) -> PieceBase {
+        let mut settled = self.settled.lock().unwrap_or_else(|e| e.into_inner());
+        if settled.is_none() {
+            let bb = self.base.bbox;
+            let mut lowest = ctx.w.max_y() + 1;
+            for z in bb.min_z..=bb.max_z {
+                for x in bb.min_x..=bb.max_x {
+                    lowest = lowest.min(ctx.w.height_at(Heightmap::MotionBlockingNoLeaves, x, z));
+                }
+            }
+            *settled = Some(lowest - bb.min_y + offset);
+        }
+        let mut base = self.base.clone();
+        base.bbox.move_by(0, settled.unwrap_or(0), 0);
+        base
     }
 
     /// `updateAverageGroundHeight`: the piece's base with its settled height, if it could be
@@ -106,6 +127,12 @@ impl Piece for Scattered {
     }
 
     fn post_process(&self, ctx: &mut PlaceCtx) {
+        if let Kind::DesertPyramid(chests) = &self.kind {
+            let offset = -ctx.r.next_bounded(3);
+            let b = self.lowest_ground_height(ctx, offset);
+            desert_pyramid(&b, ctx, chests);
+            return;
+        }
         let Some(b) = self.average_ground_height(ctx, 0) else { return };
         match &self.kind {
             Kind::SwampHut { witch, cat } => {
@@ -119,6 +146,7 @@ impl Piece for Scattered {
                 }
             }
             Kind::JungleTemple(flags) => jungle_temple(&b, ctx, flags),
+            Kind::DesertPyramid(_) => {}
         }
     }
 }
@@ -369,4 +397,375 @@ fn jungle_temple(b: &PieceBase, ctx: &mut PlaceCtx, flags: &JungleFlags) {
         if !flags.placed_hidden_chest.load(Ordering::Relaxed) {
             flags.placed_hidden_chest.store(b.create_chest(ctx, 9, -3, 10, "minecraft:chests/jungle_temple"), Ordering::Relaxed);
         }
+}
+
+fn desert_pyramid(b: &PieceBase, ctx: &mut PlaceCtx, chests: &[AtomicBool; 4]) {
+    let orange = st("minecraft:orange_terracotta");
+        b.generate_box(ctx, 0, -4, 0, 20, 0, 20, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        for n in 1..=9 {
+            b.generate_box(ctx, n, n, n, (20 - n), n, (20 - n), st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+            b.generate_box(ctx, (n + 1), n, (n + 1), (19 - n), n, (19 - n), st("minecraft:air"), st("minecraft:air"), false);
+        }
+        for n in 0..21 {
+            for s in 0..21 {
+                b.fill_column_down(ctx, st("minecraft:sandstone"), n, -5, s);
+            }
+        }
+        let n = with_dir(st("minecraft:sandstone_stairs"), "facing", Dir::North);
+        let s = with_dir(st("minecraft:sandstone_stairs"), "facing", Dir::South);
+        let e = with_dir(st("minecraft:sandstone_stairs"), "facing", Dir::East);
+        let w = with_dir(st("minecraft:sandstone_stairs"), "facing", Dir::West);
+        b.generate_box(ctx, 0, 0, 0, 4, 9, 4, st("minecraft:sandstone"), st("minecraft:air"), false);
+        b.generate_box(ctx, 1, 10, 1, 3, 10, 3, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.place_block(ctx, n, 2, 10, 0);
+        b.place_block(ctx, s, 2, 10, 4);
+        b.place_block(ctx, e, 0, 10, 2);
+        b.place_block(ctx, w, 4, 10, 2);
+        b.generate_box(ctx, 16, 0, 0, 20, 9, 4, st("minecraft:sandstone"), st("minecraft:air"), false);
+        b.generate_box(ctx, 17, 10, 1, 19, 10, 3, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.place_block(ctx, n, 18, 10, 0);
+        b.place_block(ctx, s, 18, 10, 4);
+        b.place_block(ctx, e, 16, 10, 2);
+        b.place_block(ctx, w, 20, 10, 2);
+        b.generate_box(ctx, 8, 0, 0, 12, 4, 4, st("minecraft:sandstone"), st("minecraft:air"), false);
+        b.generate_box(ctx, 9, 1, 0, 11, 3, 4, st("minecraft:air"), st("minecraft:air"), false);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 9, 1, 1);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 9, 2, 1);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 9, 3, 1);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 10, 3, 1);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 11, 3, 1);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 11, 2, 1);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 11, 1, 1);
+        b.generate_box(ctx, 4, 1, 1, 8, 3, 3, st("minecraft:sandstone"), st("minecraft:air"), false);
+        b.generate_box(ctx, 4, 1, 2, 8, 2, 2, st("minecraft:air"), st("minecraft:air"), false);
+        b.generate_box(ctx, 12, 1, 1, 16, 3, 3, st("minecraft:sandstone"), st("minecraft:air"), false);
+        b.generate_box(ctx, 12, 1, 2, 16, 2, 2, st("minecraft:air"), st("minecraft:air"), false);
+        b.generate_box(ctx, 5, 4, 5, 15, 4, 15, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 9, 4, 9, 11, 4, 11, st("minecraft:air"), st("minecraft:air"), false);
+        b.generate_box(ctx, 8, 1, 8, 8, 3, 8, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 12, 1, 8, 12, 3, 8, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 8, 1, 12, 8, 3, 12, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 12, 1, 12, 12, 3, 12, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 1, 1, 5, 4, 4, 11, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 16, 1, 5, 19, 4, 11, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 6, 7, 9, 6, 7, 11, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 14, 7, 9, 14, 7, 11, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 5, 5, 9, 5, 7, 11, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 15, 5, 9, 15, 7, 11, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.place_block(ctx, st("minecraft:air"), 5, 5, 10);
+        b.place_block(ctx, st("minecraft:air"), 5, 6, 10);
+        b.place_block(ctx, st("minecraft:air"), 6, 6, 10);
+        b.place_block(ctx, st("minecraft:air"), 15, 5, 10);
+        b.place_block(ctx, st("minecraft:air"), 15, 6, 10);
+        b.place_block(ctx, st("minecraft:air"), 14, 6, 10);
+        b.generate_box(ctx, 2, 4, 4, 2, 6, 4, st("minecraft:air"), st("minecraft:air"), false);
+        b.generate_box(ctx, 18, 4, 4, 18, 6, 4, st("minecraft:air"), st("minecraft:air"), false);
+        b.place_block(ctx, n, 2, 4, 5);
+        b.place_block(ctx, n, 2, 3, 4);
+        b.place_block(ctx, n, 18, 4, 5);
+        b.place_block(ctx, n, 18, 3, 4);
+        b.generate_box(ctx, 1, 1, 3, 2, 2, 3, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 18, 1, 3, 19, 2, 3, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.place_block(ctx, st("minecraft:sandstone"), 1, 1, 2);
+        b.place_block(ctx, st("minecraft:sandstone"), 19, 1, 2);
+        b.place_block(ctx, st("minecraft:sandstone_slab"), 1, 2, 2);
+        b.place_block(ctx, st("minecraft:sandstone_slab"), 19, 2, 2);
+        b.place_block(ctx, w, 2, 1, 2);
+        b.place_block(ctx, e, 18, 1, 2);
+        b.generate_box(ctx, 4, 3, 5, 4, 3, 17, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 16, 3, 5, 16, 3, 17, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 3, 1, 5, 4, 2, 16, st("minecraft:air"), st("minecraft:air"), false);
+        b.generate_box(ctx, 15, 1, 5, 16, 2, 16, st("minecraft:air"), st("minecraft:air"), false);
+        for x_z in (5..=17).step_by(2) {
+            b.place_block(ctx, st("minecraft:cut_sandstone"), 4, 1, x_z);
+            b.place_block(ctx, st("minecraft:chiseled_sandstone"), 4, 2, x_z);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), 16, 1, x_z);
+            b.place_block(ctx, st("minecraft:chiseled_sandstone"), 16, 2, x_z);
+        }
+        b.place_block(ctx, orange, 10, 0, 7);
+        b.place_block(ctx, orange, 10, 0, 8);
+        b.place_block(ctx, orange, 9, 0, 9);
+        b.place_block(ctx, orange, 11, 0, 9);
+        b.place_block(ctx, orange, 8, 0, 10);
+        b.place_block(ctx, orange, 12, 0, 10);
+        b.place_block(ctx, orange, 7, 0, 10);
+        b.place_block(ctx, orange, 13, 0, 10);
+        b.place_block(ctx, orange, 9, 0, 11);
+        b.place_block(ctx, orange, 11, 0, 11);
+        b.place_block(ctx, orange, 10, 0, 12);
+        b.place_block(ctx, orange, 10, 0, 13);
+        b.place_block(ctx, st("minecraft:blue_terracotta"), 10, 0, 10);
+        let mut x_z = 0;
+        while x_z <= 20 {
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 2, 1);
+            b.place_block(ctx, orange, x_z, 2, 2);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 2, 3);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 3, 1);
+            b.place_block(ctx, orange, x_z, 3, 2);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 3, 3);
+            b.place_block(ctx, orange, x_z, 4, 1);
+            b.place_block(ctx, st("minecraft:chiseled_sandstone"), x_z, 4, 2);
+            b.place_block(ctx, orange, x_z, 4, 3);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 5, 1);
+            b.place_block(ctx, orange, x_z, 5, 2);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 5, 3);
+            b.place_block(ctx, orange, x_z, 6, 1);
+            b.place_block(ctx, st("minecraft:chiseled_sandstone"), x_z, 6, 2);
+            b.place_block(ctx, orange, x_z, 6, 3);
+            b.place_block(ctx, orange, x_z, 7, 1);
+            b.place_block(ctx, orange, x_z, 7, 2);
+            b.place_block(ctx, orange, x_z, 7, 3);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 8, 1);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 8, 2);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 8, 3);
+            x_z += 20;
+        }
+        let mut x_z = 2;
+        while x_z <= 18 {
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 2, 0);
+            b.place_block(ctx, orange, x_z, 2, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 2, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 3, 0);
+            b.place_block(ctx, orange, x_z, 3, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 3, 0);
+            b.place_block(ctx, orange, (x_z - 1), 4, 0);
+            b.place_block(ctx, st("minecraft:chiseled_sandstone"), x_z, 4, 0);
+            b.place_block(ctx, orange, (x_z + 1), 4, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 5, 0);
+            b.place_block(ctx, orange, x_z, 5, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 5, 0);
+            b.place_block(ctx, orange, (x_z - 1), 6, 0);
+            b.place_block(ctx, st("minecraft:chiseled_sandstone"), x_z, 6, 0);
+            b.place_block(ctx, orange, (x_z + 1), 6, 0);
+            b.place_block(ctx, orange, (x_z - 1), 7, 0);
+            b.place_block(ctx, orange, x_z, 7, 0);
+            b.place_block(ctx, orange, (x_z + 1), 7, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z - 1), 8, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), x_z, 8, 0);
+            b.place_block(ctx, st("minecraft:cut_sandstone"), (x_z + 1), 8, 0);
+            x_z += (18 - 2);
+        }
+        b.generate_box(ctx, 8, 4, 0, 12, 6, 0, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.place_block(ctx, st("minecraft:air"), 8, 6, 0);
+        b.place_block(ctx, st("minecraft:air"), 12, 6, 0);
+        b.place_block(ctx, orange, 9, 5, 0);
+        b.place_block(ctx, st("minecraft:chiseled_sandstone"), 10, 5, 0);
+        b.place_block(ctx, orange, 11, 5, 0);
+        b.generate_box(ctx, 8, -14, 8, 12, -11, 12, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 8, -10, 8, 12, -10, 12, st("minecraft:chiseled_sandstone"), st("minecraft:chiseled_sandstone"), false);
+        b.generate_box(ctx, 8, -9, 8, 12, -9, 12, st("minecraft:cut_sandstone"), st("minecraft:cut_sandstone"), false);
+        b.generate_box(ctx, 8, -8, 8, 12, -1, 12, st("minecraft:sandstone"), st("minecraft:sandstone"), false);
+        b.generate_box(ctx, 9, -11, 9, 11, -1, 11, st("minecraft:air"), st("minecraft:air"), false);
+        b.place_block(ctx, st("minecraft:stone_pressure_plate"), 10, -11, 10);
+        b.generate_box(ctx, 9, -13, 9, 11, -13, 11, st("minecraft:tnt"), st("minecraft:air"), false);
+        b.place_block(ctx, st("minecraft:air"), 8, -11, 10);
+        b.place_block(ctx, st("minecraft:air"), 8, -10, 10);
+        b.place_block(ctx, st("minecraft:chiseled_sandstone"), 7, -10, 10);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 7, -11, 10);
+        b.place_block(ctx, st("minecraft:air"), 12, -11, 10);
+        b.place_block(ctx, st("minecraft:air"), 12, -10, 10);
+        b.place_block(ctx, st("minecraft:chiseled_sandstone"), 13, -10, 10);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 13, -11, 10);
+        b.place_block(ctx, st("minecraft:air"), 10, -11, 8);
+        b.place_block(ctx, st("minecraft:air"), 10, -10, 8);
+        b.place_block(ctx, st("minecraft:chiseled_sandstone"), 10, -10, 7);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 10, -11, 7);
+        b.place_block(ctx, st("minecraft:air"), 10, -11, 12);
+        b.place_block(ctx, st("minecraft:air"), 10, -10, 12);
+        b.place_block(ctx, st("minecraft:chiseled_sandstone"), 10, -10, 13);
+        b.place_block(ctx, st("minecraft:cut_sandstone"), 10, -11, 13);
+        for direction in Dir::HORIZONTAL {
+            let flag = &chests[data_2d(direction)];
+            if !flag.load(Ordering::Relaxed) {
+                let (dx, _, dz) = direction.offset();
+                flag.store(b.create_chest(ctx, 10 + dx * 2, -11, 10 + dz * 2, "minecraft:chests/desert_pyramid"), Ordering::Relaxed);
+            }
+        }
+        cellar_stairs(b, ctx);
+        cellar_room(b, ctx);
+}
+
+/// The center of the cellar room (`addCellar`).
+const CELLAR: (i32, i32, i32) = (16, -4, 13);
+
+/// `addCellarStairs`.
+fn cellar_stairs(b: &PieceBase, ctx: &mut PlaceCtx) {
+    let (x, y, z) = CELLAR;
+    let stairs = super::transform::rotate_state(st("minecraft:sandstone_stairs"), super::transform::Rotation::CounterClockwise90);
+    b.place_block(ctx, stairs, 13, -1, 17);
+    b.place_block(ctx, stairs, 14, -2, 17);
+    b.place_block(ctx, stairs, 15, -3, 17);
+    let (sand, sandstone) = (st("minecraft:sand"), st("minecraft:sandstone"));
+    let mut r = ctx.w.region_random();
+    let variant = r.next_bool();
+    ctx.w.store_region_random(r);
+    for dx in [-4, -3, -2, -1, 0] {
+        b.place_block(ctx, sand, x + dx, y + 4, z + 4);
+    }
+    b.place_block(ctx, sand, x - 2, y + 3, z + 4);
+    b.place_block(ctx, if variant { sand } else { sandstone }, x - 1, y + 3, z + 4);
+    b.place_block(ctx, if !variant { sand } else { sandstone }, x, y + 3, z + 4);
+    b.place_block(ctx, sand, x - 1, y + 2, z + 4);
+    b.place_block(ctx, sandstone, x, y + 2, z + 4);
+    b.place_block(ctx, sand, x, y + 1, z + 4);
+}
+
+/// `addCellarRoom`.
+fn cellar_room(b: &PieceBase, ctx: &mut PlaceCtx) {
+    let (x, y, z) = CELLAR;
+    let cut = st("minecraft:cut_sandstone");
+    let chiseled = st("minecraft:chiseled_sandstone");
+    let orange = st("minecraft:orange_terracotta");
+    let blue = st("minecraft:blue_terracotta");
+        let cut = st("minecraft:cut_sandstone");
+        let chiseled = st("minecraft:chiseled_sandstone");
+        b.generate_box(ctx, (x - 3), (y + 1), (z - 3), (x - 3), (y + 1), (z + 2), cut, cut, true);
+        b.generate_box(ctx, (x + 3), (y + 1), (z - 3), (x + 3), (y + 1), (z + 2), cut, cut, true);
+        b.generate_box(ctx, (x - 3), (y + 1), (z - 3), (x + 3), (y + 1), (z - 2), cut, cut, true);
+        b.generate_box(ctx, (x - 3), (y + 1), (z + 3), (x + 3), (y + 1), (z + 3), cut, cut, true);
+        b.generate_box(ctx, (x - 3), (y + 2), (z - 3), (x - 3), (y + 2), (z + 2), chiseled, chiseled, true);
+        b.generate_box(ctx, (x + 3), (y + 2), (z - 3), (x + 3), (y + 2), (z + 2), chiseled, chiseled, true);
+        b.generate_box(ctx, (x - 3), (y + 2), (z - 3), (x + 3), (y + 2), (z - 2), chiseled, chiseled, true);
+        b.generate_box(ctx, (x - 3), (y + 2), (z + 3), (x + 3), (y + 2), (z + 3), chiseled, chiseled, true);
+        b.generate_box(ctx, (x - 3), -1, (z - 3), (x - 3), -1, (z + 2), cut, cut, true);
+        b.generate_box(ctx, (x + 3), -1, (z - 3), (x + 3), -1, (z + 2), cut, cut, true);
+        b.generate_box(ctx, (x - 3), -1, (z - 3), (x + 3), -1, (z - 2), cut, cut, true);
+        b.generate_box(ctx, (x - 3), -1, (z + 3), (x + 3), -1, (z + 3), cut, cut, true);
+        // The sand box and collapsed roof (`placeSandBox`, `placeCollapsedRoof`).
+        collapsed_roof(b, ctx, x - 2, y + 4, z - 2, x + 2, z + 2);
+                let blue = st("minecraft:blue_terracotta");
+        b.place_block(ctx, blue, x, y, z);
+        b.place_block(ctx, orange, (x + 1), y, (z - 1));
+        b.place_block(ctx, orange, (x + 1), y, (z + 1));
+        b.place_block(ctx, orange, (x - 1), y, (z - 1));
+        b.place_block(ctx, orange, (x - 1), y, (z + 1));
+        b.place_block(ctx, orange, (x + 2), y, z);
+        b.place_block(ctx, orange, (x - 2), y, z);
+        b.place_block(ctx, orange, x, y, (z + 2));
+        b.place_block(ctx, orange, x, y, (z - 2));
+        b.place_block(ctx, orange, (x + 3), y, z);
+        b.place_block(ctx, cut, (x + 4), (y + 1), z);
+        b.place_block(ctx, chiseled, (x + 4), (y + 2), z);
+        b.place_block(ctx, orange, (x - 3), y, z);
+        b.place_block(ctx, cut, (x - 4), (y + 1), z);
+        b.place_block(ctx, chiseled, (x - 4), (y + 2), z);
+        b.place_block(ctx, orange, x, y, (z + 3));
+        b.place_block(ctx, orange, x, y, (z - 3));
+        b.place_block(ctx, cut, x, (y + 1), (z - 4));
+        b.place_block(ctx, chiseled, x, -2, (z - 4));
+}
+
+/// `placeCollapsedRoof`: sandstone or sand from the region's random.
+fn collapsed_roof(b: &PieceBase, ctx: &mut PlaceCtx, x0: i32, y0: i32, z0: i32, x1: i32, z1: i32) {
+    let mut r = ctx.w.region_random();
+    for x in x0..=x1 {
+        for z in z0..=z1 {
+            let state = if r.next_f32() < 0.33 { st("minecraft:sandstone") } else { st("minecraft:sand") };
+            b.place_block(ctx, state, x, y0, z);
+        }
+    }
+    ctx.w.store_region_random(r);
+}
+
+/// The positions `placeSand` records for the suspicious sand (`placeSandBox` and the sand
+/// next to the cellar room), in order.
+fn sand_positions(b: &PieceBase) -> Vec<Pos> {
+    let (x, y, z) = CELLAR;
+    let mut out = Vec::new();
+    for yy in y + 1..=y + 3 {
+        for xx in x - 2..=x + 2 {
+            for zz in z - 2..=z + 2 {
+                out.push(b.world_pos(xx, yy, zz));
+            }
+        }
+    }
+    for (dx, dz) in [(3, 0), (-3, 0), (0, 3), (0, -3)] {
+        out.push(b.world_pos(x + dx, y + 1, z + dz));
+        out.push(b.world_pos(x + dx, y + 2, z + dz));
+    }
+    out
+}
+
+/// `randomCollapsedRoofPos`.
+fn collapsed_roof_pos(b: &PieceBase, seed: i64) -> Pos {
+    let (x, y, z) = CELLAR;
+    let (x0, y0, z0, x1, z1) = (x - 2, y + 4, z - 2, x + 2, z + 2);
+    let mut r = WorldgenRandom::legacy(seed);
+    let f = r.fork_positional();
+    let p = b.world_pos(x0, y0, z0);
+    let mut r = WorldgenRandom::new(f.at(p.x, p.y, p.z));
+    let rx = r.next_bounded(x1 - x0 + 1) + x0;
+    let rz = r.next_bounded(z1 - z0 + 1) + z0;
+    b.world_pos(rx, y0, rz)
+}
+
+/// `Direction.get2DDataValue`.
+fn data_2d(d: Dir) -> usize {
+    match d {
+        Dir::South => 0,
+        Dir::West => 1,
+        Dir::North => 2,
+        _ => 3,
+    }
+}
+
+/// `BlockPos.asLong`.
+fn pos_as_long(p: Pos) -> i64 {
+    ((p.x as i64 & 0x3FF_FFFF) << 38) | ((p.z as i64 & 0x3FF_FFFF) << 12) | (p.y as i64 & 0xFFF)
+}
+
+/// `DesertPyramidStructure`.
+pub(crate) struct DesertPyramid;
+
+impl StructureGen for DesertPyramid {
+    fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
+        single_piece_stub(ctx, 21, 21)?;
+        let dir = Dir::random_horizontal(&mut ctx.r);
+        let kind = Kind::DesertPyramid(std::array::from_fn(|_| AtomicBool::new(false)));
+        Some(vec![Box::new(Scattered::new("minecraft:tedp", ctx.min_block_x(), 64, ctx.min_block_z(), 21, 15, 21, dir, kind))])
+    }
+
+    /// `DesertPyramidStructure.afterPlace`: suspicious sand at 5 to 7 of the sand positions
+    /// (and at the collapsed roof), plain sand at the others.
+    fn after_place(&self, start: &super::StructureStart, ctx: &mut PlaceCtx) {
+        let mut unique = std::collections::BTreeSet::new();
+        let mut boxes = Vec::new();
+        for p in &start.pieces {
+            let mut base = p.base().clone();
+            base.bbox = p.bbox();
+            boxes.push(base.bbox);
+            if base.kind != "minecraft:tedp" {
+                continue;
+            }
+            for s in sand_positions(&base) {
+                unique.insert((s.y, s.z, s.x));
+            }
+            let roof = collapsed_roof_pos(&base, ctx.w.seed());
+            suspicious_sand(ctx, roof);
+        }
+        let Some(all) = BoundingBox::encapsulating(boxes) else { return };
+        let mut list: Vec<Pos> = unique.into_iter().map(|(y, z, x)| Pos::new(x, y, z)).collect();
+        let mut r = WorldgenRandom::legacy(ctx.w.seed());
+        let f = r.fork_positional();
+        let c = all.center();
+        let mut r = WorldgenRandom::new(f.at(c.x, c.y, c.z));
+        super::jigsaw::shuffle(&mut list, &mut r);
+        let mut count = (list.len() as i32).min(5 + r.next_bounded(3));
+        for p in list {
+            if count > 0 {
+                count -= 1;
+                suspicious_sand(ctx, p);
+            } else if ctx.chunk_box.is_inside(p) {
+                ctx.w.set(p, st("minecraft:sand"));
+            }
+        }
+    }
+}
+
+/// `DesertPyramidStructure.placeSuspiciousSand`.
+fn suspicious_sand(ctx: &mut PlaceCtx, p: Pos) {
+    if ctx.chunk_box.is_inside(p) {
+        ctx.w.set(p, st("minecraft:suspicious_sand"));
+        ctx.add_block_entity(p, crate::feature::BlockEntity::Loot { table: "minecraft:archaeology/desert_pyramid".into(), seed: pos_as_long(p) });
+    }
 }

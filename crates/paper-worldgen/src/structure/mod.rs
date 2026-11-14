@@ -564,6 +564,7 @@ impl Structures {
             "buried_treasure" => Some(Box::new(legacy::BuriedTreasure)),
             "swamp_hut" => Some(Box::new(temple::SwampHut)),
             "jungle_temple" => Some(Box::new(temple::JungleTemple)),
+            "desert_pyramid" => Some(Box::new(temple::DesertPyramid)),
             _ => None,
         };
         let supported = generator.is_some();
