@@ -15,7 +15,9 @@
 //! generation stopped instead of decorating a chunk twice.
 
 use super::chunk::{BiomeStorage, BlockStorage, Chunk, ChunkPos, GenStatus, ProtoData, Section};
+use super::block_updates::{flags, Level};
 use super::generator::Generator;
+use paper_protocol::codec::BlockPos;
 use paper_data::blocks;
 use paper_nbt::{Compound, Tag};
 use paper_worldgen::{BlockEntity, Dimension, Entity, ProtoChunk, Region, WorldGenerator};
@@ -306,6 +308,74 @@ fn entity_nbt(entity: &Entity) -> Compound {
             c
         }
     }
+}
+
+/// Grows a feature in the playable world (a tree from a sapling, a huge mushroom, a fungus):
+/// the nine chunks around `origin` are copied, `clear` is set in the copy (where the sapling
+/// stood is air while the tree grows), the feature is placed into it, and the blocks that
+/// changed are set in the world (neighbours notified, clients told), with the block entities
+/// the feature made (bee nests). False if it does not fit, the feature is unknown, or a chunk
+/// around it is not loaded; then the world is unchanged.
+pub fn place_grown_feature(level: &mut Level, feature: &str, origin: BlockPos, clear: &[(BlockPos, u32)]) -> bool {
+    // The world's own vanilla generator, or the one flat worlds build for this.
+    let generator = Arc::clone(&level.world.generator);
+    let fallback;
+    let vanilla: &VanillaGenerator = match generator.staged() {
+        Some(own) => own,
+        None => {
+            fallback = level.world.grown_features();
+            match fallback.as_deref() {
+                Some(built) => built,
+                None => return false,
+            }
+        }
+    };
+    if !vanilla.inner.can_grow(feature) {
+        return false;
+    }
+    let center = ChunkPos::of_block(origin.x, origin.z);
+    let mut chunks = Vec::with_capacity(9);
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let Some(chunk) = level.world.chunks.get(&ChunkPos::new(center.x + dx, center.z + dz)) else { return false };
+            chunks.push(*ProtoEntry::from_saved(chunk, vanilla).chunk);
+        }
+    }
+    let before: Vec<(i32, i32, Vec<u16>)> = chunks.iter().map(|c| (c.chunk_x, c.chunk_z, c.blocks.clone())).collect();
+    for (pos, state) in clear {
+        if let Some(c) = chunks.iter_mut().find(|c| c.chunk_x == pos.x >> 4 && c.chunk_z == pos.z >> 4) {
+            c.set(pos.x, pos.y, pos.z, *state, vanilla.inner.block_flags());
+        }
+    }
+    let mut region = Region::new(center.x, center.z, chunks);
+    if !vanilla.inner.place_grown_feature(feature, &mut region, origin.x, origin.y, origin.z, rand::random()) {
+        return false;
+    }
+    let new_block_entities = std::mem::take(&mut region.block_entities);
+    let mut changes = Vec::new();
+    for chunk in region.into_chunks() {
+        let Some((_, _, old)) = before.iter().find(|(x, z, _)| *x == chunk.chunk_x && *z == chunk.chunk_z) else { continue };
+        for (index, (a, b)) in old.iter().zip(chunk.blocks.iter()).enumerate() {
+            if a != b {
+                let (section, local) = ((index >> 12) as i32, index & 4095);
+                let x = chunk.chunk_x * 16 + (local & 15) as i32;
+                let z = chunk.chunk_z * 16 + ((local >> 4) & 15) as i32;
+                changes.push((BlockPos::new(x, chunk.min_y + section * 16 + (local >> 8) as i32, z), *b as u32));
+            }
+        }
+    }
+    // As features set blocks (`setBlock` with 19): neighbours notified, shapes already right.
+    for (pos, state) in changes {
+        level.set_block(pos, state, flags::NEIGHBORS | flags::CLIENTS | flags::KNOWN_SHAPE);
+    }
+    for ((x, y, z), block_entity) in new_block_entities {
+        let state = level.state(BlockPos::new(x, y, z));
+        let Some(c) = block_entity_nbt(state, &block_entity) else { continue };
+        if let Some(chunk) = level.world.chunks.get_mut(&ChunkPos::of_block(x, z)) {
+            chunk.block_entities.insert((y, (z & 15) as u8, (x & 15) as u8), c);
+        }
+    }
+    true
 }
 
 /// Decorates the chunk at `center` with its eight neighbours (all nine entries, any order).

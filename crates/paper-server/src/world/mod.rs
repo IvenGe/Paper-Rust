@@ -87,6 +87,10 @@ pub struct World {
     pub has_skylight: bool,
     pub seed: i64,
     pub generator: Arc<dyn Generator>,
+    /// The vanilla jar's data, for features that grow in worlds without vanilla generation
+    /// (trees from saplings in a flat world).
+    pub vanilla: Option<Arc<crate::vanilla::VanillaData>>,
+    grown_features: std::sync::OnceLock<Option<Arc<staged::VanillaGenerator>>>,
     pub chunks: HashMap<ChunkPos, Chunk>,
     pub spawn: BlockPos,
     pub spawn_yaw: f32,
@@ -188,6 +192,8 @@ impl World {
             spawn: BlockPos::new(8, surface + 1, 8),
             spawn_yaw: 0.0,
             generator,
+            vanilla: None,
+            grown_features: std::sync::OnceLock::new(),
             chunks: HashMap::new(),
             age: 0,
             day_time: 0,
@@ -680,6 +686,21 @@ impl World {
         }
         let light = if chunk.lit { light::update_after_block_change(&mut self.chunks, self.has_skylight, x, y, z, old, state) } else { HashSet::new() };
         Some(BlockChange { pos: BlockPos::new(x, y, z), old, new: state, light })
+    }
+
+    /// For a world without vanilla generation (flat, built-in): a vanilla generator for the
+    /// features that grow (trees from saplings), built from the vanilla jar the first time
+    /// something grows. None without the jar.
+    pub fn grown_features(&self) -> Option<Arc<staged::VanillaGenerator>> {
+        self.grown_features
+            .get_or_init(|| {
+                let data = self.vanilla.as_ref()?;
+                let started = std::time::Instant::now();
+                let made = staged::VanillaGenerator::new(data, "minecraft:overworld", self.seed, false).map_err(|e| log::warn!("Trees cannot grow in {}: {e:#}", self.name)).ok()?;
+                log::debug!("Built the features that grow in {} in {:?}", self.name, started.elapsed());
+                Some(Arc::new(made))
+            })
+            .clone()
     }
 
     /// Copies the game rules block updates depend on into their settings (after loading

@@ -314,7 +314,7 @@ impl Server {
         };
         let generator = Self::make_generator(vanilla.as_deref(), "minecraft:overworld", &kind, seed, overworld_min_y, level.is_some(), config.properties.generate_structures)?;
         let new_world = level.is_none();
-        let mut worlds = vec![Self::open_world(0, &props.level_name, "minecraft:overworld", seed, generator.clone(), storage, level.as_ref())?];
+        let mut worlds = vec![Self::open_world(0, &props.level_name, "minecraft:overworld", seed, generator.clone(), storage, level.as_ref(), vanilla.clone())?];
         if let (true, Some(vanilla)) = (new_world, generator.staged()) {
             let (x, y, z) = vanilla.find_spawn();
             worlds[0].spawn = paper_protocol::codec::BlockPos::new(x, y, z);
@@ -343,7 +343,7 @@ impl Server {
             let min_y = paper_data::synced::dimension_type(dimension).map_or(0, |d| d.min_y);
             let generator = Self::make_generator(vanilla.as_deref(), dimension, &kind, seed, min_y, level.is_some(), config.properties.generate_structures)?;
             let index = worlds.len();
-            let mut world = Self::open_world(index, &name, dimension, seed, generator, storage, level.as_ref())?;
+            let mut world = Self::open_world(index, &name, dimension, seed, generator, storage, level.as_ref(), vanilla.clone())?;
             if level.is_none() {
                 // Where portals and /tp put arrivals without a better place.
                 world.spawn = match dimension {
@@ -424,8 +424,10 @@ impl Server {
     }
 
     /// A world with its saved level data and game rules applied.
-    fn open_world(index: usize, name: &str, dimension: &str, seed: i64, generator: Arc<dyn Generator>, storage: Option<Arc<WorldStorage>>, level: Option<&crate::world::storage::LevelData>) -> Result<World> {
+    #[allow(clippy::too_many_arguments)]
+    fn open_world(index: usize, name: &str, dimension: &str, seed: i64, generator: Arc<dyn Generator>, storage: Option<Arc<WorldStorage>>, level: Option<&crate::world::storage::LevelData>, vanilla: Option<Arc<crate::vanilla::VanillaData>>) -> Result<World> {
         let mut world = World::new(index, name, dimension, seed, generator);
+        world.vanilla = vanilla;
         if let Some(level) = level {
             world.apply_level(level);
             log::info!("Loaded world '{}' (seed {}, {} terrain)", world.name, seed, world.generator.name());

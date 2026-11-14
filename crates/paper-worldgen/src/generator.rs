@@ -311,6 +311,19 @@ impl WorldGenerator {
     /// Turns structure generation off or on (vanilla's `generate-structures`; on by
     /// default). Without structures nothing starts, nothing is placed and the terrain is
     /// not adapted.
+    /// Places a feature that grows in the world: one of vanilla's `TreeGrower` trees
+    /// (`oak`, `fancy_oak_bees_005`, `mega_spruce`, ...), `huge_red_mushroom`,
+    /// `crimson_fungus_planted`, ... at `(x, y, z)` in `region`, the nine chunks around the
+    /// position's chunk. False where it does not fit, or for other features.
+    pub fn place_grown_feature(&self, feature: &str, region: &mut dyn crate::feature::RegionAccess, x: i32, y: i32, z: i32, seed: i64) -> bool {
+        self.decoration.place_grown(self, feature, region, crate::feature::world::Pos::new(x, y, z), seed)
+    }
+
+    /// Whether [`WorldGenerator::place_grown_feature`] knows the feature.
+    pub fn can_grow(&self, feature: &str) -> bool {
+        self.decoration.can_grow(feature)
+    }
+
     pub fn set_structures_enabled(&mut self, enabled: bool) {
         self.structures.enabled = enabled;
     }

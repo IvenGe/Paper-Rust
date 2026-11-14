@@ -237,6 +237,27 @@ impl Parser<'_, '_> {
     }
 }
 
+/// The features saplings (`TreeGrower`), mushrooms and fungi grow into.
+const GROWABLE: &[&str] = &[
+    "oak", "fancy_oak", "oak_bees_005", "fancy_oak_bees_005", "spruce", "mega_spruce", "mega_pine", "birch", "birch_bees_005",
+    "jungle_tree_no_vine", "mega_jungle_tree", "acacia", "cherry", "cherry_bees_005", "dark_oak", "pale_oak_bonemeal", "mangrove",
+    "tall_mangrove", "azalea_tree", "huge_brown_mushroom", "huge_red_mushroom", "crimson_fungus_planted", "warped_fungus_planted",
+];
+
+impl Decoration {
+    /// Places a growable feature at `pos` in `region` (the nine chunks around `pos`).
+    pub(crate) fn place_grown(&self, gen: &WorldGenerator, feature: &str, region: &mut dyn RegionAccess, pos: Pos, seed: i64) -> bool {
+        let Some(f) = self.growable.get(&full_id(feature)) else { return false };
+        let mut world = World::new(gen, &self.blocks, region, pos.x >> 4, pos.z >> 4);
+        let mut random = WorldgenRandom::legacy(seed);
+        f.place(&mut world, &mut random, pos)
+    }
+
+    pub(crate) fn can_grow(&self, feature: &str) -> bool {
+        self.growable.contains_key(&full_id(feature))
+    }
+}
+
 /// `possibleBiomes()` of the vanilla biome sources, in order (the order breaks ties
 /// between otherwise unordered features in `FeatureSorter`).
 const OVERWORLD_BIOMES: &[&str] = &[
@@ -262,6 +283,8 @@ pub struct Decoration {
     possible: u128,
     /// Feature types the data uses that are not implemented (they place nothing).
     pub unsupported: Vec<String>,
+    /// Features that grow in the world: `TreeGrower`'s trees, huge mushrooms, planted fungi.
+    growable: HashMap<String, Arc<Feature>>,
 }
 
 impl Decoration {
@@ -363,6 +386,12 @@ impl Decoration {
             position.insert((node.0, id.clone()), steps[node.0].len() as u32);
             steps[node.0].push(placed);
         }
+        let mut growable = HashMap::new();
+        for id in GROWABLE {
+            if let Ok(f) = parser.feature(&Value::String(full_id(id))) {
+                growable.insert(full_id(id), f);
+            }
+        }
         let unsupported = std::mem::take(&mut parser.unsupported);
         drop(parser);
 
@@ -378,7 +407,7 @@ impl Decoration {
             }
             biome_steps[b as usize] = per_step;
         }
-        Ok(Self { blocks, steps, biome_steps, possible: possible_bits, unsupported })
+        Ok(Self { blocks, steps, biome_steps, possible: possible_bits, unsupported, growable })
     }
 
     /// Places the features of the chunk at the center of `region`.

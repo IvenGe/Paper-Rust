@@ -330,10 +330,18 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
             }
         }
         Kind::Vegetation if block_name(state).ends_with("_sapling") => {
-            // The first of a sapling's two stages (`SaplingBlock.advanceTree`); growing the
-            // tree needs the world generator's tree features.
-            if raw_brightness(level, pos.above()) >= 9 && random_int(level, 7) == 0 && get_int(state, "stage") == 0 {
-                level.set_block(pos, set_int(state, "stage", 1), flags::INVISIBLE);
+            if raw_brightness(level, pos.above()) >= 9 && random_int(level, 7) == 0 {
+                advance_tree(level, state, pos);
+            }
+        }
+        _ if block_name(state) == "minecraft:mangrove_propagule" => {
+            // Hanging propagules ripen (`age` 0..4); planted ones grow like saplings.
+            if get_bool(state, "hanging") {
+                if get_int(state, "age") < 4 {
+                    level.set_block(pos, set_int(state, "age", get_int(state, "age") + 1), flags::CLIENTS);
+                }
+            } else if random_int(level, 7) == 0 {
+                advance_tree(level, state, pos);
             }
         }
         Kind::Leaves => {
@@ -536,14 +544,141 @@ pub fn bone_meal(level: &mut Level, state: u32, pos: BlockPos) -> bool {
             true
         }
         Kind::Vegetation if block_name(state).ends_with("_sapling") => {
-            // 45% of the time a stage further; the tree itself needs the world generator.
-            if level.random_float() < 0.45 && get_int(state, "stage") == 0 {
-                level.set_block(pos, set_int(state, "stage", 1), flags::INVISIBLE);
+            // `SaplingBlock.isBonemealSuccess`: 45% of the time a stage further or a tree.
+            if level.random_float() < 0.45 {
+                advance_tree(level, state, pos);
+            }
+            true
+        }
+        _ if block_name(state) == "minecraft:mangrove_propagule" => {
+            if get_bool(state, "hanging") {
+                if get_int(state, "age") >= 4 {
+                    return false;
+                }
+                level.set_block(pos, set_int(state, "age", 4), flags::CLIENTS);
+            } else if level.random_float() < 0.45 {
+                advance_tree(level, state, pos);
+            }
+            true
+        }
+        _ if matches!(block_name(state), "minecraft:azalea" | "minecraft:flowering_azalea") => {
+            // `AzaleaBlock`: the block above must be free; 45% of the time a tree.
+            if !is_air(level.state(pos.above())) {
+                return false;
+            }
+            if level.random_float() < 0.45 {
+                grow_tree(level, state, pos);
+            }
+            true
+        }
+        _ if matches!(block_name(state), "minecraft:red_mushroom" | "minecraft:brown_mushroom") => {
+            // `MushroomBlock.growMushroom`, 40% of the time.
+            if level.random_float() < 0.4 {
+                let feature = if block_name(state) == "minecraft:red_mushroom" { "huge_red_mushroom" } else { "huge_brown_mushroom" };
+                crate::world::staged::place_grown_feature(level, feature, pos, &[(pos, blocks::AIR)]);
+            }
+            true
+        }
+        _ if matches!(block_name(state), "minecraft:crimson_fungus" | "minecraft:warped_fungus") => {
+            // `FungusBlock`: only on its own nylium; 40% of the time a huge fungus.
+            let crimson = block_name(state) == "minecraft:crimson_fungus";
+            let nylium = if crimson { "minecraft:crimson_nylium" } else { "minecraft:warped_nylium" };
+            if block_name(level.state(pos.below())) != nylium {
+                return false;
+            }
+            if level.random_float() < 0.4 {
+                crate::world::staged::place_grown_feature(level, if crimson { "crimson_fungus_planted" } else { "warped_fungus_planted" }, pos, &[]);
             }
             true
         }
         _ => false,
     }
+}
+
+/// `TreeGrower`: the trees a sapling can grow into (`secondary_chance` picks the second kind).
+struct Grower {
+    secondary_chance: f32,
+    mega: Option<&'static str>,
+    secondary_mega: Option<&'static str>,
+    tree: Option<&'static str>,
+    secondary_tree: Option<&'static str>,
+    flowers: Option<&'static str>,
+    secondary_flowers: Option<&'static str>,
+}
+
+const NO_GROWER: Grower = Grower { secondary_chance: 0.0, mega: None, secondary_mega: None, tree: None, secondary_tree: None, flowers: None, secondary_flowers: None };
+
+/// Vanilla's growers by block. Poplar saplings are left out: how they choose among their
+/// three tree colours is not in the data.
+fn grower(block: &str) -> Option<Grower> {
+    Some(match block {
+        "minecraft:oak_sapling" => Grower { secondary_chance: 0.1, tree: Some("oak"), secondary_tree: Some("fancy_oak"), flowers: Some("oak_bees_005"), secondary_flowers: Some("fancy_oak_bees_005"), ..NO_GROWER },
+        "minecraft:spruce_sapling" => Grower { secondary_chance: 0.5, mega: Some("mega_spruce"), secondary_mega: Some("mega_pine"), tree: Some("spruce"), ..NO_GROWER },
+        "minecraft:mangrove_propagule" => Grower { secondary_chance: 0.85, tree: Some("mangrove"), secondary_tree: Some("tall_mangrove"), ..NO_GROWER },
+        "minecraft:azalea" | "minecraft:flowering_azalea" => Grower { tree: Some("azalea_tree"), ..NO_GROWER },
+        "minecraft:birch_sapling" => Grower { tree: Some("birch"), flowers: Some("birch_bees_005"), ..NO_GROWER },
+        "minecraft:jungle_sapling" => Grower { mega: Some("mega_jungle_tree"), tree: Some("jungle_tree_no_vine"), ..NO_GROWER },
+        "minecraft:acacia_sapling" => Grower { tree: Some("acacia"), ..NO_GROWER },
+        "minecraft:cherry_sapling" => Grower { tree: Some("cherry"), flowers: Some("cherry_bees_005"), ..NO_GROWER },
+        "minecraft:dark_oak_sapling" => Grower { mega: Some("dark_oak"), ..NO_GROWER },
+        "minecraft:pale_oak_sapling" => Grower { mega: Some("pale_oak_bonemeal"), ..NO_GROWER },
+        _ => return None,
+    })
+}
+
+/// `SaplingBlock.advanceTree`: the first stage, then the tree.
+fn advance_tree(level: &mut Level, state: u32, pos: BlockPos) {
+    if get_int(state, "stage") == 0 {
+        level.set_block(pos, set_int(state, "stage", 1), flags::INVISIBLE);
+    } else {
+        grow_tree(level, state, pos);
+    }
+}
+
+/// `TreeGrower.growTree`: a 2x2 tree if four saplings stand in a square (dark oaks need
+/// one), else a single tree, with bees when flowers are near.
+pub fn grow_tree(level: &mut Level, state: u32, pos: BlockPos) -> bool {
+    use crate::world::staged::place_grown_feature;
+    let Some(g) = grower(block_name(state)) else { return false };
+    let mega = match g.secondary_mega {
+        Some(secondary) if level.random_float() < g.secondary_chance => Some(secondary),
+        _ => g.mega,
+    };
+    if let Some(mega) = mega {
+        for dx in [0, -1] {
+            for dz in [0, -1] {
+                let corner = pos.offset(dx, 0, dz);
+                let square = [corner, corner.offset(1, 0, 0), corner.offset(0, 0, 1), corner.offset(1, 0, 1)];
+                if square.iter().all(|p| block_id(level.state(*p)) == block_id(state)) {
+                    let clear: Vec<(BlockPos, u32)> = square.iter().map(|p| (*p, blocks::AIR)).collect();
+                    return place_grown_feature(level, mega, corner, &clear);
+                }
+            }
+        }
+    }
+    let flowers = has_flowers(level, pos);
+    let mut tree = None;
+    if level.random_float() < g.secondary_chance {
+        tree = if flowers && g.secondary_flowers.is_some() { g.secondary_flowers } else { g.secondary_tree };
+    }
+    let tree = tree.or(if flowers && g.flowers.is_some() { g.flowers } else { g.tree });
+    let Some(tree) = tree else { return false };
+    let fill = if get_bool(state, "waterlogged") { blocks::default_state("minecraft:water").unwrap_or(blocks::AIR) } else { blocks::AIR };
+    place_grown_feature(level, tree, pos, &[(pos, fill)])
+}
+
+/// `TreeGrower.hasFlowers`: a flower within two blocks.
+fn has_flowers(level: &mut Level, pos: BlockPos) -> bool {
+    for y in -1..=1 {
+        for z in -2..=2 {
+            for x in -2..=2 {
+                if in_tag!(level.state(pos.offset(x, y, z)), "flowers") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

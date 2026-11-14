@@ -80,9 +80,11 @@ What works:
   players): crops grow by vanilla's farmland rules, farmland gets wet near water or dries
   back to dirt, grass and mycelium spread or die in the dark, sugar cane, cactus (and its
   flowers), pumpkin and melon stems, sweet berries, nether wart and cocoa grow, leaves away
-  from logs decay, ice and snow melt near light, lava sets things on fire. Hoes till,
-  shovels make paths, axes strip logs and wood, bone meal grows crops; seeds need farmland
-  and jumping on it tramples it.
+  from logs decay, ice and snow melt near light, lava sets things on fire. Saplings grow
+  into vanilla's trees (2x2 ones from four saplings, bee nests near flowers), and bone meal
+  grows them, azaleas, huge mushrooms and huge fungi; flat worlds take the tree features
+  from the vanilla jar too. Hoes till, shovels make paths, axes strip logs and wood, bone
+  meal grows crops; seeds need farmland and jumping on it tramples it.
 * **Entities**: dropped items (pickup, merging, despawning), experience orbs, arrows, falling
   blocks and primed TNT, and mobs: animals wander, look at players and panic when hurt;
   zombies, spiders and other monsters chase and hit players; skeletons shoot arrows;
@@ -199,7 +201,8 @@ Not yet:
   structure that was being placed can show seams. There is no dragon fight (the End's exit
   portal is open from the start), and End gateways do not teleport yet.
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
-  trading, taming); saplings do not grow into trees yet. Tripwires,
+  trading, taming); poplar saplings do not grow (how they pick their tree is not in the
+  data). Tripwires,
   crafters and observers of entities do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.

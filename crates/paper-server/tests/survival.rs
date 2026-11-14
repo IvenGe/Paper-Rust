@@ -13,10 +13,13 @@ use std::time::Duration;
 const QUIET: Duration = Duration::from_millis(300);
 
 fn survival_server() -> paper_server::RunningServer {
-    start_server(|c| {
+    let server = start_server(|c| {
         c.properties.gamemode = GameMode::Survival;
         c.properties.difficulty = Difficulty::Normal;
-    })
+    });
+    // Players join right at the world spawn: the tests place mobs and blocks next to it.
+    server.handle.run(|s| s.set_game_rule(0, "respawn_radius", paper_data::game_rules::Value::Int(0))).unwrap();
+    server
 }
 
 fn join(server: &paper_server::RunningServer, name: &str) -> Client {

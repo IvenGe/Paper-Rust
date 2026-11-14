@@ -121,3 +121,57 @@ fn axes_strip_logs_and_shovels_make_paths() {
     wait_until("a path", TIMEOUT, || name_at(&server, grass) == "minecraft:dirt_path");
     server.stop();
 }
+
+#[test]
+fn saplings_grow_into_trees() {
+    if paper_server::vanilla::test_jar().is_none() {
+        eprintln!("skipping: no vanilla jar");
+        return;
+    }
+    // A flat world: the tree features come from the vanilla jar all the same.
+    let server = start_server(|c| c.properties.gamemode = GameMode::Survival);
+    let mut alice = join(&server);
+    let id = alice.entity_id;
+
+    // A sapling at its second stage grows into an oak on random ticks (in daylight).
+    let oak = BlockPos::new(12, -60, 12);
+    server
+        .handle
+        .run(move |s| {
+            s.worlds[0].day_time = 1000;
+            s.set_game_rule(0, "random_tick_speed", paper_data::game_rules::Value::Int(4096));
+            s.set_block_and_update(0, oak, blocks::parse_state("oak_sapling[stage=1]").unwrap());
+        })
+        .unwrap();
+    wait_until("the oak to grow", Duration::from_secs(30), || matches!(name_at(&server, oak).as_str(), "minecraft:oak_log"));
+    let leaves = server
+        .handle
+        .run(move |s| (-3..=3).any(|dx| (2..10).any(|dy| s.worlds[0].block_at(oak.x + dx, oak.y + dy, oak.z).is_some_and(|b| blocks::block_of_state(b).name == "minecraft:oak_leaves"))))
+        .unwrap();
+    assert!(leaves, "the oak has leaves");
+    server.handle.run(|s| s.set_game_rule(0, "random_tick_speed", paper_data::game_rules::Value::Int(0))).unwrap();
+
+    // Dark oaks need four saplings in a square; bone meal grows them.
+    let corner = BlockPos::new(4, -60, 20);
+    server
+        .handle
+        .run(move |s| {
+            // Within reach (the spawn point is spread at random).
+            s.teleport(id, paper_server::server::player::Location { x: 7.5, y: -60.0, z: 21.5, yaw: 0.0, pitch: 0.0 });
+            for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                s.set_block_and_update(0, corner.offset(dx, 0, dz), blocks::parse_state("dark_oak_sapling[stage=1]").unwrap());
+            }
+        })
+        .unwrap();
+    for sequence in 1..40 {
+        hold(&server, id, Slot::of(item("minecraft:bone_meal"), 1));
+        alice.send(&use_on(corner, sequence));
+        alice.drain(Duration::from_millis(100));
+        if name_at(&server, corner) == "minecraft:dark_oak_log" {
+            break;
+        }
+    }
+    assert_eq!(name_at(&server, corner), "minecraft:dark_oak_log", "a dark oak grew");
+    assert_eq!(name_at(&server, corner.offset(1, 0, 1)), "minecraft:dark_oak_log", "with a 2x2 trunk");
+    server.stop();
+}
