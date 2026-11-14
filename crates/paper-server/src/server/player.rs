@@ -219,6 +219,8 @@ pub struct Player {
     pub enchantment_seed: i32,
     /// Max health, speed, armour, reach, ... with the modifiers of equipment and effects.
     pub attributes: crate::world::attributes::Attributes,
+    /// The client's last answer to a resource pack offer (0 loaded ... 7 discarded).
+    pub resource_pack_status: Option<i32>,
 }
 
 impl Player {

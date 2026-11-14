@@ -449,64 +449,163 @@ public final class HostPlayer extends AbstractPlayer {
         this.server.send("player.stop_sound", this.args());
     }
 
+    // --- books ---------------------------------------------------------------------------------
+
+    @Override
+    public void openBook(final org.bukkit.inventory.ItemStack book) {
+        if (book == null || book.getType() != org.bukkit.Material.WRITTEN_BOOK) {
+            throw new IllegalArgumentException("Book must be Material.WRITTEN_BOOK");
+        }
+        this.server.send("player.open_book", this.args("item", io.papermc.paperrs.host.item.HostItemStack.toValue(book)));
+    }
+
     @Override
     public void openBook(final net.kyori.adventure.inventory.Book.Builder book) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#openBook");
+        this.openBook(book.build());
     }
 
     @Override
     public void openBook(final net.kyori.adventure.inventory.BookLike book) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#openBook");
+        this.openBook(book.asBook());
     }
 
     @Override
     public void openBook(final net.kyori.adventure.inventory.Book book) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#openBook");
+        final org.bukkit.inventory.ItemStack item = org.bukkit.inventory.ItemStack.of(org.bukkit.Material.WRITTEN_BOOK);
+        item.editMeta(org.bukkit.inventory.meta.BookMeta.class, meta -> {
+            meta.title(book.title());
+            meta.author(book.author());
+            meta.pages(book.pages());
+        });
+        this.openBook(item);
+    }
+
+    // --- resource packs -------------------------------------------------------------------------
+
+    private static String hex(final byte @Nullable [] hash) {
+        if (hash == null) {
+            return "";
+        }
+        final StringBuilder out = new StringBuilder();
+        for (final byte b : hash) {
+            out.append(String.format("%02x", b));
+        }
+        return out.toString();
+    }
+
+    private void pushPack(final UUID id, final String url, final String hash, final boolean force, final @Nullable Component prompt) {
+        if (url == null) {
+            throw new IllegalArgumentException("Resource pack URL cannot be null");
+        }
+        this.server.send("player.resource_pack_push", this.args("id", id.toString(), "url", url, "hash", hash, "forced", force,
+            "prompt", prompt == null ? null : Components.toJson(prompt)));
+    }
+
+    private void popPack(final @Nullable UUID id) {
+        this.server.send("player.resource_pack_pop", id == null ? this.args() : this.args("id", id.toString()));
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void setResourcePack(final String url, final byte @Nullable [] hash, final @Nullable String prompt, final boolean force) {
+        this.setResourcePack(UUID.nameUUIDFromBytes(url.getBytes(java.nio.charset.StandardCharsets.UTF_8)), url, hash, prompt == null ? null : Components.legacy(prompt), force);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void setResourcePack(final UUID id, final String url, final byte @Nullable [] hash, final @Nullable String prompt, final boolean force) {
+        this.setResourcePack(id, url, hash, prompt == null ? null : Components.legacy(prompt), force);
+    }
+
+    /** Replaces every pack the player has, as CraftPlayer does. */
+    @Override
+    public void setResourcePack(final UUID id, final String url, final byte @Nullable [] hash, final @Nullable Component prompt, final boolean force) {
+        this.popPack(null);
+        this.pushPack(id, url, hex(hash), force, prompt);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void addResourcePack(final UUID id, final String url, final byte @Nullable [] hash, final @Nullable String prompt, final boolean force) {
+        this.pushPack(id, url, hex(hash), force, prompt == null ? null : Components.legacy(prompt));
+    }
+
+    @Override
+    public void removeResourcePack(final UUID id) {
+        this.popPack(id);
+    }
+
+    @Override
+    public void removeResourcePacks() {
+        this.popPack(null);
+    }
+
+    @Override
+    public org.bukkit.event.player.PlayerResourcePackStatusEvent.@Nullable Status getResourcePackStatus() {
+        this.refresh(this.server.call("player.state", this.args()));
+        final Object status = this.state.get("resource_pack_status");
+        final org.bukkit.event.player.PlayerResourcePackStatusEvent.Status[] all = org.bukkit.event.player.PlayerResourcePackStatusEvent.Status.values();
+        return status instanceof Number n && n.intValue() >= 0 && n.intValue() < all.length ? all[n.intValue()] : null;
     }
 
     @Override
     public void sendResourcePacks(final net.kyori.adventure.resource.ResourcePackInfoLike first, final net.kyori.adventure.resource.ResourcePackInfoLike... others) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#sendResourcePacks");
+        this.sendResourcePacks(net.kyori.adventure.resource.ResourcePackRequest.addingRequest(first, others));
     }
 
     @Override
     public void sendResourcePacks(final net.kyori.adventure.resource.ResourcePackRequestLike request) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#sendResourcePacks");
+        this.sendResourcePacks(request.asResourcePackRequest());
     }
 
     @Override
     public void sendResourcePacks(final net.kyori.adventure.resource.ResourcePackRequest request) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#sendResourcePacks");
+        if (request.replace()) {
+            this.popPack(null);
+        }
+        for (final net.kyori.adventure.resource.ResourcePackInfo pack : request.packs()) {
+            this.pushPack(pack.id(), pack.uri().toString(), pack.hash(), request.required(), request.prompt());
+        }
     }
 
     @Override
     public void removeResourcePacks(final net.kyori.adventure.resource.ResourcePackRequestLike request) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+        this.removeResourcePacks(request.asResourcePackRequest());
     }
 
     @Override
     public void removeResourcePacks(final net.kyori.adventure.resource.ResourcePackRequest request) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+        for (final net.kyori.adventure.resource.ResourcePackInfo pack : request.packs()) {
+            this.popPack(pack.id());
+        }
     }
 
     @Override
     public void removeResourcePacks(final net.kyori.adventure.resource.ResourcePackInfoLike request, final net.kyori.adventure.resource.ResourcePackInfoLike... others) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+        this.popPack(request.asResourcePackInfo().id());
+        for (final net.kyori.adventure.resource.ResourcePackInfoLike other : others) {
+            this.popPack(other.asResourcePackInfo().id());
+        }
     }
 
     @Override
     public void removeResourcePacks(final Iterable<UUID> ids) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+        for (final UUID id : ids) {
+            this.popPack(id);
+        }
     }
 
     @Override
     public void removeResourcePacks(final UUID id, final UUID... others) {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#removeResourcePacks");
+        this.popPack(id);
+        for (final UUID other : others) {
+            this.popPack(other);
+        }
     }
 
     @Override
     public void clearResourcePacks() {
-        throw io.papermc.paperrs.host.Unsupported.method("Player#clearResourcePacks");
+        this.popPack(null);
     }
 
     @Override

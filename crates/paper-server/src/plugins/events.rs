@@ -168,6 +168,13 @@ pub fn visible_plugin_commands(server: &mut Server, id: i32) -> Vec<String> {
     }
 }
 
+/// The client answered a resource pack offer (`PlayerResourcePackStatusEvent`).
+pub fn on_resource_pack_status(server: &mut Server, id: i32, pack: uuid::Uuid, status: i32) {
+    let Some(player) = server.players.get(&id) else { return };
+    let args = bmap! { "uuid" => player.uuid().to_string(), "id" => pack.to_string(), "status" => status };
+    fire(server, "PlayerResourcePackStatusEvent", "event.resource_pack_status", args);
+}
+
 /// A player is about to break a block. Returns whether the break may proceed.
 pub fn on_block_break(server: &mut Server, id: i32, world: usize, pos: BlockPos, state: u32) -> bool {
     let Some(player) = server.players.get(&id) else { return true };

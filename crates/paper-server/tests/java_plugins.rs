@@ -298,6 +298,26 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest attributes");
     expect_line(&mut alice, "attributes: ok");
 
+    // Resource packs: offered, answered, and the answers reach the plugin.
+    alice.clear_backlog();
+    alice.command("apitest packs");
+    expect_line(&mut alice, "packs: sent");
+    alice.find(TIMEOUT, |p: &play::ResourcePackPop| p.uuid.is_none()).expect("the old packs go");
+    let push: play::ResourcePackPush = alice.find(TIMEOUT, |_: &play::ResourcePackPush| true).expect("the pack is offered");
+    assert_eq!((push.url.as_str(), push.hash.len(), push.forced), ("https://example.com/pack.zip", 40, true));
+    assert_eq!(push.prompt.as_ref().map(|p| p.to_plain()).as_deref(), Some("Please accept"));
+    alice.send(&play::ResourcePackResponse { uuid: push.uuid, result: VarInt(3) });
+    alice.send(&play::ResourcePackResponse { uuid: push.uuid, result: VarInt(0) });
+    alice.drain(Duration::from_millis(300));
+    alice.command("apitest packstatus");
+    expect_line(&mut alice, "packstatus: SUCCESSFULLY_LOADED ACCEPTED,SUCCESSFULLY_LOADED");
+
+    // A book opens on the client.
+    alice.command("apitest book");
+    let open: play::OpenBook = alice.find(TIMEOUT, |_: &play::OpenBook| true).expect("the book opens");
+    assert_eq!(open.hand.0, 0);
+    expect_line(&mut alice, "book: opened");
+
     // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
     alice.command("apitest unsupported");
     expect_line(&mut alice, "unsupported: ItemMeta#getAttributeModifiers is not supported by Paper-RS yet");

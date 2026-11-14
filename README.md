@@ -184,6 +184,9 @@ What works:
   * potion effects of players and mobs (`addPotionEffect`, `getActivePotionEffects`, ...);
   * attributes of players and mobs (`getAttribute`, base values, modifiers,
     `registerAttribute`, `getMaxHealth`/`setMaxHealth`);
+  * resource packs (Bukkit's `setResourcePack`/`addResourcePack` and Adventure's
+    `sendResourcePacks`, removing them, `getResourcePackStatus` and
+    `PlayerResourcePackStatusEvent`) and `openBook`;
   * boss bars, Adventure's (`showBossBar`) and Bukkit's (`Server.createBossBar`, keyed ones
     included);
   * block data: `Bukkit.createBlockData`, `Material`/`BlockType.createBlockData`,
@@ -207,7 +210,7 @@ Not yet:
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.
 * Plugin API: creating worlds, registry and tag lifecycle events,
-  statistics, books (`openBook`), item attribute modifiers (`ItemMeta#getAttributeModifiers`), resource packs, dialogs, signed chat messages, entity AI and passengers, the data component API
+  statistics, item attribute modifiers (`ItemMeta#getAttributeModifiers`), dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
   fish, ...), inventories of other block types and anvils, enchanting or merchant views,

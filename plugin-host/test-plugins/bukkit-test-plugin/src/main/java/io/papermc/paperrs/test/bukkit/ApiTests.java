@@ -104,6 +104,16 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "blockdata" -> this.blockData((Player) sender);
                 case "metas" -> this.metas((Player) sender);
                 case "attributes" -> this.attributes((Player) sender);
+                case "packs" -> {
+                    ((Player) sender).setResourcePack(java.util.UUID.fromString("5d1ac9b3-08a1-4b7e-9a51-4c6a8e44f1c2"), "https://example.com/pack.zip", new byte[20],
+                        Component.text("Please accept"), true);
+                    sender.sendMessage("packs: sent");
+                }
+                case "packstatus" -> sender.sendMessage("packstatus: " + ((Player) sender).getResourcePackStatus() + " " + String.join(",", this.packStatuses));
+                case "book" -> {
+                    ((Player) sender).openBook(net.kyori.adventure.inventory.Book.builder().title(Component.text("Guide")).author(Component.text("Alice")).addPage(Component.text("Hello")).build());
+                    sender.sendMessage("book: opened");
+                }
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
@@ -121,6 +131,15 @@ final class ApiTests implements Listener, CommandExecutor {
             sender.sendMessage(args[0] + ": FAIL " + e);
         }
         return true;
+    }
+
+    // --- resource packs ---------------------------------------------------------------------------
+
+    private final List<String> packStatuses = new ArrayList<>();
+
+    @EventHandler
+    public void onPackStatus(final org.bukkit.event.player.PlayerResourcePackStatusEvent event) {
+        this.packStatuses.add(event.getStatus().name());
     }
 
     // --- attributes ---------------------------------------------------------------------------

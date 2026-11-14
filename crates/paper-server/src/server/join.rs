@@ -119,6 +119,7 @@ impl Server {
             sleep_ticks: 0,
             enchantment_seed: rand::random(),
             attributes: crate::world::attributes::Attributes::of_type("minecraft:player"),
+            resource_pack_status: None,
         };
         player.view.radius = player.view_distance(server_view);
         if let Some(saved) = saved {

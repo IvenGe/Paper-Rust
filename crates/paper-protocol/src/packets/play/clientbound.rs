@@ -1627,6 +1627,13 @@ impl Encode for UpdateAttributes {
     }
 }
 
+packet! {
+    /// Opens the book in a hand (the client reads it from that hand's item).
+    OpenBook = play::clientbound::OPEN_BOOK {
+        hand: VarInt,
+    }
+}
+
 impl Decode for UpdateAttributes {
     fn decode(r: &mut Reader<'_>) -> Result<Self> {
         let entity_id = r.varint()?;

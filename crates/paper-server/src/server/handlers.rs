@@ -234,8 +234,13 @@ impl Server {
             | Serverbound::ConfigurationAcknowledged
             | Serverbound::CookieResponse(_)
             | Serverbound::Pong(_)
-            | Serverbound::ResourcePack(_)
             | Serverbound::Other { .. } => {}
+            Serverbound::ResourcePack(response) => {
+                if let Some(p) = self.players.get_mut(&id) {
+                    p.resource_pack_status = Some(response.result.0);
+                }
+                crate::plugins::events::on_resource_pack_status(self, id, response.uuid, response.result.0);
+            }
         }
     }
 

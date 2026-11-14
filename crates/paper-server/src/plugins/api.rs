@@ -131,6 +131,7 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "game_mode" => p.game_mode.name(),
         "op_level" => p.op_level as i64,
         "health" => p.health,
+        "resource_pack_status" => p.resource_pack_status.map(i64::from),
         "food" => p.food,
         "saturation" => p.saturation,
         "sneaking" => p.sneaking,
@@ -538,6 +539,38 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 other => bail!("invalid block state {other}"),
             };
             server.players[&id].conn.send(&play::BlockUpdate { pos: paper_protocol::codec::BlockPos::new(x, y, z), state: paper_protocol::codec::VarInt(state as i32) });
+            Ok(Value::Null)
+        }
+        "player.resource_pack_push" => {
+            let id = player_id(server, args)?;
+            let pack = args.str("id").and_then(|s| uuid::Uuid::parse_str(s).ok()).ok_or_else(|| anyhow!("missing pack id"))?;
+            let packet = play::ResourcePackPush {
+                uuid: pack,
+                url: args.str("url").ok_or_else(|| anyhow!("missing url"))?.to_owned(),
+                hash: args.str("hash").unwrap_or("").to_owned(),
+                forced: args.bool("forced").unwrap_or(false),
+                prompt: component_from(args.get("prompt")),
+            };
+            server.players[&id].conn.send(&packet);
+            Ok(Value::Null)
+        }
+        "player.resource_pack_pop" => {
+            let id = player_id(server, args)?;
+            let pack = args.str("id").and_then(|s| uuid::Uuid::parse_str(s).ok());
+            server.players[&id].conn.send(&play::ResourcePackPop { uuid: pack });
+            Ok(Value::Null)
+        }
+        "player.open_book" => {
+            // As CraftPlayer#openBook: the book goes into the held slot on the client only, the
+            // client opens it, and the real item comes back.
+            let id = player_id(server, args)?;
+            let book = slot_from(args.get("item"))?;
+            let p = &server.players[&id];
+            let slot = (HOTBAR_START + p.held_slot as usize) as i16;
+            let real = p.inventory[slot as usize].clone();
+            p.conn.send(&play::ContainerSetSlot { window_id: 0, state_id: p.inventory_state, slot, item: book });
+            p.conn.send(&play::OpenBook { hand: VarInt(0) });
+            p.conn.send(&play::ContainerSetSlot { window_id: 0, state_id: p.inventory_state, slot, item: real });
             Ok(Value::Null)
         }
         "player.stop_sound" => {

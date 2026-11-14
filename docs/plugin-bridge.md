@@ -139,6 +139,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.command_preprocess` | `uuid`, `message` (with `/`) | `cancelled`, `message` |
 | `event.server_command` | `command` | `cancelled`, `command` |
 | `event.block_break` | `uuid`, `world`, `x`, `y`, `z`, `state` | `cancelled` |
+| `event.resource_pack_status` | `uuid`, `id` (the pack), `status` (0 loaded ... 7 discarded) | nothing |
 | `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand` | `cancelled`; the server places the block after the event, unless a listener has set that block itself |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
@@ -188,6 +189,8 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.update_commands` | `uuid` |
 | `player.play_sound` | `uuid`, `sound`, `category`, `x`, `y`, `z`, `volume`, `pitch` |
 | `player.block_change` | `uuid`, `x`, `y`, `z`, `state` (a block only this player sees) |
+| `player.resource_pack_push` / `player.resource_pack_pop` | `uuid`, `id` (the pack), `url`, `hash`, `forced`, `prompt` (JSON) / `uuid`, and `id` or nothing for all |
+| `player.open_book` | `uuid`, `item` (a written book) |
 | `player.stop_sound` | `uuid`, and optionally `sound` and `category` (none: all sounds) |
 | `player.inventory` / `player.set_slot` / `player.set_held_slot` | `uuid` / `slot`, `item` (window slot numbers) / `slot` |
 | `player.open_inventory` | `uuid`, `inventory` (descriptor), `title` (answers `opened`, `window`) |

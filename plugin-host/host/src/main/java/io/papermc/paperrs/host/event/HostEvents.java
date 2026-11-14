@@ -58,6 +58,7 @@ public final class HostEvents {
         GATED.put("PlayerCommandPreprocessEvent", PlayerCommandPreprocessEvent.class);
         GATED.put("ServerCommandEvent", ServerCommandEvent.class);
         GATED.put("BlockBreakEvent", BlockBreakEvent.class);
+        GATED.put("PlayerResourcePackStatusEvent", org.bukkit.event.player.PlayerResourcePackStatusEvent.class);
         GATED.put("BlockPlaceEvent", BlockPlaceEvent.class);
         GATED.put("PlayerMoveEvent", PlayerMoveEvent.class);
         GATED.put("PlayerGameModeChangeEvent", PlayerGameModeChangeEvent.class);
@@ -140,6 +141,14 @@ public final class HostEvents {
                 final ServerCommandEvent event = new ServerCommandEvent(this.server.getConsoleSender(), Values.str(args, "command"));
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled(), "command", event.getCommand());
+            }
+            case "event.resource_pack_status" -> {
+                final org.bukkit.event.player.PlayerResourcePackStatusEvent.Status[] all = org.bukkit.event.player.PlayerResourcePackStatusEvent.Status.values();
+                final int status = Values.i32(args, "status", 0);
+                if (status >= 0 && status < all.length) {
+                    new org.bukkit.event.player.PlayerResourcePackStatusEvent(this.player(args), Values.uuid(args, "id"), all[status]).callEvent();
+                }
+                yield Values.of();
             }
             case "event.block_break" -> {
                 final BlockBreakEvent event = new BlockBreakEvent(this.block(args), this.player(args));
