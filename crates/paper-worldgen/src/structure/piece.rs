@@ -42,6 +42,17 @@ pub fn with_dir(state: u32, property: &str, d: Dir) -> u32 {
     with(state, property, d.name())
 }
 
+/// A mob spawned by a structure, as entity NBT (`setPersistenceRequired`, `snapTo` the
+/// block's bottom center with no rotation). Vanilla's `finalizeSpawn` is left to the caller.
+pub fn mob(id: &str, p: Pos) -> Compound {
+    let mut nbt = Compound::new();
+    nbt.insert("id", id);
+    nbt.insert("Pos", paper_nbt::Tag::List(vec![(p.x as f64 + 0.5).into(), (p.y as f64).into(), (p.z as f64 + 0.5).into()]));
+    nbt.insert("Rotation", paper_nbt::Tag::List(vec![0.0f32.into(), 0.0f32.into()]));
+    nbt.insert("PersistenceRequired", true);
+    nbt
+}
+
 /// Where a piece is placed: the chunk being decorated, inside the 3x3 region of the
 /// decoration step, and the random of the structure's step.
 pub struct PlaceCtx<'c, 'w> {

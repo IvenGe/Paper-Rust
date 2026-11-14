@@ -7,6 +7,8 @@
 //! the boxes placed in it (all boxes are block aligned, so this is exact).
 
 use super::bbox::BoundingBox;
+use super::legacy::rotation_name;
+use super::persist::{get_i32, get_str, json_to_nbt, nbt_to_json, read_base, value_key};
 use super::piece::{PieceBase, PlaceCtx};
 use super::processor::{BuiltinProcessors, Processor, ProcessorLists};
 use super::template::{JigsawBlock, PlaceSettings, Template, Templates};
@@ -17,9 +19,11 @@ use crate::data::{full_id, DataReader, JsonExt};
 use crate::feature::parse::Parser;
 use crate::feature::placement::PlacedFeature;
 use crate::feature::world::{Dir, Pos};
+use crate::generator::WorldGenerator;
 use crate::providers::{GenContext, HeightProvider};
 use crate::random::{Random, WorldgenRandom};
 use anyhow::{anyhow, bail, Result};
+use paper_nbt::{Compound, Tag};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
@@ -38,6 +42,8 @@ pub(crate) struct Element {
     pub kind: ElementKind,
     /// `Projection.RIGID` (otherwise `TERRAIN_MATCHING`).
     pub rigid: bool,
+    /// The element as the pool encodes it (saved with the pieces as `pool_element`).
+    pub json: Value,
 }
 
 /// Sorts jigsaw blocks by selection priority, highest first (a stable sort, as `List.sort`).
@@ -161,11 +167,27 @@ impl Pool {
 #[derive(Default)]
 pub(crate) struct Pools {
     pools: HashMap<Arc<str>, Pool>,
+    /// The elements of all pools by their encoded form (`value_key`), for pieces read back.
+    by_key: OnceLock<HashMap<String, Arc<Element>>>,
 }
 
 impl Pools {
     fn get(&self, name: &str) -> Option<&Pool> {
         self.pools.get(name)
+    }
+
+    /// The element a saved `pool_element` encodes.
+    fn element(&self, encoded: &Value) -> Option<Arc<Element>> {
+        let index = self.by_key.get_or_init(|| {
+            let mut m = HashMap::new();
+            for pool in self.pools.values() {
+                for e in &pool.elements {
+                    m.entry(value_key(&e.json)).or_insert_with(|| e.clone());
+                }
+            }
+            m
+        });
+        index.get(&value_key(encoded)).cloned()
     }
 }
 
@@ -213,7 +235,7 @@ impl PoolLoader {
             self.queue.push(fallback.clone());
             pools.insert(name.into(), Pool { elements, fallback: fallback.into(), max_size });
         }
-        let _ = self.cell.set(Pools { pools });
+        let _ = self.cell.set(Pools { pools, by_key: OnceLock::new() });
         Ok(())
     }
 }
@@ -258,7 +280,7 @@ fn parse_element(v: &Value, projection: Option<bool>, data: &DataReader, parser:
         "empty_pool_element" => ElementKind::Empty,
         other => bail!("unknown pool element {other}"),
     };
-    Ok(Element { kind, rigid })
+    Ok(Element { kind, rigid, json: v.clone() })
 }
 
 /// `PoolAliasBinding`.
@@ -429,6 +451,38 @@ fn can_attach(source: &JigsawBlock, target: &JigsawBlock) -> bool {
 }
 
 impl StructureGen for Jigsaw {
+    /// `PoolElementStructurePiece`'s NBT constructor: the element is found among the pools'
+    /// elements by its encoding.
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        let pools = self.pools.get().ok_or_else(|| anyhow!("template pools not loaded"))?;
+        children
+            .iter()
+            .map(|t| {
+                let base = read_base(t, &["minecraft:jigsaw"])?;
+                let encoded = nbt_to_json(t.get("pool_element").ok_or_else(|| anyhow!("jigsaw piece without pool_element"))?);
+                let element = pools.element(&encoded).ok_or_else(|| anyhow!("unknown pool element {encoded}"))?;
+                let position = Pos::new(get_i32(t, "PosX"), get_i32(t, "PosY"), get_i32(t, "PosZ"));
+                let rotation = Rotation::parse(get_str(t, "rotation")).unwrap_or_default();
+                let waterlog = match t.string("liquid_settings") {
+                    Some(s) => s != "ignore_waterlogging",
+                    None => self.waterlog,
+                };
+                let mut piece = JigsawPiece::new(element, position, get_i32(t, "ground_level_delta"), rotation, base.bbox, waterlog, self.builtins.clone());
+                piece.base.gen_depth = base.gen_depth;
+                for j in t.list("junctions").unwrap_or(&[]).iter().filter_map(Tag::as_compound) {
+                    piece.info.junctions.push(Junction {
+                        source_x: get_i32(j, "source_x"),
+                        source_ground_y: get_i32(j, "source_ground_y"),
+                        source_z: get_i32(j, "source_z"),
+                        delta_y: get_i32(j, "delta_y"),
+                        dest_rigid: get_str(j, "dest_proj") != "terrain_matching",
+                    });
+                }
+                Ok(Box::new(piece) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         let pools = self.pools.get()?;
         let gen = ctx.gen;
@@ -693,6 +747,32 @@ impl Piece for JigsawPiece {
 
     fn jigsaw(&self) -> Option<&JigsawInfo> {
         Some(&self.info)
+    }
+
+    /// `PoolElementStructurePiece.addAdditionalSaveData`.
+    fn save(&self, t: &mut Compound) {
+        t.insert("PosX", self.position.x);
+        t.insert("PosY", self.position.y);
+        t.insert("PosZ", self.position.z);
+        t.insert("ground_level_delta", self.info.ground_level_delta);
+        t.insert("pool_element", json_to_nbt(&self.element.json));
+        t.insert("rotation", rotation_name(self.rotation));
+        let junctions = self
+            .info
+            .junctions
+            .iter()
+            .map(|j| {
+                let mut c = Compound::new();
+                c.insert("source_x", j.source_x);
+                c.insert("source_ground_y", j.source_ground_y);
+                c.insert("source_z", j.source_z);
+                c.insert("delta_y", j.delta_y);
+                c.insert("dest_proj", if j.dest_rigid { "rigid" } else { "terrain_matching" });
+                Tag::Compound(c)
+            })
+            .collect();
+        t.insert("junctions", Tag::List(junctions));
+        t.insert("liquid_settings", if self.waterlog { "apply_waterlogging" } else { "ignore_waterlogging" });
     }
 
     fn translate(&mut self, dx: i32, dy: i32, dz: i32) {

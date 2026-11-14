@@ -6,6 +6,7 @@ mod dripstone;
 mod end;
 mod misc;
 mod nether;
+mod sculk;
 mod surface;
 mod template;
 mod terrain;
@@ -43,6 +44,9 @@ pub(crate) fn parse(p: &mut Parser, t: &str, v: &Value) -> Result<Option<Box<dyn
         return Ok(Some(f));
     }
     if let Some(f) = template::parse(p, t, v)? {
+        return Ok(Some(f));
+    }
+    if let Some(f) = sculk::parse(p, t, v)? {
         return Ok(Some(f));
     }
     misc::parse(p, t, v)

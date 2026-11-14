@@ -100,9 +100,50 @@ fn check_starts(dimension: Dimension, key: &str) -> BTreeMap<String, usize> {
     matched
 }
 
+/// Compares the structure references of every chunk of `structure_references.json.gz` (the
+/// references vanilla recorded in the chunks of the same dump that have any, extracted from
+/// Pumpkin's `assets/tests/structure_starts.json`) for the structures this crate generates.
+fn check_references(dimension: Dimension, key: &str) -> usize {
+    let Some(g) = generator(dimension, 0) else { return 0 };
+    let data = common::json_fixture("structure_references");
+    let supported = g.supported_structures();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for row in data[key].as_array().unwrap() {
+        let (x, z) = (row[0].as_i64().unwrap() as i32, row[1].as_i64().unwrap() as i32);
+        let mut theirs: BTreeMap<String, Vec<(i32, i32)>> = BTreeMap::new();
+        for (id, starts) in row[2].as_object().unwrap() {
+            if supported.contains(&id.as_str()) {
+                let mut v: Vec<(i32, i32)> = starts.as_array().unwrap().iter().map(|s| (s[0].as_i64().unwrap() as i32, s[1].as_i64().unwrap() as i32)).collect();
+                v.sort();
+                theirs.insert(id.clone(), v);
+            }
+        }
+        let mut ours: BTreeMap<String, Vec<(i32, i32)>> = BTreeMap::new();
+        for (id, mut starts) in g.structure_references(x, z) {
+            starts.sort();
+            ours.insert(id, starts);
+        }
+        if ours != theirs {
+            failures.push(format!("chunk ({x}, {z}): ours {ours:?}, vanilla {theirs:?}"));
+        }
+        checked += theirs.values().map(Vec::len).sum::<usize>();
+    }
+    eprintln!("{dimension:?}: {checked} references checked");
+    assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures[..failures.len().min(20)].join("\n"));
+    checked
+}
+
 #[test]
 fn overworld_starts() {
     check_starts(Dimension::Overworld, "overworld");
+}
+
+#[test]
+fn references_match_vanilla() {
+    check_references(Dimension::Overworld, "overworld");
+    check_references(Dimension::Nether, "the_nether");
+    check_references(Dimension::End, "the_end");
 }
 
 #[test]
@@ -204,9 +245,229 @@ fn template_features_are_placed() {
     assert!(bones > 0);
 }
 
+/// A world of generated chunks that decorates chunks the way a server does (each chunk
+/// once, its neighbours generated on demand) and collects the entities structures spawn.
+struct TestWorld {
+    gen: &'static paper_worldgen::WorldGenerator,
+    chunks: std::collections::HashMap<(i32, i32), paper_worldgen::ProtoChunk>,
+    entities: Vec<paper_nbt::Compound>,
+    block_entities: Vec<((i32, i32, i32), paper_worldgen::BlockEntity)>,
+    block_entity_nbt: Vec<((i32, i32, i32), paper_nbt::Compound)>,
+}
+
+impl paper_worldgen::RegionAccess for TestWorld {
+    fn chunk(&self, x: i32, z: i32) -> Option<&paper_worldgen::ProtoChunk> {
+        self.chunks.get(&(x, z))
+    }
+
+    fn chunk_mut(&mut self, x: i32, z: i32) -> Option<&mut paper_worldgen::ProtoChunk> {
+        self.chunks.get_mut(&(x, z))
+    }
+
+    fn add_block_entity(&mut self, x: i32, y: i32, z: i32, entity: paper_worldgen::BlockEntity) {
+        self.block_entities.push(((x, y, z), entity));
+    }
+
+    fn add_block_entity_nbt(&mut self, x: i32, y: i32, z: i32, nbt: paper_nbt::Compound) {
+        match paper_worldgen::BlockEntity::from_nbt(&nbt) {
+            Some(be) => self.block_entities.push(((x, y, z), be)),
+            None => self.block_entity_nbt.push(((x, y, z), nbt)),
+        }
+    }
+
+    fn add_entity_nbt(&mut self, nbt: paper_nbt::Compound) {
+        self.entities.push(nbt);
+    }
+}
+
+impl TestWorld {
+    fn new(gen: &'static paper_worldgen::WorldGenerator) -> Self {
+        Self { gen, chunks: Default::default(), entities: Vec::new(), block_entities: Vec::new(), block_entity_nbt: Vec::new() }
+    }
+
+    /// Decorates every chunk of the box, row by row.
+    fn decorate_box(&mut self, min_cx: i32, min_cz: i32, max_cx: i32, max_cz: i32) {
+        for cz in min_cz..=max_cz {
+            for cx in min_cx..=max_cx {
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        let gen = self.gen;
+                        self.chunks.entry((cx + dx, cz + dz)).or_insert_with(|| gen.generate_terrain(cx + dx, cz + dz));
+                    }
+                }
+                self.gen.decorate(cx, cz, self);
+            }
+        }
+    }
+
+    fn block(&self, x: i32, y: i32, z: i32) -> String {
+        common::block_name(self.chunks[&(x >> 4, z >> 4)].get(x, y, z))
+    }
+
+    fn name(&self, x: i32, y: i32, z: i32) -> &'static str {
+        paper_data::blocks::block_of_state(self.chunks[&(x >> 4, z >> 4)].get(x, y, z)).name
+    }
+}
+
+#[test]
+fn ocean_monument_is_placed() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    // The vanilla start of the fixture.
+    let start = g.structure_starts(-71, -15).into_iter().find(|s| s.id() == "minecraft:monument").expect("monument start");
+    let b = start.bbox;
+    let mut w = TestWorld::new(g);
+    w.decorate_box(b.min_x >> 4, b.min_z >> 4, b.max_x >> 4, b.max_z >> 4);
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let allowed = [
+        "minecraft:prismarine", "minecraft:prismarine_bricks", "minecraft:dark_prismarine", "minecraft:sea_lantern", "minecraft:gold_block",
+        "minecraft:wet_sponge", "minecraft:water", "minecraft:air", "minecraft:ice", "minecraft:packed_ice", "minecraft:blue_ice",
+        "minecraft:seagrass", "minecraft:tall_seagrass", "minecraft:kelp", "minecraft:kelp_plant", "minecraft:sea_pickle",
+    ];
+    let mut stray = Vec::new();
+    for x in b.min_x..=b.max_x {
+        for z in b.min_z..=b.max_z {
+            for y in b.min_y..=64 {
+                let name = w.name(x, y, z);
+                *counts.entry(name).or_default() += 1;
+                if !allowed.contains(&name) {
+                    stray.push(format!("{} at ({x}, {y}, {z})", w.block(x, y, z)));
+                }
+            }
+        }
+    }
+    eprintln!("monument blocks: {counts:?}");
+    assert!(stray.is_empty(), "{} blocks the monument should have carved away, e.g. {:?}", stray.len(), &stray[..stray.len().min(10)]);
+    assert_eq!(counts.get("minecraft:gold_block"), Some(&8), "the core's gold");
+    assert!(counts.get("minecraft:prismarine_bricks").copied().unwrap_or(0) > 5000);
+    assert!(counts.get("minecraft:sea_lantern").copied().unwrap_or(0) > 50);
+    let elders: Vec<_> = w.entities.iter().filter(|e| e.string("id") == Some("minecraft:elder_guardian")).collect();
+    assert_eq!(elders.len(), 3, "two wing rooms and the penthouse each spawn an elder guardian");
+    for e in elders {
+        let pos = e.list("Pos").unwrap();
+        let (x, y, z) = (pos[0].as_f64().unwrap(), pos[1].as_f64().unwrap(), pos[2].as_f64().unwrap());
+        assert!(b.contains(x.floor() as i32, y as i32, z.floor() as i32), "elder guardian at ({x}, {y}, {z}) outside {b:?}");
+        assert_eq!(e.bool("PersistenceRequired"), Some(true));
+    }
+}
+
+#[test]
+fn woodland_mansion_is_placed() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    let found = g.locate("minecraft:mansion", 0, 0, 100).expect("a woodland mansion");
+    let start = g.structure_starts(found.chunk_x, found.chunk_z).into_iter().find(|s| s.id() == "minecraft:mansion").unwrap();
+    let pieces = start.pieces();
+    eprintln!("mansion at chunk ({}, {}): {} pieces, box {:?}", found.chunk_x, found.chunk_z, pieces.len(), start.bbox);
+    assert!(pieces.len() > 300, "{} pieces", pieces.len());
+    assert!(pieces.iter().all(|p| p.kind == "minecraft:wmp" && p.orientation == 2));
+    let b = start.bbox;
+    let mut w = TestWorld::new(g);
+    w.decorate_box(b.min_x >> 4, b.min_z >> 4, b.max_x >> 4, b.max_z >> 4);
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for x in b.min_x..=b.max_x {
+        for z in b.min_z..=b.max_z {
+            for y in b.min_y - 8..=b.max_y {
+                *counts.entry(w.name(x, y, z)).or_default() += 1;
+            }
+        }
+    }
+    eprintln!("dark oak planks {:?}, cobblestone {:?}, chests {:?}", counts.get("minecraft:dark_oak_planks"), counts.get("minecraft:cobblestone"), counts.get("minecraft:chest"));
+    assert!(counts.get("minecraft:dark_oak_planks").copied().unwrap_or(0) > 5000);
+    assert!(counts.get("minecraft:cobblestone").copied().unwrap_or(0) > 1000, "walls and the foundation");
+    assert!(!counts.contains_key("minecraft:structure_block"), "data markers are replaced");
+    let chests: Vec<_> = w.block_entities.iter().filter(|(_, be)| matches!(be, paper_worldgen::BlockEntity::Loot { table, .. } if table == "minecraft:chests/woodland_mansion")).collect();
+    assert!(!chests.is_empty(), "loot chests");
+    for ((x, y, z), _) in &chests {
+        assert_eq!(w.name(*x, *y, *z), "minecraft:chest");
+    }
+    let mobs: BTreeMap<&str, usize> = w.entities.iter().filter_map(|e| e.string("id")).fold(BTreeMap::new(), |mut m, id| {
+        *m.entry(id).or_default() += 1;
+        m
+    });
+    eprintln!("loot chests {}, entities {mobs:?}", chests.len());
+    assert!(mobs.get("minecraft:vindicator").copied().unwrap_or(0) > 0);
+    let illagers = ["minecraft:vindicator", "minecraft:evoker", "minecraft:allay"];
+    for e in w.entities.iter().filter(|e| illagers.contains(&e.string("id").unwrap_or(""))) {
+        let pos = e.list("Pos").unwrap();
+        let (x, y, z) = (pos[0].as_f64().unwrap(), pos[1].as_f64().unwrap(), pos[2].as_f64().unwrap());
+        assert!(b.contains(x.floor() as i32, y as i32, z.floor() as i32));
+        assert_eq!(w.name(x.floor() as i32, y as i32, z.floor() as i32), "minecraft:air", "the marker is cleared");
+    }
+}
+
+#[test]
+fn sculk_patches_are_placed() {
+    // Ancient cities are in the deep dark: its sculk patches and the city's own
+    // (`sculk_patch_ancient_city` feature pool elements).
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    let found = g.locate("minecraft:ancient_city", 0, 0, 50).expect("an ancient city");
+    let (cx, cz) = (found.chunk_x, found.chunk_z);
+    let run = || {
+        let mut w = TestWorld::new(g);
+        w.decorate_box(cx - 1, cz - 1, cx + 1, cz + 1);
+        w
+    };
+    let w = run();
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut bad_veins = Vec::new();
+    for x in (cx - 1) * 16..(cx + 2) * 16 {
+        for z in (cz - 1) * 16..(cz + 2) * 16 {
+            for y in -63..64 {
+                let name = w.name(x, y, z);
+                if !name.contains("sculk") {
+                    continue;
+                }
+                *counts.entry(name).or_default() += 1;
+                if name == "minecraft:sculk_vein" {
+                    // Every face of a vein rests on something.
+                    let state = w.chunks[&(x >> 4, z >> 4)].get(x, y, z);
+                    for (face, (dx, dy, dz)) in [("down", (0, -1, 0)), ("up", (0, 1, 0)), ("north", (0, 0, -1)), ("south", (0, 0, 1)), ("west", (-1, 0, 0)), ("east", (1, 0, 0))] {
+                        if paper_data::blocks::property(state, face) == Some("true") && matches!(w.name(x + dx, y + dy, z + dz), "minecraft:air" | "minecraft:cave_air" | "minecraft:water") {
+                            bad_veins.push((x, y, z, face));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("ancient city at chunk ({cx}, {cz}): {counts:?}");
+    assert!(counts.get("minecraft:sculk").copied().unwrap_or(0) > 100);
+    assert!(counts.get("minecraft:sculk_vein").copied().unwrap_or(0) > 50);
+    assert!(counts.get("minecraft:sculk_catalyst").copied().unwrap_or(0) > 0);
+    assert!(counts.get("minecraft:sculk_sensor").copied().unwrap_or(0) > 0);
+    assert!(bad_veins.is_empty(), "veins on nothing: {:?}", &bad_veins[..bad_veins.len().min(10)]);
+    // Deterministic: a second run gives the same blocks.
+    let again = run();
+    for (k, c) in &w.chunks {
+        let d = &again.chunks[k];
+        for y in -64..320 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    assert_eq!(c.get(x, y, z), d.get(x, y, z), "chunk {k:?} block ({x}, {y}, {z})");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn ocean_monuments_spawn_guardians() {
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    // Inside the vanilla monument of the fixture (box -1165..-1108, 39..61, -269..-212).
+    let monsters = g.structure_spawns_at(-1140, 50, -240, "monster").expect("the monument overrides monsters");
+    assert_eq!(monsters.len(), 1);
+    let guardian = &monsters[0];
+    assert_eq!((guardian.entity.as_str(), guardian.weight, guardian.min_count, guardian.max_count), ("minecraft:guardian", 1, 2, 4));
+    assert_eq!(g.structure_spawns_at(-1140, 50, -240, "axolotls"), Some(Vec::new()));
+    assert_eq!(g.structure_spawns_at(-1140, 50, -240, "creature"), None);
+    // Above and beside the building.
+    assert_eq!(g.structure_spawns_at(-1140, 62, -240, "monster"), None);
+    assert_eq!(g.structure_spawns_at(-1100, 50, -240, "monster"), None);
+}
+
 #[test]
 fn generator_and_starts_are_send_and_sync() {
     fn check<T: Send + Sync>() {}
     check::<paper_worldgen::WorldGenerator>();
     check::<paper_worldgen::structure::StructureStart>();
 }
+

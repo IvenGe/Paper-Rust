@@ -4,8 +4,11 @@
 //! Written to vanilla 26.3's `MineshaftStructure` and `MineshaftPieces`.
 
 use super::piece::{st, with, with_bool, with_dir, PieceBase, PlaceCtx};
+use super::persist::{bbox_tag, from_2d, get_bool, get_i32, orientation_value, read_base, read_bbox};
 use super::{BoundingBox, GenCtx, Piece, StructureGen};
 use crate::chunk::Heightmap;
+use crate::generator::WorldGenerator;
+use anyhow::Result;
 use crate::feature::world::{Dir, Pos};
 use crate::random::{Random, WorldgenRandom};
 use paper_data::blocks;
@@ -320,7 +323,30 @@ impl Builder {
     }
 }
 
+/// The mineshaft piece types.
+const PIECE_IDS: [&str; 4] = ["minecraft:msroom", "minecraft:mscorridor", "minecraft:mscrossing", "minecraft:msstairs"];
+
 impl StructureGen for Mineshaft {
+    /// The NBT constructors of `MineShaftRoom`, `MineShaftCorridor`, `MineShaftCrossing` and
+    /// `MineShaftStairs` (`MST` the mineshaft type).
+    fn load_pieces(&self, _gen: &WorldGenerator, _x: i32, _z: i32, children: &[&Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        children
+            .iter()
+            .map(|t| {
+                let mut base = read_base(t, &PIECE_IDS)?;
+                let wood = Wood::of(get_i32(t, "MST") == 1);
+                base.protect = Some(protect(wood));
+                let kind = match base.kind {
+                    "minecraft:msroom" => Kind::Room { entrances: t.list("Entrances").unwrap_or(&[]).iter().map(read_bbox).collect::<Result<_>>()? },
+                    "minecraft:mscorridor" => Kind::Corridor { rails: get_bool(t, "hr"), spider: get_bool(t, "sc"), spider_placed: AtomicBool::new(get_bool(t, "hps")), sections: get_i32(t, "Num") },
+                    "minecraft:mscrossing" => Kind::Crossing { direction: from_2d(get_i32(t, "D")), two_floors: get_bool(t, "tf") },
+                    _ => Kind::Stairs,
+                };
+                Ok(Box::new(MsPiece { base, wood, blocking: self.blocking, kind }) as Box<dyn Piece>)
+            })
+            .collect()
+    }
+
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
         ctx.r.next_f64();
         let (bx, bz) = (ctx.min_block_x() + 2, ctx.min_block_z() + 2);
@@ -548,6 +574,26 @@ fn falling(state: u32) -> bool {
 impl Piece for MsPiece {
     fn base(&self) -> &PieceBase {
         &self.base
+    }
+
+    fn save(&self, t: &mut Compound) {
+        t.insert("MST", i32::from(self.wood.planks == st("minecraft:dark_oak_planks")));
+        match &self.kind {
+            Kind::Room { entrances } => {
+                t.insert("Entrances", Tag::List(entrances.iter().map(bbox_tag).collect()));
+            }
+            Kind::Corridor { rails, spider, spider_placed, sections } => {
+                t.insert("hr", *rails);
+                t.insert("sc", *spider);
+                t.insert("hps", spider_placed.load(Ordering::Relaxed));
+                t.insert("Num", *sections);
+            }
+            Kind::Crossing { direction, two_floors } => {
+                t.insert("tf", *two_floors);
+                t.insert("D", orientation_value(Some(*direction)));
+            }
+            Kind::Stairs => {}
+        }
     }
 
     fn base_mut(&mut self) -> &mut PieceBase {

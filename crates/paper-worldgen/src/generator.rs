@@ -271,6 +271,72 @@ impl WorldGenerator {
         self.structures.starts_in_chunk(self, chunk_x, chunk_z)
     }
 
+    /// The structure starts within 8 chunks whose bounding box reaches into a chunk, per
+    /// structure, as vanilla's `createReferences` records them (the chunk's
+    /// `structures.References`): structure id and start chunks, in vanilla's order. Empty
+    /// while structures are disabled.
+    pub fn structure_references(&self, chunk_x: i32, chunk_z: i32) -> Vec<(String, Vec<(i32, i32)>)> {
+        if !self.structures.enabled {
+            return Vec::new();
+        }
+        self.structures
+            .references(self, chunk_x, chunk_z, |_| true)
+            .into_iter()
+            .map(|(s, starts)| (self.structures.structure_id(s).to_owned(), starts.iter().map(|st| (st.chunk_x, st.chunk_z)).collect()))
+            .collect()
+    }
+
+    /// The `structures` compound vanilla saves in a chunk's NBT: `starts` (the chunk's
+    /// structure starts by structure id, each with `id`, `ChunkX`, `ChunkZ`, `references`
+    /// and its pieces as `Children`) and `References` (per structure id, the packed chunk
+    /// positions of the starts that reach into the chunk). The pieces carry the state they
+    /// settled when placed (temple and shipwreck heights, chests and spawners placed).
+    ///
+    /// Call it whenever a chunk is saved, and store the result as the chunk NBT's
+    /// `structures`. An empty `starts` is meaningful: the chunk has no start.
+    pub fn save_structures(&self, chunk_x: i32, chunk_z: i32) -> paper_nbt::Compound {
+        self.structures.save_chunk(self, chunk_x, chunk_z)
+    }
+
+    /// Reads a chunk's saved `structures` compound (from [`WorldGenerator::save_structures`]
+    /// or vanilla) and makes its starts the generator's: they replace the starts it would
+    /// compute for that chunk, and placement sets that could start there but have no
+    /// saved start get none. `References` are not needed: they are recomputed from the
+    /// starts. A compound without `starts` (a chunk saved before its structure starts were
+    /// generated) is ignored.
+    ///
+    /// Call it once per chunk read from disk, before generating or decorating any chunk
+    /// within 8 chunks of it with this generator: placing a structure part next to old
+    /// chunks must use the saved start. [`WorldGenerator::structure_start_chunks`] lists
+    /// the chunks whose saved structures a chunk needs; a server that loads those (where
+    /// they exist on disk) before generating a chunk continues partly placed structures
+    /// without seams after a restart. Calling it again for a chunk whose start was used
+    /// since would bring back the older state.
+    pub fn load_structures(&self, chunk_x: i32, chunk_z: i32, structures: &paper_nbt::Compound) -> crate::structure::LoadedStructures {
+        self.structures.load_chunk(self, chunk_x, chunk_z, structures)
+    }
+
+    /// The chunks within 8 chunks of a chunk that may hold a structure start reaching into
+    /// it (the placement candidates vanilla's `createReferences` looks at). Before
+    /// generating a chunk, load the saved `structures` of those that exist on disk and
+    /// were not loaded yet (see [`WorldGenerator::load_structures`]). Empty while
+    /// structures are disabled.
+    pub fn structure_start_chunks(&self, chunk_x: i32, chunk_z: i32) -> Vec<(i32, i32)> {
+        self.structures.start_chunks_near(self, chunk_x, chunk_z)
+    }
+
+    /// The spawns a structure puts in place of the biome's for a mob category (`monster`,
+    /// `creature`, `axolotls`, ...) at a block position, as the structure part of vanilla's
+    /// `ChunkGenerator.getMobsAt` (`spawn_overrides`): guardians in ocean monuments,
+    /// witches and cats in swamp huts, pillagers at outposts, the fortress mobs. An empty
+    /// list overrides too (no spawns). `None` where no structure overrides the category,
+    /// and while structures are disabled. The natural spawner should use it in place of
+    /// the biome's spawns; vanilla's extra nether fortress rule (monsters on nether bricks,
+    /// `isInNetherFortressBounds`) is a block check left to the caller.
+    pub fn structure_spawns_at(&self, x: i32, y: i32, z: i32, category: &str) -> Option<Vec<crate::structure::SpawnEntry>> {
+        self.structures.spawns_at(self, crate::feature::world::Pos::new(x, y, z), category)
+    }
+
     /// Finds the nearest start of a structure (`/locate structure`): `structure` is its id
     /// (`minecraft:village_plains`), `(x, z)` the block position to search from and
     /// `radius` the search radius in placement cells of random-spread sets (vanilla's

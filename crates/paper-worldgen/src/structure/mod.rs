@@ -17,13 +17,17 @@ pub mod transform;
 mod fortress;
 mod jigsaw;
 mod legacy;
+mod mansion;
 mod mineshaft;
+mod monument;
+mod persist;
 pub(crate) mod processor;
 mod stronghold;
 mod temple;
 pub(crate) mod template;
 
 pub use bbox::BoundingBox;
+pub use persist::LoadedStructures;
 pub(crate) use beard::Beardifier;
 
 use crate::biome::Biomes;
@@ -37,6 +41,7 @@ use piece::{PieceBase, PlaceCtx};
 use placement::{Placement, PlacementKind, Rings};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// `GenerationStep.Decoration`, by name.
@@ -143,6 +148,9 @@ pub(crate) trait Piece: Send + Sync {
     fn translate(&mut self, dx: i32, dy: i32, dz: i32) {
         self.base_mut().bbox.move_by(dx, dy, dz);
     }
+    /// `addAdditionalSaveData`: the piece type's own fields in its chunk NBT (the common
+    /// `id`, `BB`, `O` and `GD` are written by the caller).
+    fn save(&self, _tag: &mut paper_nbt::Compound) {}
 }
 
 impl AsRef<PieceBase> for dyn Piece {
@@ -234,6 +242,11 @@ pub(crate) trait StructureGen: Send + Sync {
     fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>>;
     /// `Structure.afterPlace`.
     fn after_place(&self, _start: &StructureStart, _ctx: &mut PlaceCtx) {}
+    /// Reads a start's pieces back from their NBT (`Children`), as vanilla's
+    /// `PiecesContainer.load` with each `StructurePieceType`'s NBT constructor.
+    fn load_pieces(&self, _gen: &WorldGenerator, _chunk_x: i32, _chunk_z: i32, _children: &[&paper_nbt::Compound]) -> Result<Vec<Box<dyn Piece>>> {
+        Err(anyhow!("cannot read the pieces of this structure"))
+    }
 }
 
 /// A structure type this crate does not generate.
@@ -254,6 +267,52 @@ pub(crate) struct StructureDef {
     pub step: usize,
     pub adaptation: TerrainAdjustment,
     pub supported: bool,
+    /// `spawn_overrides`.
+    pub spawn_overrides: Vec<SpawnOverride>,
+}
+
+/// A mob a structure spawns in place of the biome's (`MobSpawnSettings.SpawnerData` of a
+/// structure's `spawn_overrides`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpawnEntry {
+    /// The entity type (`minecraft:guardian`).
+    pub entity: String,
+    pub weight: i32,
+    /// The size of a group, inclusive.
+    pub min_count: i32,
+    pub max_count: i32,
+}
+
+/// `StructureSpawnOverride` of one mob category.
+pub(crate) struct SpawnOverride {
+    /// The mob category (`monster`, `creature`, `axolotls`, ...).
+    pub category: String,
+    /// `bounding_box: piece`: inside a piece, not anywhere in the start's box.
+    pub piece: bool,
+    pub spawns: Vec<SpawnEntry>,
+}
+
+impl SpawnOverride {
+    fn parse(json: &Value) -> Result<Vec<Self>> {
+        let mut out = Vec::new();
+        for (category, o) in json.get("spawn_overrides").and_then(Value::as_object).into_iter().flatten() {
+            let piece = o.get("bounding_box").and_then(Value::as_str) == Some("piece");
+            let mut spawns = Vec::new();
+            for e in o.get("spawns").and_then(Value::as_array).into_iter().flatten() {
+                let (min_count, max_count) = match e.get("count") {
+                    Some(Value::Number(n)) => {
+                        let n = n.as_i64().unwrap_or(1) as i32;
+                        (n, n)
+                    }
+                    Some(c @ Value::Object(_)) => (c.i64_or("min_inclusive", 1) as i32, c.i64_or("max_inclusive", 1) as i32),
+                    _ => (e.i64_or("minCount", 1) as i32, e.i64_or("maxCount", 1) as i32),
+                };
+                spawns.push(SpawnEntry { entity: full_id(e.str_field("type")?), weight: e.i64_or("weight", 1) as i32, min_count, max_count });
+            }
+            out.push(SpawnOverride { category: category.clone(), piece, spawns });
+        }
+        Ok(out)
+    }
 }
 
 /// A structure set (`worldgen/structure_set`).
@@ -277,6 +336,8 @@ pub struct StructureStart {
     /// The bounding box of all pieces, inflated by 12 for structures that adapt the
     /// terrain (`getBoundingBox`).
     pub bbox: BoundingBox,
+    /// `references` (maps and `/locate` that skip known structures count them).
+    references: AtomicI32,
 }
 
 impl StructureStart {
@@ -379,14 +440,23 @@ impl StartCache {
         Self { shards: (0..Self::SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
     }
 
-    fn get_or_compute(&self, key: (u16, i32, i32), f: impl FnOnce() -> Option<Arc<StructureStart>>) -> Option<Arc<StructureStart>> {
+    fn shard(&self, key: (u16, i32, i32)) -> &StartShard {
         let h = (key.0 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (key.1 as u32 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ (key.2 as u32 as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
-        let shard = &self.shards[(h >> 58) as usize % Self::SHARDS];
+        &self.shards[(h >> 58) as usize % Self::SHARDS]
+    }
+
+    fn get_or_compute(&self, key: (u16, i32, i32), f: impl FnOnce() -> Option<Arc<StructureStart>>) -> Option<Arc<StructureStart>> {
         let cell = {
-            let mut m = shard.lock().unwrap_or_else(|e| e.into_inner());
+            let mut m = self.shard(key).lock().unwrap_or_else(|e| e.into_inner());
             m.entry(key).or_default().clone()
         };
         cell.get_or_init(f).clone()
+    }
+
+    /// Replaces the start of a key (users of the previous one keep it).
+    fn put(&self, key: (u16, i32, i32), start: Option<Arc<StructureStart>>) {
+        let mut m = self.shard(key).lock().unwrap_or_else(|e| e.into_inner());
+        m.insert(key, Arc::new(OnceLock::from(start)));
     }
 }
 
@@ -561,10 +631,13 @@ impl Structures {
             "swamp_hut" => Some(Box::new(temple::SwampHut)),
             "jungle_temple" => Some(Box::new(temple::JungleTemple)),
             "desert_pyramid" => Some(Box::new(temple::DesertPyramid)),
+            "ocean_monument" => Some(Box::new(monument::OceanMonument::load(l)?)),
+            "woodland_mansion" => Some(Box::new(mansion::WoodlandMansion::load(l)?)),
             _ => None,
         };
         let supported = generator.is_some();
-        Ok(StructureDef { id: id.into(), kind, generator: generator.unwrap_or_else(|| Box::new(Unsupported)), biomes, step, adaptation, supported })
+        let spawn_overrides = SpawnOverride::parse(json)?;
+        Ok(StructureDef { id: id.into(), kind, generator: generator.unwrap_or_else(|| Box::new(Unsupported)), biomes, step, adaptation, supported, spawn_overrides })
     }
 
     /// Structure types the data uses that are not generated.
@@ -622,7 +695,12 @@ impl Structures {
 
     /// The start of `set` in a chunk (`createStructures` for one set), cached.
     pub(crate) fn start(&self, gen: &WorldGenerator, set: usize, x: i32, z: i32) -> Option<Arc<StructureStart>> {
-        self.starts.get_or_compute((set as u16, x, z), || {
+        self.starts.get_or_compute((set as u16, x, z), || self.compute(gen, set, x, z))
+    }
+
+    /// The start of `set` in a chunk, computed from the seed.
+    fn compute(&self, gen: &WorldGenerator, set: usize, x: i32, z: i32) -> Option<Arc<StructureStart>> {
+        {
             if !self.is_structure_chunk(gen, set, x, z) {
                 return None;
             }
@@ -652,7 +730,7 @@ impl Structures {
                 total -= option.1;
             }
             None
-        })
+        }
     }
 
     /// `tryGenerateStructure`: `Structure.generate` and the validity check.
@@ -665,7 +743,7 @@ impl Structures {
         }
         let bb = BoundingBox::encapsulating(pieces.iter().map(|p| p.bbox()))?;
         let bbox = if def.adaptation != TerrainAdjustment::None { bb.inflated(12) } else { bb };
-        Some(Arc::new(StructureStart { structure, id: def.id.clone(), chunk_x: x, chunk_z: z, pieces, bbox }))
+        Some(Arc::new(StructureStart { structure, id: def.id.clone(), chunk_x: x, chunk_z: z, pieces, bbox, references: AtomicI32::new(0) }))
     }
 
     /// Candidate start chunks of a set within `range` chunks of a chunk.
@@ -758,6 +836,24 @@ impl Structures {
                 start.place_in_chunk(&self.defs[structure], w, r, cx, cz);
             }
         }
+    }
+
+    /// `ChunkGenerator.getMobsAt`'s structure part: the spawns of the first structure
+    /// referenced by the position's chunk that overrides `category` and holds the position
+    /// (in its box, or in one of its pieces for `bounding_box: piece`).
+    pub(crate) fn spawns_at(&self, gen: &WorldGenerator, p: Pos, category: &str) -> Option<Vec<SpawnEntry>> {
+        if !self.enabled {
+            return None;
+        }
+        let overrides = |s: &SetDef| s.entries.iter().any(|(i, _)| self.defs[*i].spawn_overrides.iter().any(|o| o.category == category));
+        for (structure, starts) in self.references(gen, p.x >> 4, p.z >> 4, overrides) {
+            let Some(o) = self.defs[structure].spawn_overrides.iter().find(|o| o.category == category) else { continue };
+            let inside = |s: &Arc<StructureStart>| if o.piece { s.pieces.iter().any(|piece| piece.bbox().is_inside(p)) } else { s.bbox.is_inside(p) };
+            if starts.iter().any(inside) {
+                return Some(o.spawns.clone());
+            }
+        }
+        None
     }
 
     /// The id of a structure.
