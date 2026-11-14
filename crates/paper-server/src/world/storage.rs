@@ -598,7 +598,7 @@ pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, ha
             if let Some(states) = c.compound("block_states") {
                 let blocks = read_block_states(states, &mut unknown).with_context(|| format!("section {y} of chunk {},{}", pos.x, pos.z))?;
                 let biomes = c.compound("biomes").map(|b| read_biomes(b, plains)).transpose()?.unwrap_or(BiomeStorage::Uniform(plains));
-                let mut section = Section { blocks, biomes, non_air: 0, fluids: 0 };
+                let mut section = Section { blocks, biomes, non_air: 0, fluids: 0, ticking: 0 };
                 section.recount();
                 section.compact();
                 chunk.sections[section_index as usize] = Arc::new(section);

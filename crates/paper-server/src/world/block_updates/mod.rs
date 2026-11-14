@@ -24,6 +24,7 @@ pub mod doors;
 pub mod fire;
 pub mod fluid;
 pub mod piston;
+pub mod plants;
 pub mod redstone;
 pub mod state;
 pub mod support;
@@ -800,6 +801,7 @@ impl<'w> Level<'w> {
             Kind::PistonHead => piston::head_update_shape(self, state, pos, dir),
             Kind::Fire => fire::update_shape(self, state, pos),
             Kind::NetherPortal => fire::portal_update_shape(self, state, pos, dir, neighbor_state),
+            Kind::Crop | Kind::Farmland | Kind::SugarCane | Kind::Cactus | Kind::Stem | Kind::AttachedStem | Kind::SweetBerryBush | Kind::NetherWart | Kind::Cocoa | Kind::Leaves | Kind::Ice | Kind::SnowLayer => plants::update_shape(self, state, pos, dir, neighbor_state),
             _ => support::update_shape(self, state, pos, dir, neighbor_pos, neighbor_state),
         }
     }
@@ -823,6 +825,7 @@ impl<'w> Level<'w> {
             Kind::Fire => fire::tick(self, state, pos),
             Kind::Dispenser => self.world.updates.effects.push(Effect::Dispense { pos }),
             Kind::PressurePlate { .. } => self.world.updates.effects.push(Effect::CheckPlate { pos }),
+            Kind::SugarCane | Kind::Cactus | Kind::Farmland | Kind::Leaves => plants::tick(self, state, pos),
             _ => {}
         }
     }
@@ -928,6 +931,33 @@ pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
     // Forget torch turn-offs older than the burnout window.
     while world.updates.torch_toggles.front().is_some_and(|(_, when)| now - *when > redstone::TORCH_TOGGLE_WINDOW) {
         world.updates.torch_toggles.pop_front();
+    }
+}
+
+/// Random block ticks (`ServerLevel.tickChunk`): `random_tick_speed` random blocks in every
+/// section of each ticking chunk; those that take random ticks get one (crops grow, grass
+/// spreads, leaves decay, ...). Sections without such blocks are skipped.
+pub fn random_ticks(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
+    let speed = world.rules.int("random_tick_speed");
+    if speed <= 0 {
+        return;
+    }
+    let chunks: Vec<ChunkPos> = world.chunks.iter().filter(|(_, c)| c.lit && c.sections.iter().any(|s| s.ticking > 0)).map(|(p, _)| *p).filter(|p| ticking(world, *p)).collect();
+    let min_y = world.min_y;
+    let mut level = Level::new(world);
+    for cp in chunks {
+        let Some(chunk) = level.world.chunks.get(&cp) else { continue };
+        let sections: Vec<usize> = chunk.sections.iter().enumerate().filter(|(_, s)| s.ticking > 0).map(|(i, _)| i).collect();
+        for si in sections {
+            for _ in 0..speed {
+                let r = level.random();
+                let pos = BlockPos::new(cp.x * 16 + (r & 15) as i32, min_y + si as i32 * 16 + ((r >> 4) & 15) as i32, cp.z * 16 + ((r >> 8) & 15) as i32);
+                let state = level.state(pos);
+                if super::chunk::random_ticks(state) {
+                    plants::random_tick(&mut level, state, pos);
+                }
+            }
+        }
     }
 }
 

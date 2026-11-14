@@ -33,6 +33,7 @@ pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
 mod animals;
+mod farming;
 pub mod brewing;
 mod spawners;
 pub mod workstations;

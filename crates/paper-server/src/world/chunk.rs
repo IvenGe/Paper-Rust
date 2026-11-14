@@ -57,6 +57,12 @@ pub enum BiomeStorage {
     Dense(Box<[u8; 64]>),
 }
 
+/// Whether a block state takes random ticks.
+#[inline]
+pub fn random_ticks(state: u32) -> bool {
+    paper_data::physics::flags(state) & paper_data::physics::RANDOM_TICKS != 0
+}
+
 /// A 16x16x16 slice of a chunk.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
@@ -66,16 +72,18 @@ pub struct Section {
     pub non_air: u16,
     /// Blocks containing fluid.
     pub fluids: u16,
+    /// Blocks that take random ticks (crops, grass, leaves about to decay, lava, ...).
+    pub ticking: u16,
 }
 
 impl Section {
     pub fn empty(biome: u8) -> Self {
-        Self { blocks: BlockStorage::Uniform(blocks::AIR as u16), biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0 }
+        Self { blocks: BlockStorage::Uniform(blocks::AIR as u16), biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0, ticking: 0 }
     }
 
     /// A section filled with one block state.
     pub fn filled(state: u32, biome: u8) -> Self {
-        let mut s = Self { blocks: BlockStorage::Uniform(state as u16), biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0 };
+        let mut s = Self { blocks: BlockStorage::Uniform(state as u16), biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0, ticking: 0 };
         s.recount();
         s
     }
@@ -125,6 +133,12 @@ impl Section {
             if blocks::has_fluid(state) {
                 self.fluids += 1;
             }
+            if random_ticks(old) {
+                self.ticking -= 1;
+            }
+            if random_ticks(state) {
+                self.ticking += 1;
+            }
         }
         old
     }
@@ -136,10 +150,12 @@ impl Section {
                 let v = *v as u32;
                 self.non_air = if blocks::is_air(v) { 0 } else { 4096 };
                 self.fluids = if blocks::has_fluid(v) { 4096 } else { 0 };
+                self.ticking = if random_ticks(v) { 4096 } else { 0 };
             }
             BlockStorage::Dense(data) => {
                 self.non_air = data.iter().filter(|s| !blocks::is_air(**s as u32)).count() as u16;
                 self.fluids = data.iter().filter(|s| blocks::has_fluid(**s as u32)).count() as u16;
+                self.ticking = data.iter().filter(|s| random_ticks(**s as u32)).count() as u16;
             }
         }
     }
@@ -404,7 +420,7 @@ impl Chunk {
         for section in &mut self.sections {
             let mut copy = (**section).clone();
             copy.recount();
-            if copy.non_air != section.non_air || copy.fluids != section.fluids {
+            if copy.non_air != section.non_air || copy.fluids != section.fluids || copy.ticking != section.ticking {
                 *section = Arc::new(copy);
             }
         }
@@ -742,8 +758,9 @@ pub fn read_sections(mut data: &[u8], section_count: usize, biome_count: u32) ->
         for (slot, b) in biome_data.iter_mut().zip(&biomes) {
             *slot = *b as u8;
         }
-        let mut section = Section { blocks: BlockStorage::Dense(block_data), biomes: BiomeStorage::Dense(biome_data), non_air, fluids };
+        let mut section = Section { blocks: BlockStorage::Dense(block_data), biomes: BiomeStorage::Dense(biome_data), non_air, fluids, ticking: 0 };
         section.compact();
+        section.recount();
         if let BiomeStorage::Dense(d) = &section.biomes {
             if d.iter().all(|b| *b == d[0]) {
                 section.biomes = BiomeStorage::Uniform(d[0]);
@@ -796,7 +813,7 @@ mod tests {
         }
         // The first entry (bit 0) is 1 -> palette index 1 -> biome 3, so 3 appears first when
         // building the palette; the documented bytes list 39 first, which only swaps indices.
-        let section = Section { blocks: BlockStorage::Uniform(0), biomes: BiomeStorage::Dense(biomes), non_air: 0, fluids: 0 };
+        let section = Section { blocks: BlockStorage::Uniform(0), biomes: BiomeStorage::Dense(biomes), non_air: 0, fluids: 0, ticking: 0 };
         let mut out = Vec::new();
         write_section(&section, 65, &mut out);
         assert_eq!(out[..6], [0, 0, 0, 0, 0, 0]);

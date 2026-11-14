@@ -40,6 +40,7 @@ pub fn can_survive(level: &Level, state: u32, pos: BlockPos) -> bool {
             redstone::diode_can_survive_on(below) || center_support_up(below)
         }
         Kind::Vegetation => vegetation_on(level.state(pos.below())),
+        Kind::Crop | Kind::Farmland | Kind::SugarCane | Kind::Cactus | Kind::Stem | Kind::AttachedStem | Kind::SweetBerryBush | Kind::NetherWart | Kind::Cocoa | Kind::SnowLayer => super::plants::can_survive(level, state, pos),
         Kind::PistonHead => super::piston::head_can_survive(level, state, pos),
         Kind::TallPlant => {
             if prop(state, "half") == Some("upper") {
@@ -201,6 +202,7 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
         Kind::Stairs => s = with(s, "shape", stairs_shape(level, s, pos)),
         Kind::SnowyDirt => s = set_bool(s, "snowy", in_tag!(level.state(pos.above()), "snow")),
         Kind::Piston { .. } => s = set_bool(set_dir(s, "facing", ctx.looking.opposite()), "extended", false),
+        Kind::Leaves => s = super::plants::leaves_placement(level, s, pos),
         _ => {}
     }
     if !can_survive(level, s, pos) {

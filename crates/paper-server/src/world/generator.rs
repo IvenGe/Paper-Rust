@@ -66,7 +66,7 @@ impl Generator for FlatGenerator {
         for (y, layer) in self.layers.iter().enumerate().take(16) {
             data[y << 8..(y + 1) << 8].fill(*layer as u16);
         }
-        let mut section = Section { blocks: BlockStorage::Dense(data), biomes: BiomeStorage::Uniform(self.biome), non_air: 0, fluids: 0 };
+        let mut section = Section { blocks: BlockStorage::Dense(data), biomes: BiomeStorage::Uniform(self.biome), non_air: 0, fluids: 0, ticking: 0 };
         section.recount();
         chunk.sections[0] = Arc::new(section);
         let top = self.layers.len() as i16;
@@ -365,7 +365,7 @@ impl Generator for NoiseGenerator {
                 Some(d) => BlockStorage::Dense(d),
                 None => BlockStorage::Uniform(blocks::AIR as u16),
             };
-            let mut section = Section { blocks, biomes, non_air: 0, fluids: 0 };
+            let mut section = Section { blocks, biomes, non_air: 0, fluids: 0, ticking: 0 };
             section.compact();
             section.recount();
             chunk.sections[i] = Arc::new(section);
@@ -398,7 +398,7 @@ fn finish_chunk(mut chunk: Chunk, data: Vec<Option<Box<[u16; 4096]>>>, biome: u8
             Some(d) => BlockStorage::Dense(d),
             None => BlockStorage::Uniform(blocks::AIR as u16),
         };
-        let mut section = Section { blocks, biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0 };
+        let mut section = Section { blocks, biomes: BiomeStorage::Uniform(biome), non_air: 0, fluids: 0, ticking: 0 };
         section.compact();
         section.recount();
         chunk.sections[i] = Arc::new(section);

@@ -327,6 +327,19 @@ pub enum Kind {
     Dispenser,
     /// Hoppers: locked while powered.
     Hopper,
+    // Plants and blocks with random ticks (see `plants`).
+    Crop,
+    Farmland,
+    SugarCane,
+    Cactus,
+    Stem,
+    AttachedStem,
+    SweetBerryBush,
+    NetherWart,
+    Cocoa,
+    Leaves,
+    Ice,
+    SnowLayer,
 }
 
 fn classify(name: &str) -> Kind {
@@ -359,6 +372,7 @@ fn classify(name: &str) -> Kind {
         "fire" | "soul_fire" => return Kind::Fire,
         "dispenser" | "dropper" => return Kind::Dispenser,
         "hopper" => return Kind::Hopper,
+        _ if super::plants::classify(n).is_some() => return super::plants::classify(n).unwrap(),
         "nether_portal" => return Kind::NetherPortal,
         "grass_block" | "podzol" | "mycelium" => return Kind::SnowyDirt,
         "iron_bars" | "glass_pane" => return Kind::Pane,

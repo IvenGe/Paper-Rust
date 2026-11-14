@@ -165,7 +165,7 @@ impl ProtoEntry {
             let mut biomes = Box::new([0u8; 64]);
             biomes.copy_from_slice(proto.section_biomes(i));
             let biomes = if biomes.iter().all(|b| *b == biomes[0]) { BiomeStorage::Uniform(biomes[0]) } else { BiomeStorage::Dense(biomes) };
-            let mut section = Section { blocks: BlockStorage::Dense(data), biomes, non_air: 0, fluids: 0 };
+            let mut section = Section { blocks: BlockStorage::Dense(data), biomes, non_air: 0, fluids: 0, ticking: 0 };
             section.compact();
             section.recount();
             chunk.sections[i] = Arc::new(section);

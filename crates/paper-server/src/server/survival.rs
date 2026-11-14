@@ -663,6 +663,9 @@ impl Server {
             if fall_damage {
                 self.cause_fall_damage(id, distance, multiplier);
             }
+            // Jumping on farmland tramples it.
+            let world = self.players[&id].world;
+            self.landed_on(world, below_pos, distance, true);
         }
     }
 

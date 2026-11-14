@@ -97,6 +97,7 @@ impl Server {
     pub fn tick_block_updates(&mut self) {
         for index in 0..self.worlds.len() {
             block_updates::tick(&mut self.worlds[index], &|w, p| w.has_ticket(p) && w.is_ready(p));
+            block_updates::random_ticks(&mut self.worlds[index], &|w, p| w.has_ticket(p) && w.is_ready(p));
             self.publish_block_updates(index);
         }
     }
