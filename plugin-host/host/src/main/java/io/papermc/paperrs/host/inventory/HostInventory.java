@@ -75,6 +75,24 @@ public final class HostInventory implements HostProxies.Backed {
         return this.ref;
     }
 
+    // --- trading windows (MerchantInventory) ----------------------------------------------
+
+    private Map<String, Object> tradingWindow() {
+        return Values.map(this.server.call("merchant.window", Values.of("uuid", Values.str(this.ref, "uuid", ""))));
+    }
+
+    public int getSelectedRecipeIndex() {
+        return Values.i32(this.tradingWindow(), "selected", 0);
+    }
+
+    public org.bukkit.inventory.@Nullable MerchantRecipe getSelectedRecipe() {
+        return this.tradingWindow().get("recipe") instanceof Map<?, ?> recipe ? io.papermc.paperrs.host.entity.Merchants.recipe(Values.map(recipe)) : null;
+    }
+
+    public org.bukkit.inventory.@Nullable Merchant getMerchant() {
+        return io.papermc.paperrs.host.entity.Merchants.merchant(this.server, this.tradingWindow().get("merchant"));
+    }
+
     public String kind() {
         return Values.str(this.ref, "kind", "");
     }

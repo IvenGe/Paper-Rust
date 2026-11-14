@@ -6,7 +6,7 @@
 //! What is not here: breeding, sleeping in beds, meeting at bells, farming, iron golems and
 //! zombie villagers (villagers wander, panic and work, but keep no home).
 
-use super::containers::MenuKind;
+use super::containers::{MenuKind, MerchantRef};
 use super::effects::ActiveEffect;
 use super::entities::{max_stack, same_item};
 use super::loot::{LootContext, LootTables};
@@ -323,7 +323,8 @@ impl Server {
         mob.merchant = Some(Box::new(m));
     }
 
-    /// `getOffers`: works the offers out the first time they are needed.
+    /// `getOffers`: works the offers out the first time they are needed (each new trade goes
+    /// through `VillagerAcquireTradeEvent`).
     pub fn merchant_offers(&mut self, world: usize, id: i32) -> Vec<Offer> {
         let Some(e) = self.worlds[world].entities.get(&id) else { return Vec::new() };
         let name = e.info.name.clone();
@@ -333,15 +334,87 @@ impl Server {
         }
         let snapshot = m.clone();
         let mut rng = rand::thread_rng();
-        let offers: Vec<Offer> = Trades::sets_for(&name, &snapshot, snapshot.level).iter().flat_map(|set| self.trades.roll(set, &snapshot, &self.loot, &mut rng)).collect();
+        let rolled: Vec<Offer> = Trades::sets_for(&name, &snapshot, snapshot.level).iter().flat_map(|set| self.trades.roll(set, &snapshot, &self.loot, &mut rng)).collect();
+        // Set first, so plugins asking for the offers during the event do not roll again.
+        if let Some(m) = merchant_mut(&mut self.worlds[world], id) {
+            m.offers = Some(Vec::new());
+        }
+        let offers = crate::plugins::events::on_acquire_trades(self, world, id, rolled);
         if let Some(m) = merchant_mut(&mut self.worlds[world], id) {
             m.offers = Some(offers.clone());
         }
         offers
     }
 
+    /// The offers of any merchant.
+    pub fn offers_of(&mut self, merchant: MerchantRef) -> Vec<Offer> {
+        match merchant {
+            MerchantRef::Entity { world, id } => self.merchant_offers(world, id),
+            MerchantRef::Custom(c) => self.plugin_data.merchants.get(&c).map(|m| m.offers.clone()).unwrap_or_default(),
+        }
+    }
+
+    /// Replaces the offers of a merchant (`Merchant.setRecipes`), and shows them to whoever
+    /// trades with it.
+    pub fn set_offers(&mut self, merchant: MerchantRef, offers: Vec<Offer>) {
+        match merchant {
+            MerchantRef::Entity { world, id } => {
+                if let Some(m) = self.worlds.get_mut(world).and_then(|w| merchant_mut(w, id)) {
+                    m.offers = Some(offers);
+                }
+            }
+            MerchantRef::Custom(c) => {
+                if let Some(m) = self.plugin_data.merchants.get_mut(&c) {
+                    m.offers = offers;
+                }
+            }
+        }
+        if let Some(player) = self.merchant_trader(merchant) {
+            self.send_offers(player);
+        }
+    }
+
+    /// The player trading with a merchant.
+    pub fn merchant_trader(&self, merchant: MerchantRef) -> Option<i32> {
+        match merchant {
+            MerchantRef::Entity { world, id } => self.worlds.get(world).and_then(|w| merchant_of(w, id)).and_then(|m| m.trading_player),
+            MerchantRef::Custom(c) => self.plugin_data.merchants.get(&c).and_then(|m| m.trader),
+        }
+    }
+
+    fn set_merchant_trader(&mut self, merchant: MerchantRef, player: Option<i32>) {
+        match merchant {
+            MerchantRef::Entity { world, id } => {
+                if let Some(m) = self.worlds.get_mut(world).and_then(|w| merchant_mut(w, id)) {
+                    m.trading_player = player;
+                }
+            }
+            MerchantRef::Custom(c) => {
+                if let Some(m) = self.plugin_data.merchants.get_mut(&c) {
+                    m.trader = player;
+                }
+            }
+        }
+    }
+
+    /// A trading window's title: the merchant's name (a villager's is its profession) or the
+    /// title a plugin gave its merchant.
+    fn merchant_title(&self, merchant: MerchantRef) -> Option<Component> {
+        match merchant {
+            MerchantRef::Entity { world, id } => {
+                let e = self.worlds.get(world)?.entities.get(&id)?;
+                let m = e.mob()?.merchant.as_deref()?;
+                Some(e.custom_name.clone().unwrap_or_else(|| {
+                    let key = if e.info.name == VILLAGER { format!("entity.minecraft.villager.{}", path_of(&m.profession)) } else { "entity.minecraft.wandering_trader".to_owned() };
+                    Component::translatable(&key, vec![])
+                }))
+            }
+            MerchantRef::Custom(c) => self.plugin_data.merchants.get(&c).map(|m| m.title.clone()),
+        }
+    }
+
     /// Head shaking and a "no" (`setUnhappy`).
-    fn set_unhappy(&mut self, world: usize, id: i32) {
+    pub fn set_unhappy(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let pos = e.pos;
         let villager = e.info.name == VILLAGER;
@@ -392,13 +465,6 @@ impl Server {
         self.merchant_offers(world, id);
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return false };
         let villager = e.info.name == VILLAGER;
-        let title = e.custom_name.clone().unwrap_or_else(|| {
-            let key = match e.mob().and_then(|m| m.merchant.as_deref()) {
-                Some(m) if villager => format!("entity.minecraft.villager.{}", path_of(&m.profession)),
-                _ => "entity.minecraft.wandering_trader".to_owned(),
-            };
-            Component::translatable(&key, vec![])
-        });
         let Some(m) = e.mob_mut().and_then(|m| m.merchant.as_deref_mut()) else { return false };
         // `updateSpecialPrices`: reputation and Hero of the Village lower prices.
         if villager {
@@ -413,11 +479,44 @@ impl Server {
                 }
             }
         }
-        m.trading_player = Some(player);
-        if !self.open_menu(player, MenuKind::Merchant { world, entity: id }, "minecraft:merchant", title) {
-            self.stop_trading(world, id);
+        self.show_trading_window(player, MerchantRef::Entity { world, id })
+    }
+
+    /// `HumanEntity.openMerchant`: trading with any merchant, without special prices. A
+    /// merchant trading with someone else stays with them unless `force` closes their window.
+    pub fn open_merchant(&mut self, player: i32, merchant: MerchantRef, force: bool) -> bool {
+        if let Some(other) = self.merchant_trader(merchant) {
+            if !force {
+                return false;
+            }
+            if self.players.get(&other).and_then(|p| p.open_menu.as_ref()).is_some_and(|m| m.kind == MenuKind::Merchant(merchant)) {
+                self.close_menu(other, true);
+            }
+            self.stop_trading(merchant);
+        }
+        match merchant {
+            MerchantRef::Entity { world, id } => {
+                if self.worlds.get(world).and_then(|w| w.entities.get(&id)).is_none_or(|e| !e.is_alive()) {
+                    return false;
+                }
+                self.merchant_offers(world, id);
+            }
+            MerchantRef::Custom(c) if !self.plugin_data.merchants.contains_key(&c) => return false,
+            MerchantRef::Custom(_) => {}
+        }
+        self.show_trading_window(player, merchant)
+    }
+
+    /// Opens the trading window (`openTradingScreen`) and sends the offers.
+    fn show_trading_window(&mut self, player: i32, merchant: MerchantRef) -> bool {
+        let Some(title) = self.merchant_title(merchant) else { return false };
+        self.set_merchant_trader(merchant, Some(player));
+        if !self.open_menu(player, MenuKind::Merchant(merchant), "minecraft:merchant", title) {
+            self.stop_trading(merchant);
             return false;
         }
+        // Closing a window on the same merchant just now let it go: it trades with this player.
+        self.set_merchant_trader(merchant, Some(player));
         self.send_offers(player);
         true
     }
@@ -425,45 +524,55 @@ impl Server {
     /// Sends the offers of the merchant a player trades with (`sendMerchantOffers`).
     pub fn send_offers(&mut self, player: i32) {
         let Some(menu) = self.players.get(&player).and_then(|p| p.open_menu.as_ref()) else { return };
-        let MenuKind::Merchant { world, entity } = menu.kind else { return };
+        let MenuKind::Merchant(merchant) = menu.kind else { return };
         let window_id = menu.window_id;
-        let offers = self.merchant_offers(world, entity);
-        let Some(e) = self.worlds[world].entities.get(&entity) else { return };
-        let villager = e.info.name == VILLAGER;
-        let Some(m) = e.mob().and_then(|m| m.merchant.as_deref()) else { return };
-        let packet = play::MerchantOffers {
-            window_id,
-            offers: offers.iter().map(Offer::to_packet).collect(),
-            level: if villager { m.level } else { 1 },
-            xp: m.xp,
-            show_progress: villager,
-            can_restock: villager,
+        let offers = self.offers_of(merchant);
+        let (villager, level, xp) = match merchant {
+            MerchantRef::Entity { world, id } => {
+                let Some(e) = self.worlds[world].entities.get(&id) else { return };
+                let Some(m) = e.mob().and_then(|m| m.merchant.as_deref()) else { return };
+                let villager = e.info.name == VILLAGER;
+                (villager, if villager { m.level } else { 1 }, m.xp)
+            }
+            // A plugin's merchant shows no level or experience (`MinecraftMerchant`).
+            MerchantRef::Custom(_) => (false, 1, 0),
         };
+        let packet = play::MerchantOffers { window_id, offers: offers.iter().map(Offer::to_packet).collect(), level, xp, show_progress: villager, can_restock: villager };
         if let Some(p) = self.players.get(&player) {
             p.conn.send(&packet);
         }
     }
 
     /// The trading window closed (`stopTrading`): prices go back to normal.
-    pub(super) fn stop_trading(&mut self, world: usize, id: i32) {
-        let Some(m) = self.worlds.get_mut(world).and_then(|w| merchant_mut(w, id)) else { return };
-        m.trading_player = None;
-        for offer in m.offers.iter_mut().flatten() {
-            offer.special_price = 0;
+    pub(super) fn stop_trading(&mut self, merchant: MerchantRef) {
+        match merchant {
+            MerchantRef::Entity { world, id } => {
+                let Some(m) = self.worlds.get_mut(world).and_then(|w| merchant_mut(w, id)) else { return };
+                m.trading_player = None;
+                for offer in m.offers.iter_mut().flatten() {
+                    offer.special_price = 0;
+                }
+            }
+            MerchantRef::Custom(c) => {
+                if let Some(m) = self.plugin_data.merchants.get_mut(&c) {
+                    m.trader = None;
+                }
+                crate::plugins::merchant::collect_released(self);
+            }
         }
     }
 
-    /// The offers of the merchant whose window a player has open.
-    fn open_offers(&mut self, player: i32) -> Option<(usize, i32, Vec<Offer>, Option<usize>)> {
+    /// The merchant whose window a player has open, its offers and the selected trade.
+    fn open_offers(&mut self, player: i32) -> Option<(MerchantRef, Vec<Offer>, Option<usize>)> {
         let menu = self.players.get(&player)?.open_menu.as_ref()?;
-        let MenuKind::Merchant { world, entity } = menu.kind else { return None };
+        let MenuKind::Merchant(merchant) = menu.kind else { return None };
         let selection = menu.trade_selection;
-        Some((world, entity, self.merchant_offers(world, entity), selection))
+        Some((merchant, self.offers_of(merchant), selection))
     }
 
     /// Works out the result of the payment in a trading window and shows it.
     pub(super) fn update_trade_result(&mut self, player: i32) {
-        let Some((_, _, offers, selection)) = self.open_offers(player) else { return };
+        let Some((_, offers, selection)) = self.open_offers(player) else { return };
         let Some(p) = self.players.get_mut(&player) else { return };
         let Some(menu) = p.open_menu.as_mut() else { return };
         let (active, result) = sell_item(&offers, &menu.craft_grid[0], &menu.craft_grid[1], selection);
@@ -474,19 +583,29 @@ impl Server {
     }
 
     /// Pays for the trade on offer from the payment `slots` (`MerchantResultSlot.onTake`) and
-    /// works out the next result. Returns false if the payment does not cover it.
+    /// works out the next result. Plugins see it first (`PlayerTradeEvent`, or
+    /// `PlayerPurchaseEvent` for their own merchants) and may cancel or change it. Returns
+    /// false if no trade happened.
     fn take_trade(&mut self, player: i32, slots: &mut [Slot]) -> bool {
-        let Some((world, entity, offers, selection)) = self.open_offers(player) else { return false };
+        let Some((merchant, offers, selection)) = self.open_offers(player) else { return false };
         let Some(index) = self.players.get(&player).and_then(|p| p.open_menu.as_ref()).and_then(|m| m.active_offer) else { return false };
-        let Some(offer) = offers.get(index) else { return false };
+        let Some(offer) = offers.get(index).cloned() else { return false };
+        if !(offer.satisfied_by(&slots[0], &slots[1]) || offer.satisfied_by(&slots[1], &slots[0])) {
+            return false;
+        }
+        let Some((offer, reward_exp, increase_uses)) = crate::plugins::events::on_trade(self, player, merchant, index, offer) else {
+            // Cancelled: the client took the result already; it gets the real state back.
+            self.send_offers(player);
+            return false;
+        };
         let (mut a, mut b) = (slots[0].clone(), slots[1].clone());
         if !(offer.take(&mut a, &mut b) || offer.take(&mut b, &mut a)) {
             return false;
         }
         slots[0] = a;
         slots[1] = b;
-        self.notify_trade(world, entity, index, player);
-        let offers = self.merchant_offers(world, entity);
+        self.notify_trade(merchant, index, player, reward_exp, increase_uses);
+        let offers = self.offers_of(merchant);
         let (active, result) = sell_item(&offers, &slots[0], &slots[1], selection);
         slots[2] = result;
         if let Some(menu) = self.players.get_mut(&player).and_then(|p| p.open_menu.as_mut()) {
@@ -545,11 +664,16 @@ impl Server {
         result
     }
 
-    /// The client picked a trade (`ServerboundSelectTradePacket`): the payment goes back to
-    /// the inventory and what the trade wants comes out of it (`MerchantMenu.tryMoveItems`).
+    /// The client picked a trade (`ServerboundSelectTradePacket`, `TradeSelectEvent`): the
+    /// payment goes back to the inventory and what the trade wants comes out of it
+    /// (`MerchantMenu.tryMoveItems`).
     pub(super) fn handle_select_trade(&mut self, player: i32, index: i32) {
-        let Some((_, _, offers, _)) = self.open_offers(player) else { return };
+        let Some((_, offers, _)) = self.open_offers(player) else { return };
         let Some(offer) = usize::try_from(index).ok().and_then(|i| offers.get(i)).cloned() else { return };
+        if !crate::plugins::events::on_trade_select(self, player, index) {
+            self.send_menu_contents(player);
+            return;
+        }
         if let Some(menu) = self.players.get_mut(&player).and_then(|p| p.open_menu.as_mut()) {
             menu.trade_selection = Some(index as usize);
         }
@@ -580,31 +704,50 @@ impl Server {
         self.send_menu_contents(player);
     }
 
-    /// What the merchant does when a trade happens (`notifyTrade`, `rewardTradeXp`): the
+    /// What the merchant does when a trade happens (`processTrade`, `rewardTradeXp`): the
     /// offer is used once, villagers gain experience (and level up soon after the player
-    /// leaves), and experience orbs pop out.
-    fn notify_trade(&mut self, world: usize, id: i32, index: usize, player: i32) {
+    /// leaves), and experience orbs pop out. Plugins may have turned the use or the reward
+    /// off.
+    fn notify_trade(&mut self, merchant: MerchantRef, index: usize, player: i32, reward_exp: bool, increase_uses: bool) {
+        let (world, id) = match merchant {
+            MerchantRef::Entity { world, id } => (world, id),
+            MerchantRef::Custom(c) => {
+                if let Some(offer) = self.plugin_data.merchants.get_mut(&c).and_then(|m| m.offers.get_mut(index)) {
+                    if increase_uses {
+                        offer.uses += 1;
+                    }
+                }
+                return;
+            }
+        };
         let uuid = self.players.get(&player).map(|p| p.uuid());
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let pos = e.pos;
         let villager = e.info.name == VILLAGER;
         let Some(m) = e.mob_mut().and_then(|m| m.merchant.as_deref_mut()) else { return };
         let Some(offer) = m.offers.as_mut().and_then(|o| o.get_mut(index)) else { return };
-        offer.uses += 1;
-        let (xp, reward) = (offer.xp, offer.reward_xp);
-        let mut rng = rand::thread_rng();
-        let mut orbs = 3 + rng.gen_range(0..4);
-        if villager {
-            m.xp += xp;
-            m.last_traded = uuid;
-            if m.should_level_up() {
-                m.level_up_timer = 40;
-                m.level_up_pending = true;
-                orbs += 5;
+        if increase_uses {
+            offer.uses += 1;
+        }
+        let (xp, orbs_on) = (offer.xp, offer.reward_xp);
+        let mut orbs = None;
+        if reward_exp {
+            let mut amount = 3 + rand::thread_rng().gen_range(0..4);
+            if villager {
+                m.xp += xp;
+                m.last_traded = uuid;
+                if m.should_level_up() {
+                    m.level_up_timer = 40;
+                    m.level_up_pending = true;
+                    amount += 5;
+                }
+            }
+            if orbs_on {
+                orbs = Some(amount);
             }
         }
-        if reward {
-            self.award_experience(world, Vec3::new(pos.x, pos.y + 0.5, pos.z), orbs);
+        if let Some(amount) = orbs {
+            self.award_experience(world, Vec3::new(pos.x, pos.y + 0.5, pos.z), amount);
         }
         let sound = if villager { "minecraft:entity.villager.yes" } else { "minecraft:entity.wandering_trader.yes" };
         self.play_sound(world, pos, sound, category::NEUTRAL, 1.0, 1.0, None);
@@ -619,13 +762,43 @@ impl Server {
         let mut next = m.clone();
         next.level += 1;
         let mut rng = rand::thread_rng();
-        let added: Vec<Offer> = Trades::sets_for(VILLAGER, &next, next.level).iter().flat_map(|set| self.trades.roll(set, &next, &self.loot, &mut rng)).collect();
-        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
-        if let Some(m) = e.mob_mut().and_then(|m| m.merchant.as_deref_mut()) {
-            m.level = next.level;
-            m.offers.get_or_insert_with(Vec::new).extend(added);
-            e.metadata_dirty = true;
+        let rolled: Vec<Offer> = Trades::sets_for(VILLAGER, &next, next.level).iter().flat_map(|set| self.trades.roll(set, &next, &self.loot, &mut rng)).collect();
+        if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+            if let Some(m) = e.mob_mut().and_then(|m| m.merchant.as_deref_mut()) {
+                m.level = next.level;
+                e.metadata_dirty = true;
+            }
         }
+        let added = crate::plugins::events::on_acquire_trades(self, world, id, rolled);
+        if let Some(m) = merchant_mut(&mut self.worlds[world], id) {
+            m.offers.get_or_insert_with(Vec::new).extend(added);
+        }
+    }
+
+    /// `updateTrades(amount)` (Paper's `Villager.addTrades`): more trades of the current level.
+    pub fn add_trades(&mut self, world: usize, id: i32, amount: usize) -> bool {
+        self.merchant_offers(world, id);
+        let Some(e) = self.worlds[world].entities.get(&id) else { return false };
+        let name = e.info.name.clone();
+        let Some(m) = e.mob().and_then(|m| m.merchant.as_deref()) else { return false };
+        let snapshot = m.clone();
+        let mut rng = rand::thread_rng();
+        let mut rolled = Vec::new();
+        for set in Trades::sets_for(&name, &snapshot, snapshot.level) {
+            for offer in self.trades.roll(&set, &snapshot, &self.loot, &mut rng) {
+                if rolled.len() < amount {
+                    rolled.push(offer);
+                }
+            }
+        }
+        if rolled.is_empty() {
+            return false;
+        }
+        let added = crate::plugins::events::on_acquire_trades(self, world, id, rolled);
+        if let Some(m) = merchant_mut(&mut self.worlds[world], id) {
+            m.offers.get_or_insert_with(Vec::new).extend(added);
+        }
+        true
     }
 
     /// Changes a villager's profession (`setVillagerData`): its trades start over.
@@ -640,13 +813,32 @@ impl Server {
         }
     }
 
-    /// `restock`: trades are available again, with prices following demand.
+    /// `updateDemand`: prices follow how much each trade was used.
+    pub fn update_demand(&mut self, world: usize, id: i32) {
+        if let Some(m) = merchant_mut(&mut self.worlds[world], id) {
+            for offer in m.offers.iter_mut().flatten() {
+                offer.update_demand();
+            }
+        }
+    }
+
+    /// `restock`: trades are available again (unless a plugin keeps one used up with
+    /// `VillagerReplenishTradeEvent`), with prices following demand.
     pub fn restock(&mut self, world: usize, id: i32) {
+        self.update_demand(world, id);
+        let offers = self.merchant_offers(world, id);
+        let replenished = crate::plugins::events::on_replenish(self, world, id, offers);
         let age = self.worlds[world].age;
         let Some(m) = merchant_mut(&mut self.worlds[world], id) else { return };
-        for offer in m.offers.iter_mut().flatten() {
-            offer.update_demand();
-            offer.uses = 0;
+        if let Some(current) = m.offers.as_mut() {
+            for (i, (offer, reset)) in replenished.into_iter().enumerate() {
+                if let Some(slot) = current.get_mut(i) {
+                    *slot = offer;
+                    if reset {
+                        slot.uses = 0;
+                    }
+                }
+            }
         }
         m.last_restock = age;
         m.restocks_today += 1;
@@ -741,13 +933,13 @@ impl Server {
         // The trading player must stay close (`stillValid`).
         if let Some(player) = m.trading_player {
             let ok = self.players.get(&player).is_some_and(|p| {
-                !p.dead && p.world == world && p.open_menu.as_ref().is_some_and(|o| o.kind == (MenuKind::Merchant { world, entity: id })) && Vec3::new(p.loc.x, p.loc.y, p.loc.z).distance_squared(pos) <= 64.0
+                !p.dead && p.world == world && p.open_menu.as_ref().is_some_and(|o| o.kind == MenuKind::Merchant(MerchantRef::Entity { world, id })) && Vec3::new(p.loc.x, p.loc.y, p.loc.z).distance_squared(pos) <= 64.0
             });
             if !ok {
-                if self.players.get(&player).and_then(|p| p.open_menu.as_ref()).is_some_and(|o| o.kind == (MenuKind::Merchant { world, entity: id })) {
+                if self.players.get(&player).and_then(|p| p.open_menu.as_ref()).is_some_and(|o| o.kind == MenuKind::Merchant(MerchantRef::Entity { world, id })) {
                     self.close_menu(player, true);
                 }
-                self.stop_trading(world, id);
+                self.stop_trading(MerchantRef::Entity { world, id });
             }
         }
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
@@ -827,13 +1019,14 @@ impl Server {
                 m.potential_job_site = None;
             }
             // `ResetProfession`: a villager nobody traded with forgets its job.
-            if lost && !matches!(m.profession.as_str(), "minecraft:none" | "minecraft:nitwit") && m.xp == 0 && m.level <= 1 {
-                m.profession = "minecraft:none".to_owned();
-                m.offers = None;
-                e.metadata_dirty = true;
-            }
+            let reset = lost && !matches!(m.profession.as_str(), "minecraft:none" | "minecraft:nitwit") && m.xp == 0 && m.level <= 1;
             if let Some(brain) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.mob_mut()).map(|m| &mut m.brain) {
                 brain.walk_target = None;
+            }
+            if reset {
+                if let Some(p) = crate::plugins::events::on_career_change(self, world, id, "minecraft:none", "LOSING_JOB") {
+                    self.set_profession(world, id, &p);
+                }
             }
             return;
         }
@@ -862,7 +1055,10 @@ impl Server {
                 m.potential_job_site = None;
                 let unemployed = m.profession == "minecraft:none";
                 if let (true, Some(p)) = (unemployed, new_profession) {
-                    self.set_profession(world, id, p);
+                    // `VillagerCareerChangeEvent` (EMPLOYED): plugins may cancel or change it.
+                    if let Some(p) = crate::plugins::events::on_career_change(self, world, id, p, "EMPLOYED") {
+                        self.set_profession(world, id, &p);
+                    }
                 }
                 self.entity_event(world, id, 14);
             } else if let Some(spot) = self.spot_next_to(world, site) {

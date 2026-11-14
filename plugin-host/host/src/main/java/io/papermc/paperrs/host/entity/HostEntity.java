@@ -720,6 +720,171 @@ public final class HostEntity implements HostProxies.Backed {
         return material == null ? Material.AIR : material;
     }
 
+    // --- merchants: villagers and wandering traders (CraftAbstractVillager, CraftMerchant) ------
+
+    private Map<String, Object> merchantArgs(final Object... kv) {
+        final Map<String, Object> args = Values.of(kv);
+        args.put("entity", this.id);
+        return args;
+    }
+
+    private Object villager(final String method, final Object... kv) {
+        final Object result = this.server.call(method, this.merchantArgs(kv));
+        this.stateEpoch = -1;
+        return result;
+    }
+
+    public java.util.List<org.bukkit.inventory.MerchantRecipe> getRecipes() {
+        return Merchants.recipes(this.server.call("merchant.recipes", this.merchantArgs()));
+    }
+
+    public void setRecipes(final java.util.List<org.bukkit.inventory.MerchantRecipe> recipes) {
+        this.villager("merchant.set_recipes", "recipes", Merchants.values(recipes));
+    }
+
+    public org.bukkit.inventory.MerchantRecipe getRecipe(final int i) {
+        return this.getRecipes().get(i);
+    }
+
+    public void setRecipe(final int i, final org.bukkit.inventory.MerchantRecipe recipe) {
+        java.util.Objects.checkIndex(i, this.getRecipeCount());
+        this.villager("merchant.set_recipe", "index", i, "recipe", Merchants.value(recipe));
+    }
+
+    public int getRecipeCount() {
+        return Values.list(this.server.call("merchant.recipes", this.merchantArgs())).size();
+    }
+
+    public boolean isTrading() {
+        return this.getTrader() != null;
+    }
+
+    public org.bukkit.entity.@Nullable HumanEntity getTrader() {
+        final Object trader = this.state().get("trader");
+        return trader instanceof String uuid ? this.server.player(UUID.fromString(uuid)) : null;
+    }
+
+    /** {@code AbstractVillager#resetOffers}: the trades are worked out again when needed. */
+    public void resetOffers() {
+        this.villager("villager.reset_offers");
+    }
+
+    public org.bukkit.entity.Villager.Profession getProfession() {
+        return org.bukkit.Registry.VILLAGER_PROFESSION.getOrThrow(org.bukkit.NamespacedKey.fromString(Values.str(this.state(), "profession", "minecraft:none")));
+    }
+
+    public void setProfession(final org.bukkit.entity.Villager.Profession profession) {
+        if (profession == null) {
+            throw new IllegalArgumentException("Profession cannot be null");
+        }
+        this.set("profession", profession.getKey().toString());
+    }
+
+    public org.bukkit.entity.Villager.Type getVillagerType() {
+        return org.bukkit.Registry.VILLAGER_TYPE.getOrThrow(org.bukkit.NamespacedKey.fromString(Values.str(this.state(), "villager_type", "minecraft:plains")));
+    }
+
+    public void setVillagerType(final org.bukkit.entity.Villager.Type type) {
+        if (type == null) {
+            throw new IllegalArgumentException("Type cannot be null");
+        }
+        this.set("villager_type", type.getKey().toString());
+    }
+
+    public int getVillagerLevel() {
+        return Values.i32(this.state(), "villager_level", 1);
+    }
+
+    public void setVillagerLevel(final int level) {
+        if (level < 1 || level > 5) {
+            throw new IllegalArgumentException("level (" + level + ") must be between [1, 5]");
+        }
+        this.set("villager_level", level);
+    }
+
+    public int getVillagerExperience() {
+        return Values.i32(this.state(), "villager_xp", 0);
+    }
+
+    public void setVillagerExperience(final int experience) {
+        if (experience < 0) {
+            throw new IllegalArgumentException("Experience (" + experience + ") must be positive");
+        }
+        this.set("villager_xp", experience);
+    }
+
+    public boolean increaseLevel(final int amount) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Level earned must be positive");
+        }
+        return Values.bool(Values.map(this.villager("villager.increase_level", "amount", amount)), "changed", false);
+    }
+
+    public boolean addTrades(final int amount) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Number of trades unlocked must be positive");
+        }
+        return Values.bool(Values.map(this.villager("villager.add_trades", "amount", amount)), "changed", false);
+    }
+
+    public int getRestocksToday() {
+        return Values.i32(this.state(), "restocks_today", 0);
+    }
+
+    public void setRestocksToday(final int restocksToday) {
+        this.set("restocks_today", restocksToday);
+    }
+
+    public void shakeHead() {
+        this.villager("villager.shake_head");
+    }
+
+    public void restock() {
+        this.villager("villager.restock");
+    }
+
+    public void updateDemand() {
+        this.villager("villager.update_demand");
+    }
+
+    public com.destroystokyo.paper.entity.villager.Reputation getReputation(final UUID uniqueId) {
+        if (uniqueId == null) {
+            throw new IllegalArgumentException("UUID cannot be null");
+        }
+        return Merchants.reputation(Values.map(this.server.call("villager.reputations", this.merchantArgs())).get(uniqueId.toString()));
+    }
+
+    public Map<UUID, com.destroystokyo.paper.entity.villager.Reputation> getReputations() {
+        final Map<UUID, com.destroystokyo.paper.entity.villager.Reputation> out = new java.util.HashMap<>();
+        for (final Map.Entry<String, Object> e : Values.map(this.server.call("villager.reputations", this.merchantArgs())).entrySet()) {
+            out.put(UUID.fromString(e.getKey()), Merchants.reputation(e.getValue()));
+        }
+        return out;
+    }
+
+    public void setReputation(final UUID uniqueId, final com.destroystokyo.paper.entity.villager.Reputation reputation) {
+        if (uniqueId == null || reputation == null) {
+            throw new IllegalArgumentException("UUID and reputation cannot be null");
+        }
+        this.villager("villager.set_reputation", "uuid", uniqueId.toString(), "values", Merchants.reputationValue(reputation));
+    }
+
+    public void setReputations(final Map<UUID, com.destroystokyo.paper.entity.villager.Reputation> reputations) {
+        reputations.forEach(this::setReputation);
+    }
+
+    public void clearReputations() {
+        this.villager("villager.clear_reputations");
+    }
+
+    public int getDespawnDelay() {
+        return Values.i32(this.state(), "despawn_delay", 0);
+    }
+
+    public void setDespawnDelay(final int despawnDelay) {
+        this.set("despawn_delay", despawnDelay);
+    }
+
     // --- object -------------------------------------------------------------------------------
 
     @Override

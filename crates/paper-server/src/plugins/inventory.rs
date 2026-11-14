@@ -363,6 +363,9 @@ pub fn menu_value(server: &Server, id: i32, kind: Option<&MenuKind>) -> Value {
         "top" => top.value(server),
         "title" => title.as_ref().map(component_value),
     };
+    if let Some(MenuKind::Merchant(merchant)) = kind {
+        out.set("merchant", super::merchant::merchant_ref_value(server, *merchant));
+    }
     // The fields inventory events carried before descriptors existed.
     if let InvRef::Block { world, positions } = &top {
         out.set("world", world_name(*world));

@@ -53,6 +53,11 @@ public final class HostInventoryView {
         return this.type;
     }
 
+    /** {@code MerchantView#getMerchant}: who a trading window trades with. */
+    public org.bukkit.inventory.@Nullable Merchant getMerchant() {
+        return this.top instanceof org.bukkit.inventory.MerchantInventory merchant ? merchant.getMerchant() : null;
+    }
+
     private int topSize() {
         return this.top == null ? 0 : this.top.getSize();
     }
@@ -119,6 +124,7 @@ public final class HostInventoryView {
             return switch (this.type) {
                 case WORKBENCH -> rawSlot == 0 ? InventoryType.SlotType.RESULT : InventoryType.SlotType.CRAFTING;
                 case FURNACE, SMOKER, BLAST_FURNACE -> rawSlot == 2 ? InventoryType.SlotType.RESULT : rawSlot == 1 ? InventoryType.SlotType.FUEL : InventoryType.SlotType.CRAFTING;
+                case ANVIL, MERCHANT -> rawSlot == 2 ? InventoryType.SlotType.RESULT : InventoryType.SlotType.CRAFTING;
                 default -> InventoryType.SlotType.CONTAINER;
             };
         }

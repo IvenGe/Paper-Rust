@@ -318,6 +318,104 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert_eq!(open.hand.0, 0);
     expect_line(&mut alice, "book: opened");
 
+    // --- villagers and merchants -------------------------------------------------------------
+    // The plugin sets a villager up and opens its trading window for Alice; she picks the
+    // trade, pays and takes it, and the plugin sees TradeSelectEvent and PlayerTradeEvent.
+    let merchant_menu = paper_data::registries::id("minecraft:menu", "minecraft:merchant").unwrap() as i32;
+    let trade_click = |window: i32| play::ContainerClick { window_id: window, state_id: 0, slot: 2, button: 0, mode: 0, changed_slots: Vec::new(), carried: HashedSlot(None) };
+    // (Alice's inventory holds stacks with components, which this client cannot decode in
+    // window contents: the server's copy of the trading slots is checked instead.)
+    let on_offer = |server: &paper_server::RunningServer| server.handle.run(|s| s.player_by_name("Alice").unwrap().open_menu.as_ref().map(|m| m.craft_grid[2].clone())).unwrap();
+    let wait_for_offer = |server: &paper_server::RunningServer, wanted: Slot| {
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        while on_offer(server) != Some(wanted.clone()) {
+            assert!(std::time::Instant::now() < deadline, "timed out waiting for {wanted:?} on offer");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let (emerald, bread, gold, diamond) = (item("minecraft:emerald"), item("minecraft:bread"), item("minecraft:gold_ingot"), item("minecraft:diamond"));
+    server.handle.run(move |s| {
+        let id = s.player_by_name("Alice").unwrap().entity_id;
+        s.set_inventory_slot(id, 37, Slot::of(emerald, 10));
+    }).unwrap();
+    alice.clear_backlog();
+    alice.command("apitest villagers");
+    let screen: play::OpenScreen = alice.find(TIMEOUT, |o: &play::OpenScreen| o.menu_type.0 == merchant_menu).expect("the trading window");
+    expect_line(&mut alice, "villagers: ok");
+    let window = screen.window_id.0;
+    let offers: play::MerchantOffers = alice.find(TIMEOUT, |o: &play::MerchantOffers| o.window_id == window).expect("the offers");
+    assert_eq!((offers.offers.len(), offers.level, offers.offers[0].result.clone()), (1, 3, Slot::of(bread, 3)));
+    alice.send(&play::SelectTrade { item: VarInt(0) });
+    expect_line(&mut alice, "selected trade 0 of 1");
+    wait_for_offer(&server, Slot::of(bread, 3));
+    alice.send(&trade_click(window));
+    expect_line(&mut alice, "trade with villager: bread x3 (exp true)");
+    let (carried, uses) = server
+        .handle
+        .run(|s| {
+            let p = s.player_by_name("Alice").unwrap();
+            let uses = s.worlds[0].entities.values().find_map(|e| e.mob()?.merchant.as_ref()?.offers.as_ref()?.first().map(|o| o.uses));
+            (p.carried.clone(), uses)
+        })
+        .unwrap();
+    assert_eq!((carried, uses), (Slot::of(bread, 3), Some(1)));
+    alice.send(&play::ServerboundContainerClose { window_id: VarInt(window) });
+    alice.drain(Duration::from_millis(200));
+
+    // A merchant the plugin made: no levels, PlayerPurchaseEvent.
+    server.handle.run(move |s| {
+        let id = s.player_by_name("Alice").unwrap().entity_id;
+        s.set_inventory_slot(id, 38, Slot::of(gold, 8));
+        // The villager goes, so the next test's villager gets the lectern.
+        for e in s.worlds[0].entities.values_mut().filter(|e| e.info.name == "minecraft:villager") {
+            e.removed = true;
+        }
+    }).unwrap();
+    alice.clear_backlog();
+    alice.command("apitest merchant");
+    let screen: play::OpenScreen = alice.find(TIMEOUT, |o: &play::OpenScreen| o.menu_type.0 == merchant_menu).expect("the shop window");
+    assert_eq!(screen.title.to_plain(), "Shop");
+    expect_line(&mut alice, "merchant: ok");
+    let window = screen.window_id.0;
+    let offers: play::MerchantOffers = alice.find(TIMEOUT, |o: &play::MerchantOffers| o.window_id == window).expect("the shop's offers");
+    assert_eq!((offers.offers.len(), offers.show_progress), (1, false));
+    alice.send(&play::SelectTrade { item: VarInt(0) });
+    expect_line(&mut alice, "selected trade 0 of 1");
+    wait_for_offer(&server, Slot::of(diamond, 1));
+    alice.send(&trade_click(window));
+    expect_line(&mut alice, "purchase: diamond x1 (exp false)");
+    let carried = server.handle.run(|s| s.player_by_name("Alice").unwrap().carried.clone()).unwrap();
+    assert_eq!(carried, Slot::of(diamond, 1));
+    alice.send(&play::ServerboundContainerClose { window_id: VarInt(window) });
+    alice.drain(Duration::from_millis(200));
+
+    // What the trades left in the inventory goes, for the tests below.
+    server
+        .handle
+        .run(move |s| {
+            let id = s.player_by_name("Alice").unwrap().entity_id;
+            for slot in 9..45 {
+                let traded = s.players[&id].inventory[slot].0.as_ref().is_some_and(|i| [emerald, bread, gold, diamond].contains(&i.item));
+                if traded {
+                    s.set_inventory_slot(id, slot, Slot::EMPTY);
+                }
+            }
+        })
+        .unwrap();
+
+    // A villager next to a lectern takes the job: VillagerCareerChangeEvent.
+    alice.command("apitest career");
+    expect_line(&mut alice, "career: placed");
+    expect_line(&mut alice, "career librarian EMPLOYED for Hired");
+    server
+        .handle
+        .run(|s| {
+            for e in s.worlds[0].entities.values_mut().filter(|e| e.info.name == "minecraft:villager") {
+                e.removed = true;
+            }
+        })
+        .unwrap();
+
     // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
     alice.command("apitest unsupported");
     expect_line(&mut alice, "unsupported: ItemMeta#getAttributeModifiers is not supported by Paper-RS yet");

@@ -646,6 +646,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         m if m.starts_with("scoreboard.") => super::scoreboard::handle(server, m, args),
         m if m.starts_with("bossbar.") => super::bossbar::handle(server, m, args),
         m if m.starts_with("attribute.") => super::attributes::handle(server, m, args),
+        m if m.starts_with("merchant.") || m.starts_with("villager.") => super::merchant::handle(server, m, args),
         m if m.starts_with("offline.") => super::offline::handle(server, m, args),
 
         // --- worlds and blocks ---

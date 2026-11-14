@@ -80,17 +80,25 @@ public final class HostEvents {
         GATED.put("PlayerDeathEvent", org.bukkit.event.entity.PlayerDeathEvent.class);
         GATED.put("PlayerRespawnEvent", org.bukkit.event.player.PlayerRespawnEvent.class);
         GATED.put("CreatureSpawnEvent", org.bukkit.event.entity.CreatureSpawnEvent.class);
+        // PlayerTradeEvent shares PlayerPurchaseEvent's handler list.
+        GATED.put("PlayerPurchaseEvent", io.papermc.paper.event.player.PlayerPurchaseEvent.class);
+        GATED.put("TradeSelectEvent", org.bukkit.event.inventory.TradeSelectEvent.class);
+        GATED.put("VillagerAcquireTradeEvent", org.bukkit.event.entity.VillagerAcquireTradeEvent.class);
+        GATED.put("VillagerCareerChangeEvent", org.bukkit.event.entity.VillagerCareerChangeEvent.class);
+        GATED.put("VillagerReplenishTradeEvent", org.bukkit.event.entity.VillagerReplenishTradeEvent.class);
     }
 
     private final CraftServer server;
     private final Map<String, HandlerList> handlerLists = new LinkedHashMap<>();
     private final InventoryEvents inventories;
     private final EntityEvents entities;
+    private final MerchantEvents merchants;
 
     public HostEvents(final CraftServer server) {
         this.server = server;
         this.inventories = new InventoryEvents(server);
         this.entities = new EntityEvents(server);
+        this.merchants = new MerchantEvents(server);
         for (Map.Entry<String, Class<? extends Event>> e : GATED.entrySet()) {
             try {
                 this.handlerLists.put(e.getKey(), (HandlerList) e.getValue().getMethod("getHandlerList").invoke(null));
@@ -202,6 +210,11 @@ public final class HostEvents {
             case "event.player_death" -> this.entities.playerDeath(args);
             case "event.respawn" -> this.entities.respawn(args);
             case "event.creature_spawn" -> this.entities.creatureSpawn(args);
+            case "event.trade" -> this.merchants.trade(args);
+            case "event.trade_select" -> this.merchants.select(args);
+            case "event.villager_acquire_trade" -> this.merchants.acquire(args);
+            case "event.villager_career_change" -> this.merchants.careerChange(args);
+            case "event.villager_replenish_trade" -> this.merchants.replenish(args);
             case "event.server_list_ping" -> this.ping(args);
             case "event.pre_login" -> this.preLogin(args);
             default -> throw new IllegalArgumentException("unknown event " + method);

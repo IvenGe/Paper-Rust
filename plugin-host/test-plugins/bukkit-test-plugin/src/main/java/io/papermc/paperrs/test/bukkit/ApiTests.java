@@ -114,6 +114,9 @@ final class ApiTests implements Listener, CommandExecutor {
                     ((Player) sender).openBook(net.kyori.adventure.inventory.Book.builder().title(Component.text("Guide")).author(Component.text("Alice")).addPage(Component.text("Hello")).build());
                     sender.sendMessage("book: opened");
                 }
+                case "villagers" -> this.villagers((Player) sender);
+                case "merchant" -> this.merchant((Player) sender);
+                case "career" -> this.career((Player) sender);
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
@@ -131,6 +134,97 @@ final class ApiTests implements Listener, CommandExecutor {
             sender.sendMessage(args[0] + ": FAIL " + e);
         }
         return true;
+    }
+
+    // --- villagers and merchants --------------------------------------------------------------
+
+    /** A plugin's merchant stays while the plugin holds it. */
+    private org.bukkit.inventory.Merchant shop;
+
+    private static org.bukkit.inventory.MerchantRecipe recipe(final Material result, final int amount, final Material cost, final int costAmount, final int maxUses) {
+        final org.bukkit.inventory.MerchantRecipe recipe = new org.bukkit.inventory.MerchantRecipe(new ItemStack(result, amount), 0, maxUses, true, 2, 0.05f);
+        recipe.addIngredient(new ItemStack(cost, costAmount));
+        return recipe;
+    }
+
+    private void villagers(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final org.bukkit.entity.Villager villager = player.getWorld().spawn(player.getLocation().add(2, 0, 0), org.bukkit.entity.Villager.class);
+        check(failures, villager.getProfession() == org.bukkit.entity.Villager.Profession.NONE, "unemployed at first: " + villager.getProfession().getKey());
+        check(failures, villager.getVillagerType() == org.bukkit.entity.Villager.Type.PLAINS, "plains type: " + villager.getVillagerType().getKey());
+        villager.setProfession(org.bukkit.entity.Villager.Profession.LIBRARIAN);
+        villager.setVillagerType(org.bukkit.entity.Villager.Type.SNOW);
+        villager.setVillagerLevel(2);
+        villager.setVillagerExperience(15);
+        check(failures, villager.getProfession() == org.bukkit.entity.Villager.Profession.LIBRARIAN && villager.getVillagerType() == org.bukkit.entity.Villager.Type.SNOW
+            && villager.getVillagerLevel() == 2 && villager.getVillagerExperience() == 15, "villager data");
+        try {
+            villager.setVillagerLevel(6);
+            failures.add("level 6 accepted");
+        } catch (IllegalArgumentException expected) {
+            // As in Paper.
+        }
+        // Plugins set the trades.
+        villager.setRecipes(List.of(recipe(Material.BREAD, 3, Material.EMERALD, 2, 5)));
+        final org.bukkit.inventory.MerchantRecipe first = villager.getRecipe(0);
+        check(failures, villager.getRecipeCount() == 1 && first.getResult().getType() == Material.BREAD && first.getResult().getAmount() == 3
+            && first.getIngredients().get(0).getAmount() == 2 && first.getMaxUses() == 5 && first.getVillagerExperience() == 2, "recipes");
+        // New trades come from the profession's trade data, through VillagerAcquireTradeEvent
+        // (the listener below raises their maximum uses).
+        check(failures, villager.addTrades(1) && villager.getRecipeCount() == 2 && villager.getRecipe(1).getMaxUses() == 99, "addTrades: " + villager.getRecipes().size());
+        check(failures, villager.increaseLevel(1) && villager.getVillagerLevel() == 3 && villager.getRecipeCount() > 2, "increaseLevel: " + villager.getVillagerLevel());
+        final com.destroystokyo.paper.entity.villager.Reputation reputation = new com.destroystokyo.paper.entity.villager.Reputation();
+        reputation.setReputation(com.destroystokyo.paper.entity.villager.ReputationType.MAJOR_POSITIVE, 10);
+        villager.setReputation(player.getUniqueId(), reputation);
+        check(failures, villager.getReputation(player.getUniqueId()).getReputation(com.destroystokyo.paper.entity.villager.ReputationType.MAJOR_POSITIVE) == 10, "reputation");
+        villager.shakeHead();
+        // The trading window (Alice trades in tests/java_plugins.rs).
+        villager.setRecipes(List.of(recipe(Material.BREAD, 3, Material.EMERALD, 2, 5)));
+        final org.bukkit.inventory.InventoryView view = player.openMerchant(villager, false);
+        check(failures, view instanceof org.bukkit.inventory.view.MerchantView merchantView && villager.equals(merchantView.getMerchant()), "openMerchant view");
+        check(failures, view != null && view.getTopInventory() instanceof org.bukkit.inventory.MerchantInventory, "merchant inventory");
+        check(failures, villager.isTrading() && player.equals(villager.getTrader()), "trading with Alice");
+        report(player, "villagers", failures);
+    }
+
+    private void merchant(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        this.shop = Bukkit.createMerchant(Component.text("Shop"));
+        this.shop.setRecipes(List.of(recipe(Material.DIAMOND, 1, Material.GOLD_INGOT, 4, 10)));
+        check(failures, this.shop.getRecipeCount() == 1 && !this.shop.isTrading(), "a merchant with one trade");
+        final org.bukkit.inventory.InventoryView view = player.openMerchant(this.shop, true);
+        check(failures, view != null && this.shop.isTrading() && view.getType() == org.bukkit.event.inventory.InventoryType.MERCHANT, "openMerchant");
+        report(player, "merchant", failures);
+    }
+
+    /** A villager next to a lectern takes the job (VillagerCareerChangeEvent). */
+    private void career(final Player player) {
+        final Location at = player.getLocation().getBlock().getLocation().add(3, 0, 0);
+        at.getBlock().setType(Material.LECTERN);
+        player.getWorld().spawn(at.clone().add(-1.5, 0, 0.5), org.bukkit.entity.Villager.class).setCustomName("Hired");
+        player.sendMessage("career: placed");
+    }
+
+    @EventHandler
+    public void onAcquireTrade(final org.bukkit.event.entity.VillagerAcquireTradeEvent event) {
+        event.getRecipe().setMaxUses(99);
+    }
+
+    @EventHandler
+    public void onPurchase(final io.papermc.paper.event.player.PlayerPurchaseEvent event) {
+        final ItemStack result = event.getTrade().getResult();
+        final String kind = event instanceof io.papermc.paper.event.player.PlayerTradeEvent trade ? "trade with " + trade.getVillager().getType().getKey().getKey() : "purchase";
+        event.getPlayer().sendMessage(kind + ": " + result.getType().getKey().getKey() + " x" + result.getAmount() + " (exp " + event.isRewardingExp() + ")");
+    }
+
+    @EventHandler
+    public void onTradeSelect(final org.bukkit.event.inventory.TradeSelectEvent event) {
+        event.getWhoClicked().sendMessage("selected trade " + event.getIndex() + " of " + event.getMerchant().getRecipeCount());
+    }
+
+    @EventHandler
+    public void onCareer(final org.bukkit.event.entity.VillagerCareerChangeEvent event) {
+        Bukkit.broadcast(Component.text("career " + event.getProfession().getKey().getKey() + " " + event.getReason() + " for " + event.getEntity().getName()));
     }
 
     // --- resource packs ---------------------------------------------------------------------------

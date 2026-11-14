@@ -24,6 +24,7 @@ pub mod bossbar;
 pub mod entity;
 pub mod events;
 pub mod inventory;
+pub mod merchant;
 pub mod offline;
 pub mod scoreboard;
 
@@ -63,6 +64,9 @@ pub struct PluginData {
     pub closing: HashSet<i32>,
     /// Boss bars plugins show.
     pub boss_bars: bossbar::BossBars,
+    /// Merchants plugins made (`Server.createMerchant`), by id.
+    pub merchants: HashMap<u64, merchant::CustomMerchant>,
+    pub next_merchant: u64,
 }
 
 /// A loaded plugin, as reported by the host.

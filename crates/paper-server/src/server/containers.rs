@@ -44,11 +44,20 @@ pub enum MenuKind {
     Enchanting { world: usize, pos: BlockPos },
     Anvil { world: usize, pos: BlockPos },
     Brewing { world: usize, pos: BlockPos },
-    /// Trading with a villager or wandering trader.
-    Merchant { world: usize, entity: i32 },
+    /// Trading with a villager, a wandering trader or a merchant a plugin made.
+    Merchant(MerchantRef),
     /// A custom inventory made by a plugin (`Bukkit.createInventory`); its slots are kept in
     /// `Server::plugin_data` (see `plugins::inventory`) and clicks go to the plugin host.
     Custom { id: u64 },
+}
+
+/// Who a trading window trades with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MerchantRef {
+    /// A villager or wandering trader.
+    Entity { world: usize, id: i32 },
+    /// A merchant a plugin made (`Server.createMerchant`), kept in `PluginData::merchants`.
+    Custom(u64),
 }
 
 /// Vanilla's `LootTable.fill`: the loot goes into random empty slots, with stacks split up
@@ -487,7 +496,7 @@ impl Server {
             }
             // A plugin inventory nobody refers to any more can go now.
             MenuKind::Custom { .. } => crate::plugins::inventory::collect_released(self),
-            MenuKind::Merchant { world, entity } => self.stop_trading(*world, *entity),
+            MenuKind::Merchant(merchant) => self.stop_trading(*merchant),
             _ => {}
         }
     }

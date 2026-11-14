@@ -136,6 +136,10 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.player_death` | `uuid`, `message`, `cause`, `killer`, `drops`, `xp`, `keep_inventory`, `keep_level` | `cancelled`, `message` (null: none), `drops`, `xp`, `keep_inventory`, `keep_level` (`PlayerDeathEvent`) |
 | `event.respawn` | `uuid`, `world`, `x`, `y`, `z`, `yaw`, `pitch` | the location (`PlayerRespawnEvent`) |
 | `event.creature_spawn` | `entity`, `type`, `value` (state), `world`, `x`, `y`, `z`, `reason` | `cancelled` (`CreatureSpawnEvent`; the mob is removed again) |
+| `event.trade` | `uuid`, `merchant` (`{entity, value}` or `{merchant}`), `recipe`, `reward_exp`, `increase_uses` | `cancelled`, `recipe`, `reward_exp`, `increase_uses` (`PlayerTradeEvent` for villagers and wandering traders, `PlayerPurchaseEvent` for plugin merchants; a changed recipe stays on the offer) |
+| `event.trade_select` | `uuid`, `index` | `cancelled` (`TradeSelectEvent`) |
+| `event.villager_acquire_trade` / `event.villager_replenish_trade` | `entity`, `value` (state), `recipe` | `cancelled`, `recipe` (`VillagerAcquireTradeEvent`, `VillagerReplenishTradeEvent`; one per trade) |
+| `event.villager_career_change` | `entity`, `value`, `profession`, `reason` (`EMPLOYED`, `LOSING_JOB`) | `cancelled`, `profession` (`VillagerCareerChangeEvent`) |
 | `event.command_preprocess` | `uuid`, `message` (with `/`) | `cancelled`, `message` |
 | `event.server_command` | `command` | `cancelled`, `command` |
 | `event.block_break` | `uuid`, `world`, `x`, `y`, `z`, `state` | `cancelled` |
@@ -218,6 +222,12 @@ same name, which stay reachable as `minecraft:<name>`.
 | `attribute.get` | `id` (entity id of a player or mob), `attribute`; `{base, value, default, modifiers: [{id, amount, operation}]}` or null if the entity does not have it |
 | `attribute.set_base` / `attribute.add_modifier` / `attribute.remove_modifier` / `attribute.register` | `id`, `attribute` / and `base` / `modifier` (id), `amount`, `operation` (0 add, 1 multiply base, 2 multiply total), `persistent` / `modifier` / nothing |
 | `attribute.default` | `attribute`; its default value |
+| `merchant.recipes` / `merchant.set_recipes` / `merchant.set_recipe` | `entity` (a villager or wandering trader) or `merchant` (a plugin's), and `recipes` / `index`, `recipe`; a recipe is `{result, ingredients, uses, max_uses, reward_exp, villager_xp, price_multiplier, demand, special_price, ignore_discounts}` |
+| `merchant.create` / `merchant.release` | `title` (JSON; none says "Villager"); answers `id` / `merchant` (forgotten once nobody trades with it) |
+| `merchant.trader` / `merchant.open` / `merchant.window` | the merchant / the merchant, `uuid`, `force` (answers `opened`) / `uuid`: the open trading window's `merchant`, `selected` and `recipe` |
+| `villager.increase_level` / `villager.add_trades` | `entity`, `amount` (answers `changed`) |
+| `villager.shake_head` / `villager.restock` / `villager.update_demand` / `villager.reset_offers` | `entity` |
+| `villager.reputations` / `villager.set_reputation` / `villager.clear_reputations` | `entity` / and `uuid`, `values` (`{major_negative: n, ...}`) / |
 | `scoreboard.new` / `scoreboard.release` / `scoreboard.retain` | / `board` / `board` |
 | `scoreboard.objectives` / `scoreboard.objective` | `board` / `board`, `name` |
 | `scoreboard.register_objective` / `unregister_objective` / `update_objective` | `board`, `name`, `criteria`, `display_name`, `render_type` |

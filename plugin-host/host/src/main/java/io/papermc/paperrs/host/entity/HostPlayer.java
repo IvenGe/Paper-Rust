@@ -1186,6 +1186,34 @@ public final class HostPlayer extends AbstractPlayer {
         this.openInventory(view.getTopInventory());
     }
 
+    /**
+     * {@code HumanEntity#openMerchant}: trading with a villager, wandering trader or a merchant
+     * a plugin made. Without {@code force}, a merchant already trading with someone stays
+     * with them ({@code null} is returned); with it, their window closes.
+     */
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openMerchant(final org.bukkit.inventory.Merchant merchant, final boolean force) {
+        if (merchant == null) {
+            throw new IllegalArgumentException("Merchant cannot be null");
+        }
+        final Map<String, Object> ref;
+        if (merchant instanceof HostMerchant custom) {
+            ref = Values.of("merchant", custom.id());
+        } else if (io.papermc.paperrs.host.HostProxies.implOf(merchant, HostEntity.class) instanceof HostEntity entity) {
+            ref = Values.of("entity", entity.id());
+        } else {
+            throw new IllegalArgumentException("Can't open merchant " + merchant);
+        }
+        if (!force && merchant.isTrading()) {
+            return null;
+        }
+        final Map<String, Object> args = this.args("force", force);
+        args.putAll(ref);
+        final Map<String, Object> result = Values.map(this.server.call("merchant.open", args));
+        this.refresh(this.server.call("player.state", this.args()));
+        return Values.bool(result, "opened", false) ? this.getOpenInventory() : null;
+    }
+
     @Override
     public void closeInventory() {
         this.closeInventory(org.bukkit.event.inventory.InventoryCloseEvent.Reason.PLUGIN);

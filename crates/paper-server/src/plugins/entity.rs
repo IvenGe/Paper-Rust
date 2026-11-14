@@ -56,6 +56,15 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("target", target);
             let category = &e.info.category;
             out.set("category", category.clone());
+            if let Some(merchant) = m.merchant.as_deref() {
+                out.set("villager_type", merchant.villager_type.clone());
+                out.set("profession", merchant.profession.clone());
+                out.set("villager_level", merchant.level);
+                out.set("villager_xp", merchant.xp);
+                out.set("restocks_today", merchant.restocks_today);
+                out.set("despawn_delay", merchant.despawn_delay);
+                out.set("trader", merchant.trading_player.and_then(|p| server.players.get(&p)).map(|p| p.uuid().to_string()));
+            }
         }
         EntityKind::Item { stack, pickup_delay, thrower } => {
             out.set("item", item_value(stack));
@@ -331,6 +340,36 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                             m.equipment[slot] = slot_from(entry.at(1))?;
                         }
                         e.equipment_dirty = true;
+                    }
+                    // Villagers and wandering traders (CraftVillager, CraftWanderingTrader).
+                    if let Some(merchant) = m.merchant.as_deref_mut() {
+                        if let Some(t) = args.str("villager_type") {
+                            paper_data::registries::id("minecraft:villager_type", t).ok_or_else(|| anyhow!("unknown villager type {t}"))?;
+                            merchant.villager_type = t.to_owned();
+                            e.metadata_dirty = true;
+                        }
+                        if let Some(p) = args.str("profession") {
+                            paper_data::registries::id("minecraft:villager_profession", p).ok_or_else(|| anyhow!("unknown profession {p}"))?;
+                            // `setVillagerData`: another profession means other trades.
+                            if merchant.profession != p {
+                                merchant.profession = p.to_owned();
+                                merchant.offers = None;
+                            }
+                            e.metadata_dirty = true;
+                        }
+                        if let Some(l) = args.i32("villager_level") {
+                            merchant.level = l.clamp(1, 5);
+                            e.metadata_dirty = true;
+                        }
+                        if let Some(x) = args.i32("villager_xp") {
+                            merchant.xp = x.max(0);
+                        }
+                        if let Some(r) = args.i32("restocks_today") {
+                            merchant.restocks_today = r;
+                        }
+                        if let Some(d) = args.i32("despawn_delay") {
+                            merchant.despawn_delay = d;
+                        }
                     }
                     if clear_target {
                         m.brain.target = None;

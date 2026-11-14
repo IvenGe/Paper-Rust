@@ -208,6 +208,14 @@ What works:
     snapshots that `update()` writes back, and `Player.sendBlockChange`. In
     `BlockPlaceEvent` the placed block reads as the new block and the replaced state as the old
     one, and a plugin's change to the placed block stays;
+  * villagers, wandering traders and merchants: professions, types, levels, experience,
+    restocks, reputations, trades as `MerchantRecipe`s (`getRecipes`, `setRecipes`, ...),
+    `increaseLevel`, `addTrades`, `shakeHead`, `restock`, the despawn delay of wandering
+    traders, merchants of plugins (`Bukkit.createMerchant`) and trading windows
+    (`HumanEntity.openMerchant`, `MerchantInventory`, `MerchantView`), with
+    `PlayerTradeEvent`, `PlayerPurchaseEvent`, `TradeSelectEvent`,
+    `VillagerAcquireTradeEvent`, `VillagerCareerChangeEvent` and
+    `VillagerReplenishTradeEvent`;
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload)).
 
 Not yet:
@@ -228,7 +236,8 @@ Not yet:
   statistics, item attribute modifiers (`ItemMeta#getAttributeModifiers`), dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
-  fish, ...), inventories of other block types and anvils, enchanting or merchant views,
+  fish, ...), inventories of other block types and anvil and enchanting views, villager
+  inventories, sleeping and zombifying villagers,
   stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the
   `/scoreboard` and `/team` commands, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:

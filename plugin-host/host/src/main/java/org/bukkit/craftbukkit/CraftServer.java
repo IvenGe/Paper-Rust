@@ -453,6 +453,25 @@ public final class CraftServer extends AbstractServer {
     // --- inventories, items and scoreboards --------------------------------------------------
 
     @Override
+    public org.bukkit.inventory.Merchant createMerchant() {
+        return io.papermc.paperrs.host.entity.HostMerchant.create(this, null);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public org.bukkit.inventory.Merchant createMerchant(final @Nullable String title) {
+        return io.papermc.paperrs.host.entity.HostMerchant.create(this, title == null ? org.bukkit.event.inventory.InventoryType.MERCHANT.defaultTitle() : Components.legacy(title));
+    }
+
+    @Override
+    public org.bukkit.inventory.Merchant createMerchant(final Component title) {
+        if (title == null) {
+            throw new IllegalArgumentException("Title cannot be null");
+        }
+        return io.papermc.paperrs.host.entity.HostMerchant.create(this, title);
+    }
+
+    @Override
     public org.bukkit.inventory.Inventory createInventory(final @Nullable org.bukkit.inventory.InventoryHolder owner, final org.bukkit.event.inventory.InventoryType type) {
         return io.papermc.paperrs.host.inventory.Inventories.create(this, owner, type, type.getDefaultSize(), null);
     }

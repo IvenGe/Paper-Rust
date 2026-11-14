@@ -722,3 +722,110 @@ pub fn on_pre_login(conn: &super::HostConnection, name: &str, uuid: uuid::Uuid, 
         }
     }
 }
+
+// --- merchants -------------------------------------------------------------------------------
+
+/// A player takes a trade (`PlayerTradeEvent` for villagers and wandering traders,
+/// `PlayerPurchaseEvent` for merchants plugins made). Returns the trade to make (plugins may
+/// change it; changes stay on the merchant's offer, as with Paper's shared recipe), whether
+/// it rewards experience and whether it counts as a use; `None` if cancelled.
+pub fn on_trade(server: &mut Server, player: i32, merchant: crate::server::containers::MerchantRef, index: usize, offer: crate::world::merchant::Offer) -> Option<(crate::world::merchant::Offer, bool, bool)> {
+    use crate::server::containers::MerchantRef;
+    let custom = matches!(merchant, MerchantRef::Custom(_));
+    // Paper starts villager trades with the reward on and purchases from plugin merchants
+    // with it off.
+    let default = (offer.clone(), !custom, true);
+    // `PlayerTradeEvent` shares `PlayerPurchaseEvent`'s handler list.
+    if server.plugins.is_none() || !server.plugin_events.contains("PlayerPurchaseEvent") {
+        return Some(default);
+    }
+    let Some(p) = server.players.get(&player) else { return Some(default) };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "merchant" => super::merchant::merchant_ref_value(server, merchant),
+        "recipe" => super::merchant::offer_value(&offer),
+        "reward_exp" => !custom,
+        "increase_uses" => true,
+    };
+    let Some(result) = fire(server, "PlayerPurchaseEvent", "event.trade", args) else { return Some(default) };
+    if result.bool("cancelled") == Some(true) {
+        return None;
+    }
+    let changed = match super::merchant::offer_from(result.get("recipe")) {
+        Ok(changed) => changed,
+        Err(_) => return Some(default),
+    };
+    if changed != offer {
+        let mut offers = server.offers_of(merchant);
+        if let Some(slot) = offers.get_mut(index) {
+            *slot = changed.clone();
+            server.set_offers(merchant, offers);
+        }
+    }
+    Some((changed, result.bool("reward_exp").unwrap_or(!custom), result.bool("increase_uses").unwrap_or(true)))
+}
+
+/// A player picks a trade in a trading window (`TradeSelectEvent`). Returns whether it may.
+pub fn on_trade_select(server: &mut Server, player: i32, index: i32) -> bool {
+    let Some(p) = server.players.get(&player) else { return true };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "index" => index };
+    match fire(server, "TradeSelectEvent", "event.trade_select", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// A villager or wandering trader gets new trades (`VillagerAcquireTradeEvent`, one per
+/// trade). Returns the trades it keeps, as plugins left them.
+pub fn on_acquire_trades(server: &mut Server, world: usize, id: i32, offers: Vec<crate::world::merchant::Offer>) -> Vec<crate::world::merchant::Offer> {
+    if server.plugins.is_none() || !server.plugin_events.contains("VillagerAcquireTradeEvent") {
+        return offers;
+    }
+    let mut out = Vec::new();
+    for offer in offers {
+        let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return out };
+        let args = bmap! { "entity" => id as i64, "value" => super::entity::entity_value(server, world, e), "recipe" => super::merchant::offer_value(&offer) };
+        match fire(server, "VillagerAcquireTradeEvent", "event.villager_acquire_trade", args) {
+            Some(result) if result.bool("cancelled") == Some(true) => {}
+            Some(result) => out.push(super::merchant::offer_from(result.get("recipe")).unwrap_or(offer)),
+            None => out.push(offer),
+        }
+    }
+    out
+}
+
+/// A villager takes or loses a job (`VillagerCareerChangeEvent`, reason `EMPLOYED` or
+/// `LOSING_JOB`). Returns the profession it gets, or `None` if a plugin cancelled.
+pub fn on_career_change(server: &mut Server, world: usize, id: i32, profession: &str, reason: &str) -> Option<String> {
+    let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return Some(profession.to_owned()) };
+    let args = bmap! { "entity" => id as i64, "value" => super::entity::entity_value(server, world, e), "profession" => profession, "reason" => reason };
+    match fire(server, "VillagerCareerChangeEvent", "event.villager_career_change", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.str("profession").unwrap_or(profession).to_owned()),
+        None => Some(profession.to_owned()),
+    }
+}
+
+/// A villager restocks (`VillagerReplenishTradeEvent`, one per trade). Returns each trade as
+/// plugins left it and whether it is replenished.
+pub fn on_replenish(server: &mut Server, world: usize, id: i32, offers: Vec<crate::world::merchant::Offer>) -> Vec<(crate::world::merchant::Offer, bool)> {
+    if server.plugins.is_none() || !server.plugin_events.contains("VillagerReplenishTradeEvent") {
+        return offers.into_iter().map(|o| (o, true)).collect();
+    }
+    let mut out = Vec::new();
+    for offer in offers {
+        let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else {
+            out.push((offer, true));
+            continue;
+        };
+        let args = bmap! { "entity" => id as i64, "value" => super::entity::entity_value(server, world, e), "recipe" => super::merchant::offer_value(&offer) };
+        match fire(server, "VillagerReplenishTradeEvent", "event.villager_replenish_trade", args) {
+            Some(result) => {
+                let recipe = super::merchant::offer_from(result.get("recipe")).unwrap_or(offer);
+                out.push((recipe, result.bool("cancelled") != Some(true)));
+            }
+            None => out.push((offer, true)),
+        }
+    }
+    out
+}

@@ -102,6 +102,10 @@ public final class Inventories {
             }
             case "crafting" -> {
                 final HostPlayer player = server.player(java.util.UUID.fromString(Values.str(ref, "uuid")));
+                if (player != null && type == InventoryType.MERCHANT) {
+                    // A trading window: payment, payment, result.
+                    yield proxy(new HostInventory(server, ref, InventoryType.MERCHANT, 3, null, null), org.bukkit.inventory.MerchantInventory.class);
+                }
                 yield player == null ? null : crafting(server, player, type == InventoryType.WORKBENCH);
             }
             case "custom" -> {
@@ -130,7 +134,8 @@ public final class Inventories {
         final int size = Values.i32(window, "size", type.getDefaultSize());
         final Inventory top = of(server, Values.map(window.get("top")), type, size);
         final Component title = Components.fromJson(window.get("title"));
-        return HostProxies.create(new HostInventoryView(server, player, top, type, title), InventoryView.class);
+        final Class<? extends InventoryView> view = type == InventoryType.MERCHANT ? org.bukkit.inventory.view.MerchantView.class : InventoryView.class;
+        return HostProxies.create(new HostInventoryView(server, player, top, type, title), view);
     }
 
     /** Forget custom inventories (the plugin host is going away). */
