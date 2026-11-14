@@ -10,12 +10,16 @@
 //! blocks drag their neighbours along) and turns them into `moving_piston` blocks whose block
 //! entity (kept in the chunk in vanilla's format, so it is saved too) finishes the move two
 //! game ticks later. Clients get the block event first and animate the move themselves.
-//! Entities are not pushed.
+//! What the moving blocks run into is pushed along (slime blocks also launch it, honey blocks
+//! carry what stands on them sideways); players are moved by their own clients, which see
+//! the move too.
 
 use super::state::{block, block_id, default_state, get_bool, get_dir, kind, prop, set_bool, set_dir, with};
 use super::{flags, sound_source, Dir, Kind, Level, PosExt, UPDATE_LIMIT};
 use crate::world::chunk::ChunkPos;
+use crate::world::entity::{self, Aabb, EntityKind, Vec3};
 use crate::world::World;
+use std::collections::HashMap;
 use paper_data::physics::{self, PushReaction};
 use paper_data::blocks;
 use paper_nbt::{Compound, Tag};
@@ -162,6 +166,7 @@ fn update_from_neighbour_shapes(level: &mut Level, mut state: u32, pos: BlockPos
 pub fn tick_moving(level: &mut Level) {
     let positions = std::mem::take(&mut level.world.updates.moving_pistons);
     let mut keep = Vec::with_capacity(positions.len());
+    let mut pushed: HashMap<i32, [f64; 3]> = HashMap::new();
     for pos in positions {
         let Some(mut moving) = moving_block(level.world, pos) else { continue };
         if block_id(level.state(pos)) != block!("moving_piston") {
@@ -175,13 +180,231 @@ pub fn tick_moving(level: &mut Level) {
             finish(level, pos, &moving, false);
             continue;
         }
-        moving.progress = (moving.progress + 0.5).min(1.0);
+        let next = moving.progress + 0.5;
+        move_collided_entities(level.world, pos, &moving, next, &mut pushed);
+        move_stuck_entities(level.world, pos, &moving, next, &mut pushed);
+        moving.progress = next.min(1.0);
         store_moving_block(level.world, pos, &moving);
         keep.push(pos);
     }
     // Moves started while ticking (by blocks finishing their move) tick from the next tick.
     keep.append(&mut level.world.updates.moving_pistons);
     level.world.updates.moving_pistons = keep;
+}
+
+// --- entities in the way -----------------------------------------------------------------------
+
+/// Whether a state is a `moving_piston` block.
+pub fn is_moving_piston(state: u32) -> bool {
+    block_id(state) == block!("moving_piston")
+}
+
+/// What a moving block collides with where its move has got to, in world coordinates
+/// (`PistonMovingBlockEntity.getCollisionShape`): a retracting piston's base stays, its head
+/// slides back.
+pub fn moving_collision_boxes(world: &World, pos: BlockPos) -> Vec<Aabb> {
+    let Some(moving) = moving_block(world, pos) else { return Vec::new() };
+    let mut out = Vec::new();
+    if !moving.extending && moving.source && is_piston_base(moving.moved_state) {
+        let base = set_bool(moving.moved_state, "extended", true);
+        let at = Vec3::new(pos.x as f64, pos.y as f64, pos.z as f64);
+        out.extend(physics::collision_boxes(base).iter().map(|b| Aabb::new(Vec3::new(b.min[0], b.min[1], b.min[2]).add(at), Vec3::new(b.max[0], b.max[1], b.max[2]).add(at))));
+    }
+    let state = if moving.source {
+        let head = set_dir(default_state!("piston_head"), "facing", moving.direction);
+        set_bool(head, "short", moving.extending != (1.0 - moving.progress < 0.25))
+    } else {
+        moving.moved_state
+    };
+    out.extend(boxes_at(state, pos, &moving));
+    out
+}
+
+/// Entities pistons do not move (`PushReaction.IGNORE`).
+fn ignores_pistons(e: &entity::Entity) -> bool {
+    matches!(e.kind, EntityKind::Cloud { .. })
+        || matches!(
+            e.info.name.as_str(),
+            "minecraft:marker" | "minecraft:item_frame" | "minecraft:glow_item_frame" | "minecraft:painting" | "minecraft:leash_knot" | "minecraft:block_display" | "minecraft:item_display" | "minecraft:text_display" | "minecraft:interaction" | "minecraft:lightning_bolt" | "minecraft:ominous_item_spawner"
+        )
+}
+
+/// Which way a moving block travels (`getMovementDirection`).
+fn movement_direction(moving: &MovingBlock) -> Dir {
+    if moving.extending {
+        moving.direction
+    } else {
+        moving.direction.opposite()
+    }
+}
+
+/// The block's shape boxes where the move has got to (`moveByPositionAndProgress`).
+fn boxes_at(state: u32, pos: BlockPos, moving: &MovingBlock) -> Vec<Aabb> {
+    let extended = if moving.extending { moving.progress - 1.0 } else { 1.0 - moving.progress } as f64;
+    let (dx, dy, dz) = moving.direction.offset();
+    let shift = Vec3::new(pos.x as f64 + extended * dx as f64, pos.y as f64 + extended * dy as f64, pos.z as f64 + extended * dz as f64);
+    physics::collision_boxes(state).iter().map(|b| Aabb::new(Vec3::new(b.min[0], b.min[1], b.min[2]).add(shift), Vec3::new(b.max[0], b.max[1], b.max[2]).add(shift))).collect()
+}
+
+/// The slab a box's leading face sweeps through moving `delta` towards `dir`
+/// (`PistonMath.getMovementArea`).
+fn movement_area(b: Aabb, dir: Dir, delta: f64) -> Aabb {
+    let d = if matches!(dir, Dir::Up | Dir::South | Dir::East) { delta } else { -delta };
+    let (lo, hi) = (d.min(0.0), d.max(0.0));
+    let (min, max) = (b.min, b.max);
+    match dir {
+        Dir::West => Aabb::new(Vec3::new(min.x + lo, min.y, min.z), Vec3::new(min.x + hi, max.y, max.z)),
+        Dir::East => Aabb::new(Vec3::new(max.x + lo, min.y, min.z), Vec3::new(max.x + hi, max.y, max.z)),
+        Dir::Down => Aabb::new(Vec3::new(min.x, min.y + lo, min.z), Vec3::new(max.x, min.y + hi, max.z)),
+        Dir::Up => Aabb::new(Vec3::new(min.x, max.y + lo, min.z), Vec3::new(max.x, max.y + hi, max.z)),
+        Dir::North => Aabb::new(Vec3::new(min.x, min.y, min.z + lo), Vec3::new(max.x, max.y, min.z + hi)),
+        Dir::South => Aabb::new(Vec3::new(min.x, min.y, max.z + lo), Vec3::new(max.x, max.y, max.z + hi)),
+    }
+}
+
+/// How far `b` must move towards `dir` to clear `head` (`getMovement`).
+fn overlap(head: &Aabb, dir: Dir, b: &Aabb) -> f64 {
+    match dir {
+        Dir::East => head.max.x - b.min.x,
+        Dir::West => b.max.x - head.min.x,
+        Dir::Up => head.max.y - b.min.y,
+        Dir::Down => b.max.y - head.min.y,
+        Dir::South => head.max.z - b.min.z,
+        Dir::North => b.max.z - head.min.z,
+    }
+}
+
+fn union(boxes: &[Aabb]) -> Option<Aabb> {
+    let first = *boxes.first()?;
+    Some(boxes.iter().fold(first, |a, b| Aabb::new(Vec3::new(a.min.x.min(b.min.x), a.min.y.min(b.min.y), a.min.z.min(b.min.z)), Vec3::new(a.max.x.max(b.max.x), a.max.y.max(b.max.y), a.max.z.max(b.max.z)))))
+}
+
+/// Moves an entity `amount` towards `dir` with block collisions, at most 0.51 blocks per
+/// axis in a game tick however many blocks push it (`move(MoverType.PISTON)`,
+/// `limitPistonMovement`).
+fn push_entity(world: &mut World, id: i32, dir: Dir, amount: f64, pushed: &mut HashMap<i32, [f64; 3]>) {
+    let axis = match dir.axis() {
+        super::Axis::X => 0,
+        super::Axis::Y => 1,
+        super::Axis::Z => 2,
+    };
+    let (dx, dy, dz) = dir.offset();
+    let wanted = amount * [dx, dy, dz][axis] as f64;
+    let done = pushed.entry(id).or_default();
+    let total = (wanted + done[axis]).clamp(-0.51, 0.51);
+    let allowed = total - done[axis];
+    done[axis] = total;
+    if allowed.abs() <= 1.0e-5 {
+        return;
+    }
+    let Some(e) = world.entities.get(&id) else { return };
+    let delta = match axis {
+        0 => Vec3::new(allowed, 0.0, 0.0),
+        1 => Vec3::new(0.0, allowed, 0.0),
+        _ => Vec3::new(0.0, 0.0, allowed),
+    };
+    let moved = entity::move_box_past_moving_blocks(world, e.bounding_box(), delta);
+    if let Some(e) = world.entities.get_mut(&id) {
+        e.pos = e.pos.add(moved.delta);
+        if moved.collided_y && delta.y < 0.0 {
+            e.on_ground = true;
+        }
+    }
+    world.reindex_entity(id);
+}
+
+/// `moveCollidedEntities`: what the moving block runs into this tick is pushed ahead of it.
+fn move_collided_entities(world: &mut World, pos: BlockPos, moving: &MovingBlock, next: f32, pushed: &mut HashMap<i32, [f64; 3]>) {
+    let dir = movement_direction(moving);
+    let delta = (next - moving.progress) as f64;
+    // A retracting piston's own head is shaped like a head, not like the piston.
+    let shape_state = if !moving.extending && moving.source && is_piston_base(moving.moved_state) {
+        let head = set_bool(default_state!("piston_head"), "short", moving.progress > 0.25);
+        let head = with(head, "type", if sticky(moving.moved_state) { "sticky" } else { "normal" });
+        set_dir(head, "facing", facing(moving.moved_state))
+    } else {
+        moving.moved_state
+    };
+    let boxes = boxes_at(shape_state, pos, moving);
+    let Some(bounds) = union(&boxes) else { return };
+    let area = union(&[movement_area(bounds, dir, delta), bounds]).unwrap_or(bounds);
+    let slime = block_id(moving.moved_state) == block!("slime_block");
+    for id in world.entities_in(&area) {
+        let Some(e) = world.entities.get_mut(&id) else { continue };
+        if ignores_pistons(e) {
+            continue;
+        }
+        // Slime blocks launch what they push (players launch themselves).
+        if slime {
+            let (dx, dy, dz) = dir.offset();
+            match dir.axis() {
+                super::Axis::X => e.vel.x = dx as f64,
+                super::Axis::Y => e.vel.y = dy as f64,
+                super::Axis::Z => e.vel.z = dz as f64,
+            }
+        }
+        let b = e.bounding_box();
+        let mut amount: f64 = 0.0;
+        for shape in &boxes {
+            let swept = movement_area(*shape, dir, delta);
+            if swept.intersects(&b) {
+                amount = amount.max(overlap(&swept, dir, &b));
+                if amount >= delta {
+                    break;
+                }
+            }
+        }
+        if amount <= 0.0 {
+            continue;
+        }
+        push_entity(world, id, dir, amount.min(delta) + 0.01, pushed);
+        if !moving.extending && moving.source {
+            fix_entity_within_piston_base(world, pos, id, dir, delta, pushed);
+        }
+    }
+}
+
+/// `fixEntityWithinPistonBase`: something the retracting head drags into the base's block
+/// is put back out of it.
+fn fix_entity_within_piston_base(world: &mut World, pos: BlockPos, id: i32, dir: Dir, delta: f64, pushed: &mut HashMap<i32, [f64; 3]>) {
+    let Some(e) = world.entities.get(&id) else { return };
+    let b = e.bounding_box();
+    let block = Aabb::new(Vec3::new(pos.x as f64, pos.y as f64, pos.z as f64), Vec3::new(pos.x as f64 + 1.0, pos.y as f64 + 1.0, pos.z as f64 + 1.0));
+    if !b.intersects(&block) {
+        return;
+    }
+    let back = dir.opposite();
+    let inside = Aabb::new(Vec3::new(b.min.x.max(block.min.x), b.min.y.max(block.min.y), b.min.z.max(block.min.z)), Vec3::new(b.max.x.min(block.max.x), b.max.y.min(block.max.y), b.max.z.min(block.max.z)));
+    let d = overlap(&block, back, &b) + 0.01;
+    let e2 = overlap(&block, back, &inside) + 0.01;
+    if (d - e2).abs() < 0.01 {
+        push_entity(world, id, back, d.min(delta) + 0.01, pushed);
+    }
+}
+
+/// `moveStuckEntities`: honey moving sideways carries what stands on it.
+fn move_stuck_entities(world: &mut World, pos: BlockPos, moving: &MovingBlock, next: f32, pushed: &mut HashMap<i32, [f64; 3]>) {
+    if block_id(moving.moved_state) != block!("honey_block") {
+        return;
+    }
+    let dir = movement_direction(moving);
+    if dir.axis() == super::Axis::Y {
+        return;
+    }
+    let top = physics::collision_boxes(moving.moved_state).iter().map(|b| b.max[1]).fold(0.0, f64::max);
+    let extended = if moving.extending { moving.progress - 1.0 } else { 1.0 - moving.progress } as f64;
+    let (dx, dy, dz) = moving.direction.offset();
+    let shift = Vec3::new(pos.x as f64 + extended * dx as f64, pos.y as f64 + extended * dy as f64, pos.z as f64 + extended * dz as f64);
+    let area = Aabb::new(Vec3::new(0.0, top, 0.0).add(shift), Vec3::new(1.0, 1.500001, 1.0).add(shift));
+    let delta = (next - moving.progress) as f64;
+    for id in world.entities_in(&area) {
+        let Some(e) = world.entities.get(&id) else { continue };
+        let on_it = e.pos.x >= area.min.x && e.pos.x <= area.max.x && e.pos.z >= area.min.z && e.pos.z <= area.max.z;
+        if ignores_pistons(e) || !e.on_ground || !on_it {
+            continue;
+        }
+        push_entity(world, id, dir, delta, pushed);
+    }
 }
 
 /// Places the moved block (vanilla's last tick, or `finalTick` when `early`).

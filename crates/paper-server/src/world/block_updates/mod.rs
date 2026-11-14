@@ -17,8 +17,8 @@
 //!   [`BlockUpdateState`]; the server publishes them (`server::block_updates`).
 //!
 //! The behaviour of individual blocks lives in the submodules: [`fluid`] (water and lava),
-//! [`redstone`], [`doors`] (doors, trapdoors, fence gates, beds) and [`support`] (blocks that
-//! need support or connect to their neighbours).
+//! [`redstone`], [`doors`] (doors, trapdoors, fence gates, beds), [`tripwire`] and [`support`]
+//! (blocks that need support or connect to their neighbours).
 
 pub mod doors;
 pub mod fire;
@@ -28,6 +28,7 @@ pub mod plants;
 pub mod redstone;
 pub mod state;
 pub mod support;
+pub mod tripwire;
 #[cfg(test)]
 mod tests;
 
@@ -95,6 +96,8 @@ pub enum Effect {
     Dispense { pos: BlockPos },
     /// A pressed pressure plate checks whether anything still stands on it.
     CheckPlate { pos: BlockPos },
+    /// Pressed string checks whether anything is still in it.
+    CheckTripwire { pos: BlockPos },
 }
 
 /// Game rules and dimension properties block updates depend on.
@@ -708,6 +711,7 @@ impl<'w> Level<'w> {
             Kind::Tnt if kind(old) != Kind::Tnt => self.prime_if_powered(pos),
             Kind::Fire => fire::on_place(self, state, pos, old),
             Kind::Dispenser | Kind::Hopper if kind(old) != kind(state) => self.machine_power_changed(state, pos),
+            Kind::Tripwire => tripwire::wire_on_place(self, state, pos, old),
             _ => {}
         }
     }
@@ -754,6 +758,8 @@ impl<'w> Level<'w> {
             Kind::Repeater | Kind::Comparator if !moved => redstone::diode_update_in_front(self, old, pos),
             Kind::Observer => redstone::observer_after_removal(self, old, pos),
             Kind::PistonHead => piston::head_after_removal(self, old, pos),
+            Kind::Tripwire if !moved => tripwire::wire_after_removal(self, old, pos),
+            Kind::TripwireHook if !moved => tripwire::hook_after_removal(self, old, pos),
             _ => {}
         }
     }
@@ -801,6 +807,7 @@ impl<'w> Level<'w> {
             Kind::PistonHead => piston::head_update_shape(self, state, pos, dir),
             Kind::Fire => fire::update_shape(self, state, pos),
             Kind::NetherPortal => fire::portal_update_shape(self, state, pos, dir, neighbor_state),
+            Kind::Tripwire => tripwire::wire_update_shape(state, dir, neighbor_state),
             Kind::Crop | Kind::Farmland | Kind::SugarCane | Kind::Cactus | Kind::Stem | Kind::AttachedStem | Kind::SweetBerryBush | Kind::NetherWart | Kind::Cocoa | Kind::Leaves | Kind::Ice | Kind::SnowLayer => plants::update_shape(self, state, pos, dir, neighbor_state),
             _ => support::update_shape(self, state, pos, dir, neighbor_pos, neighbor_state),
         }
@@ -825,6 +832,8 @@ impl<'w> Level<'w> {
             Kind::Fire => fire::tick(self, state, pos),
             Kind::Dispenser => self.world.updates.effects.push(Effect::Dispense { pos }),
             Kind::PressurePlate { .. } => self.world.updates.effects.push(Effect::CheckPlate { pos }),
+            Kind::TripwireHook => tripwire::hook_tick(self, state, pos),
+            Kind::Tripwire if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckTripwire { pos }),
             Kind::SugarCane | Kind::Cactus | Kind::Farmland | Kind::Leaves => plants::tick(self, state, pos),
             _ => {}
         }
@@ -878,8 +887,12 @@ impl<'w> Level<'w> {
         result
     }
 
-    /// `playerWillDestroy`: a player is about to break the block at `pos`.
-    pub fn player_will_destroy(&mut self, state: u32, pos: BlockPos, creative: bool) {
+    /// `playerWillDestroy`: a player is about to break the block at `pos` (`shears`: with
+    /// shears in the main hand, which cut string without setting it off).
+    pub fn player_will_destroy(&mut self, state: u32, pos: BlockPos, creative: bool, shears: bool) {
+        if shears {
+            tripwire::disarm(self, state, pos);
+        }
         if creative {
             support::prevent_drop_from_bottom_part(self, state, pos);
             if kind(state) == Kind::PistonHead {

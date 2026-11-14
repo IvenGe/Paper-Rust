@@ -418,9 +418,9 @@ impl Server {
         match name {
             "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:tipped_arrow" => {
                 let (dx, dy, dz) = facing.offset();
-                let origin = Vec3::new(pos.x as f64 + 0.5 + 0.7 * dx as f64, pos.y as f64 + 0.5 + 0.7 * dy as f64, pos.z as f64 + 0.5 + 0.7 * dz as f64);
-                self.spawn_arrow_towards(world, origin, Vec3::new(dx as f64, dy as f64 + 0.1, dz as f64), 1.1, 6.0, None, 2.0, false, true);
-                self.broadcast_level_event(world, 1002, pos, 0, false);
+                let origin = Vec3::new(pos.x as f64 + 0.5 + 0.7 * dx as f64, pos.y as f64 + 0.6 + 0.7 * dy as f64, pos.z as f64 + 0.5 + 0.7 * dz as f64);
+                self.spawn_arrow_towards(world, origin, Vec3::new(dx as f64, dy as f64, dz as f64), 1.1, 6.0, None, 2.0, false, true);
+                self.dispensed(world, pos, facing, 1002);
                 Some(stack.with_count(stack.count - 1))
             }
             // `ProjectileDispenseBehavior`: thrown items fly out of the front.
@@ -432,7 +432,7 @@ impl Server {
                 let origin = Vec3::new(pos.x as f64 + 0.5 + 0.7 * dx as f64, pos.y as f64 + 0.6 + 0.7 * dy as f64, pos.z as f64 + 0.5 + 0.7 * dz as f64);
                 let (power, uncertainty) = if matches!(name, "minecraft:experience_bottle" | "minecraft:splash_potion" | "minecraft:lingering_potion") { (1.375, 3.0) } else { (1.1, 6.0) };
                 self.spawn_thrown(world, entity, origin, Vec3::new(dx as f64, dy as f64, dz as f64), power, uncertainty, gravity, Slot(Some(stack.with_count(1))), None);
-                self.broadcast_level_event(world, 1002, pos, 0, false);
+                self.dispensed(world, pos, facing, 1002);
                 Some(stack.with_count(stack.count - 1))
             }
             // Spawn eggs hatch in front of the dispenser.
@@ -445,12 +445,88 @@ impl Server {
                 self.broadcast_level_event(world, 1000, pos, 0, false);
                 Some(stack.with_count(stack.count - 1))
             }
+            // `FireChargeItem`: a small fireball straight out of the front.
+            "minecraft:fire_charge" => {
+                let (dx, dy, dz) = facing.offset();
+                let origin = Vec3::new(pos.x as f64 + 0.5 + dx as f64, pos.y as f64 + 0.5 + dy as f64, pos.z as f64 + 0.5 + dz as f64);
+                let mut rng = rand::thread_rng();
+                let mut wobble = |m: f64| m + (rng.gen::<f64>() - rng.gen::<f64>()) * 0.11485;
+                let dir = Vec3::new(wobble(dx as f64), wobble(dy as f64), wobble(dz as f64));
+                self.spawn_thrown(world, "minecraft:small_fireball", origin, dir, 1.0, 6.666_666_5, 0.0, Slot(Some(stack.with_count(1))), None);
+                self.dispensed(world, pos, facing, 1018);
+                Some(stack.with_count(stack.count - 1))
+            }
+            // Bone meal grows what is in front, or the dispenser clicks.
+            "minecraft:bone_meal" => {
+                let used = {
+                    let mut level = Level::new(&mut self.worlds[world]);
+                    crate::world::block_updates::plants::bone_meal(&mut level, in_front, front)
+                };
+                self.publish_block_updates(world);
+                self.dispensed(world, pos, facing, if used { 1000 } else { 1001 });
+                if !used {
+                    return Some(stack);
+                }
+                self.broadcast_level_event(world, 1505, front, 15, false);
+                Some(stack.with_count(stack.count - 1))
+            }
+            // Shears harvest a full beehive's honeycomb or shear a sheep in front.
+            "minecraft:shears" => {
+                let sheared = self.shear_in_front(world, front, in_front);
+                self.dispensed(world, pos, facing, if sheared { 1000 } else { 1001 });
+                if !sheared {
+                    return Some(stack);
+                }
+                let mut slot = Slot(Some(stack));
+                survival::hurt_item(&mut slot, 1, false);
+                slot.0
+            }
+            // Glass bottles fill with honey from a full beehive or with water.
+            "minecraft:glass_bottle" => {
+                let honey = in_block_tag(in_front, "minecraft:beehives") && blocks::property(in_front, "honey_level") == Some("5");
+                let water = survival::fluid_of(in_front).is_some_and(|(f, _)| f == Fluid::Water);
+                let filled = if honey {
+                    self.set_block_and_update(world, front, blocks::with_property(in_front, "honey_level", "0").unwrap_or(in_front));
+                    ItemStack::new(items::id("minecraft:honey_bottle").unwrap_or(0) as i32, 1)
+                } else if water {
+                    water_bottle()
+                } else {
+                    return Some(self.drop_from(world, pos, facing, stack));
+                };
+                self.dispensed(world, pos, facing, 1000);
+                Some(self.consume_with_remainder(world, pos, facing, stack, filled))
+            }
+            // A water bottle turns dirt in front into mud.
+            "minecraft:potion" if super::effects::potion_of(&stack).as_deref() == Some("minecraft:water") && in_block_tag(in_front, "minecraft:convertible_to_mud") => {
+                self.set_block_and_update(world, front, blocks::default_state("minecraft:mud").unwrap_or(in_front));
+                self.play_sound(world, Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), "minecraft:item.bottle.empty", category::BLOCKS, 1.0, 1.0, None);
+                self.dispensed(world, pos, facing, 1000);
+                let bottle = ItemStack::new(items::id("minecraft:glass_bottle").unwrap_or(0) as i32, 1);
+                Some(self.consume_with_remainder(world, pos, facing, stack, bottle))
+            }
+            // Powder snow goes into an empty block in front.
+            "minecraft:powder_snow_bucket" => {
+                if !blocks::is_air(in_front) {
+                    return Some(self.drop_from(world, pos, facing, stack));
+                }
+                self.set_block_and_update(world, front, blocks::default_state("minecraft:powder_snow").unwrap_or(blocks::AIR));
+                self.play_sound(world, Vec3::new(front.x as f64 + 0.5, front.y as f64 + 0.5, front.z as f64 + 0.5), "minecraft:item.bucket.empty_powder_snow", category::BLOCKS, 1.0, 1.0, None);
+                self.dispensed(world, pos, facing, 1000);
+                Some(ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1))
+            }
+            // A carved pumpkin or wither skeleton skull is only worn (building golems and
+            // withers is not done here); nothing to wear it makes the dispenser click.
+            "minecraft:carved_pumpkin" | "minecraft:wither_skeleton_skull" => {
+                let worn = self.dispense_equipment(world, front, &stack);
+                self.dispensed(world, pos, facing, if worn { 1000 } else { 1001 });
+                Some(if worn { stack.with_count(stack.count - 1) } else { stack })
+            }
             "minecraft:tnt" if w.rules.bool("tnt_explodes") => {
                 self.prime_tnt(world, front, 80, None);
                 Some(stack.with_count(stack.count - 1))
             }
-            "minecraft:water_bucket" | "minecraft:lava_bucket" => {
-                let fluid = if name == "minecraft:water_bucket" { Fluid::Water } else { Fluid::Lava };
+            "minecraft:water_bucket" | "minecraft:lava_bucket" | "minecraft:cod_bucket" | "minecraft:salmon_bucket" | "minecraft:pufferfish_bucket" | "minecraft:tropical_fish_bucket" | "minecraft:axolotl_bucket" | "minecraft:tadpole_bucket" => {
+                let fluid = if name == "minecraft:lava_bucket" { Fluid::Lava } else { Fluid::Water };
                 let waterloggable = fluid == Fluid::Water && blocks::property(in_front, "waterlogged") == Some("false");
                 let evaporates = fluid == Fluid::Water && paper_data::synced::dimension_type(&w.dimension).is_some_and(|d| d.water_evaporates);
                 if !(waterloggable || blocks::is_replaceable(in_front) || blocks::is_air(in_front)) {
@@ -464,6 +540,12 @@ impl Server {
                     };
                     self.set_block_and_update(world, front, placed);
                 }
+                // A bucket of fish lets its fish out too (`MobBucketItem.checkExtraContent`).
+                if let Some(mob) = name.strip_suffix("_bucket").filter(|m| !matches!(*m, "minecraft:water" | "minecraft:lava")) {
+                    let at = Vec3::new(front.x as f64 + 0.5, front.y as f64, front.z as f64 + 0.5);
+                    self.spawn_mob(world, mob, at, super::mobs::SpawnReason::Egg);
+                }
+                self.dispensed(world, pos, facing, 1000);
                 Some(ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1))
             }
             "minecraft:bucket" => {
@@ -498,19 +580,139 @@ impl Server {
                 survival::hurt_item(&mut slot, 1, false);
                 slot.0
             }
-            _ => Some(self.drop_from(world, pos, facing, stack)),
+            _ => {
+                // Armour, heads, elytra, saddles, horse and wolf armour and llama carpets go on
+                // whoever stands in front; anything else (or with nobody there) flies out.
+                if paper_data::item_data::by_id(stack.item as u32).equip_slot.is_some() && self.dispense_equipment(world, front, &stack) {
+                    self.dispensed(world, pos, facing, 1000);
+                    return Some(stack.with_count(stack.count - 1));
+                }
+                Some(self.drop_from(world, pos, facing, stack))
+            }
         }
+    }
+
+    /// The dispenser's sound (1000 dispensed, 1001 failed, 1002 shot, 1018 fire charge) and its
+    /// smoke (`playSound`, `playAnimation`).
+    fn dispensed(&mut self, world: usize, pos: BlockPos, facing: Face, sound: i32) {
+        self.broadcast_level_event(world, sound, pos, 0, false);
+        self.broadcast_level_event(world, 2000, pos, facing.data_value(), false);
+    }
+
+    /// `consumeWithRemainder`: one item is used up and `filled` goes back into the dispenser,
+    /// or out of it when there is no room. Returns what stays in the used slot.
+    fn consume_with_remainder(&mut self, world: usize, pos: BlockPos, facing: Face, stack: ItemStack, filled: ItemStack) -> ItemStack {
+        if stack.count == 1 {
+            return filled;
+        }
+        let me = Inventory { positions: vec![pos], furnace: false, brewing: false };
+        let left = self.insert_into(world, &me, filled.clone(), None);
+        if left.count > 0 {
+            self.drop_from(world, pos, facing, filled);
+        }
+        stack.with_count(stack.count - 1)
+    }
+
+    /// `ShearsDispenseItemBehavior`: a beehive full of honey gives three honeycomb, or a sheep
+    /// in front is sheared. Returns whether anything was.
+    fn shear_in_front(&mut self, world: usize, front: BlockPos, state: u32) -> bool {
+        if in_block_tag(state, "minecraft:beehives") && blocks::property(state, "honey_level") == Some("5") {
+            self.harvest_honeycomb(world, front, state);
+            return true;
+        }
+        let cell = Aabb::new(Vec3::new(front.x as f64, front.y as f64, front.z as f64), Vec3::new(front.x as f64 + 1.0, front.y as f64 + 1.0, front.z as f64 + 1.0));
+        let w = &self.worlds[world];
+        let sheep = w.entities_in(&cell).into_iter().find(|id| w.entities.get(id).is_some_and(|e| e.info.name == "minecraft:sheep" && e.mob().is_some_and(|m| !m.living.is_dead() && !m.baby && !m.sheared)));
+        match sheep {
+            Some(id) => {
+                self.shear_sheep(world, id);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Takes the honeycomb of a full beehive (`BeehiveBlock.dropHoneycomb`).
+    pub(super) fn harvest_honeycomb(&mut self, world: usize, pos: BlockPos, state: u32) {
+        self.play_sound(world, Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), "minecraft:block.beehive.shear", category::BLOCKS, 1.0, 1.0, None);
+        if let Some(comb) = items::id("minecraft:honeycomb") {
+            self.pop_resource(world, pos, Slot::of(comb as i32, 3));
+        }
+        self.set_block_and_update(world, pos, blocks::with_property(state, "honey_level", "0").unwrap_or(state));
+    }
+
+    /// `EquipmentDispenseItemBehavior.dispenseEquipment`: the item goes on the first player or
+    /// mob in the block that may wear it there and has that slot free. Returns whether it did.
+    fn dispense_equipment(&mut self, world: usize, front: BlockPos, stack: &ItemStack) -> bool {
+        let data = paper_data::item_data::by_id(stack.item as u32);
+        let Some(slot) = data.equip_slot.clone() else { return false };
+        let equippable = data.raw.as_ref().and_then(|r| r.get("equippable"));
+        if equippable.and_then(|e| e.get("dispensable")).and_then(serde_json::Value::as_bool) == Some(false) {
+            return false;
+        }
+        let allowed = equippable.and_then(|e| e.get("allowed_entities"));
+        let may_wear = |entity: &str| match allowed {
+            None => true,
+            Some(serde_json::Value::String(s)) => match s.strip_prefix('#') {
+                Some(tag) => paper_data::registries::id("minecraft:entity_type", entity).is_some_and(|id| paper_data::synced::tag("minecraft:entity_type", tag).is_some_and(|ids| ids.contains(&(id as i32)))),
+                None => s == entity,
+            },
+            Some(serde_json::Value::Array(list)) => list.iter().any(|v| v.as_str() == Some(entity)),
+            Some(_) => false,
+        };
+        let cell = Aabb::new(Vec3::new(front.x as f64, front.y as f64, front.z as f64), Vec3::new(front.x as f64 + 1.0, front.y as f64 + 1.0, front.z as f64 + 1.0));
+        let one = Slot(Some(stack.with_count(1)));
+        // Players wear armour, heads and elytra.
+        let player_slot = match slot.as_str() {
+            "head" => Some(5),
+            "chest" => Some(6),
+            "legs" => Some(7),
+            "feet" => Some(8),
+            _ => None,
+        };
+        if let Some(index) = player_slot.filter(|_| may_wear("minecraft:player")) {
+            let player = self.players.values().find(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator && p.inventory[index].is_empty() && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&cell)).map(|p| p.entity_id);
+            if let Some(player) = player {
+                self.set_inventory_slot(player, index, one);
+                return true;
+            }
+        }
+        // Mob equipment: main hand, off hand, feet, legs, chest, head, body, saddle.
+        let Some(index) = ["", "", "feet", "legs", "chest", "head", "body", "saddle"].iter().position(|s| *s == slot) else { return false };
+        let w = &self.worlds[world];
+        let target = w.entities_in(&cell).into_iter().find(|id| {
+            let Some(e) = w.entities.get(id) else { return false };
+            let Some(m) = e.mob().filter(|m| !m.living.is_dead() && m.equipment[index].is_empty()) else { return false };
+            let name = e.info.name.as_str();
+            // Saddles and body armour only go on grown (and, for horses, wolves and llamas,
+            // tamed) mobs.
+            let grown_and_tame = !m.baby && (m.tamed || !(super::riding::is_horse(name) || name == "minecraft:wolf") || matches!(name, "minecraft:camel" | "minecraft:camel_husk" | "minecraft:skeleton_horse" | "minecraft:zombie_horse"));
+            may_wear(name) && (index < 6 || grown_and_tame)
+        });
+        let Some(target) = target else { return false };
+        if let Some(e) = self.worlds[world].entities.get_mut(&target) {
+            if let Some(m) = e.mob_mut() {
+                m.equipment[index] = one;
+                m.persistent = true;
+            }
+            e.equipment_dirty = true;
+            e.metadata_dirty = true;
+        }
+        true
     }
 
     // --- pressure plates -----------------------------------------------------------------------
 
-    /// Players and entities standing on pressure plates press them.
+    /// Players and entities standing on pressure plates press them; entering string presses
+    /// it (`TripWireBlock.entityInside`).
     pub(super) fn tick_pressure_plates(&mut self) {
         for world in 0..self.worlds.len() {
             let mut boxes: Vec<Aabb> = self.players.values().filter(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator).map(|p| Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8)).collect();
             boxes.extend(self.worlds[world].entities.values().filter(|e| e.is_alive()).map(|e| e.bounding_box()));
             let mut plates: HashSet<BlockPos> = HashSet::new();
+            let mut strings: HashSet<BlockPos> = HashSet::new();
             let w = &self.worlds[world];
+            let string = blocks::id("minecraft:tripwire");
             for b in &boxes {
                 let y = b.min.y.floor() as i32;
                 for z in b.min.z.floor() as i32..=b.max.z.floor() as i32 {
@@ -519,11 +721,23 @@ impl Server {
                         if blocks::block_of_state(state).name.ends_with("_pressure_plate") && plate_signal(state) == 0 {
                             plates.insert(BlockPos::new(x, y, z));
                         }
+                        // String reacts to anything inside its block, wherever in it.
+                        for y in y..=(b.max.y - 1.0e-5).floor() as i32 {
+                            let Some(state) = w.block_at(x, y, z) else { continue };
+                            if Some(blocks::block_id_of_state(state)) == string && blocks::property(state, "powered") == Some("false") {
+                                strings.insert(BlockPos::new(x, y, z));
+                            }
+                        }
                     }
                 }
             }
             for pos in plates {
                 self.check_pressure_plate(world, pos);
+            }
+            for pos in strings {
+                let Some(w) = self.worlds.get_mut(world) else { continue };
+                crate::world::block_updates::tripwire::check_pressed(&mut Level::new(w), pos, true);
+                self.publish_block_updates(world);
             }
         }
     }
@@ -583,6 +797,37 @@ impl Server {
         }
         self.publish_block_updates(world);
     }
+}
+
+impl Server {
+    /// Pressed string checks whether anything is still in its outline (`checkPressed`).
+    pub(super) fn check_tripwire(&mut self, world: usize, pos: BlockPos) {
+        let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return };
+        if blocks::block_of_state(state).name != "minecraft:tripwire" {
+            return;
+        }
+        let (low, high) = crate::world::block_updates::tripwire::wire_box(state);
+        let inside = Aabb::new(Vec3::new(pos.x as f64, pos.y as f64 + low, pos.z as f64), Vec3::new(pos.x as f64 + 1.0, pos.y as f64 + high, pos.z as f64 + 1.0));
+        let w = &self.worlds[world];
+        let pressed = self.players.values().any(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&inside))
+            || w.entities_in(&inside).into_iter().filter_map(|id| w.entities.get(&id)).any(|e| e.is_alive());
+        let Some(w) = self.worlds.get_mut(world) else { return };
+        crate::world::block_updates::tripwire::check_pressed(&mut Level::new(w), pos, pressed);
+        self.publish_block_updates(world);
+    }
+}
+
+fn in_block_tag(state: u32, tag: &str) -> bool {
+    paper_data::synced::tag("minecraft:block", tag).is_some_and(|ids| ids.contains(&(blocks::block_id_of_state(state) as i32)))
+}
+
+/// A water bottle (`PotionContents.createItemStack(POTION, WATER)`).
+pub(super) fn water_bottle() -> ItemStack {
+    let mut bottle = ItemStack::new(items::id("minecraft:potion").unwrap_or(0) as i32, 1);
+    if let Some(water) = paper_data::registries::id("minecraft:potion", "minecraft:water") {
+        super::enchanting::set_component(&mut bottle, "minecraft:potion_contents", super::loot::potion_contents(water as i32));
+    }
+    bottle
 }
 
 fn plate_signal(state: u32) -> i32 {

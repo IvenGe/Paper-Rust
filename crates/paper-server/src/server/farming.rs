@@ -49,6 +49,33 @@ impl Server {
         let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
         let block = blocks::block_of_state(state).name;
 
+        // A full beehive gives honey to a glass bottle and honeycomb to shears
+        // (`BeehiveBlock.useItemOn`).
+        if in_block_tag(state, "minecraft:beehives") && blocks::property(state, "honey_level") == Some("5") && matches!(item, "minecraft:glass_bottle" | "minecraft:shears") {
+            if item == "minecraft:shears" {
+                self.harvest_honeycomb(world, pos, state);
+                if !creative {
+                    let mut tool = self.players[&id].inventory[slot].clone();
+                    super::survival::hurt_item(&mut tool, 1, false);
+                    self.set_inventory_slot(id, slot, tool);
+                }
+            } else {
+                self.play_sound(world, at, "minecraft:item.bottle.fill", category::BLOCKS, 1.0, 1.0, None);
+                self.set_block_and_update(world, pos, blocks::with_property(state, "honey_level", "0").unwrap_or(state));
+                let honey = paper_protocol::types::ItemStack::new(items::id("minecraft:honey_bottle").unwrap_or(0) as i32, 1);
+                self.fill_container_item(id, slot, &stack, honey, creative);
+            }
+            return true;
+        }
+        // A water bottle turns dirt into mud (`PotionItem.useOn`).
+        if item == "minecraft:potion" && face != 0 && in_block_tag(state, "minecraft:convertible_to_mud") && super::effects::potion_of(&stack).as_deref() == Some("minecraft:water") {
+            self.play_sound(world, at, "minecraft:entity.generic.splash", category::BLOCKS, 1.0, 1.0, None);
+            self.play_sound(world, at, "minecraft:item.bottle.empty", category::BLOCKS, 1.0, 1.0, None);
+            self.set_block_and_update(world, pos, blocks::default_state("minecraft:mud").unwrap_or(state));
+            let bottle = paper_protocol::types::ItemStack::new(items::id("minecraft:glass_bottle").unwrap_or(0) as i32, 1);
+            self.fill_container_item(id, slot, &stack, bottle, creative);
+            return true;
+        }
         let (new_state, sound) = if in_item_tag(stack.item, "minecraft:hoes") {
             // `HoeItem.TILLABLES`.
             if face == 0 || !above_free {

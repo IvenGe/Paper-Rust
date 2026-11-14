@@ -753,7 +753,24 @@ impl Server {
     }
 
     /// Replaces one item of `stack` in `slot` with `filled` (`ItemUtils.createFilledResult`).
-    fn fill_container_item(&mut self, id: i32, slot: usize, stack: &ItemStack, filled: ItemStack, creative: bool) {
+    /// A glass bottle used on water fills with it (`BottleItem.use`).
+    pub(super) fn use_bottle(&mut self, id: i32, hand: i32, yaw: f32, pitch: f32) -> bool {
+        let Some(p) = self.players.get(&id) else { return false };
+        let slot = if hand == 1 { OFFHAND_SLOT } else { HOTBAR_START + p.held_slot as usize };
+        let Some(stack) = p.inventory[slot].0.clone() else { return false };
+        if items::get(stack.item as u32).map_or("", |i| i.name) != "minecraft:glass_bottle" || !matches!(p.game_mode, GameMode::Survival | GameMode::Creative) {
+            return false;
+        }
+        let (world, creative) = (p.world, p.game_mode == GameMode::Creative);
+        let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
+        let Some((_, _, Some(Fluid::Water))) = raycast(&self.worlds[world], eye, Vec3::from_rotation(yaw, pitch), 4.5, true) else { return false };
+        let at = self.players.get(&id).map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z)).unwrap_or(eye);
+        self.play_sound(world, at, "minecraft:item.bottle.fill", category::NEUTRAL, 1.0, 1.0, None);
+        self.fill_container_item(id, slot, &stack, super::machines::water_bottle(), creative);
+        true
+    }
+
+    pub(super) fn fill_container_item(&mut self, id: i32, slot: usize, stack: &ItemStack, filled: ItemStack, creative: bool) {
         if creative {
             let has = self.players.get(&id).is_some_and(|p| p.inventory.iter().any(|s| s.0.as_ref().is_some_and(|s| s.item == filled.item)));
             if !has {

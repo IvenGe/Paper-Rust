@@ -301,6 +301,8 @@ pub enum Kind {
     DaylightDetector,
     LightningRod,
     TripwireHook,
+    /// String (the `tripwire` block).
+    Tripwire,
     SculkSensor,
     /// Small plants that need a block from a support tag below.
     Vegetation,
@@ -363,6 +365,7 @@ fn classify(name: &str) -> Kind {
         "target" => return Kind::TargetBlock,
         "daylight_detector" => return Kind::DaylightDetector,
         "tripwire_hook" => return Kind::TripwireHook,
+        "tripwire" => return Kind::Tripwire,
         "sculk_sensor" => return Kind::SculkSensor,
         "piston" => return Kind::Piston { sticky: false },
         "sticky_piston" => return Kind::Piston { sticky: true },

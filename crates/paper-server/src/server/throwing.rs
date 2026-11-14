@@ -1,7 +1,8 @@
 //! Thrown items (`ThrowableItemProjectile`): snowballs, eggs, ender pearls, bottles o'
 //! enchanting and splash and lingering potions, thrown by players and (all but ender pearls)
-//! by dispensers; the clouds lingering potions leave (`AreaEffectCloud`); and spawn eggs
-//! (`SpawnEggItem`) on blocks and spawners.
+//! by dispensers; small fireballs from dispensed fire charges (`SmallFireball`); the clouds
+//! lingering potions leave (`AreaEffectCloud`); and spawn eggs (`SpawnEggItem`) on blocks and
+//! spawners.
 
 use super::effects::ActiveEffect;
 use super::mobs::SpawnReason;
@@ -85,7 +86,21 @@ impl Server {
     pub(super) fn tick_thrown(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let EntityKind::Thrown { owner, gravity, left_owner, .. } = e.kind else { return };
-        let (from, vel) = (e.pos, e.vel);
+        let fireball = e.info.name == "minecraft:small_fireball";
+        let (from, mut vel) = (e.pos, e.vel);
+        if fireball {
+            // `AbstractHurtingProjectile.applyInertia`: it keeps speeding up along its way, less
+            // in water. It burns out when it reaches unloaded chunks.
+            let w = &self.worlds[world];
+            if !w.chunks.contains_key(&from.chunk()) {
+                if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+                    e.removed = true;
+                }
+                return;
+            }
+            let wet = w.block_at(from.x.floor() as i32, from.y.floor() as i32, from.z.floor() as i32).and_then(super::survival::fluid_of).is_some_and(|(f, _)| f == super::survival::Fluid::Water);
+            vel = vel.add(vel.normalize().scale(0.1)).scale(if wet { 0.8 } else { 0.95 });
+        }
         let to = from.add(vel);
         let w = &self.worlds[world];
         let block_hit = super::combat::clip_blocks(w, from, to);
@@ -121,12 +136,20 @@ impl Server {
         }
         if let Some((t, victim)) = target {
             let at = from.add(vel.scale(t));
-            self.thrown_hits(world, id, at, Some(victim));
+            if fireball {
+                self.fireball_hits(world, id, at, vel, Some(victim));
+            } else {
+                self.thrown_hits(world, id, at, Some(victim));
+            }
             return;
         }
         if let Some((_, block)) = block_hit {
             let _ = block;
-            self.thrown_hits(world, id, end, None);
+            if fireball {
+                self.fireball_hits(world, id, end, vel, None);
+            } else {
+                self.thrown_hits(world, id, end, None);
+            }
             return;
         }
         let in_water = w.block_at(to.x.floor() as i32, to.y.floor() as i32, to.z.floor() as i32).and_then(super::survival::fluid_of).is_some_and(|(f, _)| f == super::survival::Fluid::Water);
@@ -134,7 +157,7 @@ impl Server {
         let e = self.worlds[world].entities.get_mut(&id).unwrap();
         e.pos = to;
         let drag = if in_water { 0.8 } else { 0.99 };
-        e.vel = Vec3::new(vel.x * drag, vel.y * drag - gravity, vel.z * drag);
+        e.vel = if fireball { vel } else { Vec3::new(vel.x * drag, vel.y * drag - gravity, vel.z * drag) };
         e.yaw = -(e.vel.x.atan2(e.vel.z).to_degrees()) as f32;
         e.pitch = -(e.vel.y.atan2(e.vel.horizontal_length()).to_degrees()) as f32;
         if let EntityKind::Thrown { left_owner, .. } = &mut e.kind {
@@ -145,6 +168,35 @@ impl Server {
         }
         if e.pos.chunk() != from.chunk() {
             self.worlds[world].reindex_entity(id);
+        }
+    }
+
+    /// A small fireball hits (`SmallFireball.onHitEntity`, `onHitBlock`): what it hit burns
+    /// for five seconds and takes 5 damage; a block it hits catches fire on that side (when a
+    /// mob shot it, only with mob griefing).
+    fn fireball_hits(&mut self, world: usize, id: i32, at: Vec3, vel: Vec3, victim: Option<i32>) {
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        let EntityKind::Thrown { owner, .. } = e.kind.clone() else { return };
+        e.removed = true;
+        e.pos = at;
+        match victim {
+            Some(v) => {
+                self.set_on_fire(world, v, 100);
+                let damage = Damage { kind: "minecraft:fireball", attacker: owner, direct: Some(id), position: Some(at) };
+                self.hurt_entity(world, v, damage, 5.0);
+            }
+            None => {
+                let by_mob = owner.is_some_and(|o| !self.players.contains_key(&o));
+                if by_mob && !self.worlds[world].rules.bool("mob_griefing") {
+                    return;
+                }
+                let before = at.sub(vel.normalize().scale(0.01));
+                let pos = BlockPos::new(before.x.floor() as i32, before.y.floor() as i32, before.z.floor() as i32);
+                if self.worlds[world].block_at(pos.x, pos.y, pos.z).is_some_and(blocks::is_air) {
+                    let fire = crate::world::block_updates::fire::fire_state_for(&self.worlds[world], pos);
+                    self.set_block_and_update(world, pos, fire);
+                }
+            }
         }
     }
 

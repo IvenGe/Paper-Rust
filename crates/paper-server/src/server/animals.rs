@@ -236,7 +236,7 @@ impl Server {
         }
     }
 
-    fn shear_sheep(&mut self, world: usize, id: i32) {
+    pub(super) fn shear_sheep(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let pos = e.pos;
         let Some(m) = e.mob_mut() else { return };

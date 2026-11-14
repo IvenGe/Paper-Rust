@@ -77,8 +77,17 @@ What works:
   fluid ticks (saved with the chunk), water and lava (flowing, falling, infinite water,
   waterlogged blocks, obsidian, cobblestone, stone and basalt), redstone (wire, torches,
   levers, buttons, repeaters, comparators, observers, lamps, note blocks, redstone blocks,
-  doors, trapdoors and fence gates, pistons and sticky pistons), and using levers, buttons,
-  doors, repeaters and comparators by hand.
+  doors, trapdoors and fence gates, pistons and sticky pistons, tripwire hooks and string),
+  and using levers, buttons, doors, repeaters and comparators by hand. Pistons push the
+  entities in their way (slime blocks launch them, honey blocks carry what stands on them),
+  and moving blocks can be stood on. String between two hooks sets them off while anything
+  is in it, unless cut with shears. Dispensers shoot arrows, thrown items and fire charges,
+  place and pick up water, lava and powder snow (fish come out of their buckets), light
+  fires and TNT, use bone meal, shear sheep and full beehives, fill glass bottles with
+  water or honey, make mud with water bottles, put armour, heads, elytra, saddles, horse
+  and wolf armour and llama carpets on players and mobs in front, and hatch spawn eggs;
+  droppers move items into containers. Players fill glass bottles at water and full
+  beehives, take honeycomb with shears, and make mud with water bottles.
 * **Random ticks and farming**: vanilla's random ticks (`random_tick_speed` per section near
   players): crops grow by vanilla's farmland rules, farmland gets wet near water or dries
   back to dirt, grass and mycelium spread or die in the dark, sugar cane, cactus (and its
@@ -249,10 +258,9 @@ Not yet:
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
-  data). Tripwires,
-  crafters and observers of entities do not work yet, dispensers only know
-  the common items (arrows, thrown items, spawn eggs, buckets, TNT, flint and steel), and
-  pistons do not push entities. Spawn eggs are not used on water (for fish and squid).
+  data). Crafters do not work yet, and dispensers do not place shulker boxes, build golems
+  or withers, or launch fireworks, wind charges, boats or minecarts. Spawn eggs are not
+  used on water (for fish and squid), and buckets do not catch fish.
 * Plugin API: creating worlds, registry and tag lifecycle events,
   statistics, item attribute modifiers (`ItemMeta#getAttributeModifiers`), dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, the remaining special item metas (bundles,

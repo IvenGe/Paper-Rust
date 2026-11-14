@@ -23,7 +23,7 @@ fn center_support_up(state: u32) -> bool {
 pub fn can_survive(level: &Level, state: u32, pos: BlockPos) -> bool {
     match super::kind(state) {
         Kind::Torch | Kind::RedstoneTorch => center_support_up(level.state(pos.below())),
-        Kind::WallTorch | Kind::RedstoneWallTorch | Kind::Ladder => {
+        Kind::WallTorch | Kind::RedstoneWallTorch | Kind::Ladder | Kind::TripwireHook => {
             let dir = facing(state);
             physics::is_face_sturdy(level.state(pos.rel(dir.opposite())), dir.index())
         }
@@ -63,7 +63,7 @@ pub fn update_shape(level: &mut Level, state: u32, pos: BlockPos, dir: Dir, _nei
     let survive = |level: &Level| can_survive(level, state, pos);
     match super::kind(state) {
         Kind::Torch | Kind::RedstoneTorch | Kind::PressurePlate { .. } if dir == Dir::Down && !survive(level) => blocks::AIR,
-        Kind::WallTorch | Kind::RedstoneWallTorch | Kind::Ladder if dir.opposite() == facing(state) && !survive(level) => blocks::AIR,
+        Kind::WallTorch | Kind::RedstoneWallTorch | Kind::Ladder | Kind::TripwireHook if dir.opposite() == facing(state) && !survive(level) => blocks::AIR,
         Kind::Lever | Kind::Button { .. } if redstone::attached_direction(state).opposite() == dir && !survive(level) => blocks::AIR,
         Kind::Carpet | Kind::Vegetation if !survive(level) => blocks::AIR,
         Kind::TallPlant => {
@@ -203,6 +203,8 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
         Kind::SnowyDirt => s = set_bool(s, "snowy", in_tag!(level.state(pos.above()), "snow")),
         Kind::Piston { .. } => s = set_bool(set_dir(s, "facing", ctx.looking.opposite()), "extended", false),
         Kind::Leaves => s = super::plants::leaves_placement(level, s, pos),
+        Kind::Tripwire => s = super::tripwire::wire_placement(level, s, pos),
+        Kind::TripwireHook => s = set_bool(set_bool(s, "attached", false), "powered", false),
         _ => {}
     }
     if !can_survive(level, s, pos) {
@@ -218,5 +220,8 @@ pub fn placed(level: &mut Level, state: u32, pos: BlockPos) {
     }
     if matches!(super::kind(state), Kind::Piston { .. }) {
         super::piston::check_if_extend(level, state, pos);
+    }
+    if super::kind(state) == Kind::TripwireHook {
+        super::tripwire::hook_placed(level, state, pos);
     }
 }

@@ -168,8 +168,13 @@ impl Aabb {
 }
 
 /// Collision boxes of the blocks around `region`, in world coordinates. Unloaded chunks
-/// count as solid so entities do not fall out of the loaded world.
+/// count as solid so entities do not fall out of the loaded world. Blocks a piston is moving
+/// collide where their move has got to.
 pub fn block_boxes(world: &World, region: &Aabb) -> Vec<Aabb> {
+    block_boxes_with(world, region, true)
+}
+
+fn block_boxes_with(world: &World, region: &Aabb, moving_blocks: bool) -> Vec<Aabb> {
     let mut out = Vec::new();
     let (x0, x1) = (region.min.x.floor() as i32 - 1, region.max.x.floor() as i32 + 1);
     let (y0, y1) = ((region.min.y.floor() as i32 - 1).max(world.min_y), (region.max.y.floor() as i32 + 1).min(world.max_y() - 1));
@@ -185,7 +190,14 @@ pub fn block_boxes(world: &World, region: &Aabb) -> Vec<Aabb> {
             }
             for y in y0..=y1 {
                 let Some(state) = world.block_at(x, y, z) else { continue };
-                for b in physics::collision_boxes(state) {
+                let shape = physics::collision_boxes(state);
+                if shape.is_empty() {
+                    if moving_blocks && super::block_updates::piston::is_moving_piston(state) {
+                        out.extend(super::block_updates::piston::moving_collision_boxes(world, paper_protocol::codec::BlockPos::new(x, y, z)).into_iter().filter(|b| b.intersects(region)));
+                    }
+                    continue;
+                }
+                for b in shape {
                     let bb = Aabb::new(Vec3::new(x as f64 + b.min[0], y as f64 + b.min[1], z as f64 + b.min[2]), Vec3::new(x as f64 + b.max[0], y as f64 + b.max[1], z as f64 + b.max[2]));
                     if bb.intersects(region) {
                         out.push(bb);
@@ -241,8 +253,18 @@ fn collide(boxes: &[Aabb], mut b: Aabb, d: Vec3) -> Vec3 {
 /// Moves a box through the world with collisions, stepping up ledges of at most
 /// `step_height` when walking on the ground. Returns the allowed movement.
 pub fn move_box(world: &World, b: Aabb, d: Vec3, step_height: f64, was_on_ground: bool) -> Movement {
+    move_box_with(world, b, d, step_height, was_on_ground, true)
+}
+
+/// [`move_box`] for a push by a piston: the blocks it moves do not get in the way
+/// (`PistonMovingBlockEntity.NOCLIP`).
+pub fn move_box_past_moving_blocks(world: &World, b: Aabb, d: Vec3) -> Movement {
+    move_box_with(world, b, d, 0.0, false, false)
+}
+
+fn move_box_with(world: &World, b: Aabb, d: Vec3, step_height: f64, was_on_ground: bool, moving_blocks: bool) -> Movement {
     let region = b.expand_towards(d).inflate(1.0e-7, 1.0e-7, 1.0e-7);
-    let boxes = block_boxes(world, &region.expand_towards(Vec3::new(0.0, step_height, 0.0)));
+    let boxes = block_boxes_with(world, &region.expand_towards(Vec3::new(0.0, step_height, 0.0)), moving_blocks);
     let mut moved = collide(&boxes, b, d);
     let collided_x = (moved.x - d.x).abs() > 1.0e-7;
     let collided_z = (moved.z - d.z).abs() > 1.0e-7;

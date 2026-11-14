@@ -82,11 +82,12 @@ impl Server {
     /// whether the block was removed.
     pub fn player_destroy_block(&mut self, world: usize, pos: BlockPos, player: i32) -> bool {
         let creative = self.players.get(&player).is_some_and(|p| p.game_mode == GameMode::Creative);
+        let shears = self.players.get(&player).is_some_and(|p| p.held_item().0.as_ref().is_some_and(|s| paper_data::items::get(s.item as u32).is_some_and(|i| i.name == "minecraft:shears")));
         let Some(w) = self.worlds.get_mut(world) else { return false };
         let mut level = Level::new(w);
         level.actor = Some(player);
         let state = level.state(pos);
-        level.player_will_destroy(state, pos, creative);
+        level.player_will_destroy(state, pos, creative, shears);
         let removed = level.remove_block(pos, false);
         self.publish_block_updates(world);
         removed
@@ -199,6 +200,7 @@ impl Server {
                 Effect::PrimeTnt { pos, igniter } => self.prime_tnt(world, pos, 80, igniter),
                 Effect::Dispense { pos } => self.dispense(world, pos),
                 Effect::CheckPlate { pos } => self.check_pressure_plate(world, pos),
+                Effect::CheckTripwire { pos } => self.check_tripwire(world, pos),
             }
         }
     }

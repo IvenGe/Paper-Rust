@@ -81,7 +81,7 @@ fn placement_state(block: &'static paper_data::BlockInfo, face: usize, cursor_y:
     }
     if let Some((_, values)) = block.properties.iter().find(|(p, _)| *p == "facing") {
         let vertical_ok = values.contains(&"up");
-        let facing = if name.contains("wall_") || name.ends_with("ladder") || name.ends_with("_button") || name.ends_with("lever") {
+        let facing = if name.contains("wall_") || name.ends_with("ladder") || name.ends_with("_button") || name.ends_with("lever") || name.ends_with("tripwire_hook") {
             // Attached to the clicked block: points away from it.
             if face >= 2 || vertical_ok {
                 face_name

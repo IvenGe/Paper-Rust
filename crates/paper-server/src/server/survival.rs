@@ -1084,7 +1084,7 @@ impl Server {
     /// Right-click with an item in the air.
     pub(super) fn handle_use_item(&mut self, id: i32, hand: i32, sequence: i32, yaw: f32, pitch: f32) {
         self.send(id, &play::BlockChangedAck { sequence: VarInt(sequence) });
-        if self.players.get(&id).is_some_and(|p| p.dead) || self.use_bucket(id, hand, yaw, pitch) {
+        if self.players.get(&id).is_some_and(|p| p.dead) || self.use_bucket(id, hand, yaw, pitch) || self.use_bottle(id, hand, yaw, pitch) {
             return;
         }
         let Some(p) = self.players.get_mut(&id) else { return };
