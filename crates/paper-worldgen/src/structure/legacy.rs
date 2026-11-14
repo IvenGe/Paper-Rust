@@ -1,8 +1,9 @@
-//! The template structures that are not jigsaw structures: shipwrecks, ocean ruins and
-//! nether fossils, on a common `TemplateStructurePiece`.
+//! The template structures that are not jigsaw structures: shipwrecks, ocean ruins, nether
+//! fossils and ruined portals, on a common `TemplateStructurePiece`.
 //!
 //! Written to vanilla 26.3's `TemplateStructurePiece`, `ShipwreckStructure`/`ShipwreckPieces`,
-//! `OceanRuinStructure`/`OceanRuinPieces` and `NetherFossilStructure`/`NetherFossilPieces`.
+//! `OceanRuinStructure`/`OceanRuinPieces`, `NetherFossilStructure`/`NetherFossilPieces` and
+//! `RuinedPortalStructure`/`RuinedPortalPiece`.
 //! Pieces that settle their height when first placed (shipwrecks) keep the settled height in
 //! the shared start; ocean ruins settle it again for every chunk, as vanilla does.
 
@@ -32,6 +33,48 @@ pub(crate) enum TemplateKind {
     Shipwreck { beached: bool, too_big: bool },
     OceanRuin { large: bool },
     NetherFossil,
+    RuinedPortal(PortalProperties),
+}
+
+/// `RuinedPortalPiece.VerticalPlacement`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PortalPlacement {
+    OnLandSurface,
+    PartlyBuried,
+    OnOceanFloor,
+    InMountain,
+    Underground,
+    InNether,
+}
+
+impl PortalPlacement {
+    fn parse(s: &str) -> Self {
+        match s {
+            "partly_buried" => Self::PartlyBuried,
+            "on_ocean_floor" => Self::OnOceanFloor,
+            "in_mountain" => Self::InMountain,
+            "underground" => Self::Underground,
+            "in_nether" => Self::InNether,
+            _ => Self::OnLandSurface,
+        }
+    }
+
+    fn heightmap(self) -> Heightmap {
+        if self == Self::OnOceanFloor {
+            Heightmap::OceanFloorWg
+        } else {
+            Heightmap::WorldSurfaceWg
+        }
+    }
+}
+
+/// `RuinedPortalPiece.Properties` and the placement.
+#[derive(Clone, Debug)]
+pub(crate) struct PortalProperties {
+    placement: PortalPlacement,
+    cold: bool,
+    overgrown: bool,
+    vines: bool,
 }
 
 /// `TemplateStructurePiece`.
@@ -114,7 +157,7 @@ impl TemplatePiece {
                     ctx.w.set(pos, state);
                 }
             }
-            TemplateKind::NetherFossil => {}
+            TemplateKind::NetherFossil | TemplateKind::RuinedPortal(_) => {}
         }
     }
 }
@@ -193,6 +236,17 @@ impl Piece for TemplatePiece {
                     tp
                 };
                 self.place_template(ctx, position, chunk_box);
+            }
+            TemplateKind::RuinedPortal(props) => {
+                let position = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
+                let bb = self.template.bounding_box(position, self.rotation, self.pivot, self.mirror);
+                if !chunk_box.is_inside(bb.center()) {
+                    return;
+                }
+                let mut bbox = chunk_box;
+                bbox.encapsulate(&bb);
+                self.place_template(ctx, position, bbox);
+                portal_decorate(ctx, props, &bb);
             }
             TemplateKind::NetherFossil => {
                 let position = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
@@ -513,5 +567,272 @@ impl StructureGen for NetherFossil {
         let rotation = Rotation::random(&mut ctx.r);
         let template = pick(&self.templates, &mut ctx.r).clone();
         Some(vec![Box::new(TemplatePiece::new("minecraft:nefos", template, pos, rotation, Mirror::None, Pos::new(0, 0, 0), vec![self.ignore.clone()], TemplateKind::NetherFossil))])
+    }
+}
+
+/// The netherrack, magma, vines and leaves around a ruined portal (`spreadNetherrack`,
+/// `addNetherrackDripColumnsBelowPortal`, `maybeAddVines`, `maybeAddLeavesAbove`).
+fn portal_decorate(ctx: &mut PlaceCtx, p: &PortalProperties, bb: &BoundingBox) {
+    let b = ctx.w.b;
+    let block_of = blocks::block_id_of_state;
+    let (air, obsidian, lava) = (block_of(st("minecraft:air")), block_of(st("minecraft:obsidian")), block_of(st("minecraft:lava")));
+    let (netherrack, magma, vine) = (st("minecraft:netherrack"), st("minecraft:magma_block"), st("minecraft:vine"));
+    let can_replace = |state: u32| {
+        let id = block_of(state);
+        !(id == air || id == obsidian || b.tags.features_cannot_replace.has(state) || (p.placement != PortalPlacement::InNether && id == lava))
+    };
+    let place = |ctx: &mut PlaceCtx, pos: Pos| {
+        if can_replace(ctx.w.get(pos)) {
+            let state = if !p.cold && ctx.r.next_f32() < 0.07 { magma } else { netherrack };
+            ctx.w.set(pos, state);
+        }
+    };
+    let drip = |ctx: &mut PlaceCtx, pos: Pos| {
+        let mut pos = pos;
+        place(ctx, pos);
+        let mut cap = 8;
+        while cap > 0 && ctx.r.next_f32() < 0.5 {
+            pos = pos.down();
+            cap -= 1;
+            place(ctx, pos);
+        }
+    };
+    let leaves = |ctx: &mut PlaceCtx, pos: Pos| {
+        if ctx.r.next_f32() < 0.5 && block_of(ctx.w.get(pos)) == block_of(netherrack) && ctx.w.is_air(pos.up()) {
+            ctx.w.set(pos.up(), super::piece::with_bool(st("minecraft:jungle_leaves"), "persistent", true));
+        }
+    };
+    // `spreadNetherrack`.
+    let follow = matches!(p.placement, PortalPlacement::OnLandSurface | PortalPlacement::OnOceanFloor);
+    let center = bb.center();
+    const PROBABILITY: [f32; 14] = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.9, 0.9, 0.8, 0.7, 0.6, 0.4, 0.2];
+    let max_distance = PROBABILITY.len() as i32;
+    let average_width = (bb.x_span() + bb.z_span()) / 2;
+    let adjustment = ctx.r.next_bounded(1.max(8 - average_width / 2));
+    for x in center.x - max_distance..=center.x + max_distance {
+        for z in center.z - max_distance..=center.z + max_distance {
+            let distance = (x - center.x).abs() + (z - center.z).abs();
+            let adjusted = 0.max(distance + adjustment);
+            if adjusted >= max_distance {
+                continue;
+            }
+            if ctx.r.next_f64() >= PROBABILITY[adjusted as usize] as f64 {
+                continue;
+            }
+            let surface = ctx.w.height_at(p.placement.heightmap(), x, z) - 1;
+            let y = if follow { surface } else { bb.min_y.min(surface) };
+            let pos = Pos::new(x, y, z);
+            if (y - bb.min_y).abs() > 3 || !can_replace(ctx.w.get(pos)) {
+                continue;
+            }
+            place(ctx, pos);
+            if p.overgrown {
+                leaves(ctx, pos);
+            }
+            drip(ctx, pos.down());
+        }
+    }
+    // `addNetherrackDripColumnsBelowPortal`.
+    for x in bb.min_x + 1..bb.max_x {
+        for z in bb.min_z + 1..bb.max_z {
+            let pos = Pos::new(x, bb.min_y, z);
+            if block_of(ctx.w.get(pos)) == block_of(netherrack) {
+                drip(ctx, pos.down());
+            }
+        }
+    }
+    if p.vines || p.overgrown {
+        for z in bb.min_z..=bb.max_z {
+            for y in bb.min_y..=bb.max_y {
+                for x in bb.min_x..=bb.max_x {
+                    let pos = Pos::new(x, y, z);
+                    if p.vines {
+                        let state = ctx.w.get(pos);
+                        if !b.is_air(state) && block_of(state) != block_of(vine) {
+                            let dir = Dir::HORIZONTAL[ctx.r.next_bounded(4) as usize];
+                            let n = pos.rel(dir);
+                            if ctx.w.is_air(n) && paper_data::physics::collision_face_full(state, dir.index()) {
+                                ctx.w.set(n, super::piece::with_bool(vine, dir.opposite().name(), true));
+                            }
+                        }
+                    }
+                    if p.overgrown {
+                        leaves(ctx, pos);
+                    }
+                }
+            }
+        }
+    }
+}
+
+const PORTALS: &[&str] = &[
+    "ruined_portal/portal_1", "ruined_portal/portal_2", "ruined_portal/portal_3", "ruined_portal/portal_4", "ruined_portal/portal_5",
+    "ruined_portal/portal_6", "ruined_portal/portal_7", "ruined_portal/portal_8", "ruined_portal/portal_9", "ruined_portal/portal_10",
+];
+const GIANT_PORTALS: &[&str] = &["ruined_portal/giant_portal_1", "ruined_portal/giant_portal_2", "ruined_portal/giant_portal_3"];
+
+/// `RuinedPortalStructure.Setup` with its processors.
+struct PortalSetup {
+    placement: PortalPlacement,
+    air_pocket_probability: f32,
+    can_be_cold: bool,
+    overgrown: bool,
+    vines: bool,
+    weight: f32,
+    /// The processors for `[cold][air pocket]`.
+    processors: [[Vec<Arc<Processor>>; 2]; 2],
+}
+
+/// `RuinedPortalStructure`.
+pub(crate) struct RuinedPortal {
+    setups: Vec<PortalSetup>,
+    portals: Vec<Arc<Template>>,
+    giant: Vec<Arc<Template>>,
+}
+
+fn replace_rule(source: &str, probability: Option<f32>, target: &str) -> Value {
+    let input = match probability {
+        Some(p) => serde_json::json!({"predicate_type": "minecraft:random_block_match", "block": source, "probability": p}),
+        None => serde_json::json!({"predicate_type": "minecraft:block_match", "block": source}),
+    };
+    serde_json::json!({"input_predicate": input, "location_predicate": {"predicate_type": "minecraft:always_true"}, "output_state": {"Name": target}})
+}
+
+impl RuinedPortal {
+    pub fn load(l: &mut Loader, json: &Value) -> Result<Self> {
+        let mut setups = Vec::new();
+        for s in json.field("setups")?.as_array().into_iter().flatten() {
+            let placement = PortalPlacement::parse(s.get("placement").and_then(Value::as_str).unwrap_or("on_land_surface"));
+            let mossiness = s.f64_or("mossiness", 0.0);
+            let blackstone = s.get("replace_with_blackstone").and_then(Value::as_bool).unwrap_or(false);
+            let mut processors: [[Vec<Arc<Processor>>; 2]; 2] = Default::default();
+            for (cold, row) in processors.iter_mut().enumerate() {
+                for (air, list) in row.iter_mut().enumerate() {
+                    let mut rules = vec![replace_rule("minecraft:gold_block", Some(0.3), "minecraft:air")];
+                    rules.push(if placement == PortalPlacement::OnOceanFloor {
+                        replace_rule("minecraft:lava", None, "minecraft:magma_block")
+                    } else if cold == 1 {
+                        replace_rule("minecraft:lava", None, "minecraft:netherrack")
+                    } else {
+                        replace_rule("minecraft:lava", Some(0.2), "minecraft:magma_block")
+                    });
+                    if cold == 0 {
+                        rules.push(replace_rule("minecraft:netherrack", Some(0.07), "minecraft:magma_block"));
+                    }
+                    let mut v = vec![if air == 1 { l.builtins.structure_and_air.clone() } else { l.builtins.structure_block.clone() }];
+                    let mut defs = vec![
+                        serde_json::json!({"processor_type": "minecraft:rule", "rules": rules}),
+                        serde_json::json!({"processor_type": "minecraft:block_age", "mossiness": mossiness}),
+                        serde_json::json!({"processor_type": "minecraft:protected_blocks", "value": "#minecraft:features_cannot_replace"}),
+                        serde_json::json!({"processor_type": "minecraft:lava_submerged_block"}),
+                    ];
+                    if blackstone {
+                        defs.push(serde_json::json!({"processor_type": "minecraft:blackstone_replace"}));
+                    }
+                    for d in &defs {
+                        v.push(Arc::new(super::processor::ProcessorLists::processor(&mut l.parser, d)?));
+                    }
+                    *list = v;
+                }
+            }
+            setups.push(PortalSetup {
+                placement,
+                air_pocket_probability: s.f64_or("air_pocket_probability", 0.0) as f32,
+                can_be_cold: s.get("can_be_cold").and_then(Value::as_bool).unwrap_or(false),
+                overgrown: s.get("overgrown").and_then(Value::as_bool).unwrap_or(false),
+                vines: s.get("vines").and_then(Value::as_bool).unwrap_or(false),
+                weight: s.f64_or("weight", 1.0) as f32,
+                processors,
+            });
+        }
+        if setups.is_empty() {
+            anyhow::bail!("ruined portal without setups");
+        }
+        Ok(Self { setups, portals: templates(l, PORTALS)?, giant: templates(l, GIANT_PORTALS)? })
+    }
+
+    /// `findSuitableY`.
+    fn suitable_y(ctx: &mut GenCtx, placement: PortalPlacement, air_pocket: bool, surface: i32, y_span: i32, bb: &BoundingBox) -> i32 {
+        let min_y = ctx.min_y() + 15;
+        let r = &mut ctx.r;
+        let between = |r: &mut WorldgenRandom, a: i32, b: i32| r.next_bounded(b - a + 1) + a;
+        let within = |r: &mut WorldgenRandom, a: i32, b: i32| if a < b { r.next_bounded(b - a + 1) + a } else { b };
+        let new_y = match placement {
+            PortalPlacement::InNether => {
+                if air_pocket {
+                    between(r, 32, 100)
+                } else if r.next_f32() < 0.5 {
+                    between(r, 27, 29)
+                } else {
+                    between(r, 29, 100)
+                }
+            }
+            PortalPlacement::InMountain => within(r, 70, surface - y_span),
+            PortalPlacement::Underground => within(r, min_y, surface - y_span),
+            PortalPlacement::PartlyBuried => surface - y_span + between(r, 2, 8),
+            _ => surface,
+        };
+        let corners = [(bb.min_x, bb.min_z), (bb.max_x, bb.min_z), (bb.min_x, bb.max_z), (bb.max_x, bb.max_z)];
+        let b = &ctx.gen.decoration.blocks;
+        let ocean = placement == PortalPlacement::OnOceanFloor;
+        let mut y = new_y;
+        'down: while y > min_y {
+            let mut solid = 0;
+            for &(x, z) in &corners {
+                let state = ctx.cols.block(x, y, z);
+                if if ocean { b.blocks_motion(state) } else { !b.is_air(state) } {
+                    solid += 1;
+                    if solid == 3 {
+                        break 'down;
+                    }
+                }
+            }
+            y -= 1;
+        }
+        y
+    }
+}
+
+impl StructureGen for RuinedPortal {
+    fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
+        let r = &mut ctx.r;
+        let setup = if self.setups.len() > 1 {
+            let total: f32 = self.setups.iter().map(|s| s.weight).sum();
+            let mut pick_value = r.next_f32();
+            let mut chosen = None;
+            for s in &self.setups {
+                pick_value -= s.weight / total;
+                if pick_value < 0.0 {
+                    chosen = Some(s);
+                    break;
+                }
+            }
+            chosen?
+        } else {
+            &self.setups[0]
+        };
+        let air_pocket = match setup.air_pocket_probability {
+            p if p == 0.0 => false,
+            p if p == 1.0 => true,
+            p => r.next_f32() < p,
+        };
+        let template = if r.next_f32() < 0.05 { pick(&self.giant, r) } else { pick(&self.portals, r) }.clone();
+        let rotation = Rotation::random(r);
+        let mirror = if r.next_f32() < 0.5 { Mirror::None } else { Mirror::FrontBack };
+        let pivot = Pos::new(template.size.0 / 2, 0, template.size.2 / 2);
+        let base = Pos::new(ctx.min_block_x(), 0, ctx.min_block_z());
+        let bb = template.bounding_box(base, rotation, pivot, mirror);
+        let center = bb.center();
+        let surface = ctx.cols.base_height(center.x, center.z, setup.placement.heightmap()) - 1;
+        let y = Self::suitable_y(ctx, setup.placement, air_pocket, surface, bb.y_span(), &bb);
+        let origin = Pos::new(base.x, y, base.z);
+        if !ctx.valid_biome(origin) {
+            return None;
+        }
+        let gen = ctx.gen;
+        let cold = setup.can_be_cold && gen.biomes.get(ctx.cols.biome_at(origin)).cold_enough_to_snow(origin.x, origin.y, origin.z, gen.sea_level);
+        let props = PortalProperties { placement: setup.placement, cold, overgrown: setup.overgrown, vines: setup.vines };
+        let processors = setup.processors[cold as usize][air_pocket as usize].clone();
+        Some(vec![Box::new(TemplatePiece::new("minecraft:rupo", template, origin, rotation, mirror, pivot, processors, TemplateKind::RuinedPortal(props)))])
     }
 }
