@@ -395,6 +395,61 @@ fn woodland_mansion_is_placed() {
 }
 
 #[test]
+fn sculk_patches_are_placed() {
+    // Ancient cities are in the deep dark: its sculk patches and the city's own
+    // (`sculk_patch_ancient_city` feature pool elements).
+    let Some(g) = generator(Dimension::Overworld, 0) else { return };
+    let found = g.locate("minecraft:ancient_city", 0, 0, 50).expect("an ancient city");
+    let (cx, cz) = (found.chunk_x, found.chunk_z);
+    let run = || {
+        let mut w = TestWorld::new(g);
+        w.decorate_box(cx - 1, cz - 1, cx + 1, cz + 1);
+        w
+    };
+    let w = run();
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut bad_veins = Vec::new();
+    for x in (cx - 1) * 16..(cx + 2) * 16 {
+        for z in (cz - 1) * 16..(cz + 2) * 16 {
+            for y in -63..64 {
+                let name = w.name(x, y, z);
+                if !name.contains("sculk") {
+                    continue;
+                }
+                *counts.entry(name).or_default() += 1;
+                if name == "minecraft:sculk_vein" {
+                    // Every face of a vein rests on something.
+                    let state = w.chunks[&(x >> 4, z >> 4)].get(x, y, z);
+                    for (face, (dx, dy, dz)) in [("down", (0, -1, 0)), ("up", (0, 1, 0)), ("north", (0, 0, -1)), ("south", (0, 0, 1)), ("west", (-1, 0, 0)), ("east", (1, 0, 0))] {
+                        if paper_data::blocks::property(state, face) == Some("true") && matches!(w.name(x + dx, y + dy, z + dz), "minecraft:air" | "minecraft:cave_air" | "minecraft:water") {
+                            bad_veins.push((x, y, z, face));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("ancient city at chunk ({cx}, {cz}): {counts:?}");
+    assert!(counts.get("minecraft:sculk").copied().unwrap_or(0) > 100);
+    assert!(counts.get("minecraft:sculk_vein").copied().unwrap_or(0) > 50);
+    assert!(counts.get("minecraft:sculk_catalyst").copied().unwrap_or(0) > 0);
+    assert!(counts.get("minecraft:sculk_sensor").copied().unwrap_or(0) > 0);
+    assert!(bad_veins.is_empty(), "veins on nothing: {:?}", &bad_veins[..bad_veins.len().min(10)]);
+    // Deterministic: a second run gives the same blocks.
+    let again = run();
+    for (k, c) in &w.chunks {
+        let d = &again.chunks[k];
+        for y in -64..320 {
+            for z in 0..16 {
+                for x in 0..16 {
+                    assert_eq!(c.get(x, y, z), d.get(x, y, z), "chunk {k:?} block ({x}, {y}, {z})");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn ocean_monuments_spawn_guardians() {
     let Some(g) = generator(Dimension::Overworld, 0) else { return };
     // Inside the vanilla monument of the fixture (box -1165..-1108, 39..61, -269..-212).

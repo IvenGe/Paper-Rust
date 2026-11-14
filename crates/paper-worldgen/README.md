@@ -117,12 +117,16 @@ gateways, small end islands, the arrival platform and chorus plants.
 Template features (desert wells, sulfur springs) and fossils place their structure
 templates as vanilla does.
 
-Not implemented (they place nothing; `WorldGenerator::unsupported_features` lists them):
+Sculk patches (`sculk_patch`, in the deep dark and in ancient cities) spread charge with
+vanilla's world generation sculk spreader: sculk, sculk veins and the sensors and
+shriekers that grow on sculk (in 26.3 the catalyst and the ancient cities' shriekers are
+steps of the data's `sequence`). Sensors, shriekers and catalysts get their block entities
+from the server, as vanilla's region leaves them for the chunk to create.
 
-* `sculk_patch` (deep dark sculk patches, also the ones ancient cities place).
-* Where one of these is part of a `sequence`, the features after it are skipped as
-  well, as vanilla does when a step of a sequence places nothing.
-* Mobs spawned during generation, lighting.
+Every feature type of 26.3's data is implemented (`WorldGenerator::unsupported_features`
+lists types a data pack uses that are not; they place nothing, and the steps of a
+`sequence` after one are skipped, as vanilla does when a step places nothing). Not done:
+mobs spawned during generation, lighting.
 
 ### Structures
 
@@ -204,6 +208,12 @@ the settled height depends on which chunk is decorated first.
   Pumpkin corrected.
 * Pointed dripstone, dripstone clusters and large dripstone have no reference: Pumpkin's
   versions are placeholders. They follow vanilla 26.3's algorithms.
+* Sculk patches have no vanilla reference either (no fixture chunk reaches the deep
+  dark). They follow vanilla 26.3's spreader, checked against Pumpkin's port, which this
+  crate departs from where Pumpkin departs from vanilla (see `src/feature/kinds/sculk.rs`);
+  the test decorates the chunks around an ancient city and checks the sculk, veins,
+  sensors and catalysts, that every vein face rests on a block, and that a second run is
+  identical.
 * A few features compute with `sin`, `cos`, `pow` and `log` (icebergs, large dripstone,
   the spawn search); Rust's and Java's results can differ in the last bit, which changes a
   block only when a value lands exactly on a rounding boundary.
