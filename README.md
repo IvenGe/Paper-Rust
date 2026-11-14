@@ -213,7 +213,7 @@ What works:
   villagers, breed animals and enchant; shown on the statistics screen, and followed by
   scoreboard objectives with statistic criteria (`minecraft.mined:minecraft.stone`, ...).
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
-  weather difficulty gamerule summon kill effect seed locate setworldspawn scoreboard team tps mspt
+  weather difficulty gamerule summon kill effect seed locate setworldspawn scoreboard team trigger tps mspt
   kick ban pardon ban-ip pardon-ip banlist op deop whitelist save-all stop version plugins
   reload`. The main scoreboard (objectives, scores, display slots and teams) is saved with the
   main world as vanilla's `data/minecraft/scoreboard.dat`.
@@ -301,8 +301,7 @@ Not yet:
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
   fish, ...), inventories of other block types and anvil and enchanting views, villager
-  inventories, sleeping and zombifying villagers, `/scoreboard players enable` and
-  `/trigger`, and vanilla-format item serialization
+  inventories, sleeping and zombifying villagers, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet. Items do not remember who may pick them up (`Item#setOwner`).

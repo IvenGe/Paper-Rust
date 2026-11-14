@@ -239,7 +239,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `scoreboard.objectives` / `scoreboard.objective` | `board` / `board`, `name` |
 | `scoreboard.register_objective` / `unregister_objective` / `update_objective` | `board`, `name`, `criteria`, `display_name`, `render_type` |
 | `scoreboard.set_display` | `board`, `slot` (0 list, 1 sidebar, 2 below name, 3-18 team sidebars), `objective` (none clears) |
-| `scoreboard.score` / `set_score` / `reset_scores` | `board`, `objective`, `entry`, `value`, `display_name` |
+| `scoreboard.score` / `set_score` / `reset_scores` | `board`, `objective`, `entry`, `value`, `display_name`; `set_score` with `locked` instead locks or unlocks a trigger score (`Score.setTriggerable`), and `score` answers `locked` |
 | `scoreboard.entries` / `entry_scores` / `entry_team` | `board` / `board`, `entry` / `board`, `entry` |
 | `scoreboard.teams` / `team` / `register_team` / `unregister_team` | `board`, `name` |
 | `scoreboard.update_team` | `board`, `name` and any of `display_name`, `prefix`, `suffix`, `color` (0-15), `clear_color`, `friendly_fire`, `see_friendly_invisibles`, `name_tag_visibility`, `death_message_visibility`, `collision_rule` |

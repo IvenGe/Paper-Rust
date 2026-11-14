@@ -74,6 +74,7 @@ impl CommandRegistry {
             Builtin { name: "weather", aliases: &[], description: "Sets the weather", usage: "/weather <clear|rain|thunder> [duration]", min_op: 2, handler: cmd_weather, completer: complete_weather },
             Builtin { name: "scoreboard", aliases: &[], description: "Manages scoreboard objectives and players", usage: "/scoreboard <objectives|players> ...", min_op: 2, handler: cmd_scoreboard, completer: super::score_commands::complete_scoreboard },
             Builtin { name: "team", aliases: &[], description: "Controls teams", usage: "/team <list|add|remove|empty|join|leave|modify> ...", min_op: 2, handler: cmd_team, completer: super::score_commands::complete_team },
+            Builtin { name: "trigger", aliases: &[], description: "Sets a trigger to be activated", usage: "/trigger <objective> [add|set <value>]", min_op: 0, handler: cmd_trigger, completer: super::score_commands::complete_trigger },
             Builtin { name: "difficulty", aliases: &[], description: "Sets the difficulty", usage: "/difficulty [peaceful|easy|normal|hard]", min_op: 2, handler: cmd_difficulty, completer: complete_difficulty },
             Builtin { name: "effect", aliases: &[], description: "Gives or removes status effects", usage: "/effect <give|clear> <targets> [effect] [seconds] [amplifier] [hideParticles]", min_op: 2, handler: cmd_effect, completer: complete_effect },
             Builtin { name: "gamerule", aliases: &[], description: "Sets or queries a game rule", usage: "/gamerule <rule> [value]", min_op: 2, handler: cmd_gamerule, completer: complete_gamerule },
@@ -351,6 +352,10 @@ fn cmd_scoreboard(server: &mut Server, source: &CommandSource, args: &[&str]) {
 
 fn cmd_team(server: &mut Server, source: &CommandSource, args: &[&str]) {
     server.team_command(source, args);
+}
+
+fn cmd_trigger(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    server.trigger_command(source, args);
 }
 
 fn cmd_weather(server: &mut Server, source: &CommandSource, args: &[&str]) {

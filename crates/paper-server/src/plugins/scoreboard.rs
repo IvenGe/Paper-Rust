@@ -108,7 +108,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 bail!("Unregistered objective {objective}");
             }
             Ok(match board.scores.get(entry).and_then(|s| s.get(objective)) {
-                Some(score) => bmap! { "set" => true, "value" => score.value, "display_name" => score.display_name.as_ref().map(component_value) },
+                Some(score) => bmap! { "set" => true, "value" => score.value, "display_name" => score.display_name.as_ref().map(component_value), "locked" => score.locked },
                 None => bmap! { "set" => false, "value" => 0 },
             })
         }
@@ -118,6 +118,11 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let criteria = server.scoreboards.get(b).and_then(|board| board.objectives.get(&objective)).map(|o| o.criteria.clone()).unwrap_or_default();
             if scoreboard::criteria_read_only(&criteria) && args.get("value").as_i64().is_some() && args.bool("force") != Some(true) {
                 bail!("Cannot modify read-only score");
+            }
+            // `Score.setTriggerable`.
+            if let Some(locked) = args.bool("locked") {
+                server.set_score_locked(b, &objective, &entry, locked)?;
+                return Ok(Value::Null);
             }
             let display = match args.get("display_name") {
                 Value::Null if args.bool("clear_display_name") == Some(true) => Some(None),

@@ -528,6 +528,22 @@ public final class HostScoreboards {
             this.objective.board.call("scoreboard.reset_scores", "entry", this.entry, "objective", this.objective.name);
         }
 
+        /** Whether {@code /trigger} accepts this score (a set, unlocked score of a trigger objective). */
+        public boolean isTriggerable() {
+            if (!"trigger".equals(this.objective.getCriteria())) {
+                return false;
+            }
+            final Map<String, Object> info = this.info();
+            return Values.bool(info, "set", false) && !Values.bool(info, "locked", true);
+        }
+
+        public void setTriggerable(final boolean triggerable) {
+            if (!"trigger".equals(this.objective.getCriteria())) {
+                throw new IllegalArgumentException("the criteria isn't 'trigger'");
+            }
+            this.objective.board.call("scoreboard.set_score", "objective", this.objective.name, "entry", this.entry, "locked", !triggerable);
+        }
+
         public @Nullable Component customName() {
             return Components.fromJson(this.info().get("display_name"));
         }

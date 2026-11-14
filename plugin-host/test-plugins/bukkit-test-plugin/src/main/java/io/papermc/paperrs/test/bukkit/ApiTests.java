@@ -770,6 +770,21 @@ final class ApiTests implements Listener, CommandExecutor {
         red.addEntry(player.getName());
         check(failures, red.hasEntry(player.getName()) && main.getEntryTeam(player.getName()) != null, "team");
         check(failures, NamedTextColor.RED.equals(red.color()), "team colour");
+        // A trigger objective's score is enabled for /trigger by setTriggerable.
+        Objective vote = main.getObjective("vote");
+        if (vote == null) {
+            vote = main.registerNewObjective("vote", Criteria.TRIGGER, Component.text("Vote"));
+        }
+        final org.bukkit.scoreboard.Score ballot = vote.getScore(player.getName());
+        check(failures, !ballot.isTriggerable() && !ballot.isScoreSet(), "not triggerable before");
+        ballot.setTriggerable(true);
+        check(failures, ballot.isTriggerable() && ballot.isScoreSet() && ballot.getScore() == 0, "triggerable");
+        try {
+            kills.getScore(player.getName()).setTriggerable(true);
+            failures.add("a dummy objective became triggerable");
+        } catch (IllegalArgumentException expected) {
+            // Only trigger objectives.
+        }
 
         final Scoreboard personal = Bukkit.getScoreboardManager().getNewScoreboard();
         final Objective mine = personal.registerNewObjective("personal", Criteria.DUMMY, Component.text("Yours"));

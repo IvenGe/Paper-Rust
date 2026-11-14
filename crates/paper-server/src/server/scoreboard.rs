@@ -51,6 +51,9 @@ pub struct Objective {
 pub struct Score {
     pub value: i32,
     pub display_name: Option<Component>,
+    /// Whether `/trigger` refuses this score (vanilla's default) until it is enabled with
+    /// `/scoreboard players enable` or `Score.setTriggerable`.
+    pub locked: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -197,7 +200,10 @@ impl Scoreboard {
         let mut scores = Vec::new();
         for (entry, by_objective) in &self.scores {
             for (objective, score) in by_objective {
-                let mut c = Compound::new().with("Name", Tag::String(entry.clone())).with("Objective", Tag::String(objective.clone())).with("Score", Tag::Int(score.value)).with("Locked", Tag::Byte(1));
+                let mut c = Compound::new().with("Name", Tag::String(entry.clone())).with("Objective", Tag::String(objective.clone())).with("Score", Tag::Int(score.value));
+                if score.locked {
+                    c.insert("Locked", Tag::Byte(1));
+                }
                 if let Some(display) = &score.display_name {
                     c.insert("display", component_tag(display));
                 }
@@ -250,7 +256,7 @@ impl Scoreboard {
             if !board.objectives.contains_key(objective) {
                 continue;
             }
-            let score = Score { value: s.i32("Score").unwrap_or(0), display_name: component_from(s.get("display")) };
+            let score = Score { value: s.i32("Score").unwrap_or(0), display_name: component_from(s.get("display")), locked: s.bool("Locked").unwrap_or(false) };
             board.scores.entry(entry.to_owned()).or_default().insert(objective.to_owned(), score);
         }
         for t in data.list("Teams").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
@@ -530,7 +536,7 @@ impl Server {
         if !b.objectives.contains_key(objective) {
             anyhow::bail!("Unregistered objective {objective}");
         }
-        let score = b.scores.entry(entry.to_owned()).or_default().entry(objective.to_owned()).or_insert(Score { value: 0, display_name: None });
+        let score = b.scores.entry(entry.to_owned()).or_default().entry(objective.to_owned()).or_insert(Score { value: 0, display_name: None, locked: true });
         if let Some(v) = value {
             score.value = v;
         }
@@ -540,6 +546,25 @@ impl Server {
         let packet = encode(&play::SetScore { owner: entry.to_owned(), objective: objective.to_owned(), value: score.value, display_name: score.display_name.clone() });
         self.send_to_board(board, &[packet]);
         Ok(())
+    }
+
+    /// Locks or unlocks an entry's score (`ScoreAccess.lock`/`unlock`), creating it with 0 if
+    /// it is missing (a new score is shown to viewers). Answers whether the lock changed.
+    pub fn set_score_locked(&mut self, board: u64, objective: &str, entry: &str, locked: bool) -> anyhow::Result<bool> {
+        let b = self.scoreboards.get_mut(board).ok_or_else(|| anyhow::anyhow!("unknown scoreboard {board}"))?;
+        if !b.objectives.contains_key(objective) {
+            anyhow::bail!("Unregistered objective {objective}");
+        }
+        let scores = b.scores.entry(entry.to_owned()).or_default();
+        let created = !scores.contains_key(objective);
+        let score = scores.entry(objective.to_owned()).or_insert(Score { value: 0, display_name: None, locked: true });
+        let changed = score.locked != locked;
+        score.locked = locked;
+        if created {
+            let packet = encode(&play::SetScore { owner: entry.to_owned(), objective: objective.to_owned(), value: score.value, display_name: score.display_name.clone() });
+            self.send_to_board(board, &[packet]);
+        }
+        Ok(changed)
     }
 
     /// Removes an entry's score from one objective, or from all.
@@ -687,7 +712,9 @@ mod tests {
         let mut board = Scoreboard::default();
         board.objectives.insert("kills".into(), Objective { name: "kills".into(), criteria: "dummy".into(), display_name: Component::text("Kills"), render_type: 0 });
         board.display.insert(1, "kills".into());
-        board.scores.entry("Alice".into()).or_default().insert("kills".into(), Score { value: 7, display_name: None });
+        board.scores.entry("Alice".into()).or_default().insert("kills".into(), Score { value: 7, display_name: None, locked: true });
+        board.objectives.insert("vote".into(), Objective { name: "vote".into(), criteria: "trigger".into(), display_name: Component::text("Vote"), render_type: 0 });
+        board.scores.entry("Alice".into()).or_default().insert("vote".into(), Score { value: 0, display_name: None, locked: false });
         let mut red = Team::new("red");
         red.color = Some(12);
         red.friendly_fire = false;
@@ -699,6 +726,7 @@ mod tests {
         assert_eq!(back.objectives["kills"].criteria, "dummy");
         assert_eq!(back.display.get(&1).map(String::as_str), Some("kills"));
         assert_eq!(back.scores["Alice"]["kills"].value, 7);
+        assert_eq!((back.scores["Alice"]["kills"].locked, back.scores["Alice"]["vote"].locked), (true, false), "trigger locks are kept");
         let red = &back.teams["red"];
         assert_eq!((red.color, red.friendly_fire, red.collision_rule, red.entries.contains("Alice")), (Some(12), false, 1, true));
         assert_eq!(nbt.compound("data").and_then(|d| d.compound("DisplaySlots")).and_then(|d| d.string("sidebar")), Some("kills"));

@@ -11,7 +11,7 @@ const COLORS: [&str; 16] = ["black", "dark_blue", "dark_green", "dark_aqua", "da
 const VISIBILITY: [&str; 4] = ["always", "never", "hideForOtherTeams", "hideForOwnTeam"];
 const COLLISION: [&str; 4] = ["always", "never", "pushOtherTeams", "pushOwnTeam"];
 
-/// Criteria `/scoreboard objectives add` accepts (statistics are kept but not counted).
+/// Criteria `/scoreboard objectives add` accepts, statistics included.
 fn valid_criteria(c: &str) -> bool {
     matches!(c, "dummy" | "trigger" | "deathCount" | "playerKillCount" | "totalKillCount" | "health" | "xp" | "level" | "food" | "air" | "armor")
         || c.strip_prefix("teamkill.").or_else(|| c.strip_prefix("killedByTeam.")).is_some_and(|color| COLORS.contains(&color))
@@ -193,6 +193,30 @@ impl Server {
                 };
                 self.feedback(source, message);
             }
+            ["players", "enable", target, objective] => {
+                let Some(display) = self.objective_name(objective) else { return self.fail_component(source, tr("arguments.objective.notFound", vec![text(objective)])) };
+                if self.criteria_of(objective) != "trigger" {
+                    return self.fail_component(source, tr("commands.scoreboard.players.enable.invalid", vec![]));
+                }
+                let holders = self.score_holders(source, target);
+                if holders.is_empty() {
+                    return self.fail_component(source, tr("argument.entity.notfound.entity", vec![]));
+                }
+                let mut enabled = 0;
+                for holder in &holders {
+                    if self.set_score_locked(MAIN, objective, holder, false).unwrap_or(false) {
+                        enabled += 1;
+                    }
+                }
+                if enabled == 0 {
+                    return self.fail_component(source, tr("commands.scoreboard.players.enable.failed", vec![]));
+                }
+                let message = match holders.as_slice() {
+                    [holder] => tr("commands.scoreboard.players.enable.success.single", vec![display, text(holder)]),
+                    _ => tr("commands.scoreboard.players.enable.success.multiple", vec![display, text(&holders.len().to_string())]),
+                };
+                self.feedback(source, message);
+            }
             ["players", "operation", targets, target_objective, operation, sources, source_objective] => {
                 for o in [target_objective, source_objective] {
                     if self.objective_name(o).is_none() {
@@ -232,8 +256,46 @@ impl Server {
                     self.feedback(source, tr("commands.scoreboard.players.operation.success.multiple", vec![display, text(&holders.len().to_string())]));
                 }
             }
-            _ => self.fail(source, "Usage: /scoreboard objectives (list|add|remove|setdisplay|modify) ... | /scoreboard players (list|get|set|add|remove|reset|operation) ..."),
+            _ => self.fail(source, "Usage: /scoreboard objectives (list|add|remove|setdisplay|modify) ... | /scoreboard players (list|get|set|add|remove|reset|enable|operation) ..."),
         }
+    }
+
+    /// An objective's criteria on the main board (empty if there is no such objective).
+    fn criteria_of(&self, objective: &str) -> String {
+        self.scoreboards.get(MAIN).and_then(|b| b.objectives.get(objective)).map(|o| o.criteria.clone()).unwrap_or_default()
+    }
+
+    /// `/trigger <objective> [add|set <value>]` (vanilla's `TriggerCommand`): players change
+    /// their own score of a trigger objective once it is enabled for them, which locks it
+    /// again.
+    pub(super) fn trigger_command(&mut self, source: &CommandSource, args: &[&str]) {
+        let CommandSource::Player(id) = source else { return self.fail_component(source, tr("permissions.requires.player", vec![])) };
+        let Some(name) = self.players.get(id).map(|p| p.name().to_owned()) else { return };
+        let (objective, op, amount) = match args {
+            [objective] => (*objective, "simple", 1),
+            [objective, op @ ("add" | "set"), value] => match value.parse::<i32>() {
+                Ok(n) => (*objective, *op, n),
+                Err(_) => return self.fail(source, format!("Invalid integer '{value}'")),
+            },
+            _ => return self.fail(source, "Usage: /trigger <objective> [add|set <value>]"),
+        };
+        let Some(display) = self.objective_name(objective) else { return self.fail_component(source, tr("arguments.objective.notFound", vec![text(objective)])) };
+        if self.criteria_of(objective) != "trigger" {
+            return self.fail_component(source, tr("commands.trigger.failed.invalid", vec![]));
+        }
+        let unlocked = self.scoreboards.get(MAIN).and_then(|b| b.scores.get(&name)).and_then(|s| s.get(objective)).is_some_and(|s| !s.locked);
+        if !unlocked {
+            return self.fail_component(source, tr("commands.trigger.failed.unprimed", vec![]));
+        }
+        let _ = self.set_score_locked(MAIN, objective, &name, true);
+        let old = self.score_of(&name, objective).unwrap_or(0);
+        let (new, message) = match op {
+            "set" => (amount, tr("commands.trigger.set.success", vec![display, text(&amount.to_string())])),
+            "add" => (old.wrapping_add(amount), tr("commands.trigger.add.success", vec![display, text(&amount.to_string())])),
+            _ => (old.wrapping_add(1), tr("commands.trigger.simple.success", vec![display])),
+        };
+        let _ = self.set_score(MAIN, objective, &name, Some(new), None);
+        self.feedback(source, message);
     }
 
     fn team_exists(&self, name: &str) -> bool {
@@ -382,9 +444,25 @@ pub(super) fn complete_scoreboard(server: &Server, _: &CommandSource, args: &[&s
         ["objectives", "setdisplay", _, _] => objectives(),
         ["objectives", "add", _, _] => words(&["dummy", "trigger", "deathCount", "playerKillCount", "totalKillCount", "health", "xp", "level", "food", "air", "armor"]),
         ["objectives", "modify", _, _] => words(&["displayname", "rendertype"]),
-        ["players", _] => words(&["list", "get", "set", "add", "remove", "reset", "operation"]),
+        ["players", _] => words(&["list", "get", "set", "add", "remove", "reset", "enable", "operation"]),
         ["players", _, _] => server.online_players().map(|p| p.name().to_owned()).chain(["@a", "@p", "@s", "*"].map(String::from)).collect(),
         ["players", "get" | "set" | "add" | "remove" | "reset" | "operation", _, _] => objectives(),
+        ["players", "enable", _, _] => server.scoreboards.get(MAIN).map(|b| b.objectives.values().filter(|o| o.criteria == "trigger").map(|o| o.name.clone()).collect()).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Tab completion for `/trigger`: the trigger objectives enabled for the player.
+pub(super) fn complete_trigger(server: &Server, source: &CommandSource, args: &[&str]) -> Vec<String> {
+    let CommandSource::Player(id) = source else { return Vec::new() };
+    let Some(name) = server.players.get(id).map(|p| p.name()) else { return Vec::new() };
+    match args {
+        [] | [_] => server
+            .scoreboards
+            .get(MAIN)
+            .map(|b| b.objectives.values().filter(|o| o.criteria == "trigger" && b.scores.get(name).and_then(|s| s.get(&o.name)).is_some_and(|s| !s.locked)).map(|o| o.name.clone()).collect())
+            .unwrap_or_default(),
+        [_, _] => vec!["add".to_owned(), "set".to_owned()],
         _ => Vec::new(),
     }
 }
