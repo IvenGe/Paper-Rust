@@ -398,6 +398,12 @@ pub enum EntityKind {
     /// A thrown eye of ender flying towards `target` (`EyeOfEnder`); after 80 ticks it drops
     /// as an item if `survive`, else it shatters.
     EyeOfEnder { target: Vec3, life: i32, survive: bool },
+    /// A thrown snowball, egg, ender pearl, bottle o' enchanting or potion: the item it shows,
+    /// who threw it, how fast it falls, and whether it has left its thrower.
+    Thrown { item: Slot, owner: Option<i32>, gravity: f64, left_owner: bool },
+    /// A lingering potion's cloud (`AreaEffectCloud`): the potion, who threw it, its radius,
+    /// how long it lasts after a wait, and who it affected until when.
+    Cloud { potion: String, owner: Option<i32>, radius: f32, duration: i32, wait: i32, uses: Vec<(i32, u64)> },
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }

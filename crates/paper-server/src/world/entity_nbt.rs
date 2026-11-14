@@ -55,7 +55,8 @@ pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
 /// such as a villager's workstation, are in).
 pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
     // Thrown eyes of ender live for four seconds and are not kept.
-    if e.removed || !e.is_alive() || matches!(e.kind, EntityKind::EyeOfEnder { .. }) {
+    // (Thrown items and potion clouds are short-lived too.)
+    if e.removed || !e.is_alive() || matches!(e.kind, EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. }) {
         return None;
     }
     let mut c = Compound::new()
@@ -153,7 +154,7 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 }
             }
         }
-        EntityKind::EyeOfEnder { .. } | EntityKind::Other => {}
+        EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Other => {}
     }
     Some(c)
 }

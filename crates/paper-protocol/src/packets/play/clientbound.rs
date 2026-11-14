@@ -2085,3 +2085,11 @@ packet! {
         pitch: f32,
     }
 }
+
+packet! {
+    /// Greys out an item cooldown group (`minecraft:ender_pearl`) for `duration` ticks.
+    Cooldown = play::clientbound::COOLDOWN {
+        group: String,
+        duration: VarInt,
+    }
+}

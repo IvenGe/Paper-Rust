@@ -302,6 +302,17 @@ impl Server {
                 self.worlds[world].reindex_entity(id);
                 return;
             }
+            EntityKind::Thrown { .. } => {
+                self.worlds[world].entities.insert(id, e);
+                self.tick_thrown(world, id);
+                self.worlds[world].reindex_entity(id);
+                return;
+            }
+            EntityKind::Cloud { .. } => {
+                self.worlds[world].entities.insert(id, e);
+                self.tick_cloud(world, id);
+                return;
+            }
             EntityKind::FallingBlock { state, time } => {
                 *time += 1;
                 let (state, time) = (*state, *time);
@@ -573,7 +584,7 @@ impl Server {
         let e = &self.worlds[world].entities[&id];
         let data = match &e.kind {
             EntityKind::FallingBlock { state, .. } => *state as i32,
-            EntityKind::Arrow { owner, .. } => owner.unwrap_or(0),
+            EntityKind::Arrow { owner, .. } | EntityKind::Thrown { owner, .. } => owner.unwrap_or(0),
             _ => 0,
         };
         let mut out = vec![Bytes::from(encode_packet(&play::AddEntity {
@@ -819,6 +830,19 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         EntityKind::Tnt { fuse } => {
             if let Some(i) = info.data_index("DATA_FUSE_ID") {
                 m = m.varint(i, *fuse);
+            }
+        }
+        EntityKind::Thrown { item, .. } => {
+            if let Some(i) = info.data_index("DATA_ITEM_STACK") {
+                m = m.item_stack(i, item);
+            }
+        }
+        EntityKind::Cloud { radius, wait, .. } => {
+            if let Some(i) = info.data_index("DATA_RADIUS") {
+                m = m.float(i, *radius);
+            }
+            if let Some(i) = info.data_index("DATA_WAITING") {
+                m = m.boolean(i, e.age < *wait);
             }
         }
         _ => {}

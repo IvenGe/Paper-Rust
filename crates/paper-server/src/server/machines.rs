@@ -423,6 +423,28 @@ impl Server {
                 self.broadcast_level_event(world, 1002, pos, 0, false);
                 Some(stack.with_count(stack.count - 1))
             }
+            // `ProjectileDispenseBehavior`: thrown items fly out of the front.
+            "minecraft:snowball" | "minecraft:egg" | "minecraft:blue_egg" | "minecraft:brown_egg" | "minecraft:experience_bottle" | "minecraft:splash_potion" | "minecraft:lingering_potion" => {
+                let Some((entity, _, _, gravity, _)) = super::throwing::throwable(name) else { return Some(stack) };
+                let (dx, dy, dz) = facing.offset();
+                // 0.7 in front of the centre and 0.1 higher; bottles and potions fly faster and
+                // straighter (`ProjectileItem.DispenseConfig`).
+                let origin = Vec3::new(pos.x as f64 + 0.5 + 0.7 * dx as f64, pos.y as f64 + 0.6 + 0.7 * dy as f64, pos.z as f64 + 0.5 + 0.7 * dz as f64);
+                let (power, uncertainty) = if matches!(name, "minecraft:experience_bottle" | "minecraft:splash_potion" | "minecraft:lingering_potion") { (1.375, 3.0) } else { (1.1, 6.0) };
+                self.spawn_thrown(world, entity, origin, Vec3::new(dx as f64, dy as f64, dz as f64), power, uncertainty, gravity, Slot(Some(stack.with_count(1))), None);
+                self.broadcast_level_event(world, 1002, pos, 0, false);
+                Some(stack.with_count(stack.count - 1))
+            }
+            // Spawn eggs hatch in front of the dispenser.
+            egg if egg.ends_with("_spawn_egg") && paper_data::entity_types::by_name(egg.trim_end_matches("_spawn_egg")).is_some() => {
+                let entity = egg.trim_end_matches("_spawn_egg").to_owned();
+                let at = Vec3::new(front.x as f64 + 0.5, front.y as f64, front.z as f64 + 0.5);
+                if self.spawn_mob(world, &entity, at, super::mobs::SpawnReason::Egg).is_none() {
+                    return Some(self.drop_from(world, pos, facing, stack));
+                }
+                self.broadcast_level_event(world, 1000, pos, 0, false);
+                Some(stack.with_count(stack.count - 1))
+            }
             "minecraft:tnt" if w.rules.bool("tnt_explodes") => {
                 self.prime_tnt(world, front, 80, None);
                 Some(stack.with_count(stack.count - 1))

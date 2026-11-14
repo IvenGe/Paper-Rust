@@ -98,6 +98,13 @@ What works:
   Animals follow players holding their food and breed when fed (babies grow up, faster when
   fed); cows and goats give milk, mooshrooms stew; sheep are sheared and dyed and eat grass
   to grow their wool back; chickens lay eggs; name tags name mobs.
+  Snowballs, eggs (one in eight hatches a chick), ender pearls (with their cooldown, fall
+  damage and the odd endermite), bottles o' enchanting and splash and lingering potions
+  (effects weaker further from the splash, water putting out fires and hurting endermen
+  and blazes, clouds that shrink as they are used) are thrown by players and dispensers.
+  Spawn eggs spawn their mob on the clicked block (named by an anvil name), a baby when
+  used on a grown mob of their kind, or set the mob of a spawner, and dispensers hatch them
+  too.
   Endermen turn on players who look them in the eyes (not through a carved pumpkin),
   teleport away from water, rain, daylight and arrows (and towards a far target), and pick
   up and put down blocks.
@@ -244,8 +251,8 @@ Not yet:
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Tripwires,
   crafters and observers of entities do not work yet, dispensers only know
-  the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
-  entities.
+  the common items (arrows, thrown items, spawn eggs, buckets, TNT, flint and steel), and
+  pistons do not push entities. Spawn eggs are not used on water (for fish and squid).
 * Plugin API: creating worlds, registry and tag lifecycle events,
   statistics, item attribute modifiers (`ItemMeta#getAttributeModifiers`), dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, the remaining special item metas (bundles,

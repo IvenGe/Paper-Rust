@@ -1099,6 +1099,11 @@ impl Server {
             self.throw_ender_eye(id, slot);
             return;
         }
+        // Snowballs, eggs, ender pearls, bottles o' enchanting and splash potions are thrown.
+        if super::throwing::throwable(name).is_some() {
+            self.throw_held(id, hand);
+            return;
+        }
         // A carrot or warped fungus on a stick boosts the pig or strider being ridden.
         if matches!(name, "minecraft:carrot_on_a_stick" | "minecraft:warped_fungus_on_a_stick") {
             self.boost_ridden(id, hand);

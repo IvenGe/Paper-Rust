@@ -425,7 +425,7 @@ impl Server {
         // Levers, buttons, doors, repeaters... react to the click instead of a block being placed.
         let used = self.within_reach(id, use_on.pos) && self.use_block(id, &use_on);
         // Hoes, shovels, axes and bone meal work on the block.
-        let used = used || self.within_reach(id, use_on.pos) && self.use_tool_on_block(id, &use_on);
+        let used = used || self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_tool_on_block(id, &use_on));
         let placed = used || self.try_place_block(id, &use_on);
         if !placed {
             // Undo whatever the client predicted at the clicked block and beside it.

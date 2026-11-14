@@ -37,6 +37,7 @@ mod animals;
 pub mod endermen;
 pub mod riding;
 pub mod taming;
+pub mod throwing;
 mod weather;
 mod farming;
 pub mod brewing;

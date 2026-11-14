@@ -47,7 +47,7 @@ fn effect_id(name: &str) -> i32 {
 }
 
 /// Undead mobs are healed by instant damage and hurt by instant health.
-fn is_undead(name: &str) -> bool {
+pub(super) fn is_undead(name: &str) -> bool {
     paper_data::entity_types::by_name(name).is_some_and(|info| paper_data::synced::tag("minecraft:entity_type", "minecraft:undead").is_some_and(|ids| ids.contains(&info.id)))
 }
 

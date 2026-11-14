@@ -33,6 +33,18 @@ pub fn food_tag(name: &str) -> Option<&'static str> {
     })
 }
 
+/// Whether a kind of mob has babies, and whether they grow up (`AgeableMob`; baby zombies and
+/// piglins stay small). Kinds whose offspring come from eggs or not at all (parrots, frogs,
+/// wandering traders) have none from spawn eggs either.
+pub fn has_babies(name: &str) -> Option<bool> {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    match name {
+        "zombie" | "husk" | "drowned" | "zombie_villager" | "zombified_piglin" | "piglin" | "zoglin" => Some(false),
+        "cow" | "mooshroom" | "sheep" | "pig" | "chicken" | "rabbit" | "goat" | "hoglin" | "strider" | "fox" | "bee" | "armadillo" | "camel" | "horse" | "donkey" | "mule" | "llama" | "trader_llama" | "skeleton_horse" | "zombie_horse" | "wolf" | "cat" | "ocelot" | "polar_bear" | "panda" | "turtle" | "axolotl" | "sniffer" | "villager" | "dolphin" | "squid" | "glow_squid" | "happy_ghast" => Some(true),
+        _ => None,
+    }
+}
+
 pub fn is_food(animal: &str, item: i32) -> bool {
     food_tag(animal).and_then(|t| paper_data::synced::tag("minecraft:item", t)).is_some_and(|ids| ids.contains(&item))
 }
@@ -111,6 +123,12 @@ impl Server {
         let (name, baby, sheared, age, in_love) = (e.info.name.clone(), mob.baby, mob.sheared, mob.age, mob.in_love);
         let merchant = mob.merchant.is_some();
         let name_tag = held.as_ref().is_some_and(|s| item_name(s) == "minecraft:name_tag");
+        // A spawn egg of the mob's own kind makes a baby beside it (`spawnOffspringFromSpawnEgg`).
+        if let Some(stack) = held.as_ref().filter(|s| item_name(s).strip_suffix("_spawn_egg") == Some(name.as_str())) {
+            if self.spawn_offspring_from_egg(id, world, target, hand, stack) {
+                return;
+            }
+        }
         // Villagers and wandering traders trade, pets are tamed and told to sit, and mounts
         // are saddled and ridden (name tags still name them all).
         if merchant && !name_tag && self.merchant_interact(id, world, target, hand, held.as_ref()) {
@@ -315,6 +333,32 @@ impl Server {
                 }
             }
         }
+    }
+
+    /// A baby of a mob from a spawn egg of its kind, if that kind has babies; sheep take the
+    /// colour of the mob. Returns whether one was born.
+    fn spawn_offspring_from_egg(&mut self, player: i32, world: usize, parent: i32, hand: i32, stack: &ItemStack) -> bool {
+        let Some(e) = self.worlds[world].entities.get(&parent) else { return false };
+        let (name, pos, variant) = (e.info.name.clone(), e.pos, e.mob().map_or(0, |m| m.variant));
+        let Some(grows_up) = has_babies(&name) else { return false };
+        let Some(baby) = self.spawn_mob(world, &name, pos, SpawnReason::Egg) else { return false };
+        if let Some(e) = self.worlds[world].entities.get_mut(&baby) {
+            if let Some(m) = e.mob_mut() {
+                m.baby = true;
+                if grows_up {
+                    m.age = -24000;
+                }
+                if name == "minecraft:sheep" {
+                    m.variant = variant;
+                }
+            }
+            if let Some(label) = super::workstations::custom_name_of(stack) {
+                e.custom_name = Some(label);
+            }
+            e.metadata_dirty = true;
+        }
+        self.use_held(player, hand);
+        true
     }
 
     /// Two animals in love that met for three seconds have a baby (`spawnChildFromBreeding`).

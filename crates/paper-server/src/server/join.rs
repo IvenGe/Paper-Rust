@@ -117,6 +117,7 @@ impl Server {
             crack_stage: -1,
             sleeping: None,
             vehicle: None,
+            cooldowns: Default::default(),
             last_hurt_mob: None,
             sleep_ticks: 0,
             enchantment_seed: rand::random(),

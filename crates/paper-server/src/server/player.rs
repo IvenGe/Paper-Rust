@@ -216,6 +216,8 @@ pub struct Player {
     pub sleeping: Option<paper_protocol::codec::BlockPos>,
     /// The entity the player rides (in the player's world).
     pub vehicle: Option<i32>,
+    /// Item cooldown groups (`minecraft:ender_pearl`) and the tick they end.
+    pub cooldowns: std::collections::HashMap<String, u64>,
     /// The mob the player last hit, and when (wolves join in).
     pub last_hurt_mob: Option<(i32, u64)>,
     pub sleep_ticks: i32,
