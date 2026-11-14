@@ -299,11 +299,14 @@ fn dispensers_dress_players_and_mobs_and_shoot_fire_charges() {
     fire_dispenser(&server, BlockPos::new(9, -60, 6), "east", vec![Slot::of(item("minecraft:saddle"), 1)]);
     wait_until("the pig saddled", TIMEOUT, || server.handle.run(move |s| s.worlds[0].entities[&pig].mob().unwrap().equipment[7].clone()).unwrap() == Slot::of(item("minecraft:saddle"), 1));
 
-    // A fire charge: a small fireball that sets fire where it lands.
+    // A fire charge: a small fireball that sets fire where it lands. It flies with a random
+    // spread, and fire with nothing below it goes out at once, so a row of stone at the foot
+    // of the wall gives the fire something to stand on wherever the charge strikes.
     for z in 8..=14 {
         for y in -60..=-57 {
             server.handle.run(move |s| s.set_block_and_update(0, BlockPos::new(15, y, z), blocks::default_state("minecraft:stone").unwrap())).unwrap();
         }
+        server.handle.run(move |s| s.set_block_and_update(0, BlockPos::new(14, -60, z), blocks::default_state("minecraft:stone").unwrap())).unwrap();
     }
     fire_dispenser(&server, BlockPos::new(10, -60, 11), "east", vec![Slot::of(item("minecraft:fire_charge"), 1)]);
     wait_until("fire", TIMEOUT, || {
