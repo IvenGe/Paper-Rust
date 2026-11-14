@@ -288,6 +288,11 @@ impl Decode for HashedSlot {
 }
 
 /// Light data attached to chunk and light-update packets.
+///
+/// 26.3 clients read one more byte at the start of the light data than the published
+/// protocol documentation lists. Without it they misread every chunk packet (failing with
+/// "ByteArray with size 16255 is bigger than allowed 2048" on the light arrays); it is
+/// written as 0, which is valid whether it is a flag, a count or an absent value.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LightData {
     pub sky_mask: Vec<u64>,
@@ -302,6 +307,7 @@ pub struct LightData {
 
 impl Encode for LightData {
     fn encode(&self, w: &mut Vec<u8>) {
+        w.put_u8(0);
         w.put_bitset(&self.sky_mask);
         w.put_bitset(&self.block_mask);
         w.put_bitset(&self.empty_sky_mask);
@@ -313,6 +319,7 @@ impl Encode for LightData {
 
 impl Decode for LightData {
     fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        r.u8()?;
         Ok(Self {
             sky_mask: r.bitset()?,
             block_mask: r.bitset()?,
