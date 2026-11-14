@@ -165,8 +165,27 @@ pub fn analog_output(level: &Level, state: u32, pos: BlockPos) -> u8 {
             }
         }
         n if n.ends_with("candle_cake") => 14,
+        "crafter" => crafter_signal(level.world, pos),
         _ => container_signal(level.world, pos, state),
     }
+}
+
+/// A crafter's comparator signal: its slots that hold something or are switched off
+/// (`CrafterBlockEntity.getRedstoneSignal`).
+fn crafter_signal(world: &World, pos: BlockPos) -> u8 {
+    let Some(entity) = world.chunks.get(&ChunkPos::of_block(pos.x, pos.z)).and_then(|c| c.block_entities.get(&(pos.y, (pos.z & 15) as u8, (pos.x & 15) as u8))) else { return 0 };
+    let mut used = [false; 9];
+    for item in entity.list("Items").unwrap_or(&[]) {
+        if let Some(slot) = item.as_compound().and_then(|c| c.i32("Slot")).filter(|s| (0..9).contains(s)) {
+            used[slot as usize] = true;
+        }
+    }
+    if let Some(paper_nbt::Tag::IntArray(off)) = entity.get("disabled_slots") {
+        for i in off.iter().filter(|i| (0..9).contains(*i)) {
+            used[*i as usize] = true;
+        }
+    }
+    used.iter().filter(|u| **u).count() as u8
 }
 
 /// HOOK for the inventory system: the comparator signal of a container block (chests,

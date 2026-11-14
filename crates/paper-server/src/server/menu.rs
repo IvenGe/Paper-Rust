@@ -63,6 +63,8 @@ pub enum MenuShape {
     Brewing,
     /// A villager's trading window: two payment slots and the result.
     Merchant,
+    /// A crafter: nine slots, the player's inventory, then the result it would make.
+    Crafter,
 }
 
 impl Layout {
@@ -126,6 +128,14 @@ impl Layout {
         let mut kinds = vec![SlotKind::Normal; 39];
         kinds[2] = SlotKind::Output;
         Layout { kinds, main: 3..30, hotbar: 30..39, offhand: None, container: 0..3, crafting: None, furnace: None, kind: MenuShape::Anvil }
+    }
+
+    /// `CrafterMenu`: the nine slots, the player's inventory, and last the result the crafter
+    /// would make (only shown: the window code keeps clicks off it).
+    pub fn crafter() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 46];
+        kinds[45] = SlotKind::CraftResult;
+        Layout { kinds, main: 9..36, hotbar: 36..45, offhand: None, container: 0..9, crafting: None, furnace: None, kind: MenuShape::Crafter }
     }
 
     /// `MerchantMenu`: payment A, payment B, result.
@@ -342,6 +352,13 @@ impl Menu<'_> {
                     self.move_into(&mut item, 9..36, false);
                 } else {
                     self.move_into(&mut item, 9..45, false);
+                }
+            }
+            MenuShape::Crafter => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, 9..45, true);
+                } else {
+                    self.move_into(&mut item, 0..9, false);
                 }
             }
             MenuShape::Container => {

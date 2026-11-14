@@ -204,6 +204,18 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
         Kind::Piston { .. } => s = set_bool(set_dir(s, "facing", ctx.looking.opposite()), "extended", false),
         Kind::Leaves => s = super::plants::leaves_placement(level, s, pos),
         Kind::Tripwire => s = super::tripwire::wire_placement(level, s, pos),
+        // `CrafterBlock.getStateForPlacement`: the front faces the player; looking up or down
+        // the top points the way the player faces.
+        Kind::Crafter => {
+            let front = ctx.looking.opposite();
+            let top = match front {
+                Dir::Down => ctx.facing.opposite(),
+                Dir::Up => ctx.facing,
+                _ => Dir::Up,
+            };
+            s = with(s, "orientation", &format!("{}_{}", front.name(), top.name()));
+            s = set_bool(s, "triggered", level.has_neighbor_signal(pos));
+        }
         Kind::TripwireHook => s = set_bool(set_bool(s, "attached", false), "powered", false),
         _ => {}
     }
@@ -223,5 +235,9 @@ pub fn placed(level: &mut Level, state: u32, pos: BlockPos) {
     }
     if super::kind(state) == Kind::TripwireHook {
         super::tripwire::hook_placed(level, state, pos);
+    }
+    // A crafter placed while powered crafts (`CrafterBlock.setPlacedBy`).
+    if super::kind(state) == Kind::Crafter && super::state::get_bool(state, "triggered") {
+        level.schedule_tick(pos, block_id(state), 4);
     }
 }

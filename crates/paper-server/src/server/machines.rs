@@ -81,6 +81,8 @@ struct Inventory {
     /// A brewing stand (`getSlotsForFace`: the ingredient from above, bottles and fuel from
     /// the sides, bottles and ingredient below).
     brewing: bool,
+    /// A crafter (filled evenly, never into switched-off slots).
+    crafter: bool,
 }
 
 fn is_fuel(server: &Server, stack: &ItemStack) -> bool {
@@ -107,11 +109,12 @@ impl Server {
                         positions.insert(0, other);
                     }
                 }
-                Some(Inventory { positions, furnace: false, brewing: false })
+                Some(Inventory { positions, furnace: false, brewing: false, crafter: false })
             }
-            ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false, brewing: false }),
-            ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true, brewing: false }),
-            ContainerBlock::BrewingStand => Some(Inventory { positions: vec![pos], furnace: false, brewing: true }),
+            ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false }),
+            ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true, brewing: false, crafter: false }),
+            ContainerBlock::BrewingStand => Some(Inventory { positions: vec![pos], furnace: false, brewing: true, crafter: false }),
+            ContainerBlock::Crafter => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: true }),
             ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => None,
         }
     }
@@ -185,11 +188,15 @@ impl Server {
     fn insert_into(&mut self, world: usize, inv: &Inventory, mut stack: ItemStack, face: Option<Face>) -> ItemStack {
         let mut items = self.inventory_items(world, inv);
         let mut changed = false;
+        let disabled = if inv.crafter { Some(self.crafter_disabled(world, inv.positions[0])) } else { None };
         for slot in Self::slots_for_face(inv, items.len(), face) {
             if stack.count <= 0 {
                 break;
             }
             if !self.can_place(inv, slot, &stack) {
+                continue;
+            }
+            if disabled.as_ref().is_some_and(|d| !super::crafter::accepts(&items, d, slot, &stack)) {
                 continue;
             }
             match items[slot].0.as_mut() {
@@ -215,6 +222,30 @@ impl Server {
             self.set_inventory_items(world, inv, &items);
         }
         stack
+    }
+
+    /// `CrafterBlock.dispenseItem`'s container part: puts a crafted stack into the container at
+    /// `target` through `face`, one at a time into another crafter (or when the stack is
+    /// bigger than the container takes). Returns what did not fit (all of it without one).
+    pub(super) fn crafter_output_into(&mut self, world: usize, target: BlockPos, stack: ItemStack, face: Face) -> ItemStack {
+        let Some(inv) = self.loaded_inventory_at(world, target) else { return stack };
+        let mut left = stack;
+        if inv.crafter || left.count > max_stack(&left).min(64) {
+            while left.count > 0 {
+                if self.insert_into(world, &inv, left.with_count(1), Some(face)).count > 0 {
+                    break;
+                }
+                left.count -= 1;
+            }
+            return left;
+        }
+        loop {
+            let before = left.count;
+            left = self.insert_into(world, &inv, left, Some(face));
+            if left.count == 0 || left.count == before {
+                return left;
+            }
+        }
     }
 
     // --- hoppers -------------------------------------------------------------------------------
@@ -250,7 +281,7 @@ impl Server {
         if blocks::property(state, "enabled") == Some("false") {
             return;
         }
-        let me = Inventory { positions: vec![pos], furnace: false, brewing: false };
+        let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false };
         self.unpack_loot(world, pos);
         let items = self.container_items(world, pos);
         let mut moved = false;
@@ -558,7 +589,7 @@ impl Server {
                     return Some(filled);
                 }
                 // The filled bucket goes into the dispenser, or out of it when full.
-                let me = Inventory { positions: vec![pos], furnace: false, brewing: false };
+                let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false };
                 let left = self.insert_into(world, &me, filled.clone(), None);
                 if left.count > 0 {
                     self.drop_from(world, pos, facing, filled);
@@ -605,7 +636,7 @@ impl Server {
         if stack.count == 1 {
             return filled;
         }
-        let me = Inventory { positions: vec![pos], furnace: false, brewing: false };
+        let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false };
         let left = self.insert_into(world, &me, filled.clone(), None);
         if left.count > 0 {
             self.drop_from(world, pos, facing, filled);

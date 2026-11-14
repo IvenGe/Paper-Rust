@@ -234,6 +234,7 @@ impl Server {
             }
             Serverbound::Interact(p) => self.handle_interact(id, p.entity_id.0, p.hand.0),
             Serverbound::SelectTrade(p) => self.handle_select_trade(id, p.item.0),
+            Serverbound::ContainerSlotStateChanged(p) => self.handle_slot_state_changed(id, p.slot_id.0, p.window_id.0, p.new_state),
             Serverbound::ChatAck(_)
             | Serverbound::ChatSessionUpdate(_)
             | Serverbound::ClientTickEnd

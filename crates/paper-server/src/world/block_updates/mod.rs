@@ -98,6 +98,10 @@ pub enum Effect {
     CheckPlate { pos: BlockPos },
     /// Pressed string checks whether anything is still in it.
     CheckTripwire { pos: BlockPos },
+    /// A crafter crafts (its scheduled tick ran).
+    Craft { pos: BlockPos },
+    /// A crafter's power changed (its window shows it).
+    CrafterPowered { pos: BlockPos },
 }
 
 /// Game rules and dimension properties block updates depend on.
@@ -149,6 +153,8 @@ pub struct BlockUpdateState {
     random: u64,
     /// Positions of moving piston blocks, in the order they started moving.
     pub(crate) moving_pistons: Vec<BlockPos>,
+    /// Crafters showing that they crafted, until the game time they stop.
+    pub(crate) crafting: Vec<(BlockPos, i64)>,
     /// Scheduled ticks are running (vanilla's `isHandlingTick`).
     pub(crate) handling_tick: bool,
 }
@@ -165,6 +171,7 @@ impl BlockUpdateState {
             effects: Vec::new(),
             random: (seed as u64) ^ 0x5DEE_CE66_D1CE_4E5B,
             moving_pistons: Vec::new(),
+            crafting: Vec::new(),
             handling_tick: false,
         }
     }
@@ -780,8 +787,25 @@ impl<'w> Level<'w> {
             Kind::PistonHead => piston::head_neighbor_changed(self, state, pos, source_block),
             Kind::Tnt => self.prime_if_powered(pos),
             Kind::Dispenser | Kind::Hopper => self.machine_power_changed(state, pos),
+            Kind::Crafter => self.crafter_power_changed(state, pos),
             _ => {}
         }
+    }
+
+    /// `CrafterBlock.neighborChanged`: a rising signal crafts four ticks later; losing it
+    /// ends the craft's glow.
+    fn crafter_power_changed(&mut self, state: u32, pos: BlockPos) {
+        let powered = self.has_neighbor_signal(pos);
+        let triggered = state::get_bool(state, "triggered");
+        if powered && !triggered {
+            self.schedule_tick(pos, state::block_id(state), 4);
+            self.set_block(pos, state::set_bool(state, "triggered", true), flags::CLIENTS);
+        } else if !powered && triggered {
+            self.set_block(pos, state::set_bool(state::set_bool(state, "triggered", false), "crafting", false), flags::CLIENTS);
+        } else {
+            return;
+        }
+        self.world.updates.effects.push(Effect::CrafterPowered { pos });
     }
 
     /// `updateShape`: the block's state given that its neighbour in `dir` is now
@@ -831,6 +855,7 @@ impl<'w> Level<'w> {
             Kind::Button { .. } => redstone::button_tick(self, state, pos),
             Kind::Fire => fire::tick(self, state, pos),
             Kind::Dispenser => self.world.updates.effects.push(Effect::Dispense { pos }),
+            Kind::Crafter => self.world.updates.effects.push(Effect::Craft { pos }),
             Kind::PressurePlate { .. } => self.world.updates.effects.push(Effect::CheckPlate { pos }),
             Kind::TripwireHook => tripwire::hook_tick(self, state, pos),
             Kind::Tripwire if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckTripwire { pos }),
@@ -937,9 +962,23 @@ pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
     if !world.updates.block_events.is_empty() {
         Level::new(world).run_block_events(ticking);
     }
-    // Block entities tick last: moving pistons.
+    // Block entities tick last: moving pistons, crafters done showing their craft.
     if !world.updates.moving_pistons.is_empty() {
         piston::tick_moving(&mut Level::new(world));
+    }
+    if !world.updates.crafting.is_empty() {
+        let crafting = std::mem::take(&mut world.updates.crafting);
+        let mut level = Level::new(world);
+        for (pos, until) in crafting {
+            if until > now {
+                level.world.updates.crafting.push((pos, until));
+                continue;
+            }
+            let state = level.state(pos);
+            if kind(state) == Kind::Crafter && state::get_bool(state, "crafting") {
+                level.set_block(pos, state::set_bool(state, "crafting", false), flags::ALL);
+            }
+        }
     }
     // Forget torch turn-offs older than the burnout window.
     while world.updates.torch_toggles.front().is_some_and(|(_, when)| now - *when > redstone::TORCH_TOGGLE_WINDOW) {

@@ -316,3 +316,97 @@ fn dispensers_dress_players_and_mobs_and_shoot_fire_charges() {
     });
     server.stop();
 }
+
+#[test]
+fn crafters_craft_on_a_pulse_fill_evenly_and_switch_slots_off() {
+    use paper_server::world::block_updates::{redstone, Level};
+    let server = server();
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let item_id = |n: &str| item(n);
+    // A crafter facing east with a chest in front of it.
+    let (crafter, chest) = (BlockPos::new(10, -60, 6), BlockPos::new(11, -60, 6));
+    let state = blocks::with_property(blocks::default_state("minecraft:crafter").unwrap(), "orientation", "east_up").unwrap();
+    set(&server, crafter, state);
+    set(&server, chest, blocks::default_state("minecraft:chest").unwrap());
+    let log = Slot::of(item_id("minecraft:oak_log"), 2);
+    server
+        .handle
+        .run(move |s| {
+            let mut slots = s.container_items(0, crafter);
+            slots[0] = log;
+            s.set_container_items(0, crafter, &slots);
+        })
+        .unwrap();
+
+    // Alice opens it: the result shows last, and she switches the middle slot off.
+    alice.clear_backlog();
+    alice.send(&use_on(crafter, 1, 1));
+    let open: play::OpenScreen = alice.find(TIMEOUT, |_: &play::OpenScreen| true).expect("the crafter's window");
+    assert_eq!(open.menu_type.0, paper_data::registries::id("minecraft:menu", "minecraft:crafter_3x3").unwrap() as i32);
+    let content: play::ContainerSetContent = alice.find(TIMEOUT, |c: &play::ContainerSetContent| c.window_id == open.window_id.0).expect("contents");
+    assert_eq!(content.slots.len(), 46);
+    assert_eq!(content.slots[45].0.as_ref().map(|s| (s.item, s.count)), Some((item_id("minecraft:oak_planks"), 4)));
+    alice.send(&play::ContainerSlotStateChanged { slot_id: VarInt(4), window_id: open.window_id, new_state: false });
+    alice.find(TIMEOUT, |d: &play::ContainerSetData| d.window_id == open.window_id.0 && d.property == 4 && d.value == 1).expect("slot 4 switched off");
+    assert_eq!(server.handle.run(move |s| s.crafter_disabled(0, crafter)).unwrap()[4], true);
+
+    // A hopper above fills the empty slots one item each, skipping the switched-off one.
+    let hopper = BlockPos::new(10, -59, 6);
+    set(&server, hopper, blocks::with_property(blocks::default_state("minecraft:hopper").unwrap(), "facing", "down").unwrap());
+    let sticks = Slot::of(item_id("minecraft:stick"), 4);
+    server
+        .handle
+        .run(move |s| {
+            let mut slots = s.container_items(0, hopper);
+            slots[0] = sticks;
+            s.set_container_items(0, hopper, &slots);
+        })
+        .unwrap();
+    wait_until("the sticks in", TIMEOUT, || server.handle.run(move |s| s.container_items(0, hopper)[0].is_empty()).unwrap());
+    let slots = server.handle.run(move |s| s.container_items(0, crafter)).unwrap();
+    let filled: Vec<usize> = (0..9).filter(|i| slots[*i].0.as_ref().is_some_and(|s| s.item == item_id("minecraft:stick"))).collect();
+    assert_eq!(filled, vec![1, 2, 3, 5]);
+    // Comparators count the used and switched-off slots.
+    let signal = server.handle.run(move |s| redstone::analog_output(&Level::new(&mut s.worlds[0]), state, crafter)).unwrap();
+    assert_eq!(signal, 6);
+    set(&server, hopper, blocks::AIR);
+    server
+        .handle
+        .run(move |s| {
+            let mut slots = s.container_items(0, crafter);
+            for i in [1, 2, 3, 5] {
+                slots[i] = Slot::EMPTY;
+            }
+            s.set_container_items(0, crafter, &slots);
+        })
+        .unwrap();
+
+    // A pulse crafts: the planks go into the chest and one log is used up.
+    set(&server, BlockPos::new(9, -60, 6), blocks::default_state("minecraft:redstone_block").unwrap());
+    wait_until("planks in the chest", TIMEOUT, || server.handle.run(move |s| s.container_items(0, chest).iter().any(|s| s.0.as_ref().is_some_and(|s| s.count == 4))).unwrap());
+    let left = server.handle.run(move |s| s.container_items(0, crafter)[0].clone()).unwrap();
+    assert_eq!(left, Slot::of(item_id("minecraft:oak_log"), 1));
+    assert_eq!(prop(state_at(&server, crafter), "triggered"), Some("true"));
+    wait_until("the craft's glow to end", TIMEOUT, || prop(state_at(&server, crafter), "crafting") == Some("false"));
+    // Without a chest the result flies out of the front.
+    set(&server, BlockPos::new(9, -60, 6), blocks::AIR);
+    set(&server, chest, blocks::AIR);
+    server.handle.run(|s| s.worlds[0].entities.values_mut().for_each(|e| e.removed = true)).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    set(&server, BlockPos::new(9, -60, 6), blocks::default_state("minecraft:redstone_block").unwrap());
+    wait_until("planks on the ground", TIMEOUT, || {
+        server
+            .handle
+            .run(|s| s.worlds[0].entities.values().any(|e| matches!(&e.kind, paper_server::world::entity::EntityKind::Item { stack: Slot(Some(st)), .. } if st.item == items::id("minecraft:oak_planks").unwrap() as i32 && st.count == 4)))
+            .unwrap()
+    });
+    assert!(server.handle.run(move |s| s.container_items(0, crafter)[0].is_empty()).unwrap());
+
+    // Placed by Alice, who looks south: its front faces her.
+    hold(&server, id, Slot::of(item_id("minecraft:crafter"), 1));
+    alice.send(&use_on(BlockPos::new(12, -61, 10), 1, 2));
+    wait_until("a placed crafter", TIMEOUT, || blocks::block_of_state(state_at(&server, BlockPos::new(12, -60, 10))).name == "minecraft:crafter");
+    assert_eq!(prop(state_at(&server, BlockPos::new(12, -60, 10)), "orientation"), Some("north_up"));
+    server.stop();
+}

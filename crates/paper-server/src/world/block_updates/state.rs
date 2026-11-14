@@ -329,6 +329,8 @@ pub enum Kind {
     Dispenser,
     /// Hoppers: locked while powered.
     Hopper,
+    /// Crafters: craft on a rising redstone signal.
+    Crafter,
     // Plants and blocks with random ticks (see `plants`).
     Crop,
     Farmland,
@@ -366,6 +368,7 @@ fn classify(name: &str) -> Kind {
         "daylight_detector" => return Kind::DaylightDetector,
         "tripwire_hook" => return Kind::TripwireHook,
         "tripwire" => return Kind::Tripwire,
+        "crafter" => return Kind::Crafter,
         "sculk_sensor" => return Kind::SculkSensor,
         "piston" => return Kind::Piston { sticky: false },
         "sticky_piston" => return Kind::Piston { sticky: true },

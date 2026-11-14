@@ -344,6 +344,7 @@ pub fn menu_value(server: &Server, id: i32, kind: Option<&MenuKind>) -> Value {
         Some(MenuKind::Anvil { .. }) => ("ANVIL".to_owned(), 3, InvRef::Crafting(id), None),
         Some(MenuKind::Merchant { .. }) => ("MERCHANT".to_owned(), 3, InvRef::Crafting(id), None),
         Some(MenuKind::Brewing { world, pos }) => ("BREWING".to_owned(), 5, InvRef::Block { world: *world, positions: vec![*pos] }, None),
+        Some(MenuKind::Crafter { world, pos }) => ("CRAFTER".to_owned(), 9, InvRef::Block { world: *world, positions: vec![*pos] }, None),
         Some(MenuKind::Furnace { world, pos, recipe_type }) => {
             let ty = match *recipe_type {
                 "minecraft:smoking" => "SMOKER",
@@ -441,6 +442,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 ContainerBlock::Hopper => ("HOPPER", 5),
                 ContainerBlock::Dispenser => (block_inventory_type(block), 9),
                 ContainerBlock::BrewingStand => ("BREWING", 5),
+                ContainerBlock::Crafter => ("CRAFTER", 9),
                 ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => return Ok(Value::Null),
             };
             let inv = InvRef::Block { world, positions };

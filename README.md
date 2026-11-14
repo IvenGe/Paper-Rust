@@ -86,7 +86,9 @@ What works:
   fires and TNT, use bone meal, shear sheep and full beehives, fill glass bottles with
   water or honey, make mud with water bottles, put armour, heads, elytra, saddles, horse
   and wolf armour and llama carpets on players and mobs in front, and hatch spawn eggs;
-  droppers move items into containers. Players fill glass bottles at water and full
+  droppers move items into containers. Crafters craft on each pulse (into the container in
+  front, or out of the front), hoppers fill them evenly, players switch their slots off,
+  and comparators count their used and switched-off slots. Players fill glass bottles at water and full
   beehives, take honeycomb with shears, and make mud with water bottles.
 * **Random ticks and farming**: vanilla's random ticks (`random_tick_speed` per section near
   players): crops grow by vanilla's farmland rules, farmland gets wet near water or dries
@@ -258,8 +260,8 @@ Not yet:
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
-  data). Crafters do not work yet, and dispensers do not place shulker boxes, build golems
-  or withers, or launch fireworks, wind charges, boats or minecarts. Spawn eggs are not
+  data). Dispensers do not place shulker boxes, build golems or withers, or launch
+  fireworks, wind charges, boats or minecarts. Spawn eggs are not
   used on water (for fish and squid), and buckets do not catch fish.
 * Plugin API: creating worlds, registry and tag lifecycle events,
   statistics, item attribute modifiers (`ItemMeta#getAttributeModifiers`), dialogs, signed chat messages, entity AI and passengers, the data component API

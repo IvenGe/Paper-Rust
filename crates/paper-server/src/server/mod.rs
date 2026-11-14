@@ -38,6 +38,7 @@ pub mod endermen;
 pub mod riding;
 pub mod taming;
 pub mod throwing;
+pub mod crafter;
 mod weather;
 mod farming;
 pub mod brewing;
