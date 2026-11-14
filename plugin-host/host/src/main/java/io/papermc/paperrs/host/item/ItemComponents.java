@@ -373,6 +373,60 @@ public final class ItemComponents {
     // --- enchantments ---------------------------------------------------------------------
 
     /** {@code minecraft:enchantments} or {@code minecraft:stored_enchantments}: enchantment network id to level. */
+    public static final String ATTRIBUTE_MODIFIERS = "minecraft:attribute_modifiers";
+
+    /**
+     * One entry of {@code minecraft:attribute_modifiers}: the attribute (registry id), the
+     * modifier (id, amount, operation id), the slot group id, and how the tooltip shows it (0
+     * default, 1 hidden, 2 the given text component).
+     */
+    public record AttributeEntry(int attribute, String id, double amount, int operation, int slot, int display, byte @org.jetbrains.annotations.Nullable [] text) {
+    }
+
+    /** The stack's own attribute modifiers, or null if it keeps its item's defaults. */
+    public java.util.@org.jetbrains.annotations.Nullable List<AttributeEntry> attributeModifiers() {
+        final byte[] bytes = this.raw(ATTRIBUTE_MODIFIERS);
+        if (bytes == null) {
+            return null;
+        }
+        final In in = new In(bytes);
+        final int count = in.varInt();
+        final java.util.List<AttributeEntry> out = new java.util.ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            final int attribute = in.varInt();
+            final String id = in.string();
+            final double amount = in.f64();
+            final int operation = in.varInt();
+            final int slot = in.varInt();
+            final int display = in.varInt();
+            final byte[] text = display == 2 ? in.nbtTag() : null;
+            out.add(new AttributeEntry(attribute, id, amount, operation, slot, display, text));
+        }
+        return out;
+    }
+
+    /** Sets the stack's attribute modifiers; null goes back to the item's defaults. */
+    public void setAttributeModifiers(final java.util.@org.jetbrains.annotations.Nullable List<AttributeEntry> entries) {
+        if (entries == null) {
+            this.unset(ATTRIBUTE_MODIFIERS);
+            return;
+        }
+        final Out out = new Out();
+        out.varInt(entries.size());
+        for (final AttributeEntry e : entries) {
+            out.varInt(e.attribute());
+            out.string(e.id());
+            out.f64(e.amount());
+            out.varInt(e.operation());
+            out.varInt(e.slot());
+            out.varInt(e.text() == null && e.display() == 2 ? 0 : e.display());
+            if (e.display() == 2 && e.text() != null) {
+                out.raw(e.text());
+            }
+        }
+        this.setRaw(ATTRIBUTE_MODIFIERS, out.toByteArray());
+    }
+
     public Map<Integer, Integer> enchantments(final String type) {
         final Map<Integer, Integer> out = new LinkedHashMap<>();
         final byte[] bytes = this.raw(type);
@@ -598,6 +652,47 @@ public final class ItemComponents {
             return new java.util.UUID(this.int64(), this.int64());
         }
 
+        public double f64() {
+            return Double.longBitsToDouble(this.int64());
+        }
+
+        /** One network NBT tag (type byte and payload, no name), as its bytes. */
+        public byte[] nbtTag() {
+            final int start = this.pos;
+            final int type = this.u8();
+            this.skipPayload(type);
+            return java.util.Arrays.copyOfRange(this.bytes, start, this.pos);
+        }
+
+        private void skipPayload(final int type) {
+            switch (type) {
+                case 0 -> { }
+                case 1 -> this.pos += 1;
+                case 2 -> this.pos += 2;
+                case 3, 5 -> this.pos += 4;
+                case 4, 6 -> this.pos += 8;
+                case 7 -> this.pos += this.int32();
+                case 8 -> this.pos += ((this.u8() << 8) | this.u8());
+                case 9 -> {
+                    final int inner = this.u8();
+                    final int n = this.int32();
+                    for (int i = 0; i < n; i++) {
+                        this.skipPayload(inner);
+                    }
+                }
+                case 10 -> {
+                    int inner;
+                    while ((inner = this.u8()) != 0) {
+                        this.pos += ((this.u8() << 8) | this.u8());
+                        this.skipPayload(inner);
+                    }
+                }
+                case 11 -> this.pos += 4 * this.int32();
+                case 12 -> this.pos += 8 * this.int32();
+                default -> throw new IllegalStateException("bad NBT tag type " + type);
+            }
+        }
+
         public boolean atEnd() {
             return this.pos >= this.bytes.length;
         }
@@ -646,6 +741,14 @@ public final class ItemComponents {
         public void uuid(final java.util.UUID id) {
             this.int64(id.getMostSignificantBits());
             this.int64(id.getLeastSignificantBits());
+        }
+
+        public void f64(final double v) {
+            this.int64(Double.doubleToLongBits(v));
+        }
+
+        public void raw(final byte[] b) {
+            this.write(b, 0, b.length);
         }
 
         public void string(final String s) {

@@ -105,6 +105,119 @@ public final class HostItemMeta implements HostProxies.Backed {
         return create(material, this.toComponents());
     }
 
+    // --- attribute modifiers (the minecraft:attribute_modifiers component) ------------------------
+
+    /** Slot group names by network id (`EquipmentSlotGroup`). */
+    private static final String[] SLOT_GROUPS = {"any", "mainhand", "offhand", "hand", "feet", "legs", "chest", "head", "armor", "body", "saddle"};
+
+    private static java.util.List<String> attributeIds() {
+        return io.papermc.paperrs.host.data.HostData.get().registry("minecraft:attribute");
+    }
+
+    private com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> modifiers() {
+        final com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> out = com.google.common.collect.LinkedHashMultimap.create();
+        final java.util.List<ItemComponents.AttributeEntry> entries = this.components.attributeModifiers();
+        if (entries == null) {
+            return out;
+        }
+        final java.util.List<String> ids = attributeIds();
+        for (final ItemComponents.AttributeEntry e : entries) {
+            if (e.attribute() < 0 || e.attribute() >= ids.size() || e.slot() < 0 || e.slot() >= SLOT_GROUPS.length) {
+                continue;
+            }
+            final org.bukkit.attribute.Attribute attribute = org.bukkit.Registry.ATTRIBUTE.get(java.util.Objects.requireNonNull(org.bukkit.NamespacedKey.fromString(ids.get(e.attribute()))));
+            final org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(e.id());
+            if (attribute == null || key == null) {
+                continue;
+            }
+            final org.bukkit.attribute.AttributeModifier.Operation operation = org.bukkit.attribute.AttributeModifier.Operation.values()[Math.max(0, Math.min(2, e.operation()))];
+            out.put(attribute, new org.bukkit.attribute.AttributeModifier(key, e.amount(), operation, java.util.Objects.requireNonNull(org.bukkit.inventory.EquipmentSlotGroup.getByName(SLOT_GROUPS[e.slot()]))));
+        }
+        return out;
+    }
+
+    private void storeModifiers(final com.google.common.collect.@Nullable Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> modifiers) {
+        if (modifiers == null || modifiers.isEmpty()) {
+            this.components.setAttributeModifiers(null);
+            return;
+        }
+        final java.util.List<String> ids = attributeIds();
+        final java.util.List<ItemComponents.AttributeEntry> entries = new java.util.ArrayList<>();
+        for (final java.util.Map.Entry<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> e : modifiers.entries()) {
+            final int attribute = ids.indexOf(e.getKey().getKey().toString());
+            final int slot = java.util.Arrays.asList(SLOT_GROUPS).indexOf(e.getValue().getSlotGroup().toString());
+            if (attribute < 0) {
+                throw new IllegalArgumentException("Unknown attribute " + e.getKey().getKey());
+            }
+            entries.add(new ItemComponents.AttributeEntry(attribute, e.getValue().getKey().toString(), e.getValue().getAmount(), e.getValue().getOperation().ordinal(), Math.max(0, slot), 0, null));
+        }
+        this.components.setAttributeModifiers(entries);
+    }
+
+    public boolean hasAttributeModifiers() {
+        final java.util.List<ItemComponents.AttributeEntry> entries = this.components.attributeModifiers();
+        return entries != null && !entries.isEmpty();
+    }
+
+    public com.google.common.collect.@Nullable Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> getAttributeModifiers() {
+        return this.hasAttributeModifiers() ? com.google.common.collect.ImmutableMultimap.copyOf(this.modifiers()) : null;
+    }
+
+    public com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> getAttributeModifiers(final org.bukkit.inventory.EquipmentSlot slot) {
+        final com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> out = com.google.common.collect.LinkedHashMultimap.create();
+        this.modifiers().entries().stream().filter(e -> e.getValue().getSlotGroup().test(slot)).forEach(e -> out.put(e.getKey(), e.getValue()));
+        return com.google.common.collect.ImmutableMultimap.copyOf(out);
+    }
+
+    public java.util.@Nullable Collection<org.bukkit.attribute.AttributeModifier> getAttributeModifiers(final org.bukkit.attribute.Attribute attribute) {
+        return this.hasAttributeModifiers() ? com.google.common.collect.ImmutableList.copyOf(this.modifiers().get(attribute)) : null;
+    }
+
+    public boolean addAttributeModifier(final org.bukkit.attribute.Attribute attribute, final org.bukkit.attribute.AttributeModifier modifier) {
+        java.util.Objects.requireNonNull(attribute, "Attribute cannot be null");
+        java.util.Objects.requireNonNull(modifier, "AttributeModifier cannot be null");
+        final com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> all = this.modifiers();
+        for (final org.bukkit.attribute.AttributeModifier existing : all.get(attribute)) {
+            if (existing.getKey().equals(modifier.getKey())) {
+                throw new IllegalArgumentException("Cannot register AttributeModifier. Modifier is already applied! " + modifier);
+            }
+        }
+        all.put(attribute, modifier);
+        this.storeModifiers(all);
+        return true;
+    }
+
+    public void setAttributeModifiers(final com.google.common.collect.@Nullable Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> modifiers) {
+        this.storeModifiers(modifiers);
+    }
+
+    public boolean removeAttributeModifier(final org.bukkit.attribute.Attribute attribute) {
+        final com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> all = this.modifiers();
+        final boolean removed = !all.removeAll(attribute).isEmpty();
+        if (removed) {
+            this.storeModifiers(all);
+        }
+        return removed;
+    }
+
+    public boolean removeAttributeModifier(final org.bukkit.inventory.EquipmentSlot slot) {
+        final com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> all = this.modifiers();
+        final boolean removed = all.entries().removeIf(e -> e.getValue().getSlotGroup().test(slot));
+        if (removed) {
+            this.storeModifiers(all);
+        }
+        return removed;
+    }
+
+    public boolean removeAttributeModifier(final org.bukkit.attribute.Attribute attribute, final org.bukkit.attribute.AttributeModifier modifier) {
+        final com.google.common.collect.Multimap<org.bukkit.attribute.Attribute, org.bukkit.attribute.AttributeModifier> all = this.modifiers();
+        final boolean removed = all.get(attribute).removeIf(m -> m.getKey().equals(modifier.getKey()));
+        if (removed) {
+            this.storeModifiers(all);
+        }
+        return removed;
+    }
+
     // --- persistent data ------------------------------------------------------------------
 
     static HostPersistentDataContainer pdcOf(final ItemComponents components) {
@@ -490,10 +603,6 @@ public final class HostItemMeta implements HostProxies.Backed {
 
     public boolean hasCustomModelDataComponent() {
         return this.components.has(ItemComponents.CUSTOM_MODEL_DATA);
-    }
-
-    public boolean hasAttributeModifiers() {
-        return this.components.has("minecraft:attribute_modifiers");
     }
 
     // --- Damageable and Repairable ------------------------------------------------------------

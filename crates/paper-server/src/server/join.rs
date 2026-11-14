@@ -118,6 +118,7 @@ impl Server {
             sleeping: None,
             vehicle: None,
             cooldowns: Default::default(),
+            pdc: None,
             last_hurt_mob: None,
             sleep_ticks: 0,
             enchantment_seed: rand::random(),
@@ -136,6 +137,7 @@ impl Server {
             player.held_slot = saved.held_slot;
             player.inventory = saved.inventory;
             player.ender_items = saved.ender_items;
+            player.pdc = saved.pdc;
             player.xp_level = saved.xp_level;
             player.xp_progress = saved.xp_progress;
             player.xp_total = saved.xp_total;

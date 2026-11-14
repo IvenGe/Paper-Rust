@@ -117,9 +117,33 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "villagers" -> this.villagers((Player) sender);
                 case "merchant" -> this.merchant((Player) sender);
                 case "career" -> this.career((Player) sender);
+                case "riding" -> this.riding((Player) sender);
+                case "pdc" -> {
+                    final Player player = (Player) sender;
+                    final org.bukkit.NamespacedKey key = new org.bukkit.NamespacedKey(this.plugin, "score");
+                    player.getPersistentDataContainer().set(key, org.bukkit.persistence.PersistentDataType.INTEGER, 42);
+                    final org.bukkit.entity.Pig pig = player.getWorld().spawn(player.getLocation().add(2, 0, 0), org.bukkit.entity.Pig.class);
+                    pig.setCustomName("Kept");
+                    pig.getPersistentDataContainer().set(key, org.bukkit.persistence.PersistentDataType.STRING, "oink");
+                    sender.sendMessage("pdc: " + player.getPersistentDataContainer().get(key, org.bukkit.persistence.PersistentDataType.INTEGER) + " "
+                        + pig.getPersistentDataContainer().get(key, org.bukkit.persistence.PersistentDataType.STRING));
+                }
+                case "attrmods" -> {
+                    final ItemStack sword = new ItemStack(Material.DIAMOND_SWORD);
+                    final org.bukkit.inventory.meta.ItemMeta meta = sword.getItemMeta();
+                    final org.bukkit.NamespacedKey key = new org.bukkit.NamespacedKey(this.plugin, "bonus");
+                    meta.addAttributeModifier(org.bukkit.attribute.Attribute.ATTACK_DAMAGE,
+                        new org.bukkit.attribute.AttributeModifier(key, 10.0, org.bukkit.attribute.AttributeModifier.Operation.ADD_NUMBER, org.bukkit.inventory.EquipmentSlotGroup.MAINHAND));
+                    sword.setItemMeta(meta);
+                    final org.bukkit.inventory.meta.ItemMeta back = sword.getItemMeta();
+                    final org.bukkit.attribute.AttributeModifier modifier = back.getAttributeModifiers(org.bukkit.attribute.Attribute.ATTACK_DAMAGE).iterator().next();
+                    ((Player) sender).getInventory().setItemInMainHand(sword);
+                    sender.sendMessage("attrmods: " + back.hasAttributeModifiers() + " " + modifier.getKey().getKey() + " " + modifier.getAmount() + " " + modifier.getSlotGroup() + " "
+                        + back.getAttributeModifiers(org.bukkit.inventory.EquipmentSlot.HAND).size() + " " + back.getAttributeModifiers(org.bukkit.inventory.EquipmentSlot.HEAD).size());
+                }
                 case "unsupported" -> {
                     try {
-                        ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
+                        ((Player) sender).getWorld().dropItem(((Player) sender).getLocation(), new ItemStack(Material.STICK)).setOwner(java.util.UUID.randomUUID());
                         sender.sendMessage("unsupported: no exception");
                     } catch (UnsupportedOperationException e) {
                         sender.sendMessage("unsupported: " + e.getMessage());
@@ -198,6 +222,31 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     /** A villager next to a lectern takes the job (VillagerCareerChangeEvent). */
+    // --- riding and pets ------------------------------------------------------------------------
+
+    private void riding(final Player player) {
+        final Location at = player.getLocation().add(4, 0, 0);
+        final org.bukkit.entity.Pig pig = player.getWorld().spawn(at, org.bukkit.entity.Pig.class);
+        final org.bukkit.entity.Zombie zombie = player.getWorld().spawn(at, org.bukkit.entity.Zombie.class);
+        final boolean added = pig.addPassenger(zombie);
+        final org.bukkit.entity.Entity vehicle = zombie.getVehicle();
+        player.sendMessage("riding: added " + added + " vehicle " + (vehicle == null ? "none" : vehicle.getType().getKey().getKey()) + " passengers " + pig.getPassengers().size());
+        final boolean ejected = pig.eject();
+        player.sendMessage("riding: ejected " + ejected + " passengers " + pig.getPassengers().size() + " inside " + zombie.isInsideVehicle());
+        zombie.remove();
+        pig.remove();
+        final org.bukkit.entity.Wolf wolf = player.getWorld().spawn(at, org.bukkit.entity.Wolf.class);
+        wolf.setOwner(player);
+        wolf.setSitting(true);
+        player.sendMessage("pets: tamed " + wolf.isTamed() + " owner " + (wolf.getOwner() == null ? "none" : wolf.getOwner().getName()) + " sitting " + wolf.isSitting());
+        wolf.remove();
+        final org.bukkit.entity.Horse horse = player.getWorld().spawn(at, org.bukkit.entity.Horse.class);
+        horse.setDomestication(42);
+        horse.setJumpStrength(0.9);
+        player.sendMessage("horse: domestication " + horse.getDomestication() + "/" + horse.getMaxDomestication() + " jump " + Math.round(horse.getJumpStrength() * 10));
+        horse.remove();
+    }
+
     private void career(final Player player) {
         final Location at = player.getLocation().getBlock().getLocation().add(3, 0, 0);
         at.getBlock().setType(Material.LECTERN);

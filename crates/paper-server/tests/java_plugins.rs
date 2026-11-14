@@ -407,6 +407,28 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest career");
     expect_line(&mut alice, "career: placed");
     expect_line(&mut alice, "career librarian EMPLOYED for Hired");
+
+    // Passengers, pets and horses.
+    alice.command("apitest riding");
+    expect_line(&mut alice, "riding: added true vehicle pig passengers 1");
+    expect_line(&mut alice, "riding: ejected true passengers 0 inside false");
+    expect_line(&mut alice, "pets: tamed true owner Alice sitting true");
+    expect_line(&mut alice, "horse: domestication 42/100 jump 9");
+
+    // Persistent data is kept by the server with the player and the entity.
+    alice.command("apitest pdc");
+    expect_line(&mut alice, "pdc: 42 oink");
+    let (player_pdc, pig_pdc) = server
+        .handle
+        .run(|s| {
+            let player = s.players.values().find(|p| p.name() == "Alice").and_then(|p| p.pdc.clone());
+            let pig = s.worlds[0].entities.values().find(|e| e.custom_name.as_ref().is_some_and(|n| n.to_plain() == "Kept")).and_then(|e| e.pdc.clone());
+            (player, pig)
+        })
+        .unwrap();
+    let score = |c: &Option<paper_nbt::Compound>| c.as_ref().and_then(|c| c.iter().find(|(k, _)| k.ends_with(":score")).map(|(_, v)| v.clone()));
+    assert_eq!(score(&player_pdc), Some(paper_nbt::Tag::Int(42)));
+    assert_eq!(score(&pig_pdc), Some(paper_nbt::Tag::String("oink".into())));
     server
         .handle
         .run(|s| {
@@ -418,7 +440,10 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
 
     // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
     alice.command("apitest unsupported");
-    expect_line(&mut alice, "unsupported: ItemMeta#getAttributeModifiers is not supported by Paper-RS yet");
+    expect_line(&mut alice, "unsupported: Item#setOwner is not supported by Paper-RS yet");
+    // Attribute modifiers on an item's meta, worn by the server's attribute maps too.
+    alice.command("apitest attrmods");
+    expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
 
     // --- a custom inventory: open, click (cancelled by the plugin), closed by the plugin ----
     alice.clear_backlog();

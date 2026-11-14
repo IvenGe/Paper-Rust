@@ -37,6 +37,8 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
         "height" => e.info.height as f64,
         "eye_height" => e.info.eye_height as f64,
         "living" => matches!(e.kind, EntityKind::Mob(_)),
+        "passengers" => Value::List(e.passengers.iter().map(|p| shallow_ref(server, *p)).collect()),
+        "vehicle" => e.vehicle.map(|v| shallow_ref(server, v)),
     };
     match &e.kind {
         EntityKind::Mob(m) => {
@@ -47,6 +49,11 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("air", m.living.air);
             out.set("baby", m.baby);
             out.set("persistent", m.persistent);
+            out.set("tamed", m.tamed);
+            out.set("owner", m.owner.map(|o| o.to_string()));
+            out.set("sitting", m.sitting);
+            out.set("temper", m.temper);
+            out.set("jump_strength", m.attributes.value("jump_strength"));
             out.set("no_damage_ticks", m.living.invulnerable_time);
             out.set("equipment", Value::List(m.equipment.iter().map(item_value).collect()));
             let target = m.brain.target.map(|t| match server.players.get(&t) {
@@ -105,6 +112,15 @@ fn world_arg(server: &Server, args: &Value) -> Result<usize> {
 
 fn vec_arg(args: &Value, x: &str, y: &str, z: &str) -> Option<Vec3> {
     Some(Vec3::new(args.f64(x)?, args.f64(y)?, args.f64(z)?))
+}
+
+/// `{player: uuid}` or `{entity: id}` without the entity's state (riders and vehicles name
+/// each other).
+pub fn shallow_ref(server: &Server, id: i32) -> Value {
+    match server.players.get(&id) {
+        Some(p) => bmap! { "player" => p.uuid().to_string() },
+        None => bmap! { "entity" => id as i64 },
+    }
 }
 
 /// A player or entity named by `{player: uuid}` or `{entity: id}`.
@@ -272,6 +288,75 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             };
             Ok(Value::Bool(server.hurt_entity(world, id, damage, amount)))
         }
+        // A player's or entity's persistent data container, as network NBT.
+        "entity.pdc" => {
+            let Some(id) = target_id(server, args.get("target")) else { return Ok(Value::Null) };
+            let pdc = match server.players.get(&id) {
+                Some(p) => p.pdc.clone(),
+                None => world_of(server, id).and_then(|w| server.worlds[w].entities.get(&id)).and_then(|e| e.pdc.clone()),
+            };
+            Ok(match pdc {
+                Some(c) => {
+                    let mut out = Vec::new();
+                    paper_nbt::write_network_compound(&mut out, &c);
+                    Value::Bytes(out)
+                }
+                None => Value::Null,
+            })
+        }
+        "entity.set_pdc" => {
+            let Some(id) = target_id(server, args.get("target")) else { return Ok(Value::Bool(false)) };
+            let pdc = match args.get("data") {
+                Value::Bytes(b) if !b.is_empty() => match paper_nbt::read_network(&mut b.as_slice(), 2 * 1024 * 1024) {
+                    Ok(Some(paper_nbt::Tag::Compound(c))) => Some(c),
+                    _ => return Ok(Value::Bool(false)),
+                },
+                _ => None,
+            };
+            if let Some(p) = server.players.get_mut(&id) {
+                p.pdc = pdc;
+                return Ok(Value::Bool(true));
+            }
+            let Some(world) = world_of(server, id) else { return Ok(Value::Bool(false)) };
+            if let Some(e) = server.worlds[world].entities.get_mut(&id) {
+                e.pdc = pdc;
+            }
+            Ok(Value::Bool(true))
+        }
+        // `Entity.addPassenger`, `removePassenger`, `eject`, `leaveVehicle`.
+        "entity.add_passenger" => {
+            let (world, id) = entity_arg(server, args)?;
+            let Some(rider) = target_id(server, args.get("passenger")) else { return Ok(Value::Bool(false)) };
+            if server.vehicle_of(rider).is_some_and(|(_, v)| v == id) {
+                return Ok(Value::Bool(false));
+            }
+            Ok(Value::Bool(server.mount(world, rider, id)))
+        }
+        "entity.remove_passenger" => {
+            let (world, id) = entity_arg(server, args)?;
+            let Some(rider) = target_id(server, args.get("passenger")) else { return Ok(Value::Bool(false)) };
+            if !server.passengers_of(world, id).contains(&rider) {
+                return Ok(Value::Bool(false));
+            }
+            server.dismount(rider);
+            Ok(Value::Bool(true))
+        }
+        "entity.eject" => {
+            let (world, id) = entity_arg(server, args)?;
+            let riders = server.passengers_of(world, id);
+            for r in &riders {
+                server.dismount(*r);
+            }
+            Ok(Value::Bool(!riders.is_empty()))
+        }
+        "entity.leave_vehicle" => {
+            let Some(rider) = target_id(server, args.get("rider")) else { return Ok(Value::Bool(false)) };
+            if server.vehicle_of(rider).is_none() {
+                return Ok(Value::Bool(false));
+            }
+            server.dismount(rider);
+            Ok(Value::Bool(true))
+        }
         "entity.set" => {
             let (world, id) = entity_arg(server, args)?;
             let target = match args.get("target") {
@@ -279,6 +364,9 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 v => Some(target_id(server, v)),
             };
             let clear_target = args.bool("clear_target") == Some(true);
+            if let Some(sitting) = args.bool("sitting") {
+                server.set_sitting(world, id, sitting);
+            }
             let e = server.worlds[world].entities.get_mut(&id).unwrap();
             if args.bool("clear_custom_name") == Some(true) {
                 e.custom_name = None;
@@ -294,6 +382,27 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             if let Some(gravity) = args.bool("gravity") {
                 e.no_gravity = !gravity;
+                e.metadata_dirty = true;
+            }
+            let mut pet_changed = false;
+            if let Some(m) = e.mob_mut() {
+                if let Some(tamed) = args.bool("tamed") {
+                    m.tamed = tamed;
+                }
+                match args.get("owner") {
+                    Value::Str(o) if o.is_empty() => m.owner = None,
+                    Value::Str(o) => m.owner = o.parse().ok(),
+                    _ => {}
+                }
+                if let Some(temper) = args.i32("temper") {
+                    m.temper = temper.clamp(0, 100);
+                }
+                if let Some(jump) = args.f64("jump_strength") {
+                    m.attributes.set_base("jump_strength", jump);
+                }
+                pet_changed = args.bool("tamed").is_some() || matches!(args.get("owner"), Value::Str(_));
+            }
+            if pet_changed {
                 e.metadata_dirty = true;
             }
             if let Some(v) = vec_arg(args, "vx", "vy", "vz") {

@@ -718,13 +718,25 @@ public final class HostEntity implements HostProxies.Backed {
         return this.state().get("owner") instanceof String uuid && !uuid.isEmpty() ? UUID.fromString(uuid) : null;
     }
 
-    public org.bukkit.entity.@Nullable AnimalTamer getOwner() {
+    /**
+     * {@code Tameable#getOwner} (an {@code AnimalTamer}); {@code Item#getOwner} (a UUID) shares
+     * the name, and items have no owner here.
+     */
+    public @Nullable Object getOwner() {
+        if (this.type == EntityType.ITEM) {
+            return null;
+        }
         final UUID owner = this.getOwnerUniqueId();
         if (owner == null) {
             return null;
         }
         final org.bukkit.entity.Player online = this.server.getPlayer(owner);
         return online != null ? online : this.server.getOfflinePlayer(owner);
+    }
+
+    /** {@code Item#setOwner}: who may pick the item up is not modelled. */
+    public void setOwner(final @Nullable UUID owner) {
+        throw io.papermc.paperrs.host.Unsupported.method("Item#setOwner");
     }
 
     public void setOwner(final org.bukkit.entity.@Nullable AnimalTamer tamer) {

@@ -211,8 +211,11 @@ same name, which stay reachable as `minecraft:<name>`.
 | `world.entities` | `world`, `types`, `min`/`max` (`{x, y, z}`) (answers entity states) |
 | `world.spawn_entity` | `world`, `type`, `x`, `y`, `z`, `yaw`, `pitch`, `reason` (answers the state) |
 | `world.drop_item` | `world`, `x`, `y`, `z`, `item`, `natural` (answers the state) |
-| `entity.state` | `id` (answers `id`, `uuid`, `type`, `world`, position, rotation, velocity, `custom_name`, `living`, health, `equipment`, `target`, `item`, `fuse`, ... or null once gone) |
-| `entity.set` | `id` and any of `custom_name`, `clear_custom_name`, `custom_name_visible`, `gravity`, `vx`/`vy`/`vz`, `health`, `max_health`, `fire_ticks`, `air`, `no_damage_ticks`, `persistent`, `baby`, `equipment` (`[[slot 0-5, item]]`), `target`, `clear_target`, `item`, `pickup_delay`, `damage`, `pickup`, `critical`, `experience`, `fuse` (answers the state) |
+| `entity.state` | `id` (answers `id`, `uuid`, `type`, `world`, position, rotation, velocity, `custom_name`, `living`, health, `equipment`, `target`, `item`, `fuse`, `passengers`, `vehicle`, `tamed`, `owner`, `sitting`, `temper`, `jump_strength`, ... or null once gone) |
+| `entity.set` | `id` and any of `custom_name`, `clear_custom_name`, `custom_name_visible`, `gravity`, `vx`/`vy`/`vz`, `health`, `max_health`, `fire_ticks`, `air`, `no_damage_ticks`, `persistent`, `baby`, `equipment` (`[[slot 0-5, item]]`), `target`, `clear_target`, `item`, `pickup_delay`, `damage`, `pickup`, `critical`, `experience`, `fuse`, `tamed`, `owner` (a UUID, empty for none), `sitting`, `temper`, `jump_strength` (answers the state) |
+| `entity.add_passenger` / `entity.remove_passenger` / `entity.eject` | `id`, `passenger` (`{player}`/`{entity}`) / `id`, `passenger` / `id` (answers whether anything changed) |
+| `entity.leave_vehicle` | `rider` (`{player}`/`{entity}`) (answers whether it was riding) |
+| `entity.pdc` / `entity.set_pdc` | `target` (`{player}`/`{entity}`) / `target`, `data` (network NBT bytes, empty to clear): a persistent data container, saved with the player or entity as `BukkitValues` |
 | `entity.teleport` / `entity.remove` | `id`, `world`, `x`, `y`, `z`, `yaw`, `pitch` / `id` |
 | `entity.damage` | `id` (also of a player), `amount`, `source` (`{player}`/`{entity}`) |
 | `entity.add_effect` | `id` (also of a player), `effect`, `duration` (-1 infinite), `amplifier`, `ambient`, `particles`, `icon` (answers whether it took) |

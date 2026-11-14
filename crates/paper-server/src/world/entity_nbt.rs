@@ -66,6 +66,9 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
         .with("Rotation", Tag::List(vec![Tag::Float(e.yaw), Tag::Float(e.pitch)]))
         .with("OnGround", Tag::Byte(e.on_ground as i8))
         .with("UUID", uuid_tag(e.uuid));
+    if let Some(pdc) = &e.pdc {
+        c.insert("BukkitValues", Tag::Compound(pdc.clone()));
+    }
     if let Some(name) = &e.custom_name {
         c.insert("CustomName", name.to_nbt());
         if e.custom_name_visible {
@@ -247,6 +250,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
     if let Some(uuid) = uuid_from(c.get("UUID")) {
         e.uuid = uuid;
     }
+    e.pdc = c.compound("BukkitValues").cloned();
     e.vel = vec3(c.list("Motion")).unwrap_or(Vec3::ZERO);
     if let Some(rotation) = c.list("Rotation") {
         e.yaw = rotation.first().and_then(Tag::as_f64).unwrap_or(0.0) as f32;

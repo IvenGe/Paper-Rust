@@ -226,7 +226,8 @@ What works:
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
-    item flags, the persistent data container; other components are kept intact), the
+    item flags, the persistent data container, attribute modifiers; other components are kept
+    intact), the
     special metas of heads (`SkullMeta`), potions and tipped arrows (`PotionMeta`, and
     `PotionType` data), suspicious stew, fireworks and firework stars, banners, written and
     writable books, block data (`BlockDataMeta`), maps (id and colour), ominous bottles, and
@@ -235,7 +236,10 @@ What works:
     `Player.openInventory`, open windows and the cursor;
   * entities: listing, spawning and dropping items, and the basics of entities, living
     entities, mobs, items, experience orbs, arrows and primed TNT (location, teleporting,
-    velocity, names, health, damage, equipment, targets, ...);
+    velocity, names, health, damage, equipment, targets, ...), passengers and vehicles
+    (`addPassenger`, `eject`, `leaveVehicle`, ...), tamed animals (`Tameable`, `Sittable`) and
+    horses (domestication, jump strength), and the persistent data containers of players and
+    entities, saved with them as Bukkit's `BukkitValues`;
   * offline players, from the player data files and the name cache (`usercache.json`);
   * scoreboards: the main scoreboard and new ones, objectives, display slots, scores
     (`health`, `food`, `air`, `armor`, `level` and `xp` follow the players), teams and
@@ -279,7 +283,7 @@ Not yet:
   fireworks, wind charges, boats or minecarts. Spawn eggs are not
   used on water (for fish and squid), and buckets do not catch fish.
 * Plugin API: creating worlds, registry and tag lifecycle events,
-  statistics, item attribute modifiers (`ItemMeta#getAttributeModifiers`), dialogs, signed chat messages, entity AI and passengers, the data component API
+  statistics, dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
   fish, ...), inventories of other block types and anvil and enchanting views, villager
@@ -288,8 +292,7 @@ Not yet:
   `/scoreboard` and `/team` commands, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
-  ...) are not answered yet. The persistent data containers of
-  entities other than players live only in the plugin host and are not saved with the entity.
+  ...) are not answered yet. Items do not remember who may pick them up (`Item#setOwner`).
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them.
 

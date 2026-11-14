@@ -53,6 +53,17 @@ fn wait_until(what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
     }
 }
 
+/// [`wait_until`] that keeps reading what the server sends (answering keep-alives), so a
+/// long wait under load does not time the player out.
+fn wait_reading(client: &mut Client, what: &str, timeout: Duration, mut f: impl FnMut() -> bool) {
+    let deadline = Instant::now() + timeout;
+    while !f() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        client.drain(Duration::from_millis(50));
+        client.clear_backlog();
+    }
+}
+
 fn spawn(server: &paper_server::RunningServer, name: &'static str, at: Vec3) -> i32 {
     server.handle.run(move |s| s.spawn_mob(0, name, at, SpawnReason::Command).unwrap()).unwrap()
 }
@@ -256,7 +267,7 @@ fn horses_buck_until_tamed_and_then_take_saddles() {
     hold(&server, id, Slot::EMPTY);
     alice.send(&interact(horse));
     wait_until("Alice to get on", TIMEOUT, || vehicle(&server, id) == Some(horse));
-    wait_until("the horse to buck", Duration::from_secs(30), || vehicle(&server, id).is_none());
+    wait_reading(&mut alice, "the horse to buck", Duration::from_secs(30), || vehicle(&server, id).is_none());
     assert_eq!(mob(&server, horse, |m| (m.tamed, m.temper)), (false, 8));
 
     // At the most temper it gives in: tamed by Alice, who stays on.
@@ -264,7 +275,7 @@ fn horses_buck_until_tamed_and_then_take_saddles() {
     next_to(&server, id, horse);
     alice.send(&interact(horse));
     wait_until("Alice to get on again", TIMEOUT, || vehicle(&server, id) == Some(horse));
-    wait_until("the horse to be tamed", Duration::from_secs(30), || mob(&server, horse, |m| m.tamed));
+    wait_reading(&mut alice, "the horse to be tamed", Duration::from_secs(30), || mob(&server, horse, |m| m.tamed));
     let uuid = server.handle.run(move |s| s.players[&id].uuid()).unwrap();
     assert_eq!(mob(&server, horse, |m| m.owner), Some(uuid));
     assert_eq!(vehicle(&server, id), Some(horse));

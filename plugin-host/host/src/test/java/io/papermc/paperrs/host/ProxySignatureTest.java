@@ -98,7 +98,8 @@ class ProxySignatureTest {
     @Test
     void entitiesMatchTheApi() {
         check(HostEntity.class, org.bukkit.entity.Zombie.class, org.bukkit.entity.Item.class, org.bukkit.entity.ExperienceOrb.class,
-            org.bukkit.entity.Arrow.class, org.bukkit.entity.TNTPrimed.class, org.bukkit.entity.FallingBlock.class, org.bukkit.entity.Sheep.class);
+            org.bukkit.entity.Arrow.class, org.bukkit.entity.TNTPrimed.class, org.bukkit.entity.FallingBlock.class, org.bukkit.entity.Sheep.class,
+            org.bukkit.entity.Wolf.class, org.bukkit.entity.Horse.class, org.bukkit.entity.Pig.class);
     }
 
     @Test

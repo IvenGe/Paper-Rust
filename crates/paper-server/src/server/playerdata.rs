@@ -45,6 +45,8 @@ pub struct SavedPlayer {
     pub enchantment_seed: Option<i32>,
     /// Vanilla's `attributes` list (base values and saved modifiers).
     pub attributes: Vec<Tag>,
+    /// Plugins' persistent data (`BukkitValues`).
+    pub pdc: Option<Compound>,
 }
 
 fn component_name(id: i32) -> Option<&'static str> {
@@ -167,6 +169,9 @@ impl Server {
             })
             .collect();
         c.insert("EnderItems", Tag::List(ender));
+        if let Some(pdc) = &player.pdc {
+            c.insert("BukkitValues", Tag::Compound(pdc.clone()));
+        }
         c.insert("XpLevel", Tag::Int(player.xp_level));
         c.insert("XpP", Tag::Float(player.xp_progress));
         c.insert("XpTotal", Tag::Int(player.xp_total));
@@ -300,6 +305,7 @@ impl Server {
             first_played: c.compound("bukkit").and_then(|b| b.i64("firstPlayed")),
             enchantment_seed: c.i32("XpSeed"),
             attributes: c.list("attributes").map(<[Tag]>::to_vec).unwrap_or_default(),
+            pdc: c.compound("BukkitValues").cloned(),
         })
     }
 

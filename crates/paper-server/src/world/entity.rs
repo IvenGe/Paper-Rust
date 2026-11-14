@@ -469,6 +469,8 @@ pub struct Entity {
     pub force_sync: bool,
     /// Who rides it (players' and other entities' ids), the one steering first.
     pub passengers: Vec<i32>,
+    /// Plugins' persistent data (Bukkit's `BukkitValues`).
+    pub pdc: Option<paper_nbt::Compound>,
     /// What it rides.
     pub vehicle: Option<i32>,
 }
@@ -505,6 +507,7 @@ impl Entity {
             equipment_dirty: false,
             force_sync: false,
             passengers: Vec::new(),
+            pdc: None,
             vehicle: None,
         }
     }

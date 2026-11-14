@@ -121,6 +121,7 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "uuid" => p.uuid().to_string(),
         "name" => p.name(),
         "entity_id" => p.entity_id,
+        "vehicle" => p.vehicle.map(|v| super::entity::shallow_ref(server, v)),
         "world" => server.worlds.get(p.world).map(|w| w.name.clone()),
         "x" => p.loc.x,
         "y" => p.loc.y,
