@@ -406,6 +406,8 @@ pub struct Mob {
     pub temper: i32,
     /// Pigs and striders: the length of the boost a stick gave (`DATA_BOOST_TIME`).
     pub boost: i32,
+    /// The ender dragon's phases, flight and parts.
+    pub dragon: Option<Box<crate::server::dragon::DragonBrain>>,
 }
 
 /// Behaviour-specific data.
@@ -425,7 +427,9 @@ pub enum EntityKind {
     Thrown { item: Slot, owner: Option<i32>, gravity: f64, left_owner: bool },
     /// A lingering potion's cloud (`AreaEffectCloud`): the potion, who threw it, its radius,
     /// how long it lasts after a wait, and who it affected until when.
-    Cloud { potion: String, owner: Option<i32>, radius: f32, duration: i32, wait: i32, uses: Vec<(i32, u64)> },
+    /// `growth` is added to the radius every tick and `on_use` each time it affects
+    /// something; `breath` marks the dragon's.
+    Cloud { potion: String, owner: Option<i32>, radius: f32, duration: i32, wait: i32, uses: Vec<(i32, u64)>, growth: f32, on_use: f32, breath: bool },
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }

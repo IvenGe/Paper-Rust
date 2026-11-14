@@ -39,6 +39,7 @@ pub mod riding;
 pub mod taming;
 pub mod throwing;
 pub mod crafter;
+pub mod dragon;
 mod weather;
 mod farming;
 pub mod brewing;
@@ -569,6 +570,7 @@ impl Server {
         self.tick_brewing_stands();
         self.tick_hoppers();
         self.tick_pressure_plates();
+        self.tick_dragon_fights();
         self.tick_tracker();
 
         if self.tick % 100 == 0 {

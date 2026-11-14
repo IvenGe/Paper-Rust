@@ -110,8 +110,13 @@ impl Server {
     /// gateways on the outer islands lead to the main island) sends the player there,
     /// exactly or onto the tallest block beside it, then shows its beam and rests for two
     /// seconds. Gateways without an exit (the dragon fight's) do nothing yet.
-    fn use_end_gateway(&mut self, id: i32, world: usize, pos: BlockPos) {
+    pub(super) fn use_end_gateway(&mut self, id: i32, world: usize, pos: BlockPos) {
         if self.gateway_cooldowns.get(&(world, pos)).is_some_and(|used| self.tick < used + 40) {
+            return;
+        }
+        let key = (pos.y, (pos.z & 15) as u8, (pos.x & 15) as u8);
+        if !self.worlds[world].chunks.get(&ChunkPos::of_block(pos.x, pos.z)).is_some_and(|c| c.block_entities.contains_key(&key)) {
+            self.search_gateway_exit(id, world, pos);
             return;
         }
         let w = &self.worlds[world];
@@ -123,7 +128,11 @@ impl Server {
                 (Some(x), Some(y), Some(z)) => BlockPos::new(x, y, z),
                 _ => return,
             },
-            _ => return,
+            // A gateway the dragon's death opened finds where it leads first.
+            _ => {
+                self.search_gateway_exit(id, world, pos);
+                return;
+            }
         };
         let target = if entity.bool("ExactTeleport").unwrap_or(false) {
             Vec3::new(exit.x as f64 + 0.5, exit.y as f64, exit.z as f64 + 0.5)

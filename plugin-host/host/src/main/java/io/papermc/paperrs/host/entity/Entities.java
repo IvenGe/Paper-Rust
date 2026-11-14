@@ -118,8 +118,24 @@ public final class Entities {
         return out;
     }
 
-    public static PersistentDataContainer data(final UUID uuid) {
-        return DATA.computeIfAbsent(uuid, u -> new HostPersistentDataContainer());
+    /**
+     * The persistent data of a player or entity (named by {@code ref}): loaded from the server,
+     * which saves it with the player or entity ({@code BukkitValues}), and sent back after
+     * every change.
+     */
+    public static PersistentDataContainer data(final CraftServer server, final Map<String, Object> ref, final UUID uuid) {
+        return DATA.computeIfAbsent(uuid, u -> {
+            HostPersistentDataContainer pdc = new HostPersistentDataContainer();
+            if (server.call("entity.pdc", Values.of("target", ref)) instanceof byte[] saved && saved.length > 0) {
+                try {
+                    pdc = new HostPersistentDataContainer(io.papermc.paperrs.host.item.Nbt.readCompound(saved));
+                } catch (final RuntimeException e) {
+                    pdc = new HostPersistentDataContainer();
+                }
+            }
+            final HostPersistentDataContainer container = pdc;
+            return container.onChange(() -> server.call("entity.set_pdc", Values.of("target", ref, "data", container.isEmpty() ? new byte[0] : io.papermc.paperrs.host.item.Nbt.writeCompound(container.tags()))));
+        });
     }
 
     /** Forget everything (the plugin host is going away). */

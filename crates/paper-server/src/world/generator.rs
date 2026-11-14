@@ -562,8 +562,8 @@ impl Generator for EndGenerator {
                 }
             }
         }
-        // The exit portal: a bedrock bowl with portal blocks, open from the start since the
-        // dragon fight is not implemented.
+        // The exit portal: a bedrock bowl with portal blocks, open from the start (the dragon
+        // fight takes an open portal as a dragon killed before, so these Ends have none).
         if (-1..=0).contains(&pos.x) && (-1..=0).contains(&pos.z) {
             let y = self.portal_y();
             for dz in -4i32..=4 {

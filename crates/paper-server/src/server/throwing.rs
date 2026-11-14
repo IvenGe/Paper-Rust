@@ -86,7 +86,8 @@ impl Server {
     pub(super) fn tick_thrown(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let EntityKind::Thrown { owner, gravity, left_owner, .. } = e.kind else { return };
-        let fireball = e.info.name == "minecraft:small_fireball";
+        let fireball = matches!(e.info.name.as_str(), "minecraft:small_fireball" | "minecraft:dragon_fireball");
+        let dragon_fireball = e.info.name == "minecraft:dragon_fireball";
         let (from, mut vel) = (e.pos, e.vel);
         if fireball {
             // `AbstractHurtingProjectile.applyInertia`: it keeps speeding up along its way, less
@@ -127,7 +128,7 @@ impl Server {
             }
         }
         for cand in w.entities_in(&swept) {
-            if cand == id || Some(cand) == owner && !left_owner {
+            if cand == id || Some(cand) == owner && (!left_owner || dragon_fireball) {
                 continue;
             }
             if let Some(c) = w.entities.get(&cand).filter(|c| c.mob().is_some_and(|m| !m.living.is_dead())) {
@@ -136,7 +137,9 @@ impl Server {
         }
         if let Some((t, victim)) = target {
             let at = from.add(vel.scale(t));
-            if fireball {
+            if dragon_fireball {
+                self.dragon_fireball_hits(world, id, at, owner);
+            } else if fireball {
                 self.fireball_hits(world, id, at, vel, Some(victim));
             } else {
                 self.thrown_hits(world, id, at, Some(victim));
@@ -145,7 +148,9 @@ impl Server {
         }
         if let Some((_, block)) = block_hit {
             let _ = block;
-            if fireball {
+            if dragon_fireball {
+                self.dragon_fireball_hits(world, id, end, owner);
+            } else if fireball {
                 self.fireball_hits(world, id, end, vel, None);
             } else {
                 self.thrown_hits(world, id, end, None);
@@ -356,7 +361,7 @@ impl Server {
     /// each use (`AreaEffectCloud`).
     fn spawn_cloud(&mut self, world: usize, at: Vec3, potion: String, owner: Option<i32>) {
         let Some(info) = entity_types::by_name("minecraft:area_effect_cloud") else { return };
-        let kind = EntityKind::Cloud { potion, owner, radius: 3.0, duration: 600, wait: 10, uses: Default::default() };
+        let kind = EntityKind::Cloud { potion, owner, radius: 3.0, duration: 600, wait: 10, uses: Default::default(), growth: -3.0 / 600.0, on_use: -0.5, breath: false };
         let e = Entity::new(self.next_entity_id(), info, at, kind);
         self.spawn_entity(world, e);
     }
@@ -367,14 +372,15 @@ impl Server {
         let tick = self.tick;
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let (pos, age) = (e.pos, e.age);
-        let EntityKind::Cloud { potion, owner, radius, duration, wait, uses } = &mut e.kind else { return };
+        let EntityKind::Cloud { potion, owner, radius, duration, wait, uses, growth, on_use, .. } = &mut e.kind else { return };
+        let on_use = *on_use;
         if age >= *wait + *duration {
             e.removed = true;
             return;
         }
         let waiting = age < *wait;
         if !waiting {
-            *radius -= 3.0 / *duration as f32;
+            *radius += *growth;
             if *radius < 0.5 {
                 e.removed = true;
                 return;
@@ -415,10 +421,15 @@ impl Server {
                 }
             }
         }
-        if let Some(EntityKind::Cloud { radius, uses, .. }) = self.worlds[world].entities.get_mut(&id).map(|e| &mut e.kind) {
-            for t in targets {
-                uses.push((t, tick + 20));
-                *radius -= 0.5;
+        if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+            if let EntityKind::Cloud { radius, uses, .. } = &mut e.kind {
+                for t in targets {
+                    uses.push((t, tick + 20));
+                    *radius += on_use;
+                }
+                if *radius < 0.5 {
+                    e.removed = true;
+                }
             }
         }
     }

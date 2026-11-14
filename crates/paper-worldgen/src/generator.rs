@@ -322,6 +322,24 @@ impl WorldGenerator {
     /// were not loaded yet (see [`WorldGenerator::load_structures`]). Empty while
     /// structures are disabled.
     pub fn structure_start_chunks(&self, chunk_x: i32, chunk_z: i32) -> Vec<(i32, i32)> {
+        self.structure_start_chunks_inner(chunk_x, chunk_z)
+    }
+
+    /// Whether a chunk has any terrain, from the noise alone and without generating it
+    /// (vanilla's `isChunkEmpty` for where End gateways lead): a 3x3 grid of its columns.
+    pub fn chunk_has_terrain(&self, chunk_x: i32, chunk_z: i32) -> bool {
+        let mut columns = crate::structure::height::Columns::new(self);
+        for dx in [0, 8, 15] {
+            for dz in [0, 8, 15] {
+                if columns.column(chunk_x * 16 + dx, chunk_z * 16 + dz).iter().any(|s| !paper_data::blocks::is_air(*s as u32)) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn structure_start_chunks_inner(&self, chunk_x: i32, chunk_z: i32) -> Vec<(i32, i32)> {
         self.structures.start_chunks_near(self, chunk_x, chunk_z)
     }
 

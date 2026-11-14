@@ -3,7 +3,7 @@
 mod basic;
 mod cave;
 mod dripstone;
-mod end;
+pub(crate) mod end;
 mod misc;
 mod nether;
 mod sculk;

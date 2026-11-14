@@ -79,6 +79,9 @@ impl Server {
         }
         let world = p.world;
         let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
+        // A dragon is hit through its parts, whose ids follow its own.
+        let part = self.dragon_of_part(world, target);
+        let target = part.map_or(target, |(dragon, _)| dragon);
         // The target's box, and whether it can be hit at all.
         let (target_box, _, living) = if let Some(t) = self.players.get(&target) {
             if t.world != world || t.dead || t.game_mode == GameMode::Spectator {
@@ -89,7 +92,10 @@ impl Server {
         } else {
             let Some(e) = self.worlds[world].entities.get(&target) else { return };
             match &e.kind {
-                EntityKind::Mob(m) if !m.living.is_dead() => (e.bounding_box(), e.pos, true),
+                EntityKind::Mob(m) if !m.living.is_dead() => match (part, m.dragon.as_deref()) {
+                    (Some((_, p)), Some(brain)) => (brain.part_box(p), e.pos, true),
+                    _ => (e.bounding_box(), e.pos, true),
+                },
                 EntityKind::Item { .. } | EntityKind::ExperienceOrb { .. } | EntityKind::Arrow { .. } => return,
                 EntityKind::Mob(_) => return,
                 _ => (e.bounding_box(), e.pos, false),
@@ -143,7 +149,10 @@ impl Server {
             self.play_sound(world, at, "minecraft:entity.player.attack.knockback", category::PLAYERS, 1.0, 1.0, None);
         }
 
-        let hurt = self.hurt_entity(world, target, Damage::by("minecraft:player_attack", id, at), total);
+        let hurt = match part {
+            Some((dragon, p)) => self.hurt_dragon(world, dragon, p, Damage::by("minecraft:player_attack", id, at), total),
+            None => self.hurt_entity(world, target, Damage::by("minecraft:player_attack", id, at), total),
+        };
         if hurt {
             // Pets join in (`OwnerHurtTargetGoal`).
             if let Some(p) = self.players.get_mut(&id) {
@@ -261,6 +270,9 @@ impl Server {
             return;
         }
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        if e.info.name == super::dragon::DRAGON {
+            return;
+        }
         let resistance = match &e.kind {
             EntityKind::Mob(mob) => mob.attributes.value("knockback_resistance"),
             _ => e.info.attribute("knockback_resistance").unwrap_or(0.0),
@@ -291,6 +303,9 @@ impl Server {
         }
         let tick = self.tick;
         let Some(e) = self.worlds[world].entities.get(&id) else { return false };
+        if e.info.name == super::dragon::DRAGON {
+            return self.hurt_dragon(world, id, super::dragon::BODY, damage, amount);
+        }
         match &e.kind {
             EntityKind::Item { stack, .. } => {
                 // Items burn and blow up; fire-resistant ones survive fire.
@@ -316,7 +331,9 @@ impl Server {
             // End crystals break at any hit, and blow up unless an explosion broke them
             // (`EndCrystal.hurtServer`).
             EntityKind::Other if e.info.name == "minecraft:end_crystal" => {
-                if e.removed {
+                // The dragon's own breath and bites leave them be.
+                let by_dragon = damage.attacker.is_some_and(|a| self.worlds[world].entities.get(&a).is_some_and(|d| d.info.name == super::dragon::DRAGON));
+                if e.removed || by_dragon {
                     return false;
                 }
                 let pos = e.pos;
@@ -324,6 +341,7 @@ impl Server {
                 if !damage.is("is_explosion") {
                     self.explode(world, pos, 6.0, true, None);
                 }
+                self.crystal_destroyed(world, id, pos, damage.attacker);
                 return true;
             }
             _ => return false,

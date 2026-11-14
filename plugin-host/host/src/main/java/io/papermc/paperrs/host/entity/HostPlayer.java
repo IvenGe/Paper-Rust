@@ -131,6 +131,47 @@ public final class HostPlayer extends AbstractPlayer {
         HostAttributeInstance.register(this.server, this.entityId, attribute);
     }
 
+    // --- persistent data ------------------------------------------------------------------------
+
+    @Override
+    public org.bukkit.persistence.PersistentDataContainer getPersistentDataContainer() {
+        return Entities.data(this.server, Values.of("player", this.getUniqueId().toString()), this.getUniqueId());
+    }
+
+    // --- vehicles ------------------------------------------------------------------------------
+
+    @Override
+    public @Nullable Entity getVehicle() {
+        this.refresh(this.server.call("player.state", this.args()));
+        return this.state.get("vehicle") instanceof Map<?, ?> vehicle ? Entities.of(this.server, Values.map(vehicle)) : null;
+    }
+
+    @Override
+    public boolean isInsideVehicle() {
+        return this.getVehicle() != null;
+    }
+
+    @Override
+    public boolean leaveVehicle() {
+        return Boolean.TRUE.equals(this.server.call("entity.leave_vehicle", Values.of("rider", Values.of("player", this.getUniqueId().toString()))));
+    }
+
+    /** Nothing rides players on this server. */
+    @Override
+    public List<Entity> getPassengers() {
+        return List.of();
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return true;
+    }
+
+    @Override
+    public boolean eject() {
+        return false;
+    }
+
     @Override
     public int getEntityId() {
         return this.entityId;

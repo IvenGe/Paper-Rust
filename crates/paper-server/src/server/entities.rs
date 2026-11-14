@@ -44,6 +44,11 @@ impl Server {
         self.shared.next_entity_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// `n` consecutive entity ids (the dragon's parts follow its own); returns the first.
+    pub fn reserve_entity_ids(&self, n: i32) -> i32 {
+        self.shared.next_entity_id.fetch_add(n, Ordering::Relaxed)
+    }
+
     /// Adds an entity to a world; it is shown to players on the next tick.
     pub fn spawn_entity(&mut self, world: usize, e: Entity) -> i32 {
         let id = e.id;
@@ -737,6 +742,11 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         EntityKind::Mob(mob) => {
             if let Some(i) = info.data_index("DATA_HEALTH_ID") {
                 m = m.float(i, mob.living.health.max(0.0));
+            }
+            if let Some(dragon) = &mob.dragon {
+                if let Some(i) = info.data_index("DATA_PHASE") {
+                    m = m.varint(i, dragon.phase as i32);
+                }
             }
             if mob.baby {
                 if let Some(i) = info.data_index("DATA_BABY_ID") {

@@ -450,9 +450,9 @@ pub fn decorate(generator: &VanillaGenerator, center: ChunkPos, entries: Vec<Pro
     out
 }
 
-/// The End's exit portal (`EndDragonFight.spawnExitPortal` with `EndPodiumFeature`), open
-/// from the start since there is no dragon fight: placed when the chunk at the origin is
-/// decorated (its neighbours hold the whole podium).
+/// The End's exit portal (`EndDragonFight.spawnExitPortal` with `EndPodiumFeature`), closed
+/// until the dragon is killed (`server::dragon` opens it): placed when the chunk at the
+/// origin is decorated (its neighbours hold the whole podium).
 fn place_exit_portal(region: &mut Region, generator: &VanillaGenerator) {
     use paper_worldgen::{Heightmap, RegionAccess};
     let flags = generator.inner.block_flags();
@@ -465,7 +465,7 @@ fn place_exit_portal(region: &mut Region, generator: &VanillaGenerator) {
     }
     let y = y.max(generator.inner.min_y() + 1);
     let state = |name: &str| blocks::default_state(name).unwrap_or(0);
-    let (end_stone, portal, air) = (state("minecraft:end_stone"), state("minecraft:end_portal"), blocks::AIR);
+    let (end_stone, air) = (state("minecraft:end_stone"), blocks::AIR);
     let mut set = |x: i32, by: i32, z: i32, s: u32| {
         if let Some(chunk) = region.chunk_mut(x >> 4, z >> 4) {
             chunk.set(x, by, z, s, flags);
@@ -490,7 +490,7 @@ fn place_exit_portal(region: &mut Region, generator: &VanillaGenerator) {
                 } else if !inner {
                     bedrock
                 } else {
-                    portal
+                    air
                 };
                 set(x, by, z, s);
             }

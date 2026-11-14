@@ -9,6 +9,9 @@
 pub mod blockinfo;
 pub mod javaset;
 mod kinds;
+
+/// The End's obsidian pillars of a seed (`EndSpikeFeature.getSpikesForLevel`).
+pub use kinds::end::{spikes_for_seed, Spike};
 pub mod parse;
 pub mod placement;
 pub mod predicate;

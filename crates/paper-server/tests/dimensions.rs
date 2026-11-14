@@ -162,10 +162,32 @@ fn the_last_eye_opens_the_end_and_the_exit_portal_leads_home() {
         .unwrap();
     assert_eq!(platform, (Some("minecraft:obsidian"), Some(true)));
 
-    // The exit portal (open, since the dragon fight is not implemented) rolls the credits.
+    // The dragon appears; once it is dead the exit portal opens and rolls the credits.
     // Alice flies over to the centre of the island first (the test view distance is short).
     alice.move_to(4.5, 80.0, 0.5);
     alice.find(TIMEOUT, |c: &play::LevelChunkWithLight| c.x == 0 && c.z == 0).expect("the island centre arrives");
+    let dragon = (0..600)
+        .find_map(|_| {
+            let found = server
+                .handle
+                .run(|s| {
+                    let end = s.world_of_dimension("minecraft:the_end").unwrap();
+                    s.worlds[end].entities.values().find(|e| e.info.name == "minecraft:ender_dragon").map(|e| e.id)
+                })
+                .unwrap();
+            if found.is_none() {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            found
+        })
+        .expect("the dragon");
+    server
+        .handle
+        .run(move |s| {
+            let end = s.world_of_dimension("minecraft:the_end").unwrap();
+            s.hurt_entity(end, dragon, paper_server::server::survival::Damage::new("minecraft:generic_kill"), f32::MAX);
+        })
+        .unwrap();
     let exit_y = server
         .handle
         .run(|s| {

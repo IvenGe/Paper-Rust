@@ -182,6 +182,20 @@ What works:
   arrive on the obsidian platform, and the exit portal shows the credits and brings them
   home. The gateways on the outer islands lead back to the main island. Fire burns, spreads and lights portals; buckets scoop up and pour water and lava
   (water boils away in the Nether).
+* **The dragon fight**: a new End's island has its exit portal closed and the ender dragon
+  circling the pillars, with its boss bar (music and fog) for players within 192 blocks. The
+  dragon follows vanilla's phases: it flies a ring of 24 nodes round the pillars (the inner
+  rings once the crystals are gone), strafes players with fireballs whose breath lingers,
+  charges, and lands on the portal to breathe fire before taking off again. Crystals on the
+  pillars heal it, and breaking the one healing it hurts it; only players and explosions
+  hurt it, its head takes full damage and the rest a quarter, and arrows bounce off while it
+  sits. Its wings knock players back and its head bites; it breaks through blocks that are
+  not dragon-immune. Killed, it flies to the portal and rises for ten seconds while 12000
+  experience pours out (500 after the first time); then the exit portal opens, the dragon
+  egg appears the first time, and the next of twenty gateways opens around the island,
+  leading out to the islands beyond (found along its direction from the terrain noise, with
+  a little island made if there is no room) where a gateway leads back. The fight is saved in
+  the End's `level.dat` as vanilla's `DragonFight`.
 * **Weather**: vanilla's rain and thunder cycle (`advance_weather`) with `/weather`, saved in
   `level.dat`: clients see rain and thunder fade in and out, storms darken the sky (enough to
   sleep in a thunderstorm), rain puts out fires, keeps farmland wet and protects undead from
@@ -252,9 +266,10 @@ What works:
 
 Not yet:
 
-* World generation: there is no dragon fight (the End's exit portal is open from the start,
-  and the gateways the dragon's death opens do not appear). Sculk sensors, shriekers and
-  catalysts from world generation have no block entities on the server.
+* World generation: sculk sensors, shriekers and catalysts from world generation have no
+  block entities on the server.
+* The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
+  portal, its breath cannot be bottled, and its fireballs cannot be hit back.
 * Gameplay: boats and minecarts cannot be ridden, there is no horse inventory window, donkeys,
   mules and llamas carry no chests, parrots do not ride on shoulders, cats do not sleep on
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no

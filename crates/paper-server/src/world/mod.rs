@@ -16,6 +16,7 @@
 pub mod attributes;
 pub mod block_updates;
 pub mod chunk;
+pub mod dragon_fight;
 pub mod entity;
 pub mod entity_nbt;
 pub mod generator;
@@ -107,6 +108,8 @@ pub struct World {
     pub trader_tick_delay: i32,
     pub trader_spawn_delay: i32,
     pub trader_spawn_chance: i32,
+    /// The End's dragon fight (only in Ends; made on its first tick there).
+    pub dragon_fight: Option<dragon_fight::DragonFight>,
     /// Network id of the world's clock in `minecraft:world_clock`, if it has one.
     pub clock: Option<i32>,
     /// Size of the synchronised biome registry.
@@ -209,6 +212,7 @@ impl World {
             trader_tick_delay: 1200,
             trader_spawn_delay: 24000,
             trader_spawn_chance: 25,
+            dragon_fight: None,
             weather: Weather::default(),
             rules: rules::GameRules::default(),
             clock: clock_name.and_then(|c| paper_data::synced::id("minecraft:world_clock", c)),
@@ -871,6 +875,7 @@ impl World {
             weather: self.weather.clone(),
             trader_spawn_delay: self.trader_spawn_delay,
             trader_spawn_chance: self.trader_spawn_chance,
+            dragon_fight: self.dragon_fight.as_ref().map(|f| f.to_nbt()),
         }
     }
 
@@ -884,6 +889,7 @@ impl World {
         self.weather = level.weather.clone();
         // Vanilla starts over with a day's wait and 25% when nothing was saved.
         self.trader_spawn_delay = if level.trader_spawn_delay > 0 { level.trader_spawn_delay } else { 24000 };
+        self.dragon_fight = level.dragon_fight.as_ref().map(|c| dragon_fight::DragonFight::from_nbt(c, self.seed));
         self.trader_spawn_chance = if level.trader_spawn_chance > 0 { level.trader_spawn_chance } else { 25 };
     }
 

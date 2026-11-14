@@ -41,6 +41,20 @@ public final class HostPersistentDataContainer implements PersistentDataContaine
     }
 
     /** The values as an NBT compound (live). */
+    /** Called after every change (an entity's container is saved with the entity). */
+    private @Nullable Runnable onChange;
+
+    public HostPersistentDataContainer onChange(final @Nullable Runnable listener) {
+        this.onChange = listener;
+        return this;
+    }
+
+    private void changed() {
+        if (this.onChange != null) {
+            this.onChange.run();
+        }
+    }
+
     public Nbt.Compound tags() {
         return this.tags;
     }
@@ -153,11 +167,14 @@ public final class HostPersistentDataContainer implements PersistentDataContaine
         Objects.requireNonNull(value, "value");
         final P primitive = type.toPrimitive(value, CONTEXT);
         this.tags.put(key.toString(), wrap((PersistentDataType) type, primitive));
+        this.changed();
     }
 
     @Override
     public void remove(final NamespacedKey key) {
-        this.tags.remove(key.toString());
+        if (this.tags.remove(key.toString()) != null) {
+            this.changed();
+        }
     }
 
     @Override
@@ -177,6 +194,7 @@ public final class HostPersistentDataContainer implements PersistentDataContaine
             System.arraycopy(rest, 0, root, 1, rest.length);
             this.tags.putAll(Nbt.readCompound(root));
         }
+        this.changed();
     }
 
     @Override

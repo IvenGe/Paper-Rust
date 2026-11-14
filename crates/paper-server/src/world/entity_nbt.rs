@@ -143,6 +143,10 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
             if let Some(owner) = mob.owner {
                 c.insert("Owner", uuid_tag(owner));
             }
+            if let Some(dragon) = &mob.dragon {
+                c.insert("DragonPhase", Tag::Int(dragon.phase as i32));
+                c.insert("DragonDeathTime", Tag::Int(dragon.death_time));
+            }
             if crate::server::riding::is_horse(&e.info.name) {
                 c.insert("Tame", Tag::Byte(mob.tamed as i8));
                 c.insert("Temper", Tag::Int(mob.temper));
@@ -230,6 +234,11 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 collar: c.i32("CollarColor").unwrap_or(14),
                 temper: c.i32("Temper").unwrap_or(0),
                 boost: 0,
+                dragon: (info.name == crate::server::dragon::DRAGON).then(|| {
+                    let mut brain = crate::server::dragon::DragonBrain::new(crate::server::dragon::Phase::from_id(c.i32("DragonPhase").unwrap_or(0)));
+                    brain.death_time = c.i32("DragonDeathTime").unwrap_or(0);
+                    Box::new(brain)
+                }),
             }))
         }
         _ => EntityKind::Other,
@@ -286,6 +295,7 @@ mod tests {
             collar: 14,
             temper: 0,
             boost: 0,
+            dragon: None,
         };
         mob.living.health = 13.5;
         mob.equipment[5] = Slot::of(paper_data::items::id("minecraft:iron_helmet").unwrap() as i32, 1);

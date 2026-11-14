@@ -102,7 +102,7 @@ fn the_nether_and_the_end_are_generated_like_vanilla() {
     alice.expect::<play::PlayerPosition>();
     alice.find(TIMEOUT, |c: &play::LevelChunkWithLight| c.x == 0 && c.z == 0).expect("spawn chunk");
 
-    // In the End: the main island with its open exit portal.
+    // In the End: the main island with its exit portal, closed until the dragon dies.
     let end = server.handle.run(|s| s.world_of_dimension("minecraft:the_end")).unwrap().expect("an End");
     server
         .handle
@@ -115,9 +115,10 @@ fn the_nether_and_the_end_are_generated_like_vanilla() {
         })
         .unwrap();
     wait_for(&server, "the End around the origin to be finished", Duration::from_secs(60), move |s| (-1..=0).all(|cz| (-1..=0).all(|cx| s.worlds[end].is_ready(ChunkPos::new(cx, cz)))));
-    let (portal, end_stone) = server.handle.run(move |s| (count_blocks(s, end, &["minecraft:end_portal"]), count_blocks(s, end, &["minecraft:end_stone"]))).unwrap();
+    let (portal, end_stone, bedrock) = server.handle.run(move |s| (count_blocks(s, end, &["minecraft:end_portal"]), count_blocks(s, end, &["minecraft:end_stone"]), count_blocks(s, end, &["minecraft:bedrock"]))).unwrap();
     assert!(end_stone > 1000, "the main island: {end_stone}");
-    assert_eq!(portal, 20, "the exit portal is open");
+    assert_eq!(portal, 0, "the exit portal is closed");
+    assert!(bedrock > 20, "the exit portal's bedrock: {bedrock}");
     server.stop();
 }
 

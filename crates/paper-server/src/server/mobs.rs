@@ -344,6 +344,7 @@ impl Server {
             collar: 14,
             temper: 0,
             boost: 0,
+            dragon: (name == super::dragon::DRAGON).then(|| Box::new(super::dragon::DragonBrain::new(super::dragon::Phase::HoldingPattern))),
         };
         // Equipment and variants picked when spawning (`finalizeSpawn`).
         match name.as_str() {
@@ -379,7 +380,7 @@ impl Server {
         }
         self.init_merchant(world, &name, pos, &mut mob, reason);
         super::riding::randomize_horse(&name, &mut mob, &mut rng);
-        let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::Mob(Box::new(mob)));
+        let mut e = Entity::new(if info.name == super::dragon::DRAGON { self.reserve_entity_ids(9) } else { self.next_entity_id() }, info, pos, EntityKind::Mob(Box::new(mob)));
         e.yaw = rng.gen_range(0.0..360.0);
         e.head_yaw = e.yaw;
         let id = self.spawn_entity(world, e);
@@ -390,6 +391,11 @@ impl Server {
     // --- per tick ------------------------------------------------------------------------------
 
     pub(super) fn tick_mob(&mut self, world: usize, id: i32) {
+        // The dragon flies its own way (and dies its own way).
+        if self.worlds[world].entities.get(&id).is_some_and(|e| e.info.name == super::dragon::DRAGON) {
+            self.tick_dragon(world, id);
+            return;
+        }
         if self.tick_dying(world, id) {
             return;
         }

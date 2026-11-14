@@ -474,7 +474,7 @@ public final class HostEntity implements HostProxies.Backed {
 
     /** Kept in memory by the host: entities are not saved with their data yet. */
     public PersistentDataContainer getPersistentDataContainer() {
-        return Entities.data(this.uuid);
+        return Entities.data(this.server, Values.of("entity", this.id), this.uuid);
     }
 
     // --- living entities ----------------------------------------------------------------------
@@ -630,6 +630,145 @@ public final class HostEntity implements HostProxies.Backed {
         } else {
             this.set("target", Entities.ref(target));
         }
+    }
+
+    // --- vehicles and passengers -------------------------------------------------------------
+
+    public List<Entity> getPassengers() {
+        final List<Entity> out = new ArrayList<>();
+        for (final Object ref : Values.list(this.state().get("passengers"))) {
+            final Entity passenger = Entities.of(this.server, Values.map(ref));
+            if (passenger != null) {
+                out.add(passenger);
+            }
+        }
+        return out;
+    }
+
+    @Deprecated
+    public @Nullable Entity getPassenger() {
+        final List<Entity> passengers = this.getPassengers();
+        return passengers.isEmpty() ? null : passengers.get(0);
+    }
+
+    @Deprecated
+    public boolean setPassenger(final Entity passenger) {
+        this.eject();
+        return this.addPassenger(passenger);
+    }
+
+    public boolean addPassenger(final Entity passenger) {
+        if (passenger == null) {
+            throw new IllegalArgumentException("Entity cannot be null");
+        }
+        return this.riding("entity.add_passenger", Values.of("id", this.id, "passenger", Entities.ref(passenger)));
+    }
+
+    public boolean removePassenger(final Entity passenger) {
+        if (passenger == null) {
+            throw new IllegalArgumentException("Entity cannot be null");
+        }
+        return this.riding("entity.remove_passenger", Values.of("id", this.id, "passenger", Entities.ref(passenger)));
+    }
+
+    public boolean isEmpty() {
+        return this.getPassengers().isEmpty();
+    }
+
+    public boolean eject() {
+        return this.riding("entity.eject", Values.of("id", this.id));
+    }
+
+    public @Nullable Entity getVehicle() {
+        return this.state().get("vehicle") instanceof Map<?, ?> vehicle ? Entities.of(this.server, Values.map(vehicle)) : null;
+    }
+
+    public boolean isInsideVehicle() {
+        return this.state().get("vehicle") instanceof Map<?, ?>;
+    }
+
+    public boolean leaveVehicle() {
+        return this.riding("entity.leave_vehicle", Values.of("rider", Values.of("entity", this.id)));
+    }
+
+    private boolean riding(final String method, final Map<String, Object> args) {
+        if (this.gone) {
+            return false;
+        }
+        final boolean changed = Boolean.TRUE.equals(this.server.call(method, args));
+        this.stateEpoch = -1;
+        return changed;
+    }
+
+    // --- tameable and sittable ------------------------------------------------------------------
+
+    public boolean isTamed() {
+        return Values.bool(this.state(), "tamed", false);
+    }
+
+    public void setTamed(final boolean tame) {
+        if (tame) {
+            this.set("tamed", true);
+        } else {
+            this.set("tamed", false, "owner", "");
+        }
+    }
+
+    public @Nullable UUID getOwnerUniqueId() {
+        return this.state().get("owner") instanceof String uuid && !uuid.isEmpty() ? UUID.fromString(uuid) : null;
+    }
+
+    public org.bukkit.entity.@Nullable AnimalTamer getOwner() {
+        final UUID owner = this.getOwnerUniqueId();
+        if (owner == null) {
+            return null;
+        }
+        final org.bukkit.entity.Player online = this.server.getPlayer(owner);
+        return online != null ? online : this.server.getOfflinePlayer(owner);
+    }
+
+    public void setOwner(final org.bukkit.entity.@Nullable AnimalTamer tamer) {
+        if (tamer == null) {
+            this.set("tamed", false, "owner", "");
+        } else {
+            this.set("tamed", true, "owner", tamer.getUniqueId().toString(), "persistent", true);
+        }
+    }
+
+    public boolean isSitting() {
+        return Values.bool(this.state(), "sitting", false);
+    }
+
+    public void setSitting(final boolean sitting) {
+        this.set("sitting", sitting);
+    }
+
+    // --- horses ------------------------------------------------------------------------------------
+
+    public int getDomestication() {
+        return Values.i32(this.state(), "temper", 0);
+    }
+
+    public void setDomestication(final int value) {
+        if (value < 0 || value > this.getMaxDomestication()) {
+            throw new IllegalArgumentException("Domestication level (" + value + ") cannot be less than zero or greater than max domestication (" + this.getMaxDomestication() + ")");
+        }
+        this.set("temper", value);
+    }
+
+    public int getMaxDomestication() {
+        return 100;
+    }
+
+    public double getJumpStrength() {
+        return Values.f64(this.state(), "jump_strength", 0.7);
+    }
+
+    public void setJumpStrength(final double strength) {
+        if (strength < 0) {
+            throw new IllegalArgumentException("Jump strength (" + strength + ") cannot be less than zero");
+        }
+        this.set("jump_strength", strength);
     }
 
     // --- items ----------------------------------------------------------------------------------

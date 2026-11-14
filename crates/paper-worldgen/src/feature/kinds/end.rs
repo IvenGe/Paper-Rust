@@ -52,7 +52,7 @@ fn block_pos(v: &Value) -> Result<(i32, i32, i32)> {
 
 /// `EndSpikeFeature.EndSpike`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Spike {
+pub struct Spike {
     pub x: i32,
     pub z: i32,
     pub radius: i32,
@@ -61,7 +61,7 @@ pub(crate) struct Spike {
 }
 
 /// `EndSpikeFeature.getSpikesForLevel`: the ten obsidian pillars of a seed.
-pub(crate) fn spikes_for_seed(seed: i64) -> Vec<Spike> {
+pub fn spikes_for_seed(seed: i64) -> Vec<Spike> {
     let key = LegacyRandom::new(seed).next_i64() & 0xFFFF;
     let mut r = LegacyRandom::new(key);
     // `Util.toShuffledList(IntStream.range(0, 10), random)`.
