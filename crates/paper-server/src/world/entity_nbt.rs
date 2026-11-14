@@ -79,12 +79,15 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
         c.insert("NoGravity", Tag::Byte(1));
     }
     match &e.kind {
-        EntityKind::Item { stack, pickup_delay, thrower } => {
+        EntityKind::Item { stack, pickup_delay, thrower, owner } => {
             c.insert("Item", Tag::Compound(item_to_nbt(stack)?));
             c.insert("PickupDelay", short(*pickup_delay));
             c.insert("Age", short(e.age));
             if let Some(t) = thrower {
                 c.insert("Thrower", uuid_tag(*t));
+            }
+            if let Some(o) = owner {
+                c.insert("Owner", uuid_tag(*o));
             }
         }
         EntityKind::ExperienceOrb { value } => {
@@ -176,7 +179,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
             if stack.is_empty() {
                 return None;
             }
-            EntityKind::Item { stack, pickup_delay: c.i32("PickupDelay").unwrap_or(0), thrower: uuid_from(c.get("Thrower")) }
+            EntityKind::Item { stack, pickup_delay: c.i32("PickupDelay").unwrap_or(0), thrower: uuid_from(c.get("Thrower")), owner: uuid_from(c.get("Owner")) }
         }
         "minecraft:experience_orb" => EntityKind::ExperienceOrb { value: c.i32("Value").unwrap_or(1) },
         "minecraft:arrow" | "minecraft:spectral_arrow" => EntityKind::Arrow {
@@ -316,8 +319,9 @@ mod tests {
 
         let item_type = paper_data::entity_types::by_name("minecraft:item").unwrap();
         let stick = Slot::of(paper_data::items::id("minecraft:stick").unwrap() as i32, 5);
-        let item = Entity::new(3, item_type, Vec3::new(0.0, 0.0, 0.0), EntityKind::Item { stack: stick.clone(), pickup_delay: 10, thrower: None });
+        let owner = Uuid::from_u128(0x1234_5678);
+        let item = Entity::new(3, item_type, Vec3::new(0.0, 0.0, 0.0), EntityKind::Item { stack: stick.clone(), pickup_delay: 10, thrower: None, owner: Some(owner) });
         let back = entity_from_nbt(4, &entity_to_nbt(&item).unwrap()).unwrap();
-        assert!(matches!(back.kind, EntityKind::Item { ref stack, pickup_delay: 10, .. } if *stack == stick));
+        assert!(matches!(back.kind, EntityKind::Item { ref stack, pickup_delay: 10, thrower: None, owner: Some(o) } if *stack == stick && o == owner));
     }
 }

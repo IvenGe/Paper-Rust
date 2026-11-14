@@ -183,10 +183,21 @@ final class ApiTests implements Listener, CommandExecutor {
                     }
                     report(sender, "stats", failures);
                 }
+                case "owner" -> {
+                    // A stick only someone else may pick up, and a feather for this player.
+                    final Player player = (Player) sender;
+                    final java.util.UUID stranger = java.util.UUID.randomUUID();
+                    final org.bukkit.entity.Item stick = player.getWorld().dropItem(player.getLocation(), new ItemStack(Material.STICK));
+                    stick.setOwner(stranger);
+                    stick.setThrower(stranger);
+                    final org.bukkit.entity.Item feather = player.getWorld().dropItem(player.getLocation(), new ItemStack(Material.FEATHER));
+                    feather.setOwner(player.getUniqueId());
+                    sender.sendMessage("owner: " + stranger.equals(stick.getOwner()) + " " + stranger.equals(stick.getThrower()) + " " + player.getUniqueId().equals(feather.getOwner()) + " " + (feather.getThrower() == null));
+                }
                 case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
                     try {
-                        ((Player) sender).getWorld().dropItem(((Player) sender).getLocation(), new ItemStack(Material.STICK)).setOwner(java.util.UUID.randomUUID());
+                        ((Player) sender).getWorld().locateNearestRaid(((Player) sender).getLocation(), 16);
                         sender.sendMessage("unsupported: no exception");
                     } catch (UnsupportedOperationException e) {
                         sender.sendMessage("unsupported: " + e.getMessage());

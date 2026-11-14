@@ -413,7 +413,8 @@ pub struct Mob {
 /// Behaviour-specific data.
 #[derive(Clone, Debug)]
 pub enum EntityKind {
-    Item { stack: Slot, pickup_delay: i32, thrower: Option<Uuid> },
+    /// A dropped item; with an `owner` (vanilla's `target`), only that player picks it up.
+    Item { stack: Slot, pickup_delay: i32, thrower: Option<Uuid>, owner: Option<Uuid> },
     Mob(Box<Mob>),
     Arrow { damage: f64, owner: Option<i32>, in_ground: bool, life: i32, pickup: bool, critical: bool },
     FallingBlock { state: u32, time: i32 },

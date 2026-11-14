@@ -244,7 +244,8 @@ What works:
     `Player.openInventory`, open windows and the cursor;
   * entities: listing, spawning and dropping items, and the basics of entities, living
     entities, mobs, items, experience orbs, arrows and primed TNT (location, teleporting,
-    velocity, names, health, damage, equipment, targets, ...), passengers and vehicles
+    velocity, names, health, damage, equipment, targets, ...), the owners (who alone may pick
+    them up) and throwers of items, passengers and vehicles
     (`addPassenger`, `eject`, `leaveVehicle`, ...), tamed animals (`Tameable`, `Sittable`) and
     horses (domestication, jump strength), and the persistent data containers of players and
     entities, saved with them as Bukkit's `BukkitValues`;
@@ -304,7 +305,7 @@ Not yet:
   inventories, sleeping and zombifying villagers, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
-  ...) are not answered yet. Items do not remember who may pick them up (`Item#setOwner`).
+  ...) are not answered yet.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them.
 

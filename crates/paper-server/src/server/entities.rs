@@ -76,7 +76,7 @@ impl Server {
             return None;
         }
         let info = entity_types::by_name("minecraft:item")?;
-        let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::Item { stack, pickup_delay, thrower: None });
+        let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::Item { stack, pickup_delay, thrower: None, owner: None });
         e.vel = vel;
         e.yaw = rand::thread_rng().gen_range(0.0..360.0);
         Some(self.spawn_entity(world, e))
@@ -474,18 +474,20 @@ impl Server {
 
     /// Players pick up items they touch.
     fn pickup_items(&mut self, world: usize) {
-        let collectors: Vec<(i32, Aabb)> = self
+        let collectors: Vec<(i32, uuid::Uuid, Aabb)> = self
             .players
             .values()
             .filter(|p| p.world == world && p.game_mode != GameMode::Spectator && p.health > 0.0)
-            .map(|p| (p.entity_id, Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).inflate(1.0, 0.5, 1.0)))
+            .map(|p| (p.entity_id, p.uuid(), Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).inflate(1.0, 0.5, 1.0)))
             .collect();
-        for (player, area) in collectors {
+        for (player, uuid, area) in collectors {
             let candidates = self.worlds[world].entities_in(&area);
             for item in candidates {
                 let Some(e) = self.worlds[world].entities.get(&item) else { continue };
-                let EntityKind::Item { stack: Slot(Some(stack)), pickup_delay, .. } = &e.kind else { continue };
-                if *pickup_delay > 0 || e.removed {
+                let EntityKind::Item { stack: Slot(Some(stack)), pickup_delay, owner, .. } = &e.kind else { continue };
+                // An item with an owner is only for that player (Paper still fires
+                // PlayerAttemptPickupItemEvent for others; this server does not).
+                if *pickup_delay > 0 || e.removed || owner.is_some_and(|o| o != uuid) {
                     continue;
                 }
                 let stack = stack.clone();

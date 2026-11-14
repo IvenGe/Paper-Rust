@@ -73,10 +73,11 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
                 out.set("trader", merchant.trading_player.and_then(|p| server.players.get(&p)).map(|p| p.uuid().to_string()));
             }
         }
-        EntityKind::Item { stack, pickup_delay, thrower } => {
+        EntityKind::Item { stack, pickup_delay, thrower, owner } => {
             out.set("item", item_value(stack));
             out.set("pickup_delay", *pickup_delay);
             out.set("thrower", thrower.map(|t| t.to_string()));
+            out.set("item_owner", owner.map(|o| o.to_string()));
         }
         EntityKind::Arrow { damage, owner, in_ground, pickup, critical, .. } => {
             out.set("damage", *damage);
@@ -490,7 +491,14 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                         e.metadata_dirty = true;
                     }
                 }
-                EntityKind::Item { stack, pickup_delay, .. } => {
+                EntityKind::Item { stack, pickup_delay, thrower, owner } => {
+                    // `Item.setOwner`/`setThrower` (an empty string clears them).
+                    if let Some(o) = args.str("item_owner") {
+                        *owner = o.parse().ok();
+                    }
+                    if let Some(t) = args.str("thrower") {
+                        *thrower = t.parse().ok();
+                    }
                     if !args.get("item").is_null() {
                         let item = slot_from(args.get("item"))?;
                         if item.is_empty() {

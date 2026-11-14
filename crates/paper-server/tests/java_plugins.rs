@@ -440,7 +440,22 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
 
     // A method Paper-RS does not implement fails with a named UnsupportedOperationException.
     alice.command("apitest unsupported");
-    expect_line(&mut alice, "unsupported: Item#setOwner is not supported by Paper-RS yet");
+    expect_line(&mut alice, "unsupported: World#locateNearestRaid is not supported by Paper-RS yet");
+    // An item with an owner is only for that player: Alice picks up her feather, not the
+    // stick meant for someone else.
+    alice.command("apitest owner");
+    expect_line(&mut alice, "owner: true true true true");
+    let (feather, stick) = (paper_data::items::id("minecraft:feather").unwrap() as i32, paper_data::items::id("minecraft:stick").unwrap() as i32);
+    let has = |server: &paper_server::RunningServer, item: i32| server.handle.run(move |s| s.player_by_name("Alice").unwrap().inventory.iter().any(|i| i.0.as_ref().is_some_and(|i| i.item == item))).unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while !has(&server, feather) {
+        assert!(std::time::Instant::now() < deadline, "Alice picks up her feather");
+        alice.drain(Duration::from_millis(50));
+    }
+    alice.drain(Duration::from_millis(500));
+    assert!(!has(&server, stick), "the stick is someone else's");
+    let owned = server.handle.run(move |s| s.worlds[0].entities.values().any(|e| matches!(&e.kind, paper_server::world::entity::EntityKind::Item { stack, owner: Some(_), .. } if stack.0.as_ref().is_some_and(|i| i.item == stick)))).unwrap();
+    assert!(owned, "the stick stays, still owned");
     // Attribute modifiers on an item's meta, worn by the server's attribute maps too.
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");

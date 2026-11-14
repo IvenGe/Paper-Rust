@@ -719,12 +719,12 @@ public final class HostEntity implements HostProxies.Backed {
     }
 
     /**
-     * {@code Tameable#getOwner} (an {@code AnimalTamer}); {@code Item#getOwner} (a UUID) shares
-     * the name, and items have no owner here.
+     * {@code Tameable#getOwner} (an {@code AnimalTamer}); {@code Item#getOwner} (the UUID of the
+     * only player who may pick the item up) shares the name.
      */
     public @Nullable Object getOwner() {
         if (this.type == EntityType.ITEM) {
-            return null;
+            return this.state().get("item_owner") instanceof String uuid && !uuid.isEmpty() ? UUID.fromString(uuid) : null;
         }
         final UUID owner = this.getOwnerUniqueId();
         if (owner == null) {
@@ -734,9 +734,9 @@ public final class HostEntity implements HostProxies.Backed {
         return online != null ? online : this.server.getOfflinePlayer(owner);
     }
 
-    /** {@code Item#setOwner}: who may pick the item up is not modelled. */
+    /** {@code Item#setOwner}: only this player may pick the item up (null: anyone). */
     public void setOwner(final @Nullable UUID owner) {
-        throw io.papermc.paperrs.host.Unsupported.method("Item#setOwner");
+        this.set("item_owner", owner == null ? "" : owner.toString());
     }
 
     public void setOwner(final org.bukkit.entity.@Nullable AnimalTamer tamer) {
@@ -804,7 +804,11 @@ public final class HostEntity implements HostProxies.Backed {
 
     public @Nullable UUID getThrower() {
         final Object thrower = this.state().get("thrower");
-        return thrower instanceof String s ? UUID.fromString(s) : null;
+        return thrower instanceof String s && !s.isEmpty() ? UUID.fromString(s) : null;
+    }
+
+    public void setThrower(final @Nullable UUID thrower) {
+        this.set("thrower", thrower == null ? "" : thrower.toString());
     }
 
     // --- experience orbs ------------------------------------------------------------------------
