@@ -1,9 +1,13 @@
-//! The template structures that are not jigsaw structures: shipwrecks, ocean ruins, nether
-//! fossils and ruined portals, on a common `TemplateStructurePiece`.
+//! The structures that are not jigsaw structures but place templates (shipwrecks, ocean
+//! ruins, nether fossils, ruined portals, end cities, igloos), on a common
+//! `TemplateStructurePiece`, and buried treasure.
 //!
 //! Written to vanilla 26.3's `TemplateStructurePiece`, `ShipwreckStructure`/`ShipwreckPieces`,
-//! `OceanRuinStructure`/`OceanRuinPieces`, `NetherFossilStructure`/`NetherFossilPieces` and
-//! `RuinedPortalStructure`/`RuinedPortalPiece`.
+//! `OceanRuinStructure`/`OceanRuinPieces`, `NetherFossilStructure`/`NetherFossilPieces`,
+//! `RuinedPortalStructure`/`RuinedPortalPiece`, `EndCityStructure`/`EndCityPieces`,
+//! `IglooStructure`/`IglooPieces` and `BuriedTreasureStructure`/`BuriedTreasurePieces`.
+//! Mobs these structures spawn (drowned, shulkers) and the end city's elytra item frame are
+//! returned as entity NBT; vanilla's `finalizeSpawn` of the drowned is left to the caller.
 //! Pieces that settle their height when first placed (shipwrecks) keep the settled height in
 //! the shared start; ocean ruins settle it again for every chunk, as vanilla does.
 
@@ -34,6 +38,8 @@ pub(crate) enum TemplateKind {
     OceanRuin { large: bool },
     NetherFossil,
     RuinedPortal(PortalProperties),
+    EndCity,
+    Igloo { part: IglooPart, offset: Pos },
 }
 
 /// `RuinedPortalPiece.VerticalPlacement`.
@@ -88,17 +94,28 @@ pub(crate) struct TemplatePiece {
     pivot: Pos,
     processors: Vec<Arc<Processor>>,
     kind: TemplateKind,
+    ignore_entities: bool,
+    waterlog: bool,
 }
 
 impl TemplatePiece {
     fn new(kind_id: &'static str, template: Arc<Template>, position: Pos, rotation: Rotation, mirror: Mirror, pivot: Pos, processors: Vec<Arc<Processor>>, kind: TemplateKind) -> Self {
         let bbox = template.bounding_box(position, rotation, pivot, mirror);
         let base = PieceBase::new(kind_id, 0, bbox).with_orientation(Some(Dir::North));
-        Self { base, template, position: Mutex::new((position, false)), rotation, mirror, pivot, processors, kind }
+        Self { base, template, position: Mutex::new((position, false)), rotation, mirror, pivot, processors, kind, ignore_entities: false, waterlog: true }
     }
 
     fn settings(&self, bbox: BoundingBox) -> PlaceSettings<'static> {
-        PlaceSettings { mirror: self.mirror, rotation: self.rotation, pivot: self.pivot, bbox: Some(bbox), processors: self.processors.clone(), ..PlaceSettings::default() }
+        PlaceSettings {
+            mirror: self.mirror,
+            rotation: self.rotation,
+            pivot: self.pivot,
+            bbox: Some(bbox),
+            processors: self.processors.clone(),
+            ignore_entities: self.ignore_entities,
+            waterlog: self.waterlog,
+            random: None,
+        }
     }
 
     /// `TemplateStructurePiece.postProcess` at `position`.
@@ -155,6 +172,38 @@ impl TemplatePiece {
                     ctx.w.add_entity_nbt(nbt);
                     let state = if pos.y > ctx.w.sea_level { st("minecraft:air") } else { st("minecraft:water") };
                     ctx.w.set(pos, state);
+                }
+            }
+            TemplateKind::EndCity => {
+                if id.starts_with("Chest") {
+                    if ctx.chunk_box.is_inside(pos.down()) {
+                        set_loot(ctx, entities, pos.down(), "minecraft:chests/end_city_treasure");
+                    }
+                } else if ctx.chunk_box.is_inside(pos) {
+                    if id.starts_with("Sentry") {
+                        let mut nbt = Compound::new();
+                        nbt.insert("id", "minecraft:shulker");
+                        nbt.insert("Pos", paper_nbt::Tag::List(vec![(pos.x as f64 + 0.5).into(), (pos.y as f64).into(), (pos.z as f64 + 0.5).into()]));
+                        ctx.w.add_entity_nbt(nbt);
+                    } else if id.starts_with("Elytra") {
+                        let facing = self.rotation.rotate(Dir::South);
+                        let mut item = Compound::new();
+                        item.insert("id", "minecraft:elytra");
+                        item.insert("count", 1i32);
+                        let mut nbt = Compound::new();
+                        nbt.insert("id", "minecraft:item_frame");
+                        nbt.insert("Pos", paper_nbt::Tag::List(vec![(pos.x as f64 + 0.5).into(), (pos.y as f64 + 0.5).into(), (pos.z as f64 + 0.5).into()]));
+                        nbt.insert("block_pos", paper_nbt::Tag::IntArray(vec![pos.x, pos.y, pos.z]));
+                        nbt.insert("Facing", facing.index() as i8);
+                        nbt.insert("Item", item);
+                        ctx.w.add_entity_nbt(nbt);
+                    }
+                }
+            }
+            TemplateKind::Igloo { .. } => {
+                if id == "chest" {
+                    ctx.w.set(pos, st("minecraft:air"));
+                    set_loot(ctx, entities, pos.down(), "minecraft:chests/igloo_chest");
                 }
             }
             TemplateKind::NetherFossil | TemplateKind::RuinedPortal(_) => {}
@@ -236,6 +285,25 @@ impl Piece for TemplatePiece {
                     tp
                 };
                 self.place_template(ctx, position, chunk_box);
+            }
+            TemplateKind::EndCity => {
+                let position = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
+                self.place_template(ctx, position, chunk_box);
+            }
+            TemplateKind::Igloo { part, offset } => {
+                let tp = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
+                let rel = transform_pos(Pos::new(3 - offset.x, 0, -offset.z), Mirror::None, self.rotation, self.pivot);
+                let height = ctx.w.height_at(Heightmap::WorldSurfaceWg, tp.x + rel.x, tp.z + rel.z);
+                let placed = Pos::new(tp.x, tp.y + height - 90 - 1, tp.z);
+                self.place_template(ctx, placed, chunk_box);
+                if *part == IglooPart::Top {
+                    let rel = transform_pos(Pos::new(3, 0, 5), Mirror::None, self.rotation, self.pivot);
+                    let trap = Pos::new(placed.x + rel.x, placed.y + rel.y, placed.z + rel.z);
+                    let below = ctx.w.get(trap.down());
+                    if !ctx.w.b.is_air(below) && blocks::block_of_state(below).name != "minecraft:ladder" {
+                        ctx.w.set(trap, st("minecraft:snow_block"));
+                    }
+                }
             }
             TemplateKind::RuinedPortal(props) => {
                 let position = self.position.lock().unwrap_or_else(|e| e.into_inner()).0;
@@ -834,5 +902,360 @@ impl StructureGen for RuinedPortal {
         let props = PortalProperties { placement: setup.placement, cold, overgrown: setup.overgrown, vines: setup.vines };
         let processors = setup.processors[cold as usize][air_pocket as usize].clone();
         Some(vec![Box::new(TemplatePiece::new("minecraft:rupo", template, origin, rotation, mirror, pivot, processors, TemplateKind::RuinedPortal(props)))])
+    }
+}
+
+/// `EndCityPieces`: the piece generators, with the bridge generator's `shipCreated`.
+struct EndCityBuilder<'a> {
+    city: &'a EndCity,
+    ship_created: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    HouseTower,
+    Tower,
+    TowerBridge,
+    FatTower,
+}
+
+const TOWER_BRIDGES: [(Rotation, (i32, i32, i32)); 4] =
+    [(Rotation::None, (1, -1, 0)), (Rotation::Clockwise90, (6, -1, 1)), (Rotation::CounterClockwise90, (0, -1, 5)), (Rotation::Clockwise180, (5, -1, 6))];
+const FAT_TOWER_BRIDGES: [(Rotation, (i32, i32, i32)); 4] =
+    [(Rotation::None, (4, -1, 0)), (Rotation::Clockwise90, (12, -1, 4)), (Rotation::CounterClockwise90, (0, -1, 8)), (Rotation::Clockwise180, (8, -1, 12))];
+
+impl EndCityBuilder<'_> {
+    /// `EndCityPieces.addPiece`: a piece connected to `parent` at `offset`.
+    fn add(&self, out: &mut Vec<TemplatePiece>, parent: usize, offset: (i32, i32, i32), name: &str, rotation: Rotation, overwrite: bool) -> usize {
+        let (pp, pr) = {
+            let p = &out[parent];
+            (p.position.lock().unwrap_or_else(|e| e.into_inner()).0, p.rotation)
+        };
+        let mut child = self.city.piece(name, pp, rotation, overwrite);
+        let o = transform_pos(Pos::new(offset.0, offset.1, offset.2), Mirror::None, pr, Pos::new(0, 0, 0));
+        child.translate(o.x, o.y, o.z);
+        out.push(child);
+        out.len() - 1
+    }
+
+    /// `recursiveChildren`. Vanilla passes each generator its own child list and nested
+    /// calls get that list: here all pieces are in one list, a generator's children follow
+    /// `pieces[..start]`, and children are checked against `pieces[outer..start]` (the
+    /// list vanilla would have passed) and kept or dropped as a group.
+    #[allow(clippy::too_many_arguments)]
+    fn recursive(&mut self, section: Section, depth: i32, parent: usize, offset: Option<(i32, i32, i32)>, pieces: &mut Vec<TemplatePiece>, outer: usize, r: &mut WorldgenRandom) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let start = pieces.len();
+        let parent_depth = pieces[parent].base.gen_depth;
+        if self.generate(section, depth, parent, offset, pieces, start, r) {
+            let tag = r.next_i32();
+            let mut collision = false;
+            for i in start..pieces.len() {
+                pieces[i].base.gen_depth = tag;
+                let bb = pieces[i].base.bbox;
+                if let Some(c) = pieces[outer..start].iter().find(|p| p.base.bbox.intersects(&bb)) {
+                    if c.base.gen_depth != parent_depth {
+                        collision = true;
+                        break;
+                    }
+                }
+            }
+            if !collision {
+                return true;
+            }
+        }
+        pieces.truncate(start);
+        false
+    }
+
+    /// `SectionGenerator.generate`, adding to `pieces` from `start` on (pieces before
+    /// `start` are only parents).
+    #[allow(clippy::too_many_arguments)]
+    fn generate(&mut self, section: Section, depth: i32, parent: usize, offset: Option<(i32, i32, i32)>, pieces: &mut Vec<TemplatePiece>, start: usize, r: &mut WorldgenRandom) -> bool {
+        let rotation = pieces[parent].rotation;
+        match section {
+            Section::HouseTower => {
+                if depth > 8 {
+                    return false;
+                }
+                let mut last = self.add(pieces, parent, offset.unwrap_or((0, 0, 0)), "base_floor", rotation, true);
+                match r.next_bounded(3) {
+                    0 => {
+                        self.add(pieces, last, (-1, 4, -1), "base_roof", rotation, true);
+                    }
+                    1 => {
+                        last = self.add(pieces, last, (-1, 0, -1), "second_floor_2", rotation, false);
+                        last = self.add(pieces, last, (-1, 8, -1), "second_roof", rotation, false);
+                        self.recursive(Section::Tower, depth + 1, last, None, pieces, start, r);
+                    }
+                    _ => {
+                        last = self.add(pieces, last, (-1, 0, -1), "second_floor_2", rotation, false);
+                        last = self.add(pieces, last, (-1, 4, -1), "third_floor_2", rotation, false);
+                        last = self.add(pieces, last, (-1, 8, -1), "third_roof", rotation, true);
+                        self.recursive(Section::Tower, depth + 1, last, None, pieces, start, r);
+                    }
+                }
+                true
+            }
+            Section::Tower => {
+                let (x, z) = (3 + r.next_bounded(2), 3 + r.next_bounded(2));
+                let mut last = self.add(pieces, parent, (x, -3, z), "tower_base", rotation, true);
+                last = self.add(pieces, last, (0, 7, 0), "tower_piece", rotation, true);
+                let mut bridge = if r.next_bounded(3) == 0 { Some(last) } else { None };
+                let height = 1 + r.next_bounded(3);
+                for i in 0..height {
+                    last = self.add(pieces, last, (0, 4, 0), "tower_piece", rotation, true);
+                    if i < height - 1 && r.next_bool() {
+                        bridge = Some(last);
+                    }
+                }
+                if let Some(bridge) = bridge {
+                    for (rot, pos) in TOWER_BRIDGES {
+                        if r.next_bool() {
+                            let b = self.add(pieces, bridge, pos, "bridge_end", rotation.then(rot), true);
+                            self.recursive(Section::TowerBridge, depth + 1, b, None, pieces, start, r);
+                        }
+                    }
+                    self.add(pieces, last, (-1, 4, -1), "tower_top", rotation, true);
+                } else if depth == 7 {
+                    self.add(pieces, last, (-1, 4, -1), "tower_top", rotation, true);
+                } else {
+                    return self.recursive(Section::FatTower, depth + 1, last, None, pieces, start, r);
+                }
+                true
+            }
+            Section::TowerBridge => {
+                let length = r.next_bounded(4) + 1;
+                let mut last = self.add(pieces, parent, (0, 0, -4), "bridge_piece", rotation, true);
+                pieces[last].base.gen_depth = -1;
+                let mut next_y = 0;
+                for _ in 0..length {
+                    if r.next_bool() {
+                        last = self.add(pieces, last, (0, next_y, -4), "bridge_piece", rotation, true);
+                        next_y = 0;
+                    } else {
+                        last = if r.next_bool() {
+                            self.add(pieces, last, (0, next_y, -4), "bridge_steep_stairs", rotation, true)
+                        } else {
+                            self.add(pieces, last, (0, next_y, -8), "bridge_gentle_stairs", rotation, true)
+                        };
+                        next_y = 4;
+                    }
+                }
+                if !self.ship_created && r.next_bounded(10 - depth) == 0 {
+                    let (x, z) = (-8 + r.next_bounded(8), -70 + r.next_bounded(10));
+                    self.add(pieces, last, (x, next_y, z), "ship", rotation, true);
+                    self.ship_created = true;
+                } else if !self.recursive(Section::HouseTower, depth + 1, last, Some((-3, next_y + 1, -11)), pieces, start, r) {
+                    return false;
+                }
+                last = self.add(pieces, last, (4, next_y, 0), "bridge_end", rotation.then(Rotation::Clockwise180), true);
+                pieces[last].base.gen_depth = -1;
+                true
+            }
+            Section::FatTower => {
+                let mut last = self.add(pieces, parent, (-3, 4, -3), "fat_tower_base", rotation, true);
+                last = self.add(pieces, last, (0, 4, 0), "fat_tower_middle", rotation, true);
+                for _ in 0..2 {
+                    if r.next_bounded(3) == 0 {
+                        break;
+                    }
+                    last = self.add(pieces, last, (0, 8, 0), "fat_tower_middle", rotation, true);
+                    for (rot, pos) in FAT_TOWER_BRIDGES {
+                        if r.next_bool() {
+                            let b = self.add(pieces, last, pos, "bridge_end", rotation.then(rot), true);
+                            self.recursive(Section::TowerBridge, depth + 1, b, None, pieces, start, r);
+                        }
+                    }
+                }
+                self.add(pieces, last, (-2, 8, -2), "fat_tower_top", rotation, true);
+                true
+            }
+        }
+    }
+}
+
+/// `EndCityStructure`.
+pub(crate) struct EndCity {
+    templates: std::collections::HashMap<&'static str, Arc<Template>>,
+    structure_block: Arc<Processor>,
+    structure_and_air: Arc<Processor>,
+}
+
+const END_CITY_TEMPLATES: &[&str] = &[
+    "base_floor", "base_roof", "bridge_end", "bridge_gentle_stairs", "bridge_piece", "bridge_steep_stairs", "fat_tower_base", "fat_tower_middle",
+    "fat_tower_top", "second_floor_1", "second_floor_2", "second_roof", "ship", "third_floor_1", "third_floor_2", "third_roof", "tower_base",
+    "tower_piece", "tower_top",
+];
+
+impl EndCity {
+    pub fn load(l: &mut Loader) -> Result<Self> {
+        let mut templates = std::collections::HashMap::new();
+        for name in END_CITY_TEMPLATES {
+            templates.insert(*name, l.templates.load(l.data, &format!("minecraft:end_city/{name}"))?);
+        }
+        Ok(Self { templates, structure_block: l.builtins.structure_block.clone(), structure_and_air: l.builtins.structure_and_air.clone() })
+    }
+
+    fn piece(&self, name: &str, position: Pos, rotation: Rotation, overwrite: bool) -> TemplatePiece {
+        let template = self.templates[name].clone();
+        let processor = if overwrite { self.structure_block.clone() } else { self.structure_and_air.clone() };
+        let mut p = TemplatePiece::new("minecraft:ecp", template, position, rotation, Mirror::None, Pos::new(0, 0, 0), vec![processor], TemplateKind::EndCity);
+        p.ignore_entities = true;
+        p
+    }
+}
+
+impl StructureGen for EndCity {
+    fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
+        let (x, z) = (ctx.min_block_x() + 7, ctx.min_block_z() + 7);
+        let (min_y, max_y) = (ctx.min_y() - 1, ctx.max_y());
+        if !ctx.could_exist_in_column(x, z, min_y, max_y) {
+            return None;
+        }
+        let rotation = Rotation::random(&mut ctx.r);
+        let (ox, oz) = match rotation {
+            Rotation::None => (5, 5),
+            Rotation::Clockwise90 => (-5, 5),
+            Rotation::Clockwise180 => (-5, -5),
+            Rotation::CounterClockwise90 => (5, -5),
+        };
+        let y = ctx.cols.lowest_y(x, z, ox, oz);
+        if y < 60 {
+            return None;
+        }
+        let start = Pos::new(x, y, z);
+        if !ctx.valid_biome(start) {
+            return None;
+        }
+        // `startHouseTower`.
+        let mut builder = EndCityBuilder { city: self, ship_created: false };
+        let mut pieces = vec![self.piece("base_floor", start, rotation, true)];
+        let mut last = builder.add(&mut pieces, 0, (-1, 0, -1), "second_floor_1", rotation, false);
+        last = builder.add(&mut pieces, last, (-1, 4, -1), "third_floor_1", rotation, false);
+        last = builder.add(&mut pieces, last, (-1, 8, -1), "third_roof", rotation, true);
+        builder.recursive(Section::Tower, 1, last, None, &mut pieces, 0, &mut ctx.r);
+        Some(pieces.into_iter().map(|p| Box::new(p) as Box<dyn Piece>).collect())
+    }
+}
+
+const IGLOO_TOP: &str = "igloo/top";
+const IGLOO_MIDDLE: &str = "igloo/middle";
+const IGLOO_BOTTOM: &str = "igloo/bottom";
+
+/// `IglooStructure`.
+pub(crate) struct Igloo {
+    top: Arc<Template>,
+    middle: Arc<Template>,
+    bottom: Arc<Template>,
+    structure_block: Arc<Processor>,
+}
+
+impl Igloo {
+    pub fn load(l: &mut Loader) -> Result<Self> {
+        let t = templates(l, &[IGLOO_TOP, IGLOO_MIDDLE, IGLOO_BOTTOM])?;
+        Ok(Self { top: t[0].clone(), middle: t[1].clone(), bottom: t[2].clone(), structure_block: l.builtins.structure_block.clone() })
+    }
+
+    fn piece(&self, which: IglooPart, position: Pos, rotation: Rotation, depth: i32) -> TemplatePiece {
+        let (template, pivot, offset) = match which {
+            IglooPart::Top => (&self.top, Pos::new(3, 5, 5), Pos::new(0, 0, 0)),
+            IglooPart::Middle => (&self.middle, Pos::new(1, 3, 1), Pos::new(2, -3, 4)),
+            IglooPart::Bottom => (&self.bottom, Pos::new(3, 6, 7), Pos::new(0, -3, -2)),
+        };
+        let pos = Pos::new(position.x + offset.x, position.y + offset.y - depth, position.z + offset.z);
+        let mut p = TemplatePiece::new("minecraft:iglu", template.clone(), pos, rotation, Mirror::None, pivot, vec![self.structure_block.clone()], TemplateKind::Igloo { part: which, offset });
+        p.waterlog = false;
+        p
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IglooPart {
+    Top,
+    Middle,
+    Bottom,
+}
+
+impl StructureGen for Igloo {
+    fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
+        let stub = ctx.on_top_of_chunk_center(Heightmap::WorldSurfaceWg)?;
+        if !ctx.valid_biome(stub) {
+            return None;
+        }
+        let start = Pos::new(ctx.min_block_x(), 90, ctx.min_block_z());
+        let r = &mut ctx.r;
+        let rotation = Rotation::random(r);
+        let mut pieces: Vec<Box<dyn Piece>> = Vec::new();
+        if r.next_f64() < 0.5 {
+            let depth = r.next_bounded(8) + 4;
+            pieces.push(Box::new(self.piece(IglooPart::Bottom, start, rotation, depth * 3)));
+            for i in 0..depth - 1 {
+                pieces.push(Box::new(self.piece(IglooPart::Middle, start, rotation, i * 3)));
+            }
+        }
+        pieces.push(Box::new(self.piece(IglooPart::Top, start, rotation, 0)));
+        Some(pieces)
+    }
+}
+
+/// `BuriedTreasurePieces.BuriedTreasurePiece`.
+struct BuriedTreasurePiece {
+    base: PieceBase,
+}
+
+impl Piece for BuriedTreasurePiece {
+    fn base(&self) -> &PieceBase {
+        &self.base
+    }
+
+    fn base_mut(&mut self) -> &mut PieceBase {
+        &mut self.base
+    }
+
+    fn post_process(&self, ctx: &mut PlaceCtx) {
+        let b = ctx.w.b;
+        let (x, z) = (self.base.bbox.min_x, self.base.bbox.min_z);
+        let mut pos = Pos::new(x, ctx.w.height_at(Heightmap::OceanFloorWg, x, z), z);
+        let base_blocks: Vec<u32> = ["sandstone", "stone", "andesite", "granite", "diorite"].iter().map(|n| blocks::id(&format!("minecraft:{n}")).unwrap_or(0)).collect();
+        let liquid = |s: u32| matches!(blocks::block_of_state(s).name, "minecraft:water" | "minecraft:lava");
+        while pos.y > ctx.w.min_y {
+            let current = ctx.w.get(pos);
+            let below = ctx.w.get(pos.down());
+            if base_blocks.contains(&blocks::block_id_of_state(below)) {
+                let soft = if b.is_air(current) || liquid(current) { st("minecraft:sand") } else { current };
+                for d in Dir::ALL {
+                    let rel = pos.rel(d);
+                    let rs = ctx.w.get(rel);
+                    if b.is_air(rs) || liquid(rs) {
+                        let brs = ctx.w.get(rel.down());
+                        if (b.is_air(brs) || liquid(brs)) && d != Dir::Up {
+                            ctx.w.set(rel, below);
+                        } else {
+                            ctx.w.set(rel, soft);
+                        }
+                    }
+                }
+                super::piece::create_chest_at(ctx, pos, "minecraft:chests/buried_treasure", None);
+                return;
+            }
+            pos = pos.down();
+        }
+    }
+}
+
+/// `BuriedTreasureStructure`.
+pub(crate) struct BuriedTreasure;
+
+impl StructureGen for BuriedTreasure {
+    fn generate(&self, ctx: &mut GenCtx) -> Option<Vec<Box<dyn Piece>>> {
+        let stub = ctx.on_top_of_chunk_center(Heightmap::OceanFloorWg)?;
+        if !ctx.valid_biome(stub) {
+            return None;
+        }
+        let p = Pos::new(ctx.min_block_x() + 9, 90, ctx.min_block_z() + 9);
+        Some(vec![Box::new(BuriedTreasurePiece { base: PieceBase::new("minecraft:btp", 0, BoundingBox::single(p)) })])
     }
 }

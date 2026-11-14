@@ -544,6 +544,9 @@ impl Structures {
             "ocean_ruin" => Some(Box::new(legacy::OceanRuin::load(l, json)?)),
             "nether_fossil" => Some(Box::new(legacy::NetherFossil::load(l, json)?)),
             "ruined_portal" => Some(Box::new(legacy::RuinedPortal::load(l, json)?)),
+            "end_city" => Some(Box::new(legacy::EndCity::load(l)?)),
+            "igloo" => Some(Box::new(legacy::Igloo::load(l)?)),
+            "buried_treasure" => Some(Box::new(legacy::BuriedTreasure)),
             _ => None,
         };
         let supported = generator.is_some();
