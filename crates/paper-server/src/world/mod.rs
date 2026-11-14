@@ -13,6 +13,7 @@
 //! neighbours too; chunks are only handed to the rest of the server once finished (see
 //! [`staged`]).
 
+pub mod attributes;
 pub mod block_updates;
 pub mod chunk;
 pub mod entity;

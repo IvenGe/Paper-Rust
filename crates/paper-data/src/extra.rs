@@ -165,8 +165,8 @@ pub mod item_data {
         pub tool: Option<Tool>,
         /// Equipment slot (`head`, `chest`, `legs`, `feet`, `body`, `saddle`, `offhand`).
         pub equip_slot: Option<String>,
-        /// Attribute modifiers: (attribute, amount, operation, slot).
-        pub modifiers: Vec<(String, f64, String, String)>,
+        /// Default attribute modifiers.
+        pub modifiers: Vec<ItemModifier>,
         /// Furnace fuel: the `context_int_provider` entry giving the burn time
         /// (e.g. `minecraft:cooking/time_coal`), resolved from the vanilla data.
         pub fuel: Option<String>,
@@ -175,10 +175,21 @@ pub mod item_data {
         pub raw: Option<Value>,
     }
 
+    /// An attribute modifier of an item: attribute (`minecraft:armor`), modifier id, amount,
+    /// operation (`add_value`, ...) and slot group (`mainhand`, `armor`, `any`, ...).
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct ItemModifier {
+        pub attribute: String,
+        pub id: String,
+        pub amount: f64,
+        pub operation: String,
+        pub slot: String,
+    }
+
     impl ItemData {
         /// Sum of the `add_value` modifiers of `attribute` that apply in `slot`.
         pub fn modifier(&self, attribute: &str, slot: &str) -> f64 {
-            self.modifiers.iter().filter(|(a, _, op, s)| a == attribute && op == "add_value" && (s == slot || s == "any")).map(|(_, v, _, _)| *v).sum()
+            self.modifiers.iter().filter(|m| m.attribute == attribute && m.operation == "add_value" && (m.slot == slot || m.slot == "any")).map(|m| m.amount).sum()
         }
     }
 
@@ -220,13 +231,12 @@ pub mod item_data {
                     .and_then(Value::as_array)
                     .map(|mods| {
                         mods.iter()
-                            .map(|m| {
-                                (
-                                    m["type"].as_str().unwrap_or("").to_owned(),
-                                    m["amount"].as_f64().unwrap_or(0.0),
-                                    m["operation"].as_str().unwrap_or("add_value").to_owned(),
-                                    m["slot"].as_str().unwrap_or("any").to_owned(),
-                                )
+                            .map(|m| ItemModifier {
+                                attribute: m["type"].as_str().unwrap_or("").to_owned(),
+                                id: m["id"].as_str().unwrap_or("").to_owned(),
+                                amount: m["amount"].as_f64().unwrap_or(0.0),
+                                operation: m["operation"].as_str().unwrap_or("add_value").to_owned(),
+                                slot: m["slot"].as_str().unwrap_or("any").to_owned(),
                             })
                             .collect()
                     })
