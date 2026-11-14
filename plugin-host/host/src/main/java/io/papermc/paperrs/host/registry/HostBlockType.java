@@ -2,6 +2,9 @@ package io.papermc.paperrs.host.registry;
 
 import io.papermc.paperrs.host.data.HostData;
 import io.papermc.paperrs.host.stub.AbstractBlockType;
+import io.papermc.paperrs.host.world.HostBlockData;
+import java.util.Collection;
+import java.util.function.Consumer;
 import java.util.Locale;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -133,6 +136,36 @@ public final class HostBlockType extends AbstractBlockType<BlockData> {
     @Override
     public String getTranslationKey() {
         return this.translationKey;
+    }
+
+    @Override
+    public BlockData createBlockData() {
+        return HostBlockData.defaults(this.key.toString());
+    }
+
+    @Override
+    public BlockData createBlockData(final @Nullable String data) {
+        return HostBlockData.parse(this.asMaterial(), data);
+    }
+
+    @Override
+    public BlockData createBlockData(final @Nullable Consumer<? super BlockData> consumer) {
+        final BlockData data = this.createBlockData();
+        if (consumer != null) {
+            consumer.accept(data);
+        }
+        return data;
+    }
+
+    @Override
+    public Collection<BlockData> createBlockDataStates() {
+        return HostBlockData.allStates(this.key.toString());
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Class<BlockData> getBlockDataClass() {
+        return (Class<BlockData>) HostBlockData.dataClass(this.key.toString());
     }
 
     @Override

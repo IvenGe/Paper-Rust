@@ -419,6 +419,36 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.find(TIMEOUT, |b: &play::BossEvent| matches!(&b.action, play::BossEventAction::Add { title, color: 1, .. } if title.to_plain() == "Event")).expect("the Bukkit bar");
     expect_line(&mut alice, "bossbar: ok");
 
+    // --- block data --------------------------------------------------------------------------------
+    alice.clear_backlog();
+    let (id, feet) = server
+        .handle
+        .run(|s| {
+            let p = s.player_by_name("Alice").unwrap();
+            (p.entity_id, BlockPos::new(p.loc.x.floor() as i32, p.loc.y.floor() as i32, p.loc.z.floor() as i32))
+        })
+        .unwrap();
+    let state_at = |pos: BlockPos| server.handle.run(move |s| s.worlds[0].block_at(pos.x, pos.y, pos.z)).unwrap().unwrap();
+    alice.command("apitest blockdata");
+    expect_line(&mut alice, "blockdata: ok");
+    let (base, fence) = (feet.offset(3, 0, -3), feet.offset(3, 0, -4));
+    assert_eq!(paper_data::blocks::block_of_state(state_at(base)).name, "minecraft:gold_block", "the forced snapshot update");
+    assert_eq!(paper_data::blocks::block_of_state(state_at(fence)).name, "minecraft:oak_fence");
+    let fake: play::BlockUpdate = alice.find(TIMEOUT, |u: &play::BlockUpdate| u.pos == base.offset(0, 1, 0)).expect("the block only Alice sees");
+    assert_eq!(Some(fake.state.0 as u32), paper_data::blocks::default_state("minecraft:diamond_block"));
+    assert_eq!(state_at(base.offset(0, 1, 0)), paper_data::blocks::AIR, "the world is unchanged");
+
+    // BlockPlaceEvent sees the placed block, and the plugin's change to it stays.
+    alice.clear_backlog();
+    let stairs = paper_data::items::id("minecraft:oak_stairs").unwrap() as i32;
+    server.handle.run(move |s| s.set_inventory_slot(id, 36 + s.players[&id].held_slot as usize, paper_protocol::types::Slot::of(stairs, 4))).unwrap();
+    let below = feet.offset(-2, -1, 2);
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: below, face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(40) });
+    expect_line(&mut alice, "place: OAK_STAIRS over AIR with OAK_STAIRS");
+    let placed = state_at(below.offset(0, 1, 0));
+    assert_eq!(paper_data::blocks::block_of_state(placed).name, "minecraft:oak_stairs");
+    assert_eq!(paper_data::blocks::property(placed, "half"), Some("top"), "the plugin turned it over");
+
     // --- offline players ------------------------------------------------------------------------
     server.handle.console_command("kick Carol");
     carol.wait_closed(TIMEOUT);

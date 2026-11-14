@@ -137,7 +137,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.command_preprocess` | `uuid`, `message` (with `/`) | `cancelled`, `message` |
 | `event.server_command` | `command` | `cancelled`, `command` |
 | `event.block_break` | `uuid`, `world`, `x`, `y`, `z`, `state` | `cancelled` |
-| `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand` | `cancelled` |
+| `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand` | `cancelled`; the server places the block after the event, unless a listener has set that block itself |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
 | `event.chat` (async) | `uuid`, `message`, `default` | `cancelled`, `deliveries`: `[{viewer, message}]` rendered per viewer (`viewer` is a UUID or `console`) |
@@ -185,6 +185,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.send_plugin_message` | `uuid`, `channel`, `data` |
 | `player.update_commands` | `uuid` |
 | `player.play_sound` | `uuid`, `sound`, `category`, `x`, `y`, `z`, `volume`, `pitch` |
+| `player.block_change` | `uuid`, `x`, `y`, `z`, `state` (a block only this player sees) |
 | `player.stop_sound` | `uuid`, and optionally `sound` and `category` (none: all sounds) |
 | `player.inventory` / `player.set_slot` / `player.set_held_slot` | `uuid` / `slot`, `item` (window slot numbers) / `slot` |
 | `player.open_inventory` | `uuid`, `inventory` (descriptor), `title` (answers `opened`, `window`) |
@@ -222,7 +223,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `offline.list` | (answers the same for every known player) |
 | `offline.set_op` / `set_whitelisted` / `ban` / `pardon` | `uuid`, `name`, `op` / `value` / `reason`, `source` / |
 | `world.info` | `world` |
-| `world.get_block` / `world.set_block` | `world`, `x`, `y`, `z` / `state` |
+| `world.get_block` / `world.set_block` | `world`, `x`, `y`, `z` / `state` (`minecraft:name[property=value,...]`), `physics` (default true) |
 | `world.highest_block_y` | `world`, `x`, `z` |
 | `world.set_time` | `world`, `time`, `daylight_cycle` |
 | `world.set_spawn` | `world`, `x`, `y`, `z`, `yaw` |
@@ -253,3 +254,9 @@ public method of the same signature. Calls without one run the interface's defau
 throw the same named `UnsupportedOperationException`, so `instanceof` checks work and missing
 features still fail clearly. `ProxySignatureTest` checks the implementation classes against
 the API interfaces, since the compiler cannot.
+
+Block data (`HostBlockData`) is a proxy too, of the interface Paper gives the block: the type
+argument of its `BlockType.Typed` constant (`BlockType.Typed<Stairs> OAK_STAIRS`), the same
+mapping `CraftBlockData` is generated from. Its getters and setters read and write the block's
+properties by name (`getHoneyLevel` is `honey_level`, `getHeight(BlockFace)` is the property
+named after the face), and `BlockDataTest` calls every one of them on every block.

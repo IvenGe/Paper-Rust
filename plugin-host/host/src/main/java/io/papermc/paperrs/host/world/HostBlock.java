@@ -8,7 +8,8 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.craftbukkit.CraftServer;
+import org.bukkit.block.data.BlockData;
+import org.jetbrains.annotations.Nullable;
 
 /** A block position in a world. Reads and writes go to the Rust server. */
 public final class HostBlock extends AbstractBlock {
@@ -16,6 +17,11 @@ public final class HostBlock extends AbstractBlock {
     private final int x;
     private final int y;
     private final int z;
+    /**
+     * The state an event shows for a change the server makes only once the event allows it
+     * ({@code BlockPlaceEvent#getBlockPlaced}); null to read the world.
+     */
+    private @Nullable String pending;
 
     public HostBlock(final HostWorld world, final int x, final int y, final int z) {
         this.world = world;
@@ -30,7 +36,43 @@ public final class HostBlock extends AbstractBlock {
 
     /** The block state as {@code minecraft:name[property=value,...]}. */
     public String stateString() {
-        return Values.str(this.query(), "state", "minecraft:air");
+        final String state = this.pending;
+        return state != null ? state : Values.str(this.query(), "state", "minecraft:air");
+    }
+
+    /** Shows {@code state} instead of the world's block until {@link #settle()} or a change. */
+    public HostBlock pending(final String state) {
+        this.pending = state;
+        return this;
+    }
+
+    public void settle() {
+        this.pending = null;
+    }
+
+    /** Sets the block state ({@code minecraft:name[property=value,...]}). */
+    public void setState(final String state, final boolean applyPhysics) {
+        this.pending = null;
+        this.world.server().call("world.set_block",
+            Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z, "state", state, "physics", applyPhysics));
+    }
+
+    @Override
+    public BlockData getBlockData() {
+        return HostBlockData.ofState(this.stateString());
+    }
+
+    @Override
+    public void setBlockData(final BlockData data) {
+        this.setBlockData(data, true);
+    }
+
+    @Override
+    public void setBlockData(final BlockData data, final boolean applyPhysics) {
+        if (data == null) {
+            throw new IllegalArgumentException("BlockData cannot be null");
+        }
+        this.setState(HostBlockData.impl(data).getAsString(false), applyPhysics);
     }
 
     @Override
@@ -87,8 +129,7 @@ public final class HostBlock extends AbstractBlock {
         if (!type.isBlock()) {
             throw new IllegalArgumentException(type + " is not a block");
         }
-        this.world.server().call("world.set_block",
-            Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z, "state", type.getKey().toString()));
+        this.setState(type.getKey().toString(), applyPhysics);
     }
 
     @Override

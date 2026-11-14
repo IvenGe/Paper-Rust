@@ -18,31 +18,41 @@ import org.bukkit.block.EnderChest;
 import org.bukkit.block.Furnace;
 import org.bukkit.block.Hopper;
 import org.bukkit.block.Smoker;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * {@code Block#getState()}: the block at a position, implementing the block's state interface
- * for the containers Paper-RS supports ({@code Chest}, {@code Barrel}, {@code Furnace},
- * {@code Smoker}, {@code BlastFurnace}, {@code EnderChest}, {@code Hopper}, {@code Dispenser},
- * {@code Dropper}); other blocks are plain
- * {@code BlockState}s. Container inventories are live (the server keeps the items in the
- * block entity), so {@code update()} has nothing to write.
+ * {@code Block#getState()}: a snapshot of the block at a position, implementing the block's
+ * state interface for the containers Paper-RS supports ({@code Chest}, {@code Barrel},
+ * {@code Furnace}, {@code Smoker}, {@code BlastFurnace}, {@code EnderChest}, {@code Hopper},
+ * {@code Dispenser}, {@code Dropper}); other blocks are plain {@code BlockState}s. The block
+ * data is a snapshot that {@code update()} writes back, as in {@code CraftBlockState}; container
+ * inventories are live (the server keeps the items in the block entity).
  */
 public final class HostBlockState implements HostProxies.Backed {
     private final HostBlock block;
-    private final Material type;
+    private final Class<? extends BlockState> iface;
+    /** The snapshot, as {@code minecraft:name[property=value,...]}. */
+    private String data;
+    private Material type;
     private Object self;
 
-    private HostBlockState(final HostBlock block, final Material type) {
+    private HostBlockState(final HostBlock block, final Class<? extends BlockState> iface, final String data) {
         this.block = block;
-        this.type = type;
+        this.iface = iface;
+        this.setData(data);
     }
 
     static BlockState of(final HostBlock block) {
-        final Material type = block.getType();
-        final Class<? extends BlockState> iface = switch (type.getKey().getKey()) {
+        return of(block, block.stateString());
+    }
+
+    /** A snapshot of {@code block} holding {@code state} (for events about a state the world no longer has). */
+    public static BlockState of(final HostBlock block, final String state) {
+        final String name = state.indexOf('[') < 0 ? state : state.substring(0, state.indexOf('['));
+        final Class<? extends BlockState> iface = switch (name.substring(name.indexOf(':') + 1)) {
             case "chest", "trapped_chest" -> Chest.class;
             case "barrel" -> Barrel.class;
             case "furnace" -> Furnace.class;
@@ -54,7 +64,14 @@ public final class HostBlockState implements HostProxies.Backed {
             case "dropper" -> Dropper.class;
             default -> BlockState.class;
         };
-        return HostProxies.create(new HostBlockState(block, type), iface);
+        return HostProxies.create(new HostBlockState(block, iface, state), iface);
+    }
+
+    private void setData(final String state) {
+        this.data = state;
+        final int bracket = state.indexOf('[');
+        final Material material = Material.matchMaterial(bracket < 0 ? state : state.substring(0, bracket));
+        this.type = material == null ? Material.AIR : material;
     }
 
     @Override
@@ -68,6 +85,26 @@ public final class HostBlockState implements HostProxies.Backed {
 
     public Material getType() {
         return this.type;
+    }
+
+    public void setType(final Material type) {
+        if (type == null || !type.isBlock()) {
+            throw new IllegalArgumentException(type + " is not a block");
+        }
+        if (type != this.type) {
+            this.setData(HostBlockData.defaults(type).getAsString());
+        }
+    }
+
+    public BlockData getBlockData() {
+        return HostBlockData.ofState(this.data);
+    }
+
+    public void setBlockData(final BlockData data) {
+        if (data == null) {
+            throw new IllegalArgumentException("BlockData cannot be null");
+        }
+        this.setData(HostBlockData.impl(data).getAsString(false));
     }
 
     public World getWorld() {
@@ -103,15 +140,32 @@ public final class HostBlockState implements HostProxies.Backed {
     }
 
     public boolean update() {
-        return true;
+        return this.update(false, true);
     }
 
     public boolean update(final boolean force) {
+        return this.update(force, true);
+    }
+
+    /**
+     * Writes the snapshot's block data to the world. Unless forced, only while the world still
+     * has the same type of block there.
+     */
+    public boolean update(final boolean force, final boolean applyPhysics) {
+        if (!force && this.block.getType() != this.type) {
+            return false;
+        }
+        this.block.setState(this.data, applyPhysics);
         return true;
     }
 
-    public boolean update(final boolean force, final boolean applyPhysics) {
-        return true;
+    public BlockState copy() {
+        return HostProxies.create(new HostBlockState(this.block, this.iface, this.data), this.iface);
+    }
+
+    public BlockState copy(final Location location) {
+        final HostWorld world = (HostWorld) (location.getWorld() == null ? this.block.getWorld() : location.getWorld());
+        return HostProxies.create(new HostBlockState((HostBlock) world.getBlockAt(location), this.iface, this.data), this.iface);
     }
 
     private @Nullable Map<String, Object> container() {

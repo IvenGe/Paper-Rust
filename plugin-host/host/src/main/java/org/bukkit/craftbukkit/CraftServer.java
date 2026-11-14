@@ -17,6 +17,7 @@ import io.papermc.paperrs.host.entity.HostPlayer;
 import io.papermc.paperrs.host.registry.HostLegacyTag;
 import io.papermc.paperrs.host.stub.AbstractHelpMap;
 import io.papermc.paperrs.host.stub.AbstractServer;
+import io.papermc.paperrs.host.world.HostBlockData;
 import io.papermc.paperrs.host.world.HostWorld;
 import java.io.File;
 import java.nio.file.Path;
@@ -30,6 +31,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -51,6 +53,7 @@ import org.bukkit.Tag;
 import org.bukkit.UnsafeValues;
 import org.bukkit.Warning;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandMap;
 import org.bukkit.command.CommandSender;
@@ -954,5 +957,31 @@ public final class CraftServer extends AbstractServer {
 
     @SuppressWarnings("unused")
     private static void unusedImports(final Fluid f, final GameEvent g, final EntityType e) {
+    }
+
+    // --- block data ------------------------------------------------------------------------------
+
+    @Override
+    public BlockData createBlockData(final String data) {
+        return HostBlockData.parse(null, data);
+    }
+
+    @Override
+    public BlockData createBlockData(final Material material) {
+        return HostBlockData.defaults(material);
+    }
+
+    @Override
+    public BlockData createBlockData(final Material material, final String data) {
+        return HostBlockData.parse(material, data);
+    }
+
+    @Override
+    public BlockData createBlockData(final Material material, final Consumer<? super BlockData> consumer) {
+        final BlockData data = HostBlockData.defaults(material);
+        if (consumer != null) {
+            consumer.accept(data);
+        }
+        return data;
     }
 }

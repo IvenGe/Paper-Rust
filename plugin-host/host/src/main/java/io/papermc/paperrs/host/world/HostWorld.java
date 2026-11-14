@@ -119,6 +119,21 @@ public final class HostWorld extends AbstractWorld {
     }
 
     @Override
+    public org.bukkit.block.data.BlockData getBlockData(final int x, final int y, final int z) {
+        return this.getBlockAt(x, y, z).getBlockData();
+    }
+
+    @Override
+    public void setBlockData(final int x, final int y, final int z, final org.bukkit.block.data.BlockData data) {
+        this.getBlockAt(x, y, z).setBlockData(data);
+    }
+
+    @Override
+    public org.bukkit.Material getType(final int x, final int y, final int z) {
+        return this.getBlockAt(x, y, z).getType();
+    }
+
+    @Override
     public int getHighestBlockYAt(final int x, final int z) {
         final Object y = this.server.call("world.highest_block_y", Values.of("world", this.name, "x", x, "z", z));
         return y instanceof Number n ? n.intValue() : this.minY;

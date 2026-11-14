@@ -101,6 +101,7 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "scoreboard" -> this.scoreboard((Player) sender);
                 case "effects" -> this.effects((Player) sender);
                 case "bossbar" -> this.bossbar((Player) sender);
+                case "blockdata" -> this.blockData((Player) sender);
                 case "unsupported" -> {
                     try {
                         ((Player) sender).getInventory().getItemInMainHand().getItemMeta().getAttributeModifiers();
@@ -118,6 +119,64 @@ final class ApiTests implements Listener, CommandExecutor {
             sender.sendMessage(args[0] + ": FAIL " + e);
         }
         return true;
+    }
+
+    // --- block data ---------------------------------------------------------------------------
+
+    private void blockData(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final World world = player.getWorld();
+        final Location base = player.getLocation().getBlock().getLocation().add(3, 0, -3);
+
+        final org.bukkit.block.data.BlockData parsed = Bukkit.createBlockData("minecraft:oak_stairs[facing=east,half=top]");
+        check(failures, parsed instanceof org.bukkit.block.data.type.Stairs s && s.getFacing() == org.bukkit.block.BlockFace.EAST
+            && s.getHalf() == org.bukkit.block.data.Bisected.Half.TOP && s.getShape() == org.bukkit.block.data.type.Stairs.Shape.STRAIGHT, "parse " + parsed);
+        check(failures, Material.WHEAT.createBlockData() instanceof org.bukkit.block.data.Ageable a && a.getMaximumAge() == 7, "wheat");
+        check(failures, Bukkit.createBlockData(Material.OAK_LOG, "[axis=x]") instanceof org.bukkit.block.data.Orientable o && o.getAxis() == org.bukkit.Axis.X, "log");
+        check(failures, org.bukkit.block.BlockType.CHEST.createBlockData() instanceof org.bukkit.block.data.type.Chest, "block type");
+
+        // Block#setBlockData and getBlockData, with and without physics.
+        final Block block = world.getBlockAt(base);
+        block.setBlockData(parsed);
+        check(failures, block.getType() == Material.OAK_STAIRS, "type " + block.getType());
+        check(failures, block.getBlockData().matches(parsed), "read back " + block.getBlockData().getAsString());
+        final org.bukkit.block.data.type.Stairs stairs = (org.bukkit.block.data.type.Stairs) block.getBlockData();
+        stairs.setFacing(org.bukkit.block.BlockFace.NORTH);
+        block.setBlockData(stairs, false);
+        check(failures, ((org.bukkit.block.data.Directional) block.getBlockData()).getFacing() == org.bukkit.block.BlockFace.NORTH, "facing");
+        final Location fence = base.clone().add(0, 0, -1);
+        world.setBlockData(fence, Material.OAK_FENCE.createBlockData());
+        check(failures, world.getBlockData(fence) instanceof org.bukkit.block.data.type.Fence, "world " + world.getBlockData(fence).getAsString());
+
+        // Block states are snapshots that update() writes back.
+        final BlockState state = block.getState();
+        state.setType(Material.GOLD_BLOCK);
+        check(failures, block.getType() == Material.OAK_STAIRS, "snapshot applied early");
+        check(failures, !state.update(), "update without force");
+        check(failures, state.update(true) && block.getType() == Material.GOLD_BLOCK, "forced update " + block.getType());
+
+        try {
+            block.getBlockData().getSoundGroup();
+            failures.add("getSoundGroup returned");
+        } catch (UnsupportedOperationException e) {
+            check(failures, e.getMessage().contains("BlockData#getSoundGroup"), e.getMessage());
+        }
+        // A block only this player sees.
+        player.sendBlockChange(base.clone().add(0, 1, 0), Material.DIAMOND_BLOCK.createBlockData());
+        report(player, "blockdata", failures);
+    }
+
+    /** BlockPlaceEvent shows the placed block; stairs are turned upside down. */
+    @EventHandler
+    public void onPlace(final org.bukkit.event.block.BlockPlaceEvent event) {
+        if (event.getBlockPlaced().getType() != Material.OAK_STAIRS) {
+            return;
+        }
+        event.getPlayer().sendMessage("place: " + event.getBlockPlaced().getType() + " over " + event.getBlockReplacedState().getType()
+            + " with " + event.getItemInHand().getType());
+        final org.bukkit.block.data.type.Stairs stairs = (org.bukkit.block.data.type.Stairs) event.getBlockPlaced().getBlockData();
+        stairs.setHalf(org.bukkit.block.data.Bisected.Half.TOP);
+        event.getBlockPlaced().setBlockData(stairs);
     }
 
     // --- potion effects and boss bars ---------------------------------------------------------

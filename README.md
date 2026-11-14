@@ -174,6 +174,12 @@ What works:
   * potion effects of players and mobs (`addPotionEffect`, `getActivePotionEffects`, ...);
   * boss bars, Adventure's (`showBossBar`) and Bukkit's (`Server.createBossBar`, keyed ones
     included);
+  * block data: `Bukkit.createBlockData`, `Material`/`BlockType.createBlockData`,
+    `Block`/`World.getBlockData` and `setBlockData` (with or without physics), every block's
+    data interface (`Stairs`, `Ageable`, `Directional`, `Door`, `Wall`, ...), block states as
+    snapshots that `update()` writes back, and `Player.sendBlockChange`. In
+    `BlockPlaceEvent` the placed block reads as the new block and the replaced state as the old
+    one, and a plugin's change to the placed block stays;
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload)).
 
 Not yet:
@@ -187,13 +193,15 @@ Not yet:
   crafters and observers of entities do not work yet, dispensers only know
   the common items (arrows, buckets, TNT, flint and steel), and pistons do not push
   entities.
-* Plugin API: block data, creating worlds, registry and tag lifecycle events,
+* Plugin API: creating worlds, registry and tag lifecycle events,
   attributes, statistics, books (`openBook`), resource packs, dialogs, signed chat messages, entity AI and passengers, the data component API
   for components without plain values, most special item metas (skulls, potions, books,
   banners, ...), inventories of other block types and anvils, enchanting or merchant views,
   stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the
   `/scoreboard` and `/team` commands, and vanilla-format item serialization
-  (`ItemStack.serialize` uses Paper-RS's own form). The persistent data containers of
+  (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
+  its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
+  ...) are not answered yet. The persistent data containers of
   entities other than players live only in the plugin host and are not saved with the entity.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them.

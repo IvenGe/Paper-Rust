@@ -492,13 +492,18 @@ impl Server {
         if !crate::plugins::events::on_block_place(self, id, world, target, state, replaced, use_on.pos, use_on.hand.0 == 1) {
             return false;
         }
-        if !self.set_block_with_flags(world, target, state, crate::world::block_updates::flags::ALL_IMMEDIATE) {
-            return false;
+        // A plugin that set the block itself during the event keeps its block, as in Paper
+        // (where the event runs after the placement and later changes win).
+        let set_by_plugin = self.worlds[world].block_at(target.x, target.y, target.z) != Some(replaced);
+        if !set_by_plugin {
+            if !self.set_block_with_flags(world, target, state, crate::world::block_updates::flags::ALL_IMMEDIATE) {
+                return false;
+            }
+            if let Some((pos, second_state)) = second.or(neighbour) {
+                self.set_block_and_update(world, pos, second_state);
+            }
+            self.block_placed(world, target, state);
         }
-        if let Some((pos, second_state)) = second.or(neighbour) {
-            self.set_block_and_update(world, pos, second_state);
-        }
-        self.block_placed(world, target, state);
         if mode == GameMode::Survival {
             if let Some(player) = self.players.get_mut(&id) {
                 let remaining = stack.count - 1;

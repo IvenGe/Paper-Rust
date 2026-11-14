@@ -411,6 +411,27 @@ public final class HostPlayer extends AbstractPlayer {
         this.server.send("player.stop_sound", args);
     }
 
+    // --- fake blocks ---------------------------------------------------------------------------
+
+    @Override
+    public void sendBlockChange(final org.bukkit.Location loc, final org.bukkit.block.data.BlockData block) {
+        this.server.send("player.block_change", this.args("x", loc.getBlockX(), "y", loc.getBlockY(), "z", loc.getBlockZ(),
+            "state", io.papermc.paperrs.host.world.HostBlockData.impl(block).getAsString(false)));
+    }
+
+    @Override
+    public void sendBlockChanges(final java.util.Collection<org.bukkit.block.BlockState> blocks) {
+        for (final org.bukkit.block.BlockState state : blocks) {
+            this.sendBlockChange(state.getLocation(), state.getBlockData());
+        }
+    }
+
+    @Override
+    public void sendMultiBlockChange(final Map<? extends io.papermc.paper.math.Position, org.bukkit.block.data.BlockData> blocks) {
+        blocks.forEach((pos, data) -> this.server.send("player.block_change", this.args("x", pos.blockX(), "y", pos.blockY(), "z", pos.blockZ(),
+            "state", io.papermc.paperrs.host.world.HostBlockData.impl(data).getAsString(false))));
+    }
+
     @Override
     public void stopAllSounds() {
         this.server.send("player.stop_sound", this.args());

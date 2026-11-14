@@ -455,6 +455,17 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             player.conn.send(&packet);
             Ok(Value::Null)
         }
+        "player.block_change" => {
+            // Player#sendBlockChange: only this player sees the block (until the chunk resends it).
+            let id = player_id(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            let state = match args.get("state") {
+                Value::Str(s) => blocks::parse_state(s).ok_or_else(|| anyhow!("invalid block state {s}"))?,
+                other => bail!("invalid block state {other}"),
+            };
+            server.players[&id].conn.send(&play::BlockUpdate { pos: paper_protocol::codec::BlockPos::new(x, y, z), state: paper_protocol::codec::VarInt(state as i32) });
+            Ok(Value::Null)
+        }
         "player.stop_sound" => {
             let id = player_id(server, args)?;
             server.players[&id].conn.send(&play::StopSound { category: args.i32("category"), sound: args.str("sound").map(str::to_owned) });

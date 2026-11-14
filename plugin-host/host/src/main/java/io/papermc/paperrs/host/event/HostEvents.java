@@ -7,6 +7,8 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import io.papermc.paperrs.host.Components;
 import io.papermc.paperrs.host.bridge.Values;
 import io.papermc.paperrs.host.entity.HostPlayer;
+import io.papermc.paperrs.host.world.HostBlock;
+import io.papermc.paperrs.host.world.HostBlockState;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -145,12 +147,20 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.block_place" -> {
-                final Block placed = this.block(args);
+                // The server places the block once the event allows it; until then the placed
+                // block shows the new state and the replaced state is a snapshot of the old one.
+                final HostBlock placed = ((HostBlock) this.block(args)).pending(Values.str(args, "state"));
                 final List<Object> against = Values.list(args.get("against"));
                 final Block clicked = placed.getWorld().getBlockAt(((Number) against.get(0)).intValue(), ((Number) against.get(1)).intValue(), ((Number) against.get(2)).intValue());
-                final BlockPlaceEvent event = new BlockPlaceEvent(placed, null, clicked, null, this.player(args), true,
-                    Values.bool(args, "offhand", false) ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
-                event.callEvent();
+                final HostPlayer player = this.player(args);
+                final EquipmentSlot hand = Values.bool(args, "offhand", false) ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND;
+                final BlockPlaceEvent event = new BlockPlaceEvent(placed, HostBlockState.of(placed, Values.str(args, "replaced", "minecraft:air")), clicked,
+                    player.getInventory().getItem(hand), player, true, hand);
+                try {
+                    event.callEvent();
+                } finally {
+                    placed.settle();
+                }
                 yield Values.of("cancelled", event.isCancelled() || !event.canBuild());
             }
             case "event.move" -> {
