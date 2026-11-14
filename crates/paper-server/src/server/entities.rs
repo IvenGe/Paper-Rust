@@ -830,6 +830,21 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
                     m = m.boolean(i, mob.stared_at);
                 }
             }
+            // A ghast opens its mouth while charging; a blaze glows while charged.
+            if let Some(i) = info.data_index("DATA_IS_CHARGING") {
+                let charging = mob.brain.charge > 10;
+                if charging || !spawning {
+                    m = m.boolean(i, charging);
+                }
+            }
+            if info.name == "minecraft:blaze" {
+                if let Some(i) = info.data_index("DATA_FLAGS_ID") {
+                    let charged = (1..=4).contains(&mob.brain.swell);
+                    if charged || !spawning {
+                        m = m.byte(i, if charged { 1 } else { 0 });
+                    }
+                }
+            }
             if let Some(merchant) = mob.merchant.as_deref() {
                 if let Some(i) = info.data_index("DATA_VILLAGER_DATA") {
                     let ty = paper_data::registries::id("minecraft:villager_type", &merchant.villager_type).unwrap_or(2) as i32;

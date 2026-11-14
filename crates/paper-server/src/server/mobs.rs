@@ -546,7 +546,8 @@ impl Server {
             }
         }
         // Hostile mobs look for players now and then (`NearestAttackableTargetGoal`).
-        let hostile = matches!(kind, Behavior::Melee | Behavior::Archer | Behavior::Creeper);
+        let shooter = matches!(info.name.as_str(), "minecraft:ghast" | "minecraft:blaze");
+        let hostile = matches!(kind, Behavior::Melee | Behavior::Archer | Behavior::Creeper) || shooter;
         let spider_calm = matches!(info.name.as_str(), "minecraft:spider" | "minecraft:cave_spider") && raw_brightness(w, eye.x.floor() as i32, eye.y.floor() as i32, eye.z.floor() as i32) >= 12;
         if hostile && brain.target.is_none() && difficulty != Difficulty::Peaceful && rng.gen_range(0..10) == 0 && !spider_calm {
             let mut best: Option<(f64, i32)> = None;
@@ -557,7 +558,9 @@ impl Server {
                 let at = Vec3::new(p.loc.x, p.loc.y, p.loc.z);
                 let range = if p.sneaking { follow * 0.8 } else { follow };
                 let d = at.distance_squared(pos);
-                if d > range * range || (at.y - pos.y).abs() > 4.0 + range.min(follow) {
+                // Ghasts only go for players within four blocks of their own height.
+                let vertical = if info.name == "minecraft:ghast" { 4.0 } else { 4.0 + range.min(follow) };
+                if d > range * range || (at.y - pos.y).abs() > vertical {
                     continue;
                 }
                 let p_eye = Vec3::new(at.x, at.y + p.eye_height(), at.z);
@@ -577,6 +580,9 @@ impl Server {
         let mut swing = false;
         let mut attack: Option<(i32, f32)> = None;
         let mut shoot: Option<(i32, Vec3)> = None;
+        // A fireball to shoot (its kind, where from, which way) and a cry to go with it.
+        let mut fireball: Option<(&'static str, Vec3, Vec3)> = None;
+        let mut cry: Option<(&'static str, f32)> = None;
         let mut explode = false;
         let mut breed_with: Option<i32> = None;
 
@@ -624,6 +630,64 @@ impl Server {
                         }
                     } else {
                         brain.charge = 0;
+                    }
+                }
+                // `GhastShootFireballGoal`: a player in sight within 64 blocks is charged at for a
+                // second, with a warning cry halfway, then shot at; two seconds later again.
+                Behavior::Flyer if info.name == "minecraft:ghast" => {
+                    let center = Vec3::new(tp.x, tp.y + 0.9, tp.z);
+                    if dist2 < 4096.0 && super::combat::clip_blocks(w, eye, center).is_none() {
+                        brain.charge += 1;
+                        if brain.charge == 10 {
+                            cry = Some(("minecraft:entity.ghast.warn", 10.0));
+                        }
+                        if brain.charge == 20 {
+                            let ahead = Vec3::new(tp.x - pos.x, 0.0, tp.z - pos.z).normalize().scale(4.0);
+                            let from = Vec3::new(pos.x + ahead.x, pos.y + info.height as f64 * 0.5 + 0.5, pos.z + ahead.z);
+                            fireball = Some(("minecraft:fireball", from, center.sub(from)));
+                            cry = Some(("minecraft:entity.ghast.shoot", 10.0));
+                            brain.charge = -40;
+                        }
+                    } else if brain.charge > 0 {
+                        brain.charge -= 1;
+                    }
+                }
+                // `BlazeAttackGoal`: up close it hits; further away, in sight, it charges for
+                // three seconds and shoots three fireballs a third of a second apart, then rests
+                // for five seconds (the step counts in `swell`).
+                Behavior::Flyer if info.name == "minecraft:blaze" => {
+                    let center = Vec3::new(tp.x, tp.y + 0.9, tp.z);
+                    let visible = super::combat::clip_blocks(w, eye, center).is_none();
+                    brain.attack_cooldown -= 1;
+                    if dist2 < 4.0 {
+                        if visible && brain.attack_cooldown <= 0 {
+                            brain.attack_cooldown = 20;
+                            swing = true;
+                            attack = Some((t, mob.attributes.value("attack_damage") as f32));
+                        }
+                        goal = Some(tp);
+                    } else if dist2 < follow * follow && visible {
+                        if brain.attack_cooldown <= 0 {
+                            brain.swell += 1;
+                            brain.attack_cooldown = match brain.swell {
+                                1 => 60,
+                                2..=4 => 6,
+                                _ => 100,
+                            };
+                            if brain.swell > 1 {
+                                let spread = dist2.sqrt().sqrt() * 0.5 * 2.297;
+                                let middle = Vec3::new(pos.x, pos.y + info.height as f64 * 0.5, pos.z);
+                                let d = center.sub(middle);
+                                let dir = Vec3::new(d.x + spread * (rng.gen::<f64>() - rng.gen::<f64>()), d.y, d.z + spread * (rng.gen::<f64>() - rng.gen::<f64>()));
+                                fireball = Some(("minecraft:small_fireball", Vec3::new(pos.x, middle.y + 0.5, pos.z), dir));
+                                cry = Some(("minecraft:entity.blaze.shoot", 2.0));
+                            }
+                            if brain.swell > 4 {
+                                brain.swell = 0;
+                            }
+                        }
+                    } else {
+                        goal = Some(tp);
                     }
                 }
                 Behavior::Creeper => {
@@ -777,7 +841,11 @@ impl Server {
         let _ = tick;
 
         let e = self.worlds[world].entities.get_mut(&id).unwrap();
-        let swelling_changed = e.mob().is_some_and(|m| m.brain.swelling != brain.swelling || m.brain.target.is_some() != brain.target.is_some());
+        let swelling_changed = e.mob().is_some_and(|m| {
+            // Also a ghast's open mouth and a blaze's glow (see `entity_metadata`).
+            let shown = |b: &MobBrain| (b.charge > 10, (1..=4).contains(&b.swell));
+            m.brain.swelling != brain.swelling || m.brain.target.is_some() != brain.target.is_some() || shooter && shown(&m.brain) != shown(&brain)
+        });
         if let Some(m) = e.mob_mut() {
             m.brain = brain;
         }
@@ -793,6 +861,14 @@ impl Server {
         }
         if let Some((_, at)) = shoot {
             self.mob_shoot(world, id, at);
+        }
+        if let Some((sound, volume)) = cry {
+            let pitch = (rand::thread_rng().gen::<f32>() - rand::thread_rng().gen::<f32>()) * 0.2 + 1.0;
+            self.play_sound(world, pos, sound, category::HOSTILE, volume, pitch, None);
+        }
+        if let Some((kind, from, dir)) = fireball {
+            // Hurting projectiles start slow and speed up (`AbstractHurtingProjectile`).
+            self.spawn_thrown(world, kind, from, dir, 0.1, 0.0, 0.0, Slot::EMPTY, Some(id));
         }
         if explode {
             self.creeper_explode(world, id);

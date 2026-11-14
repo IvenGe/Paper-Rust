@@ -87,8 +87,9 @@ impl Server {
     pub(super) fn tick_thrown(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let EntityKind::Thrown { owner, gravity, left_owner, .. } = e.kind else { return };
-        let fireball = matches!(e.info.name.as_str(), "minecraft:small_fireball" | "minecraft:dragon_fireball");
+        let fireball = matches!(e.info.name.as_str(), "minecraft:small_fireball" | "minecraft:dragon_fireball" | "minecraft:fireball");
         let dragon_fireball = e.info.name == "minecraft:dragon_fireball";
+        let large_fireball = e.info.name == "minecraft:fireball";
         let (from, mut vel) = (e.pos, e.vel);
         if fireball {
             // `AbstractHurtingProjectile.applyInertia`: it keeps speeding up along its way, less
@@ -140,6 +141,8 @@ impl Server {
             let at = from.add(vel.scale(t));
             if dragon_fireball {
                 self.dragon_fireball_hits(world, id, at, owner);
+            } else if large_fireball {
+                self.large_fireball_hits(world, id, at, Some(victim));
             } else if fireball {
                 self.fireball_hits(world, id, at, vel, Some(victim));
             } else {
@@ -151,6 +154,8 @@ impl Server {
             let _ = block;
             if dragon_fireball {
                 self.dragon_fireball_hits(world, id, end, owner);
+            } else if large_fireball {
+                self.large_fireball_hits(world, id, end, None);
             } else if fireball {
                 self.fireball_hits(world, id, end, vel, None);
             } else {
@@ -203,6 +208,36 @@ impl Server {
                     self.set_block_and_update(world, pos, fire);
                 }
             }
+        }
+    }
+
+    /// A ghast's fireball hits (`LargeFireball.onHit`): what it hit takes 6 damage, and it
+    /// explodes with power 1, breaking blocks only with mob griefing (the explosion sets no
+    /// fires here).
+    fn large_fireball_hits(&mut self, world: usize, id: i32, at: Vec3, victim: Option<i32>) {
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        let EntityKind::Thrown { owner, .. } = e.kind.clone() else { return };
+        e.removed = true;
+        e.pos = at;
+        if let Some(v) = victim {
+            let damage = Damage { kind: "minecraft:fireball", attacker: owner, direct: Some(id), position: Some(at) };
+            self.hurt_entity(world, v, damage, 6.0);
+        }
+        let griefing = self.worlds[world].rules.bool("mob_griefing");
+        self.explode(world, at, 1.0, griefing, owner);
+    }
+
+    /// A player strikes a ghast's fireball (`ProjectileDeflection.AIM_DEFLECT`): it flies where
+    /// they look, and is theirs from then on.
+    pub(super) fn deflect_fireball(&mut self, world: usize, id: i32, player: i32) {
+        let Some(p) = self.players.get(&player) else { return };
+        let look = Vec3::from_rotation(p.loc.yaw, p.loc.pitch);
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        e.vel = look.normalize();
+        e.force_sync = true;
+        if let EntityKind::Thrown { owner, left_owner, .. } = &mut e.kind {
+            *owner = Some(player);
+            *left_owner = false;
         }
     }
 

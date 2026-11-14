@@ -118,6 +118,11 @@ impl Server {
         if nearest.distance_squared(eye) > range * range {
             return;
         }
+        // A ghast's fireball is struck back (small and dragon fireballs cannot be).
+        if self.worlds[world].entities.get(&target).is_some_and(|e| e.info.name == "minecraft:fireball") {
+            self.deflect_fireball(world, target, id);
+            return;
+        }
 
         // The held weapon's modifiers (and strength or weakness) are in the attributes.
         self.refresh_player_attributes(id);
