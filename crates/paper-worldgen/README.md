@@ -164,8 +164,9 @@ generation), witches and cats in swamp huts, pillagers at outposts and the fortr
 Block entities come out typed where `BlockEntity` can express them (containers with a
 loot table and seed, spawners) and as vanilla block entity NBT otherwise
 (`RegionAccess::add_block_entity_nbt`, e.g. trial spawners, vaults, decorated pots, signs);
-template entities and mobs structures spawn (villagers, witches, drowned, shulkers, the end
-city's elytra item frame) come out as entity NBT (`RegionAccess::add_entity_nbt`), without
+template entities and mobs structures spawn (villagers, witches, drowned, shulkers, elder
+guardians, vindicators, evokers, allays, the end city's elytra item frame) come out as
+entity NBT (`RegionAccess::add_entity_nbt`), without
 vanilla's `finalizeSpawn`, which the server should run. Not done: the neighbour shape
 updates vanilla runs after placing non-jigsaw templates and post-processing of placed
 blocks (vanilla's `markPosForPostprocessing`). Pieces that settle their height when first
@@ -239,9 +240,11 @@ should load them once per chunk it reads from disk.
   with references, 1524 references in all three dimensions, extracted into
   `tests/fixtures/structure_references.json.gz`) all match.
 * Ocean monuments: only the start (and its references) has a vanilla reference. The rooms
-  were checked by hand against vanilla's `OceanMonumentPieces`; the test places the
-  fixture's monument and checks the core's eight gold blocks, the three elder guardians and
-  that nothing but monument blocks, water, ice and water plants is left in its volume.
+  are ported from Pumpkin and were reviewed against vanilla's behaviour (statement order,
+  the water state `generateBoxOnFillOnly` compares with), not against vanilla output; the
+  test places the fixture's monument and checks the core's eight gold blocks, the three
+  elder guardians and that nothing but monument blocks, water, ice and water plants is
+  left in its volume.
 * Woodland mansions: the dump has none. The piece layouts (every piece's template,
   position, rotation and mirror) match the Java layouts Pumpkin's test records for four
   seeds; the test places a mansion of seed 0 and checks its blocks, loot chests, mobs and
