@@ -236,10 +236,15 @@ Layout
 | `crates/paper-server` | the server: networking, tick loop, players, worlds, storage, plugin bridge |
 | `plugin-host/` | the plugin host (Java), plus two small test plugins |
 | `data/26.3` | the version data tables, see its README |
+| `tools/datagen` | the tools that extract those tables from the vanilla jar without running it |
 | `docs/` | [architecture](docs/architecture.md) and the [plugin bridge](docs/plugin-bridge.md) |
 
-The Java sources of upstream Paper (`paper-api`, `paper-server`, ...) are still in the tree as
-the reference for the port; the plugin host builds against the published Paper API.
+The server is Rust only. The one Java part is the plugin host: Bukkit and Paper plugins are
+Java bytecode written against Java interfaces, so they run in a JVM next to the server. The
+host builds against the published Paper API and compiles copies of Paper's plugin-loading
+classes (`plugin-host/host/src/lifted`, refreshed from a Paper checkout by
+`plugin-host/host/tools/lift.py`). Upstream Paper's own Java sources are no longer in this
+repository.
 
 Testing
 -------

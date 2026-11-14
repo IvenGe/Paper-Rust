@@ -3,14 +3,15 @@
 
 Paper's plugin loading pipeline (io.papermc.paper.plugin), its Bukkit scheduler, the
 console sender and a few helpers do not depend on Minecraft itself. Rather than rewrite
-them, the host compiles copies of them from this repository's own paper-server sources.
+them, the host compiles copies of them from Paper's paper-server sources.
 
-This script re-creates src/lifted/java from ../../paper-server/src/main/java: it copies the
-files listed below, stamps each with its origin, and applies the few edits recorded in
-EDITS (each must match exactly once, so an upstream change that invalidates an edit fails
-loudly instead of being silently skipped). Run it again after updating paper-server.
+This script re-creates src/lifted/java from a checkout of Paper
+(https://github.com/PaperMC/Paper): it copies the files listed below from
+paper-server/src/main/java, stamps each with its origin, and applies the few edits recorded
+in EDITS (each must match exactly once, so an upstream change that invalidates an edit fails
+loudly instead of being silently skipped). Run it again after updating to a newer Paper.
 
-    python3 -I plugin-host/host/tools/lift.py
+    python3 -I plugin-host/host/tools/lift.py /path/to/Paper
 """
 import pathlib
 import shutil
@@ -19,7 +20,8 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 HOST = HERE.parent
 REPO = HOST.parent.parent
-SRC = REPO / 'paper-server' / 'src' / 'main' / 'java'
+PAPER = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else REPO.parent / 'Paper'
+SRC = PAPER / 'paper-server' / 'src' / 'main' / 'java'
 DST = HOST / 'src' / 'lifted' / 'java'
 
 # Whole directories, minus files the host replaces with its own version.
@@ -100,7 +102,7 @@ EDITS = [
 
 def main() -> int:
     if not SRC.is_dir():
-        print(f'paper-server sources not found at {SRC}', file=sys.stderr)
+        print(f'paper-server sources not found at {SRC}; pass the path of a Paper checkout', file=sys.stderr)
         return 2
     if DST.exists():
         shutil.rmtree(DST)

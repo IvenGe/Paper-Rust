@@ -246,7 +246,8 @@ same name, which stay reachable as `minecraft:<name>`.
 
 The host reuses Paper's own plugin loading code (scanning, class loaders, `plugin.yml` and
 `paper-plugin.yml` parsing, bootstrappers, the plugin manager, the lifecycle event system,
-the scheduler), copied from `paper-server` by `plugin-host/host/tools/lift.py`. The classes
+the scheduler), copied from a checkout of Paper's `paper-server` by
+`plugin-host/host/tools/lift.py`. The classes
 Paper implements on top of the Minecraft server are written for the bridge instead:
 `CraftServer`, players, worlds and blocks, registries built from the server's data tables,
 the command map and a Brigadier registrar for Paper plugins, and the events above. API

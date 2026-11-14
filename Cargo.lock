@@ -694,7 +694,6 @@ dependencies = [
  "flate2",
  "paper-data",
  "paper-nbt",
- "serde",
  "serde_json",
  "thiserror",
  "uuid",
