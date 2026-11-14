@@ -96,6 +96,9 @@ pub struct World {
     pub chunks: HashMap<ChunkPos, Chunk>,
     pub spawn: BlockPos,
     pub spawn_yaw: f32,
+    /// A new vanilla overworld's spawn, found on the spawn finder's own copy of the spawn
+    /// chunks, is still to be checked against the world's spawn chunk.
+    spawn_unchecked: bool,
     /// Ticks this world has existed.
     pub age: i64,
     /// Time of the world's clock in ticks (0 = sunrise).
@@ -202,6 +205,7 @@ impl World {
             seed,
             spawn: BlockPos::new(8, surface + 1, 8),
             spawn_yaw: 0.0,
+            spawn_unchecked: generator.staged().is_some() && dimension == "minecraft:overworld",
             generator,
             vanilla: None,
             grown_features: std::sync::OnceLock::new(),
@@ -554,6 +558,9 @@ impl World {
                 self.chunks.entry(pos).or_insert(*chunk);
                 // Block updates: saved ticks and moving pistons continue.
                 block_updates::chunk_loaded(self, pos);
+                if self.spawn_unchecked && pos == ChunkPos::of_block(self.spawn.x, self.spawn.z) {
+                    self.check_spawn();
+                }
                 None
             }
             WorldEvent::Proto(entry) => {
@@ -880,8 +887,55 @@ impl World {
     }
 
     /// Restores spawn and time from `level.dat`.
+    /// A new world's spawn comes from the spawn finder's own copy of the spawn chunks.
+    /// Features reaching across chunk borders can turn out differently when the world
+    /// generates its chunks in another order (vanilla's generation varies the same way, but
+    /// vanilla looks for the spawn in the world itself), so once the world's spawn chunk is
+    /// finished the spawn is checked against it and, if a player could no longer stand
+    /// there, found again in that chunk as `PlayerSpawnFinder.getSpawnPosInChunk` would.
+    fn check_spawn(&mut self) {
+        self.spawn_unchecked = false;
+        let (x, y, z) = (self.spawn.x, self.spawn.y, self.spawn.z);
+        if self.can_stand_at(x, y, z) {
+            return;
+        }
+        let chunk = ChunkPos::of_block(x, z);
+        let columns = std::iter::once((x, z)).chain((0..16).flat_map(|dx| (0..16).map(move |dz| (chunk.x * 16 + dx, chunk.z * 16 + dz))));
+        for (cx, cz) in columns {
+            if let Some(cy) = self.spawn_height_in_column(cx, cz) {
+                log::info!("World spawn moved from {x}, {y}, {z} to {cx}, {cy}, {cz}: the spawn chunk generated differently");
+                self.spawn = BlockPos::new(cx, cy, cz);
+                return;
+            }
+        }
+    }
+
+    /// Solid ground below, and room without fluid for a player's body.
+    fn can_stand_at(&self, x: i32, y: i32, z: i32) -> bool {
+        let free = |y: i32| self.block_at(x, y, z).is_some_and(|b| !blocks::has_collision(b) && crate::server::survival::fluid_of(b).is_none());
+        self.block_at(x, y - 1, z).is_some_and(blocks::has_collision) && free(y) && free(y + 1)
+    }
+
+    /// Where a player would stand on a column: on the highest solid block, unless fluid
+    /// comes first from the top.
+    fn spawn_height_in_column(&self, x: i32, z: i32) -> Option<i32> {
+        let mut y = self.top_y(x, z)?;
+        while y >= self.min_y {
+            let state = self.block_at(x, y, z)?;
+            if crate::server::survival::fluid_of(state).is_some() {
+                return None;
+            }
+            if blocks::has_collision(state) {
+                return Some(y + 1).filter(|&y| self.can_stand_at(x, y, z));
+            }
+            y -= 1;
+        }
+        None
+    }
+
     pub fn apply_level(&mut self, level: &LevelData) {
         self.spawn = BlockPos::new(level.spawn.0, level.spawn.1, level.spawn.2);
+        self.spawn_unchecked = false;
         self.spawn_yaw = level.spawn_yaw;
         self.age = level.age;
         self.day_time = level.day_time;
@@ -951,6 +1005,39 @@ mod tests {
                 world.handle_event(event);
             }
         }
+    }
+
+    #[test]
+    fn a_new_worlds_spawn_is_checked_against_its_finished_chunk() {
+        let generator = FlatGenerator::new(-64);
+        let finished = |dig: &[(usize, i32, usize, &str)]| {
+            let mut chunk = generator.generate(ChunkPos::new(0, 0), -64, 384);
+            for (x, y, z, block) in dig {
+                chunk.set_block(*x, *y, *z, blocks::default_state(block).unwrap());
+            }
+            Box::new(chunk)
+        };
+        // The spawn finder saw ground the world's own generation left out: a hole under the
+        // spawn, so the spawn goes down to its bottom.
+        let mut world = World::new(0, "world", "minecraft:overworld", 1, Arc::new(FlatGenerator::new(-64)));
+        world.spawn_unchecked = true;
+        world.spawn = BlockPos::new(5, -60, 7);
+        world.handle_event(WorldEvent::Terrain(finished(&[(5, -61, 7, "minecraft:air"), (5, -62, 7, "minecraft:air")])));
+        assert_eq!((world.spawn, world.spawn_unchecked), (BlockPos::new(5, -62, 7), false), "on the dirt at the bottom");
+
+        // Water where the spawn was: the first column of the chunk that a player can stand on.
+        let mut world = World::new(0, "world", "minecraft:overworld", 1, Arc::new(FlatGenerator::new(-64)));
+        world.spawn_unchecked = true;
+        world.spawn = BlockPos::new(5, -60, 7);
+        world.handle_event(WorldEvent::Terrain(finished(&[(5, -60, 7, "minecraft:water")])));
+        assert_eq!(world.spawn, BlockPos::new(0, -60, 0));
+
+        // A spawn that still stands on the ground stays.
+        let mut world = World::new(0, "world", "minecraft:overworld", 1, Arc::new(FlatGenerator::new(-64)));
+        world.spawn_unchecked = true;
+        world.spawn = BlockPos::new(5, -60, 7);
+        world.handle_event(WorldEvent::Terrain(finished(&[])));
+        assert_eq!(world.spawn, BlockPos::new(5, -60, 7));
     }
 
     #[test]

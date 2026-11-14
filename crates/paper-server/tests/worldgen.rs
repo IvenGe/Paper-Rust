@@ -70,7 +70,10 @@ fn players_join_a_decorated_vanilla_world() {
     let (cx, cz) = (spawn.x >> 4, spawn.z >> 4);
     alice.find(Duration::from_secs(60), |c: &play::LevelChunkWithLight| c.x == cx && c.z == cz).expect("the spawn chunk arrives");
 
-    // The spawn stands on solid ground with room above.
+    // The spawn stands on solid ground with room above (checked again, and moved if need be,
+    // once the world's own spawn chunk is finished).
+    let spawn = server.handle.run(|s| s.worlds[0].spawn).unwrap();
+    assert_eq!((spawn.x >> 4, spawn.z >> 4), (cx, cz), "still in the spawn chunk");
     let ground = server.handle.run(move |s| s.worlds[0].block_at(spawn.x, spawn.y - 1, spawn.z)).unwrap();
     assert!(ground.is_some_and(blocks::has_collision), "solid ground under the spawn: {:?}", ground.map(|g| blocks::block_of_state(g).name));
 
