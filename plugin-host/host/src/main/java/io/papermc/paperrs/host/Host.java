@@ -143,6 +143,7 @@ public final class Host implements Bridge.Handler {
 
     private Map<String, Object> postWorld() {
         final CraftServer server = this.server();
+        server.loadWorlds();
         server.enablePlugins(PluginLoadOrder.POSTWORLD);
         LifecycleEventRunner.INSTANCE.callReloadableRegistrarEvent(LifecycleEvents.COMMANDS, this.commands, Plugin.class, ReloadableRegistrarEvent.Cause.INITIAL);
         new ServerLoadEvent(Values.bool(this.welcome, "reload", false) ? ServerLoadEvent.LoadType.RELOAD : ServerLoadEvent.LoadType.STARTUP).callEvent();

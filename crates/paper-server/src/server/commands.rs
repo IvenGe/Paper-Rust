@@ -156,12 +156,12 @@ impl Server {
         self.feedback(source, message.color("red"));
     }
 
-    /// Parses and runs a command line (with or without the leading slash), like Bukkit's
+    /// Parses and runs a command line without its leading slash, like Bukkit's
     /// `Server#dispatchCommand`: plugin commands take precedence over built-in commands of
-    /// the same name, which stay reachable as `minecraft:<name>`.
+    /// the same name, which stay reachable as `minecraft:<name>`. A further slash belongs to
+    /// the command: `//wand` arrives as `/wand`, WorldEdit's command of that name.
     pub fn dispatch_command(&mut self, source: &CommandSource, line: &str) {
         let line = line.trim();
-        let line = line.strip_prefix('/').unwrap_or(line);
         let Some(label) = line.split_whitespace().next() else { return };
         if crate::plugins::events::is_plugin_command(self, label) && crate::plugins::events::run_plugin_command(self, source, line) {
             return;

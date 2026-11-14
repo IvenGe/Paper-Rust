@@ -246,11 +246,13 @@ public final class HostCommands implements Commands, PaperRegistrar<LifecycleEve
     }
 
     /**
-     * Runs a plugin command. Returns {@code false} if no plugin command has that label (the
-     * server then tries its own commands).
+     * Runs a plugin command, given without its leading slash (as {@code dispatchCommand}: a
+     * second slash belongs to the label, as in WorldEdit's {@code //wand}). Returns
+     * {@code false} if no plugin command has that label (the server then tries its own
+     * commands).
      */
     public boolean execute(final CommandSender sender, final String rawLine) {
-        final String line = strip(rawLine.trim());
+        final String line = rawLine.trim();
         if (this.commandMap == null || line.isEmpty()) {
             return false;
         }

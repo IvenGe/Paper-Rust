@@ -32,6 +32,11 @@
       <id>papermc</id>
       <url>https://repo.papermc.io/repository/maven-public/</url>
     </repository>
+    <!-- WorldEdit's API, for the adapter the host gives WorldEdit (host/compat/worldedit) -->
+    <repository>
+      <id>enginehub</id>
+      <url>https://maven.enginehub.org/repo/</url>
+    </repository>
   </repositories>
 
   <dependencyManagement>

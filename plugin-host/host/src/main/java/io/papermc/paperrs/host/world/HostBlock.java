@@ -24,6 +24,11 @@ public final class HostBlock extends AbstractBlock {
     private @Nullable String pending;
 
     @Override
+    public org.bukkit.block.Biome getBiome() {
+        return this.world.getBiome(this.x, this.y, this.z);
+    }
+
+    @Override
     public org.bukkit.Chunk getChunk() {
         return this.world.getChunkAt(this);
     }

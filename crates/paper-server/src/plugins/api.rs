@@ -425,6 +425,14 @@ fn state_value(server: &Server, world: usize, x: i32, y: i32, z: i32) -> Value {
     }
 }
 
+/// Loads the chunk of a block if it is not loaded (Paper's block access loads chunks).
+fn ensure_chunk(server: &mut Server, world: usize, x: i32, z: i32) {
+    let pos = crate::world::chunk::ChunkPos::of_block(x, z);
+    if !server.worlds[world].chunks.contains_key(&pos) {
+        server.load_chunk_now(world, pos);
+    }
+}
+
 /// Whether a chunk exists: loaded, or saved (`World.isChunkGenerated`).
 fn chunk_generated(server: &Server, world: usize, pos: crate::world::chunk::ChunkPos) -> bool {
     let w = &server.worlds[world];
@@ -747,9 +755,58 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
 
         // --- worlds and blocks ---
         "world.get_block" => {
+            // As on Paper, reading a block loads (or generates) its chunk.
             let world = world_index(server, args)?;
             let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
             Ok(state_value(server, world, x, y, z))
+        }
+        "world.block_entity" => {
+            // A block entity as saved (named NBT, with its id and position), or null.
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let chunk = crate::world::chunk::ChunkPos::of_block(x, z);
+            let Some(nbt) = server.worlds[world].chunks.get(&chunk).and_then(|c| c.block_entities.get(&(y, (z & 15) as u8, (x & 15) as u8))) else { return Ok(Value::Null) };
+            let mut nbt = nbt.clone();
+            nbt.insert("x", paper_nbt::Tag::Int(x));
+            nbt.insert("y", paper_nbt::Tag::Int(y));
+            nbt.insert("z", paper_nbt::Tag::Int(z));
+            let mut out = Vec::new();
+            paper_nbt::write_named(&mut out, "", &nbt);
+            Ok(Value::Bytes(out))
+        }
+        "world.set_block_entity" => {
+            // Replaces a block entity's data (`id` and position come from the block) and shows
+            // players what changed.
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let bytes = args.get("nbt").as_bytes().ok_or_else(|| anyhow!("missing nbt"))?;
+            let (_, mut nbt) = paper_nbt::read_named(&mut &bytes[..], 2 * 1024 * 1024)?;
+            for key in ["x", "y", "z"] {
+                nbt.remove(key);
+            }
+            let chunk = crate::world::chunk::ChunkPos::of_block(x, z);
+            let key = (y, (z & 15) as u8, (x & 15) as u8);
+            let Some(c) = server.worlds[world].chunks.get_mut(&chunk) else { return Ok(Value::Bool(false)) };
+            let id = nbt.string("id").map(str::to_owned).or_else(|| c.block_entities.get(&key).and_then(|e| e.string("id")).map(str::to_owned));
+            let Some(id) = id else { return Ok(Value::Bool(false)) };
+            nbt.insert("id", paper_nbt::Tag::String(id.clone()));
+            c.block_entities.insert(key, nbt.clone());
+            c.dirty = true;
+            if let Some(ty) = paper_data::registries::id("minecraft:block_entity_type", &id) {
+                nbt.remove("id");
+                let packet = play::BlockEntityData { pos: paper_protocol::codec::BlockPos::new(x, y, z), block_entity_type: VarInt(ty as i32), data: paper_protocol::codec::Nbt(Some(paper_nbt::Tag::Compound(nbt))) };
+                server.broadcast_to_chunk_viewers(world, chunk, &packet);
+            }
+            Ok(Value::Bool(true))
+        }
+        "world.get_biome" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            Ok(Value::Str(server.biome_at(world, x, y, z).to_owned()))
         }
         "world.set_block" => {
             let world = world_index(server, args)?;
@@ -759,14 +816,18 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 Value::Int(i) if blocks::is_valid_state(*i as u32) => *i as u32,
                 other => bail!("invalid block state {other}"),
             };
-            if server.worlds[world].block_at(x, y, z).is_none() {
-                bail!("the chunk at {x}, {z} is not loaded");
-            }
+            ensure_chunk(server, world, x, z);
+            let Some(old) = server.worlds[world].block_at(x, y, z) else { bail!("the chunk at {x}, {z} could not be loaded") };
             // Bukkit's applyPhysics (default true): neighbours react like for any other change;
             // without physics nothing reacts, as in CraftBlock.
             use crate::world::block_updates::flags;
             let update = if args.bool("physics").unwrap_or(true) { flags::ALL } else { flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE };
-            Ok(Value::Bool(server.set_block_with_flags(world, paper_protocol::codec::BlockPos::new(x, y, z), state, update)))
+            let changed = server.set_block_with_flags(world, paper_protocol::codec::BlockPos::new(x, y, z), state, update);
+            if args.bool("return_old") == Some(true) {
+                // WorldEdit's adapter: the state before, if it changed.
+                return Ok(if changed { Value::Int(old as i64) } else { Value::Null });
+            }
+            Ok(Value::Bool(changed))
         }
         "world.highest_block_y" => {
             let world = world_index(server, args)?;

@@ -131,8 +131,29 @@ public final class CraftServer extends AbstractServer {
         this.pluginManager.paperPluginManager = this.paperPluginManager;
         this.console = new HostConsole();
         for (Object world : Values.list(welcome.get("worlds"))) {
-            this.worlds.add(new HostWorld(this, Values.map(world)));
+            this.pendingWorlds.add(new HostWorld(this, Values.map(world)));
         }
+        // After /reload the worlds are there from the start, as on Paper; on a real start they
+        // load after the STARTUP plugins are enabled (loadWorlds).
+        if (Values.bool(welcome, "reload", false)) {
+            this.worlds.addAll(this.pendingWorlds);
+            this.pendingWorlds.clear();
+        }
+    }
+
+    private final List<World> pendingWorlds = new java.util.ArrayList<>();
+
+    /**
+     * The server's worlds, loaded between the STARTUP and POSTWORLD plugins as on Paper: each
+     * with {@code WorldInitEvent} and {@code WorldLoadEvent}.
+     */
+    public void loadWorlds() {
+        for (final World world : this.pendingWorlds) {
+            this.worlds.add(world);
+            new org.bukkit.event.world.WorldInitEvent(world).callEvent();
+            new org.bukkit.event.world.WorldLoadEvent(world).callEvent();
+        }
+        this.pendingWorlds.clear();
     }
 
     // --- bridge helpers ---------------------------------------------------------------------
@@ -269,6 +290,7 @@ public final class CraftServer extends AbstractServer {
                 }
             }
             this.pluginManager.dirtyPermissibles();
+            io.papermc.paperrs.host.compat.WorldEditCompat.beforeEnable(plugin);
             this.pluginManager.enablePlugin(plugin);
         } catch (Throwable ex) {
             this.logger.log(Level.SEVERE, ex.getMessage() + " loading " + plugin.getDescription().getFullName() + " (Is it up to date?)", ex);

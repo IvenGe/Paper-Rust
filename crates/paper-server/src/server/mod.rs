@@ -605,7 +605,9 @@ impl Server {
             }
             MainTask::ConsoleCommand(line) => {
                 if let Some(line) = crate::plugins::events::on_server_command(self, &line) {
-                    self.dispatch_command(&commands::CommandSource::Console, &line);
+                    // The console takes commands with or without a slash, as vanilla's does.
+                    let line = line.trim();
+                    self.dispatch_command(&commands::CommandSource::Console, line.strip_prefix('/').unwrap_or(line));
                 }
             }
             MainTask::Run(f) => f(self),

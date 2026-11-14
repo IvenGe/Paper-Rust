@@ -63,6 +63,8 @@ FILES = [
     'io/papermc/paper/persistence/PaperPersistentDataKey.java',
     'io/papermc/paper/adventure/providers/MiniMessageProviderImpl.java',
     'io/papermc/paper/adventure/providers/AdventurePropertiesDefaultOverrideProviderImpl.java',
+    # PaperLib (bundled in many plugins) recognises Paper by this class.
+    'io/papermc/paper/configuration/Configuration.java',
     'io/papermc/paper/configuration/constraint/Constraint.java',
     'io/papermc/paper/configuration/serializer/ComponentSerializer.java',
     'io/papermc/paper/configuration/serializer/EnumValueSerializer.java',

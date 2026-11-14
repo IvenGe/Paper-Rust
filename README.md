@@ -311,6 +311,17 @@ What works:
     entities, slime chunks;
   * Folia's entity scheduler (`Entity.getScheduler`) and region checks, `matchPlayer`, player
     profiles, server-wide plugin messages and the server's settings;
+  * WorldEdit: it only works through an adapter for the server version, and the ones it ships
+    use Minecraft's internal classes, so the plugin host gives it its own
+    (`plugin-host/host/src/main/java/io/papermc/paperrs/host/compat`), defined in WorldEdit's
+    class loader when WorldEdit is enabled. Selections, `//set`, `//replace`, `//copy`,
+    `//paste`, shapes and `//undo` work, block entities included; regeneration, trees and
+    features from WorldEdit are not supported;
+  * Paper's start-up order: STARTUP plugins are enabled before the worlds load, then each
+    world loads with `WorldInitEvent` and `WorldLoadEvent`, then the POSTWORLD plugins.
+    Libraries bundled in plugins recognise the server as Paper (PaperLib), plugins logging with
+    Log4j are logged, and reading or changing a block of an unloaded chunk loads it first, as
+    on Paper;
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload));
   * Paper's class rewriting as plugins load (Commodore): fields and enum constants renamed
     since a plugin's api-version, enums that became registries, and `Material.values()`
@@ -382,7 +393,9 @@ The tests include protocol clients that join a real server over TCP. The Java pl
 (`crates/paper-server/tests/java_plugins.rs`) runs the real plugin host with the two test
 plugins when Java 25 and the built jars are available (run `mvn package` in `plugin-host/`
 first, and set `PAPER_RS_TEST_JAVA` if Java 25 is not found automatically); otherwise it
-skips itself.
+skips itself. `crates/paper-server/tests/third_party_plugins.rs` runs EssentialsX and
+WorldEdit the same way when `PAPER_RS_TEST_PLUGINS` names a folder with their jars (they are
+not part of this repository).
 
 License
 -------

@@ -441,6 +441,20 @@ public final class HostWorld extends AbstractWorld {
 
     private final HostWorldBorder border = new HostWorldBorder(this);
 
+    // --- biomes ------------------------------------------------------------------------------
+
+    @Override
+    public org.bukkit.block.Biome getBiome(final int x, final int y, final int z) {
+        final Object biome = this.server.call("world.get_biome", Values.of("world", this.name, "x", x, "y", y, "z", z));
+        final org.bukkit.block.Biome found = org.bukkit.Registry.BIOME.get(NamespacedKey.fromString(String.valueOf(biome)));
+        return found != null ? found : org.bukkit.block.Biome.PLAINS;
+    }
+
+    @Override
+    public org.bukkit.block.Biome getBiome(final Location location) {
+        return this.getBiome(location.getBlockX(), location.getBlockY(), location.getBlockZ());
+    }
+
     // --- chunks (CraftWorld) ----------------------------------------------------------------
 
     private Map<String, Object> chunkArgs(final int x, final int z, final Object... kv) {
