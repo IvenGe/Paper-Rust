@@ -1094,6 +1094,10 @@ impl Server {
         let Some(stack) = p.inventory[slot].0.clone() else { return };
         let data = item_data::by_id(stack.item as u32);
         let name = items::get(stack.item as u32).map_or("", |i| i.name);
+        if name == "minecraft:ender_eye" {
+            self.throw_ender_eye(id, slot);
+            return;
+        }
         if let Some(seconds) = data.consume_seconds {
             let can_eat = match &data.food {
                 Some(food) => p.game_mode == GameMode::Creative || food.can_always_eat || p.food < 20,

@@ -367,6 +367,9 @@ pub enum EntityKind {
     FallingBlock { state: u32, time: i32 },
     ExperienceOrb { value: i32 },
     Tnt { fuse: i32 },
+    /// A thrown eye of ender flying towards `target` (`EyeOfEnder`); after 80 ticks it drops
+    /// as an item if `survive`, else it shatters.
+    EyeOfEnder { target: Vec3, life: i32, survive: bool },
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }

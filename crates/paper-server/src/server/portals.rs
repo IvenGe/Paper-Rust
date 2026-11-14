@@ -534,6 +534,39 @@ impl Server {
         true
     }
 
+    /// An eye of ender thrown into the air (`EnderEyeItem.use`): it flies towards the nearest
+    /// stronghold. Nothing happens where there is none (no vanilla generation, or
+    /// `generate-structures` off).
+    pub(super) fn throw_ender_eye(&mut self, id: i32, slot: usize) {
+        use rand::Rng;
+        let Some(p) = self.players.get(&id) else { return };
+        let (world, loc, creative) = (p.world, p.loc, p.game_mode == GameMode::Creative);
+        let Some(stack) = p.inventory[slot].0.clone() else { return };
+        let found = self.worlds[world].generator.staged().and_then(|g| g.inner.locate("minecraft:stronghold", loc.x.floor() as i32, loc.z.floor() as i32, 100));
+        let (Some(found), Some(info)) = (found, paper_data::entity_types::by_name("minecraft:eye_of_ender")) else { return };
+        let start = Vec3::new(loc.x, loc.y + 0.9, loc.z);
+        // `signalTo`: at most 12 blocks out and 8 up at a time.
+        let (dx, dz) = (found.x as f64 - start.x, found.z as f64 - start.z);
+        let distance = (dx * dx + dz * dz).sqrt();
+        let target = if distance > 12.0 {
+            Vec3::new(start.x + dx / distance * 12.0, start.y + 8.0, start.z + dz / distance * 12.0)
+        } else {
+            Vec3::new(found.x as f64, found.y as f64, found.z as f64)
+        };
+        let mut rng = rand::thread_rng();
+        let kind = crate::world::entity::EntityKind::EyeOfEnder { target, life: 0, survive: rng.gen_range(0..5) > 0 };
+        let e = crate::world::entity::Entity::new(self.next_entity_id(), info, start, kind);
+        self.spawn_entity(world, e);
+        let pitch = 0.33 + rng.gen::<f32>() * (0.5 - 0.33);
+        self.play_sound(world, Vec3::new(loc.x, loc.y, loc.z), "minecraft:entity.ender_eye.launch", category::NEUTRAL, 1.0, pitch, None);
+        if !creative {
+            let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
+            self.set_inventory_slot(id, slot, rest);
+        }
+        let hand = if slot == OFFHAND_SLOT { 1 } else { 0 };
+        self.broadcast_to_viewers(id, &play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(hand), animation_type: VarInt(1), duration: VarInt(6) });
+    }
+
     /// An eye of ender put into an End portal frame; a complete ring opens the portal.
     pub(super) fn use_ender_eye(&mut self, id: i32, use_on: &play::UseItemOn) -> bool {
         let Some(p) = self.players.get(&id) else { return false };

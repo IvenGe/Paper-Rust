@@ -11,8 +11,7 @@ to the server over a local socket ("separate mode"). Without plugins no JVM is s
 
 > This is an early port. The protocol, worlds, players, survival gameplay (mobs, damage,
 > hunger, containers, crafting, redstone, fluids) and the plugin bridge work end to end (see
-> [Status](#status)); vanilla world generation, the Nether and the End and parts of the
-> plugin API are still missing.
+> [Status](#status)); some vanilla features and parts of the plugin API are still missing.
 
 Running
 -------
@@ -63,8 +62,11 @@ What works:
   from 26.3 and driven by the vanilla jar's worldgen data (`crates/paper-worldgen`): biomes,
   terrain with aquifers and ore veins, surface rules, caves and canyons, and the features
   stage (ores, trees, plants, lakes, dungeons, geodes, icebergs, nether fungi and basalt,
-  end spikes and islands, ...), with vanilla's spawn search for new worlds; also the flat
-  preset. Sky and block light,
+  end spikes and islands, ...), and structures (villages, strongholds, mineshafts, nether
+  fortresses, bastions, end cities, ancient cities, trial chambers, temples, shipwrecks,
+  ruined portals, ...; `generate-structures`) with their loot chests and mobs, with
+  vanilla's spawn search for new worlds; also the flat preset. `/locate structure` and
+  thrown eyes of ender find structures. Sky and block light,
   chunk streaming with the client's flow control, block breaking and placing (with
   orientation for stairs, logs, slabs, doors, beds, ...), world time.
 * **Block updates**: neighbour and shape updates (wire, fence, pane and stair connections,
@@ -142,7 +144,7 @@ What works:
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
-  weather difficulty gamerule summon kill effect seed setworldspawn tps mspt kick ban pardon ban-ip
+  weather difficulty gamerule summon kill effect seed locate setworldspawn tps mspt kick ban pardon ban-ip
   pardon-ip banlist op deop whitelist save-all stop version plugins reload`.
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
@@ -187,10 +189,10 @@ What works:
 
 Not yet:
 
-* World generation: structures (villages, mineshafts, strongholds, fortresses, end cities,
-  ...) and the template features (desert wells, fossils) are not generated, nor sculk
-  patches; there is no dragon fight (the End's exit portal is open from the start).
-  End gateways do not teleport yet.
+* World generation: ocean monuments and woodland mansions are not generated, nor sculk
+  patches (ancient cities have none). Structure starts are not saved: after a restart, a
+  structure that was being placed can show seams. There is no dragon fight (the End's exit
+  portal is open from the start), and End gateways do not teleport yet.
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
   trading, taming); saplings do not grow into trees yet. Tripwires,
   crafters and observers of entities do not work yet, dispensers only know
@@ -219,7 +221,7 @@ Layout
 | `crates/paper-protocol` | packet framing, compression, encryption, text components, packets |
 | `crates/paper-data` | block, item, registry and tag tables for 26.3 (built from `data/26.3`) |
 | `crates/paper-bridge` | the wire format shared with the plugin host |
-| `crates/paper-worldgen` | vanilla world generation (terrain, biomes, carvers, features, spawn search) |
+| `crates/paper-worldgen` | vanilla world generation (terrain, biomes, carvers, features, structures, spawn search) |
 | `crates/paper-server` | the server: networking, tick loop, players, worlds, storage, plugin bridge |
 | `plugin-host/` | the plugin host (Java), plus two small test plugins |
 | `data/26.3` | the version data tables, see its README |

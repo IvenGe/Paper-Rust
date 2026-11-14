@@ -275,8 +275,13 @@ impl WorldGenerator {
     /// (`minecraft:village_plains`), `(x, z)` the block position to search from and
     /// `radius` the search radius in placement cells of random-spread sets (vanilla's
     /// `/locate` uses 100). Strongholds are searched among all their ring positions.
-    /// Starts are generated as needed (and cached), never placed.
+    /// Starts are generated as needed (and cached), never placed. Finds nothing while
+    /// structures are disabled.
     pub fn locate(&self, structure: &str, x: i32, z: i32, radius: i32) -> Option<crate::structure::Located> {
+        // As vanilla's `findNearestMapStructure`: nothing is found while structures are off.
+        if !self.structures.enabled {
+            return None;
+        }
         let id = crate::data::full_id(structure);
         let index = self.structures.structure_index(&id)?;
         let (set, cx, cz) = self.structures.locate(self, index, x, z, radius)?;

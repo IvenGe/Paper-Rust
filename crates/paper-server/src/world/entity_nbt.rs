@@ -48,7 +48,8 @@ pub fn ages(name: &str) -> bool {
 
 /// The saved form of an entity, or `None` for entities that are not saved (dead ones).
 pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
-    if e.removed || !e.is_alive() {
+    // Thrown eyes of ender live for four seconds and are not kept.
+    if e.removed || !e.is_alive() || matches!(e.kind, EntityKind::EyeOfEnder { .. }) {
         return None;
     }
     let mut c = Compound::new()
@@ -125,7 +126,7 @@ pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
                 c.insert("Sheared", Tag::Byte(mob.sheared as i8));
             }
         }
-        EntityKind::Other => {}
+        EntityKind::EyeOfEnder { .. } | EntityKind::Other => {}
     }
     Some(c)
 }

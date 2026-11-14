@@ -311,7 +311,7 @@ impl Server {
                 _ => "vanilla".to_owned(),
             },
         };
-        let generator = Self::make_generator(vanilla.as_deref(), "minecraft:overworld", &kind, seed, overworld_min_y, level.is_some())?;
+        let generator = Self::make_generator(vanilla.as_deref(), "minecraft:overworld", &kind, seed, overworld_min_y, level.is_some(), config.properties.generate_structures)?;
         let new_world = level.is_none();
         let mut worlds = vec![Self::open_world(0, &props.level_name, "minecraft:overworld", seed, generator.clone(), storage, level.as_ref())?];
         if let (true, Some(vanilla)) = (new_world, generator.staged()) {
@@ -340,7 +340,7 @@ impl Server {
             };
             let kind = level.as_ref().map_or("vanilla", |l| l.generator.as_str()).to_owned();
             let min_y = paper_data::synced::dimension_type(dimension).map_or(0, |d| d.min_y);
-            let generator = Self::make_generator(vanilla.as_deref(), dimension, &kind, seed, min_y, level.is_some())?;
+            let generator = Self::make_generator(vanilla.as_deref(), dimension, &kind, seed, min_y, level.is_some(), config.properties.generate_structures)?;
             let index = worlds.len();
             let mut world = Self::open_world(index, &name, dimension, seed, generator, storage, level.as_ref())?;
             if level.is_none() {
@@ -396,7 +396,7 @@ impl Server {
     /// ported). Vanilla generation needs the vanilla jar; new worlds fall back to the built-in
     /// generators without it, existing vanilla worlds refuse to start rather than grow
     /// mismatched terrain.
-    fn make_generator(vanilla: Option<&crate::vanilla::VanillaData>, dimension: &str, kind: &str, seed: i64, min_y: i32, existing: bool) -> Result<Arc<dyn Generator>> {
+    fn make_generator(vanilla: Option<&crate::vanilla::VanillaData>, dimension: &str, kind: &str, seed: i64, min_y: i32, existing: bool, structures: bool) -> Result<Arc<dyn Generator>> {
         let built_in = |dimension: &str| -> Arc<dyn Generator> {
             match dimension {
                 "minecraft:the_nether" => Arc::new(crate::world::generator::NetherGenerator::new(seed)),
@@ -408,7 +408,7 @@ impl Server {
             "flat" => Arc::new(FlatGenerator::new(min_y)),
             "noise" | "nether" | "end" => built_in(dimension),
             _ => {
-                let made = vanilla.ok_or_else(|| anyhow!("the vanilla server jar is not available")).and_then(|v| crate::world::staged::VanillaGenerator::new(v, dimension, seed));
+                let made = vanilla.ok_or_else(|| anyhow!("the vanilla server jar is not available")).and_then(|v| crate::world::staged::VanillaGenerator::new(v, dimension, seed, structures));
                 match made {
                     Ok(generator) => Arc::new(generator),
                     Err(e) if existing => bail!("{dimension} uses vanilla world generation, which needs the vanilla server jar's data: {e:#}"),

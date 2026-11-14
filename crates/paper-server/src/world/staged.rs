@@ -37,14 +37,16 @@ impl paper_worldgen::DataSource for JarData<'_> {
 
 impl VanillaGenerator {
     /// Builds the generator of a dimension (`minecraft:overworld`, `minecraft:the_nether`,
-    /// `minecraft:the_end`) from the worldgen data in the vanilla jar.
-    pub fn new(data: &crate::vanilla::VanillaData, dimension: &str, seed: i64) -> anyhow::Result<Self> {
+    /// `minecraft:the_end`) from the worldgen data in the vanilla jar, with or without
+    /// structures (`generate-structures`).
+    pub fn new(data: &crate::vanilla::VanillaData, dimension: &str, seed: i64, structures: bool) -> anyhow::Result<Self> {
         let dimension = match dimension {
             "minecraft:the_nether" => Dimension::Nether,
             "minecraft:the_end" => Dimension::End,
             _ => Dimension::Overworld,
         };
-        let inner = WorldGenerator::new(&JarData(data), dimension, seed)?;
+        let mut inner = WorldGenerator::new(&JarData(data), dimension, seed)?;
+        inner.set_structures_enabled(structures);
         if !inner.unsupported_features().is_empty() {
             log::debug!("{} generation leaves out these feature types: {}", dimension.id(), inner.unsupported_features().join(", "));
         }
@@ -322,6 +324,9 @@ pub fn decorate(generator: &VanillaGenerator, center: ChunkPos, entries: Vec<Pro
     }
     let new_block_entities = std::mem::take(&mut region.block_entities);
     let new_entities = std::mem::take(&mut region.entities);
+    // Structures: block entities and entities from templates, as vanilla NBT.
+    let new_block_entity_nbt = std::mem::take(&mut region.block_entity_nbt);
+    let new_entity_nbt = std::mem::take(&mut region.entity_nbt);
     let mut out: Vec<ProtoEntry> = region
         .into_chunks()
         .into_iter()
@@ -343,11 +348,33 @@ pub fn decorate(generator: &VanillaGenerator, center: ChunkPos, entries: Vec<Pro
             entry.block_entities.push(c);
         }
     }
+    for ((x, y, z), mut c) in new_block_entity_nbt {
+        let pos = ChunkPos::new(x >> 4, z >> 4);
+        let Some(entry) = out.iter_mut().find(|e| e.pos() == pos) else { continue };
+        if c.string("id").is_none() {
+            let Some(kind) = block_entity_type(entry.chunk.get(x, y, z)) else { continue };
+            c.insert("id", Tag::String(kind.to_owned()));
+        }
+        c.insert("x", Tag::Int(x));
+        c.insert("y", Tag::Int(y));
+        c.insert("z", Tag::Int(z));
+        entry.block_entities.retain(|b| (b.i32("x"), b.i32("y"), b.i32("z")) != (Some(x), Some(y), Some(z)));
+        entry.block_entities.push(c);
+    }
     for entity in new_entities {
         let Entity::EndCrystal { x, z, .. } = &entity;
         let pos = ChunkPos::new((*x).floor() as i32 >> 4, (*z).floor() as i32 >> 4);
         if let Some(entry) = out.iter_mut().find(|e| e.pos() == pos) {
             entry.entities.push(entity_nbt(&entity));
+        }
+    }
+    for mut entity in new_entity_nbt {
+        let Some((x, z)) = entity.list("Pos").and_then(|p| Some((p.first()?.as_f64()?, p.get(2)?.as_f64()?))) else { continue };
+        // Mobs that come with a structure stay (villagers, witches, guardians, shulkers, ...).
+        entity.insert("PersistenceRequired", Tag::Byte(1));
+        let pos = ChunkPos::new(x.floor() as i32 >> 4, z.floor() as i32 >> 4);
+        if let Some(entry) = out.iter_mut().find(|e| e.pos() == pos) {
+            entry.entities.push(entity);
         }
     }
     out

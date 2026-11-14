@@ -193,3 +193,74 @@ fn unfinished_chunks_are_saved_and_finished_after_a_restart() {
     server.stop();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn structures_are_located_and_eyes_of_ender_lead_to_strongholds() {
+    if !have_jar() {
+        return;
+    }
+    let server = start_server(vanilla);
+    let mut alice = Client::join(server.port(), "Alice");
+    let at: play::PlayerPosition = alice.expect();
+    server.handle.console_command("op Alice");
+    alice.drain(Duration::from_millis(500));
+    alice.clear_backlog();
+
+    // /locate finds the nearest village, as vanilla reports it.
+    alice.command("locate structure village_plains");
+    let found: play::SystemChat = alice.find(Duration::from_secs(60), |m: &play::SystemChat| m.content.to_plain().contains("village_plains")).expect("a locate result");
+    let text = format!("{:?}", found.content);
+    assert!(text.contains("commands.locate.structure.success"), "{text}");
+    alice.command("locate structure #minecraft:village");
+    let tagged: play::SystemChat = alice.find(Duration::from_secs(60), |m: &play::SystemChat| m.content.to_plain().contains("#minecraft:village")).expect("a tag result");
+    assert!(format!("{:?}", tagged.content).contains("commands.locate.structure.success"), "{:?}", tagged.content);
+
+    // A thrown eye of ender flies towards the nearest stronghold.
+    let stronghold = server
+        .handle
+        .run(move |s| s.worlds[0].generator.staged().and_then(|g| g.inner.locate("minecraft:stronghold", at.x.floor() as i32, at.z.floor() as i32, 100)).map(|l| (l.x, l.z)))
+        .unwrap()
+        .expect("a stronghold");
+    let id = alice.entity_id;
+    let eye = paper_data::items::id("minecraft:ender_eye").unwrap() as i32;
+    server.handle.run(move |s| s.set_inventory_slot(id, 36, paper_protocol::types::Slot::of(eye, 1))).unwrap();
+    alice.send(&play::UseItem { hand: paper_protocol::codec::VarInt(0), sequence: paper_protocol::codec::VarInt(1), yaw: 0.0, pitch: 0.0 });
+    wait_for(&server, "the eye to fly", Duration::from_secs(10), |s| s.worlds[0].entities.values().any(|e| e.info.name == "minecraft:eye_of_ender" && e.age > 10));
+    let (start, now) = server
+        .handle
+        .run(move |s| {
+            let e = s.worlds[0].entities.values().find(|e| e.info.name == "minecraft:eye_of_ender").unwrap();
+            ((at.x, at.z), (e.pos.x, e.pos.z))
+        })
+        .unwrap();
+    let towards = ((stronghold.0 as f64 - start.0), (stronghold.1 as f64 - start.1));
+    let moved = (now.0 - start.0, now.1 - start.1);
+    assert!(towards.0 * moved.0 + towards.1 * moved.1 > 0.0, "the eye moves towards the stronghold at {stronghold:?}: {moved:?}");
+
+    // The village is there when its chunks generate, with its villagers.
+    let village = server
+        .handle
+        .run(move |s| s.worlds[0].generator.staged().and_then(|g| g.inner.locate("minecraft:village_plains", at.x.floor() as i32, at.z.floor() as i32, 100)).map(|l| (l.x, l.z)))
+        .unwrap()
+        .expect("a village");
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(id, paper_server::config::GameMode::Spectator);
+            s.teleport(id, paper_server::server::player::Location { x: village.0 as f64 + 8.0, y: 120.0, z: village.1 as f64 + 8.0, yaw: 0.0, pitch: 0.0 });
+        })
+        .unwrap();
+    wait_for(&server, "villagers", Duration::from_secs(120), move |s| {
+        s.worlds[0].entities.values().any(|e| e.info.name == "minecraft:villager" && (e.pos.x - village.0 as f64).abs() < 96.0 && (e.pos.z - village.1 as f64).abs() < 96.0)
+    });
+    server.stop();
+
+    // Without structures there is nothing to find.
+    let server = start_server(|c| {
+        vanilla(c);
+        c.properties.generate_structures = false;
+    });
+    let none = server.handle.run(|s| s.worlds[0].generator.staged().and_then(|g| g.inner.locate("minecraft:village_plains", 0, 0, 100))).unwrap();
+    assert!(none.is_none(), "{none:?}");
+    server.stop();
+}

@@ -75,7 +75,7 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
         EntityKind::ExperienceOrb { value } => out.set("experience", *value),
         EntityKind::Tnt { fuse } => out.set("fuse", *fuse),
         EntityKind::FallingBlock { state, .. } => out.set("block", paper_data::blocks::state_to_string(*state)),
-        EntityKind::Other => {}
+        EntityKind::EyeOfEnder { .. } | EntityKind::Other => {}
     }
     out
 }

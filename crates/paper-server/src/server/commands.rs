@@ -78,6 +78,7 @@ impl CommandRegistry {
             Builtin { name: "summon", aliases: &[], description: "Summons an entity", usage: "/summon <entity> [x y z]", min_op: 2, handler: cmd_summon, completer: complete_summon },
             Builtin { name: "kill", aliases: &[], description: "Kills entities", usage: "/kill [targets]", min_op: 2, handler: cmd_kill, completer: complete_kill },
             Builtin { name: "seed", aliases: &[], description: "Displays the world seed", usage: "/seed", min_op: 2, handler: cmd_seed, completer: no_completions },
+            Builtin { name: "locate", aliases: &[], description: "Finds the nearest structure", usage: "/locate structure <structure>", min_op: 2, handler: cmd_locate, completer: complete_locate },
             Builtin { name: "setworldspawn", aliases: &[], description: "Sets the world spawn", usage: "/setworldspawn [x y z]", min_op: 2, handler: cmd_set_world_spawn, completer: no_completions },
             Builtin { name: "tps", aliases: &[], description: "Shows the server's ticks per second", usage: "/tps", min_op: 2, handler: cmd_tps, completer: no_completions },
             Builtin { name: "mspt", aliases: &[], description: "Shows the average tick duration", usage: "/mspt", min_op: 2, handler: cmd_mspt, completer: no_completions },
@@ -146,6 +147,10 @@ impl Server {
 
     pub(super) fn fail(&self, source: &CommandSource, message: impl Into<String>) {
         self.feedback(source, Component::text(message.into()).color("red"));
+    }
+
+    pub(super) fn fail_component(&self, source: &CommandSource, message: Component) {
+        self.feedback(source, message.color("red"));
     }
 
     /// Parses and runs a command line (with or without the leading slash), like Bukkit's
@@ -823,6 +828,71 @@ fn complete_kill(server: &Server, source: &CommandSource, args: &[&str]) -> Vec<
         out
     } else {
         Vec::new()
+    }
+}
+
+/// The structures of a structure tag (`minecraft:village`), from the vanilla jar's data.
+fn structure_tag(server: &Server, tag: &str) -> Vec<String> {
+    let (namespace, path) = tag.split_once(':').unwrap_or(("minecraft", tag));
+    let Some(bytes) = server.vanilla.as_ref().and_then(|v| v.read(&format!("data/{namespace}/tags/worldgen/structure/{path}.json"))) else { return Vec::new() };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else { return Vec::new() };
+    let mut out = Vec::new();
+    for value in json["values"].as_array().into_iter().flatten() {
+        let id = value.as_str().or_else(|| value["id"].as_str()).unwrap_or("");
+        match id.strip_prefix('#') {
+            Some(inner) => out.extend(structure_tag(server, inner)),
+            None if !id.is_empty() => out.push(if id.contains(':') { id.to_owned() } else { format!("minecraft:{id}") }),
+            None => {}
+        }
+    }
+    out
+}
+
+/// `/locate structure <structure>`: the nearest start of a structure (or of any structure in
+/// a `#tag`), from vanilla generation's placements.
+fn cmd_locate(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    let ["structure", target] = args else { return usage(server, source, "/locate structure <structure>") };
+    let Some((world, loc)) = server.source_location(source) else { return server.fail(source, "Only players can locate structures from the console's position") };
+    let ids: Vec<String> = match target.strip_prefix('#') {
+        Some(tag) => structure_tag(server, tag),
+        None => vec![if target.contains(':') { (*target).to_owned() } else { format!("minecraft:{target}") }],
+    };
+    let invalid = Component::translatable("commands.locate.structure.invalid", vec![Component::text((*target).to_owned())]);
+    let Some(generator) = server.worlds[world].generator.staged() else { return server.fail_component(source, invalid) };
+    let supported = generator.inner.supported_structures();
+    let ids: Vec<String> = ids.into_iter().filter(|id| supported.contains(&id.as_str())).collect();
+    if ids.is_empty() {
+        return server.fail_component(source, invalid);
+    }
+    let (x, z) = (loc.x.floor() as i32, loc.z.floor() as i32);
+    let started = std::time::Instant::now();
+    let distance = |l: &paper_worldgen::structure::Located| (((l.x - x) as f64).powi(2) + ((l.z - z) as f64).powi(2)).sqrt();
+    let found = ids.iter().filter_map(|id| generator.inner.locate(id, x, z, 100)).min_by(|a, b| distance(a).total_cmp(&distance(b)));
+    log::debug!("/locate {target} took {:?}", started.elapsed());
+    let Some(found) = found else {
+        return server.fail_component(source, Component::translatable("commands.locate.structure.not_found", vec![Component::text((*target).to_owned())]));
+    };
+    let coordinates = Component::text("[")
+        .append(Component::translatable("chat.coordinates", vec![Component::text(found.x.to_string()), Component::text("~"), Component::text(found.z.to_string())]))
+        .append(Component::text("]"))
+        .color("green")
+        .click_suggest_command(&format!("/tp @s {} ~ {}", found.x, found.z))
+        .hover_text(Component::translatable("chat.coordinates.tooltip", vec![]));
+    let blocks = distance(&found).floor() as i64;
+    server.feedback(source, Component::translatable("commands.locate.structure.success", vec![Component::text((*target).to_owned()), coordinates, Component::text(blocks.to_string())]));
+}
+
+fn complete_locate(server: &Server, source: &CommandSource, args: &[&str]) -> Vec<String> {
+    match args.len() {
+        0 | 1 => vec!["structure".to_owned()],
+        2 if args[0] == "structure" => {
+            let world = server.source_location(source).map_or(0, |(w, _)| w);
+            let Some(generator) = server.worlds[world].generator.staged() else { return Vec::new() };
+            let typed = args[1].to_ascii_lowercase();
+            let bare = typed.strip_prefix("minecraft:").unwrap_or(&typed);
+            generator.inner.supported_structures().into_iter().map(|id| id.strip_prefix("minecraft:").unwrap_or(id).to_owned()).filter(|id| id.starts_with(bare)).take(100).collect()
+        }
+        _ => Vec::new(),
     }
 }
 

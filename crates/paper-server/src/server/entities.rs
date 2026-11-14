@@ -320,6 +320,38 @@ impl Server {
                     return;
                 }
             }
+            EntityKind::EyeOfEnder { target, life, survive } => {
+                // `EyeOfEnder.tick`: steer towards the target, rising or sinking to its height.
+                let next = e.pos.add(e.vel);
+                let horizontal = (e.vel.x * e.vel.x + e.vel.z * e.vel.z).sqrt();
+                let (dx, dz) = (target.x - next.x, target.z - next.z);
+                let to_target = (dx * dx + dz * dz).sqrt() as f32;
+                let angle = dz.atan2(dx);
+                let mut speed = horizontal + 0.0025 * (to_target as f64 - horizontal);
+                let mut vy = e.vel.y;
+                if to_target < 1.0 {
+                    speed *= 0.8;
+                    vy *= 0.8;
+                }
+                let sign = if e.pos.y < target.y { 1.0 } else { -1.0 };
+                e.vel = Vec3::new(angle.cos() * speed, vy + (sign - vy) * 0.015f32 as f64, angle.sin() * speed);
+                e.pos = next;
+                *life += 1;
+                if *life > 80 {
+                    e.removed = true;
+                    let (at, survive) = (e.pos, *survive);
+                    self.worlds[world].entities.insert(id, e);
+                    self.play_sound(world, at, "minecraft:entity.ender_eye.death", super::survival::category::NEUTRAL, 1.0, 1.0, None);
+                    let pos = BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32);
+                    match items::id("minecraft:ender_eye").filter(|_| survive) {
+                        Some(eye) => {
+                            self.spawn_item(world, at, Slot::of(eye as i32, 1), Vec3::ZERO, 10);
+                        }
+                        None => self.broadcast_level_event(world, 2003, pos, 0, false),
+                    }
+                    return;
+                }
+            }
             EntityKind::Tnt { fuse } => {
                 *fuse -= 1;
                 let explode = *fuse <= 0;
