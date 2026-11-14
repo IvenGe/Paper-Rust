@@ -156,6 +156,137 @@ fn encode<P: paper_protocol::packets::Packet + paper_protocol::codec::Encode>(pa
     Bytes::from(encode_packet(packet))
 }
 
+// --- saving (`ScoreboardSaveData`, `data/minecraft/scoreboard.dat`) -----------------------------
+
+/// Team colours by id (`ChatFormatting` names).
+const TEAM_COLORS: [&str; 16] = ["black", "dark_blue", "dark_green", "dark_aqua", "dark_red", "dark_purple", "gold", "gray", "dark_gray", "blue", "green", "aqua", "red", "light_purple", "yellow", "white"];
+/// Name tag and death message visibility by id (`Team.Visibility`).
+const VISIBILITY: [&str; 4] = ["always", "never", "hideForOtherTeams", "hideForOwnTeam"];
+/// Collision rules by id (`Team.CollisionRule`).
+const COLLISION: [&str; 4] = ["always", "never", "pushOtherTeams", "pushOwnTeam"];
+
+fn component_tag(c: &Component) -> paper_nbt::Tag {
+    c.to_nbt()
+}
+
+fn component_from(tag: Option<&paper_nbt::Tag>) -> Option<Component> {
+    match tag? {
+        paper_nbt::Tag::String(s) => Component::from_json_str(s).ok().or_else(|| Some(Component::text(s.clone()))),
+        t => Some(Component::from_nbt(t)),
+    }
+}
+
+impl Scoreboard {
+    /// The board as vanilla saves the main scoreboard.
+    pub fn to_nbt(&self) -> paper_nbt::Compound {
+        use paper_nbt::{Compound, Tag};
+        let objectives = self
+            .objectives
+            .values()
+            .map(|o| {
+                Tag::Compound(
+                    Compound::new()
+                        .with("Name", Tag::String(o.name.clone()))
+                        .with("CriteriaName", Tag::String(o.criteria.clone()))
+                        .with("DisplayName", component_tag(&o.display_name))
+                        .with("RenderType", Tag::String(if o.render_type == 1 { "hearts" } else { "integer" }.into()))
+                        .with("DisplayAutoUpdate", Tag::Byte(0)),
+                )
+            })
+            .collect();
+        let mut scores = Vec::new();
+        for (entry, by_objective) in &self.scores {
+            for (objective, score) in by_objective {
+                let mut c = Compound::new().with("Name", Tag::String(entry.clone())).with("Objective", Tag::String(objective.clone())).with("Score", Tag::Int(score.value)).with("Locked", Tag::Byte(1));
+                if let Some(display) = &score.display_name {
+                    c.insert("display", component_tag(display));
+                }
+                scores.push(Tag::Compound(c));
+            }
+        }
+        let teams = self
+            .teams
+            .values()
+            .map(|t| {
+                let mut c = Compound::new()
+                    .with("Name", Tag::String(t.name.clone()))
+                    .with("DisplayName", component_tag(&t.display_name))
+                    .with("MemberNamePrefix", component_tag(&t.prefix))
+                    .with("MemberNameSuffix", component_tag(&t.suffix))
+                    .with("AllowFriendlyFire", Tag::Byte(t.friendly_fire as i8))
+                    .with("SeeFriendlyInvisibles", Tag::Byte(t.see_friendly_invisibles as i8))
+                    .with("NameTagVisibility", Tag::String(VISIBILITY[t.name_tag_visibility.clamp(0, 3) as usize].into()))
+                    .with("DeathMessageVisibility", Tag::String(VISIBILITY[t.death_message_visibility.clamp(0, 3) as usize].into()))
+                    .with("CollisionRule", Tag::String(COLLISION[t.collision_rule.clamp(0, 3) as usize].into()))
+                    .with("Players", Tag::List(t.entries.iter().map(|e| Tag::String(e.clone())).collect()));
+                if let Some(color) = t.color.and_then(|c| TEAM_COLORS.get(c as usize)) {
+                    c.insert("TeamColor", Tag::String((*color).into()));
+                }
+                Tag::Compound(c)
+            })
+            .collect();
+        let mut slots = Compound::new();
+        for (slot, objective) in &self.display {
+            if let Some(name) = DISPLAY_SLOTS.get(*slot as usize) {
+                slots.insert(*name, Tag::String(objective.clone()));
+            }
+        }
+        let data = Compound::new().with("Objectives", Tag::List(objectives)).with("PlayerScores", Tag::List(scores)).with("Teams", Tag::List(teams)).with("DisplaySlots", Tag::Compound(slots));
+        Compound::new().with("data", Tag::Compound(data)).with("DataVersion", Tag::Int(crate::world::storage::data_version()))
+    }
+
+    /// A board from a saved `scoreboard.dat`.
+    pub fn from_nbt(root: &paper_nbt::Compound) -> Scoreboard {
+        let mut board = Scoreboard::default();
+        let Some(data) = root.compound("data") else { return board };
+        for o in data.list("Objectives").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
+            let (Some(name), Some(criteria)) = (o.string("Name"), o.string("CriteriaName")) else { continue };
+            let render_type = i32::from(o.string("RenderType") == Some("hearts"));
+            let display_name = component_from(o.get("DisplayName")).unwrap_or_else(|| Component::text(name));
+            board.objectives.insert(name.to_owned(), Objective { name: name.to_owned(), criteria: criteria.to_owned(), display_name, render_type });
+        }
+        for s in data.list("PlayerScores").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
+            let (Some(entry), Some(objective)) = (s.string("Name"), s.string("Objective")) else { continue };
+            if !board.objectives.contains_key(objective) {
+                continue;
+            }
+            let score = Score { value: s.i32("Score").unwrap_or(0), display_name: component_from(s.get("display")) };
+            board.scores.entry(entry.to_owned()).or_default().insert(objective.to_owned(), score);
+        }
+        for t in data.list("Teams").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
+            let Some(name) = t.string("Name") else { continue };
+            let mut team = Team::new(name);
+            if let Some(c) = component_from(t.get("DisplayName")) {
+                team.display_name = c;
+            }
+            if let Some(c) = component_from(t.get("MemberNamePrefix")) {
+                team.prefix = c;
+            }
+            if let Some(c) = component_from(t.get("MemberNameSuffix")) {
+                team.suffix = c;
+            }
+            team.color = t.string("TeamColor").and_then(|c| TEAM_COLORS.iter().position(|n| *n == c)).map(|i| i as i32);
+            team.friendly_fire = t.bool("AllowFriendlyFire").unwrap_or(true);
+            team.see_friendly_invisibles = t.bool("SeeFriendlyInvisibles").unwrap_or(true);
+            let pick = |names: &[&str; 4], key: &str| t.string(key).and_then(|v| names.iter().position(|n| *n == v)).unwrap_or(0) as i32;
+            team.name_tag_visibility = pick(&VISIBILITY, "NameTagVisibility");
+            team.death_message_visibility = pick(&VISIBILITY, "DeathMessageVisibility");
+            team.collision_rule = pick(&COLLISION, "CollisionRule");
+            team.entries = t.list("Players").unwrap_or(&[]).iter().filter_map(|p| p.as_str().map(str::to_owned)).collect();
+            board.teams.insert(name.to_owned(), team);
+        }
+        if let Some(slots) = data.compound("DisplaySlots") {
+            for (slot, objective) in slots.iter() {
+                let (Some(id), Some(objective)) = (DISPLAY_SLOTS.iter().position(|n| *n == slot.as_str()), objective.as_str()) else { continue };
+                if board.objectives.contains_key(objective) {
+                    board.display.insert(id as i32, objective.to_owned());
+                }
+            }
+        }
+        board
+    }
+}
+
 /// Every scoreboard and who views which.
 #[derive(Debug)]
 pub struct Scoreboards {
@@ -172,6 +303,11 @@ impl Default for Scoreboards {
 }
 
 impl Scoreboards {
+    /// Replaces the main board (with a saved one) before anyone views it.
+    pub fn set_main(&mut self, board: Scoreboard) {
+        self.boards.insert(MAIN, board);
+    }
+
     pub fn new() -> Self {
         let mut boards = HashMap::new();
         boards.insert(MAIN, Scoreboard::default());
@@ -540,6 +676,28 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_main_board_saves_like_vanilla() {
+        let mut board = Scoreboard::default();
+        board.objectives.insert("kills".into(), Objective { name: "kills".into(), criteria: "dummy".into(), display_name: Component::text("Kills"), render_type: 0 });
+        board.display.insert(1, "kills".into());
+        board.scores.entry("Alice".into()).or_default().insert("kills".into(), Score { value: 7, display_name: None });
+        let mut red = Team::new("red");
+        red.color = Some(12);
+        red.friendly_fire = false;
+        red.collision_rule = 1;
+        red.entries.insert("Alice".into());
+        board.teams.insert("red".into(), red);
+        let nbt = board.to_nbt();
+        let back = Scoreboard::from_nbt(&nbt);
+        assert_eq!(back.objectives["kills"].criteria, "dummy");
+        assert_eq!(back.display.get(&1).map(String::as_str), Some("kills"));
+        assert_eq!(back.scores["Alice"]["kills"].value, 7);
+        let red = &back.teams["red"];
+        assert_eq!((red.color, red.friendly_fire, red.collision_rule, red.entries.contains("Alice")), (Some(12), false, 1, true));
+        assert_eq!(nbt.compound("data").and_then(|d| d.compound("DisplaySlots")).and_then(|d| d.string("sidebar")), Some("kills"));
+    }
 
     #[test]
     fn boards_are_dropped_once_released_and_unviewed() {

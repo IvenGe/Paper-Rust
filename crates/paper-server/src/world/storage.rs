@@ -1109,6 +1109,20 @@ impl WorldStorage {
         Ok(level.compound("Data").and_then(|d| d.compound("GameRules")).map(super::rules::GameRules::from_legacy))
     }
 
+    /// The main scoreboard (`data/minecraft/scoreboard.dat`, or `data/scoreboard.dat` of older
+    /// worlds).
+    pub fn read_scoreboard(&self) -> Result<Option<Compound>> {
+        if let Some(root) = read_gzip_nbt(&self.dir.join("data").join("minecraft").join("scoreboard.dat"))? {
+            return Ok(Some(root));
+        }
+        read_gzip_nbt(&self.dir.join("data").join("scoreboard.dat"))
+    }
+
+    pub fn save_scoreboard(&self, root: &Compound) -> Result<()> {
+        self.io.write_file(self.dir.join("data").join("minecraft").join("scoreboard.dat"), gzip_nbt(root)?);
+        Ok(())
+    }
+
     pub fn save_game_rules(&self, rules: &super::rules::GameRules) -> Result<()> {
         self.io.write_file(self.dir.join("data").join("minecraft").join("game_rules.dat"), gzip_nbt(&rules.to_nbt())?);
         Ok(())

@@ -208,8 +208,10 @@ What works:
 * **Players**: movement and seeing each other, chat, game modes, creative inventory,
   operators, whitelist and bans, the player list.
 * **Commands**: `help list me msg say gamemode defaultgamemode tp give clear setblock time
-  weather difficulty gamerule summon kill effect seed locate setworldspawn tps mspt kick ban pardon ban-ip
-  pardon-ip banlist op deop whitelist save-all stop version plugins reload`.
+  weather difficulty gamerule summon kill effect seed locate setworldspawn scoreboard team tps mspt
+  kick ban pardon ban-ip pardon-ip banlist op deop whitelist save-all stop version plugins
+  reload`. The main scoreboard (objectives, scores, display slots and teams) is saved with the
+  main world as vanilla's `data/minecraft/scoreboard.dat`.
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
   permissions, aliases and tab completion; Brigadier commands and `BasicCommand`), the
@@ -288,8 +290,8 @@ Not yet:
   crossbows, compasses, armour trims, block states of items, map views, spawn eggs, buckets of
   fish, ...), inventories of other block types and anvil and enchanting views, villager
   inventories, sleeping and zombifying villagers,
-  stat-based scoreboard criteria, saving the main scoreboard (`data/scoreboard.dat`), the
-  `/scoreboard` and `/team` commands, and vanilla-format item serialization
+  stat-based scoreboard criteria (they are kept but not counted), `/scoreboard players
+  enable` and `/trigger`, and vanilla-format item serialization
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet. Items do not remember who may pick them up (`Item#setOwner`).

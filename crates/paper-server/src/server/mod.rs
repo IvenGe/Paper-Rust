@@ -39,6 +39,7 @@ pub mod riding;
 pub mod taming;
 pub mod throwing;
 pub mod crafter;
+pub mod score_commands;
 pub mod dragon;
 mod weather;
 mod farming;
@@ -366,7 +367,7 @@ impl Server {
         }
 
         let user_cache = usercache::UserCache::load(&config.root);
-        let server = Self {
+        let mut server = Self {
             default_game_mode: props.gamemode,
             difficulty: props.difficulty,
             config,
@@ -402,6 +403,13 @@ impl Server {
             tasks,
             status_dirty: true,
         };
+        // The main scoreboard lives with the main world.
+        let saved_board = server.worlds.first().and_then(|w| w.storage.as_ref()).map(|s| s.read_scoreboard());
+        match saved_board {
+            Some(Ok(Some(root))) => server.scoreboards.set_main(scoreboard::Scoreboard::from_nbt(&root)),
+            Some(Err(e)) => log::warn!("Could not read the scoreboard: {e:#}"),
+            _ => {}
+        }
         Ok((server, ServerHandle { shared }))
     }
 
@@ -692,6 +700,11 @@ impl Server {
             self.save_player_data(player);
         }
         let (game_type, hardcore) = (self.default_game_mode.id(), self.config.properties.hardcore);
+        if let (Some(storage), Some(board)) = (self.worlds.first().and_then(|w| w.storage.as_ref()), self.scoreboards.get(scoreboard::MAIN)) {
+            if let Err(e) = storage.save_scoreboard(&board.to_nbt()) {
+                log::error!("Could not save the scoreboard: {e:#}");
+            }
+        }
         for world in &mut self.worlds {
             let chunks = world.save_chunks();
             if let Some(storage) = &world.storage {
