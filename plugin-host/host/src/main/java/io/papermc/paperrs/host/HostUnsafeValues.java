@@ -7,11 +7,14 @@ import java.util.logging.Logger;
 import org.bukkit.Keyed;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.craftbukkit.legacy.CraftLegacy;
 import org.bukkit.craftbukkit.util.ApiVersion;
+import org.bukkit.material.MaterialData;
 import org.bukkit.plugin.InvalidPluginException;
 import org.bukkit.plugin.PluginDescriptionFile;
 
-/** {@code UnsafeValues}: the API version gate and version numbers. */
+/** {@code UnsafeValues}: the API version gate, version numbers, class rewriting and legacy materials. */
 public final class HostUnsafeValues extends AbstractUnsafeValues {
     private static final Logger LOGGER = Logger.getLogger("Minecraft");
 
@@ -42,11 +45,27 @@ public final class HostUnsafeValues extends AbstractUnsafeValues {
         return !version.isNewerThan(ApiVersion.CURRENT);
     }
 
+    /**
+     * Paper's class rewriting for plugins as they load ({@code Commodore}): fields renamed since
+     * the plugin's api-version, enums that became registries, and {@code Material.values()}
+     * without the legacy materials. Plugins without an api-version (written for 1.12 or older)
+     * are loaded unchanged: converting them also needs Paper's rerouting of every method that
+     * takes a {@code Material}, which the host does not have.
+     */
     @Override
     public byte[] processClass(final PluginDescriptionFile pdf, final String path, final byte[] clazz) {
-        // Paper rewrites old plugin bytecode here (Commodore); Paper-RS loads classes unchanged.
-        return clazz;
+        if (pdf.getAPIVersion() == null) {
+            return clazz;
+        }
+        try {
+            return COMMODORE.convert(clazz, pdf.getName(), ApiVersion.getOrCreateVersion(pdf.getAPIVersion()), java.util.Set.of());
+        } catch (Exception ex) {
+            LOGGER.log(java.util.logging.Level.SEVERE, "Fatal error trying to convert " + pdf.getFullName() + ":" + path, ex);
+            return clazz;
+        }
     }
+
+    private static final org.bukkit.craftbukkit.util.Commodore COMMODORE = new org.bukkit.craftbukkit.util.Commodore(compatibility -> false);
 
     @Override
     public int getDataVersion() {
@@ -65,12 +84,27 @@ public final class HostUnsafeValues extends AbstractUnsafeValues {
 
     @Override
     public Material toLegacy(final Material material) {
-        return material;
+        return CraftLegacy.toLegacy(material);
     }
 
     @Override
     public Material fromLegacy(final Material material) {
-        return material;
+        return CraftLegacy.fromLegacy(material);
+    }
+
+    @Override
+    public Material fromLegacy(final MaterialData material) {
+        return CraftLegacy.fromLegacy(material);
+    }
+
+    @Override
+    public Material fromLegacy(final MaterialData material, final boolean itemPriority) {
+        return CraftLegacy.fromLegacy(material, itemPriority);
+    }
+
+    @Override
+    public BlockData fromLegacy(final Material material, final byte data) {
+        return CraftLegacy.fromLegacyData(CraftLegacy.toLegacy(material), data);
     }
 
     @Override

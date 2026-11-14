@@ -33,6 +33,12 @@
       <artifactId>commons-lang3</artifactId>
       <version>3.20.0</version>
     </dependency>
+    <!-- Commodore rewrites plugin classes as they load; Paper bundles the same version -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-commons</artifactId>
+      <version>9.9.1</version>
+    </dependency>
     <dependency>
       <groupId>org.jetbrains</groupId>
       <artifactId>annotations</artifactId>

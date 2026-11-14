@@ -457,6 +457,10 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let owned = server.handle.run(move |s| s.worlds[0].entities.values().any(|e| matches!(&e.kind, paper_server::world::entity::EntityKind::Item { stack, owner: Some(_), .. } if stack.0.as_ref().is_some_and(|i| i.item == stick)))).unwrap();
     assert!(owned, "the stick stays, still owned");
     // Attribute modifiers on an item's meta, worn by the server's attribute maps too.
+    // Commodore rewrites the plugin's Material.values() and enum switches to leave out the
+    // legacy materials; legacy constants it names still convert, from the legacy id table.
+    alice.command("apitest legacy");
+    expect_line(&mut alice, "legacy: ok");
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

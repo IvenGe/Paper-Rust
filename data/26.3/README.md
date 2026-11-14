@@ -20,6 +20,7 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `entities.json` | entity types: size, eye height, category, attributes, health, experience, spawn rules, sounds |
 | `entity_data.json` | the entity metadata layout (field index and serializer) of each entity type |
 | `game_rules.json` | game rules with their defaults (and bounds for integer rules) |
+| `legacy.json` | the pre-1.13 numeric ids (`id:data`) as 26.3 block states and items, for the plugin host's legacy materials |
 | `worldgen/multi_noise_biome_tree.json.gz` | the multi-noise biome parameter R-trees of the `overworld` and `nether` presets (embedded by `paper-worldgen`) |
 | `worldgen/block_physics.bin.gz` | per block state: physical flags and sturdy faces that world generation features test (embedded by `paper-worldgen`) |
 
@@ -67,6 +68,13 @@ exact inputs, the method and the full list of checks
   `python3 -I crates/paper-worldgen/scripts/block_physics.py <pumpkin>/assets/blocks.json
   data/26.3/blocks.json data/26.3/worldgen/block_physics.bin.gz`, which also checks that every
   state id belongs to the same block in both files.
+
+* `legacy.json` is built by `tools/datagen/legacy.py` from `data/pc/common/legacy.json` of
+  [PrismarineJS/minecraft-data](https://github.com/PrismarineJS/minecraft-data) (MIT
+  licence), which maps 1.12 ids to 1.13 names. The script renames what changed after 1.13
+  (signs, the smooth stone slab, three dyes, dirt paths, short grass, turtle scutes, the
+  zombified piglin egg; wall sides became `none`/`low`) and checks every block, property,
+  value and item against `blocks.json` and `items.json`.
 
 Every registry was checked for an identical name set against mcmeta, and every
 order that an independent source covers (packets, block states, 22 registries)

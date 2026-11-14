@@ -292,7 +292,11 @@ What works:
     `VillagerReplenishTradeEvent`;
   * worlds made by plugins (`Bukkit.createWorld`): normal or flat; overworld, Nether or End;
     opened again from their folders; and players teleported from one world to another;
-  * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload)).
+  * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload));
+  * Paper's class rewriting as plugins load (Commodore): fields and enum constants renamed
+    since a plugin's api-version, enums that became registries, and `Material.values()`
+    without the legacy materials; and the legacy materials themselves (`LEGACY_` constants,
+    `UnsafeValues.fromLegacy`/`toLegacy`), converted with a table of the pre-1.13 ids.
 
 Not yet:
 
@@ -320,7 +324,8 @@ Not yet:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
-  them.
+  them. Plugins without an api-version (written for 1.12 or older) are loaded without
+  Paper's legacy conversion.
 
 Layout
 ------

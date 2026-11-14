@@ -126,6 +126,7 @@ final class ApiTests implements Listener, CommandExecutor {
                     sender.sendMessage("book: opened");
                 }
                 case "villagers" -> this.villagers((Player) sender);
+                case "legacy" -> this.legacy(sender);
                 case "merchant" -> this.merchant((Player) sender);
                 case "career" -> this.career((Player) sender);
                 case "riding" -> this.riding((Player) sender);
@@ -258,6 +259,33 @@ final class ApiTests implements Listener, CommandExecutor {
         final org.bukkit.inventory.MerchantRecipe recipe = new org.bukkit.inventory.MerchantRecipe(new ItemStack(result, amount), 0, maxUses, true, 2, 0.05f);
         recipe.addIngredient(new ItemStack(cost, costAmount));
         return recipe;
+    }
+
+    /**
+     * Commodore and legacy materials: as on Paper, a plugin with an api-version sees no
+     * {@code LEGACY_} constants in {@code Material.values()} (nor in an enum switch), while the
+     * legacy constants it does name still convert.
+     */
+    @SuppressWarnings("deprecation")
+    private void legacy(final CommandSender sender) {
+        final List<String> failures = new ArrayList<>();
+        final Material[] values = Material.values();
+        check(failures, java.util.Arrays.stream(values).noneMatch(Material::isLegacy) && values.length > 1000, "values() without legacy materials: " + values.length);
+        final String kind = switch (Material.OAK_LOG) {
+            case OAK_LOG -> "log";
+            case STONE -> "stone";
+            default -> "other";
+        };
+        check(failures, kind.equals("log"), "switch over Material: " + kind);
+        check(failures, Material.getMaterial("WOOL", true) == Material.WHITE_WOOL, "getMaterial(WOOL, legacy): " + Material.getMaterial("WOOL", true));
+        check(failures, Material.LEGACY_WOOL.isBlock() && !Material.LEGACY_DIAMOND.isBlock() && Material.LEGACY_DIAMOND.isItem(), "legacy isBlock / isItem");
+        final org.bukkit.UnsafeValues unsafe = Bukkit.getUnsafe();
+        check(failures, unsafe.fromLegacy(new org.bukkit.material.MaterialData(Material.LEGACY_WOOL, (byte) 14)) == Material.RED_WOOL, "red wool");
+        check(failures, unsafe.fromLegacy(new org.bukkit.material.MaterialData(Material.LEGACY_INK_SACK, (byte) 1), true) == Material.RED_DYE, "rose red is red dye");
+        check(failures, unsafe.fromLegacy(Material.LEGACY_LOG, (byte) 5).getAsString().equals("minecraft:spruce_log[axis=x]"), "spruce log on its side: " + unsafe.fromLegacy(Material.LEGACY_LOG, (byte) 5).getAsString());
+        check(failures, unsafe.toLegacy(Material.RED_WOOL) == Material.LEGACY_WOOL && unsafe.toLegacy(Material.DIAMOND) == Material.LEGACY_DIAMOND, "toLegacy: " + unsafe.toLegacy(Material.RED_WOOL));
+        check(failures, unsafe.fromLegacy(new org.bukkit.material.MaterialData(Material.LEGACY_MONSTER_EGG, (byte) 50), true) == Material.CREEPER_SPAWN_EGG, "creeper egg");
+        report(sender, "legacy", failures);
     }
 
     private void villagers(final Player player) {

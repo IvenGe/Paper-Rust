@@ -34,10 +34,20 @@ TREES = {
     },
     'org/bukkit/craftbukkit/metadata': set(),
     'org/bukkit/craftbukkit/scheduler': set(),
+    # Commodore's rerouting: enum-to-registry compatibility and its annotations
+    'org/bukkit/craftbukkit/legacy/enums': set(),
+    'org/bukkit/craftbukkit/legacy/reroute': set(),
 }
 
 FILES = [
     'org/bukkit/craftbukkit/util/ApiVersion.java',
+    # Commodore: rewrites plugin classes as they load (renamed fields, Material.values()...)
+    'org/bukkit/craftbukkit/util/Commodore.java',
+    'org/bukkit/craftbukkit/util/ClassTraverser.java',
+    'org/bukkit/craftbukkit/util/CraftLegacy.java',
+    'org/bukkit/craftbukkit/legacy/FieldRename.java',
+    'org/bukkit/craftbukkit/legacy/MethodRerouting.java',
+    'org/bukkit/craftbukkit/legacy/fieldrename/FieldRenameData.java',
     'org/bukkit/craftbukkit/util/Versioning.java',
     'org/bukkit/craftbukkit/util/Waitable.java',
     'org/bukkit/craftbukkit/util/WeakCollection.java',
@@ -60,6 +70,38 @@ FILES = [
 
 # (file, exact text, replacement, why)
 EDITS = [
+    ('org/bukkit/craftbukkit/util/Commodore.java',
+     'import joptsimple.OptionParser;\nimport joptsimple.OptionSet;\nimport joptsimple.OptionSpec;\n', '',
+     'the command-line converter (main) is left out: the host does not bundle jopt-simple'),
+    ('org/bukkit/craftbukkit/util/Commodore.java',
+     '''    public static void main(String[] args) {
+        OptionParser parser = new OptionParser();''',
+     '''    private static void unusedMain(String[] args) {
+        if (true) throw new UnsupportedOperationException();''',
+     'see above'),
+    ('org/bukkit/craftbukkit/util/Commodore.java',
+     '''        OptionSpec<File> inputFlag = parser.acceptsAll(Arrays.asList("i", "input")).withRequiredArg().ofType(File.class).required();
+        OptionSpec<File> outputFlag = parser.acceptsAll(Arrays.asList("o", "output")).withRequiredArg().ofType(File.class).required();
+
+        OptionSet options = parser.parse(args);
+
+        File input = options.valueOf(inputFlag);
+        File output = options.valueOf(outputFlag);
+''',
+     '''        File input = new File(args[0]);
+        File output = new File(args[1]);
+''',
+     'see above'),
+    ('org/bukkit/craftbukkit/util/Commodore.java',
+     'import org.bukkit.craftbukkit.legacy.MaterialRerouting;\n', '',
+     'MaterialRerouting (Material arguments of plugins without an api-version) needs CraftBukkit\'s item and tag classes; the host does not convert such plugins'),
+    ('org/bukkit/craftbukkit/util/Commodore.java',
+     '''                .create(compatibilityPresent)
+                .forClass(MaterialRerouting.class)
+                .build();''',
+     '''                .create(compatibilityPresent)
+                .build();''',
+     'see above'),
     ('io/papermc/paper/plugin/manager/PaperPluginInstanceManager.java',
      'import io.papermc.paper.FeatureHooks;\n', '',
      'FeatureHooks flushes the server\'s async log appenders, which the host does not have'),
