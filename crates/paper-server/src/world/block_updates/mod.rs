@@ -25,6 +25,7 @@ pub mod fire;
 pub mod fluid;
 pub mod piston;
 pub mod plants;
+pub mod rails;
 pub mod redstone;
 pub mod state;
 pub mod support;
@@ -98,6 +99,8 @@ pub enum Effect {
     CheckPlate { pos: BlockPos },
     /// Pressed string checks whether anything is still in it.
     CheckTripwire { pos: BlockPos },
+    /// A detector rail checks whether a minecart is on it.
+    CheckDetectorRail { pos: BlockPos },
     /// A crafter crafts (its scheduled tick ran).
     Craft { pos: BlockPos },
     /// A crafter's power changed (its window shows it).
@@ -705,7 +708,7 @@ impl<'w> Level<'w> {
     // --- block behaviour dispatch --------------------------------------------------------
 
     /// `onPlace`.
-    fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, _moved: bool) {
+    fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, moved: bool) {
         if matches!(state::block_name(state), "minecraft:carved_pumpkin" | "minecraft:jack_o_lantern") && state::block_name(old) != state::block_name(state) {
             self.world.updates.effects.push(Effect::Golem { pos });
         }
@@ -724,6 +727,7 @@ impl<'w> Level<'w> {
             Kind::Fire => fire::on_place(self, state, pos, old),
             Kind::Dispenser | Kind::Hopper if kind(old) != kind(state) => self.machine_power_changed(state, pos),
             Kind::Tripwire => tripwire::wire_on_place(self, state, pos, old),
+            Kind::Rail | Kind::PoweredRail | Kind::DetectorRail => rails::on_place(self, state, pos, old, moved),
             _ => {}
         }
     }
@@ -772,12 +776,13 @@ impl<'w> Level<'w> {
             Kind::PistonHead => piston::head_after_removal(self, old, pos),
             Kind::Tripwire if !moved => tripwire::wire_after_removal(self, old, pos),
             Kind::TripwireHook if !moved => tripwire::hook_after_removal(self, old, pos),
+            Kind::Rail | Kind::PoweredRail | Kind::DetectorRail => rails::after_removal(self, old, pos, moved),
             _ => {}
         }
     }
 
     /// `neighborChanged`: a neighbour changed; `source_block` is its block id.
-    fn neighbor_changed(&mut self, state: u32, pos: BlockPos, source_block: u32, _moved: bool) {
+    fn neighbor_changed(&mut self, state: u32, pos: BlockPos, source_block: u32, moved: bool) {
         match kind(state) {
             Kind::Water | Kind::Lava => fluid::neighbor_changed(self, state, pos),
             Kind::RedstoneWire => redstone::wire_neighbor_changed(self, state, pos),
@@ -793,6 +798,7 @@ impl<'w> Level<'w> {
             Kind::Tnt => self.prime_if_powered(pos),
             Kind::Dispenser | Kind::Hopper => self.machine_power_changed(state, pos),
             Kind::Crafter => self.crafter_power_changed(state, pos),
+            Kind::Rail | Kind::PoweredRail | Kind::DetectorRail => rails::neighbor_changed(self, state, pos, source_block, moved),
             _ => {}
         }
     }
@@ -864,6 +870,7 @@ impl<'w> Level<'w> {
             Kind::PressurePlate { .. } => self.world.updates.effects.push(Effect::CheckPlate { pos }),
             Kind::TripwireHook => tripwire::hook_tick(self, state, pos),
             Kind::Tripwire if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckTripwire { pos }),
+            Kind::DetectorRail if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckDetectorRail { pos }),
             Kind::SugarCane | Kind::Cactus | Kind::Farmland | Kind::Leaves => plants::tick(self, state, pos),
             _ => {}
         }

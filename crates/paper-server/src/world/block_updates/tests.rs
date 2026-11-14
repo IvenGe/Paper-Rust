@@ -293,6 +293,96 @@ fn breaking_a_waterlogged_block_leaves_water() {
 
 // --- redstone -----------------------------------------------------------------------------
 
+fn shape_at(w: &World, pos: BlockPos) -> &'static str {
+    prop(get(w, pos), "shape").unwrap()
+}
+
+#[test]
+fn rails_join_bend_and_climb() {
+    let mut w = world();
+    let rail = s("minecraft:rail");
+    // Two rails side by side join east-west; a third south of the second bends it.
+    place(&mut w, p(0, Y, 0), rail);
+    place(&mut w, p(1, Y, 0), rail);
+    assert_eq!((shape_at(&w, p(0, Y, 0)), shape_at(&w, p(1, Y, 0))), ("east_west", "east_west"));
+    place(&mut w, p(1, Y, 1), rail);
+    assert_eq!(shape_at(&w, p(1, Y, 0)), "south_west");
+    assert_eq!(shape_at(&w, p(1, Y, 1)), "north_south");
+    // A rail next to one a block up climbs to it.
+    set(&mut w, p(4, Y, 4), s("minecraft:stone"));
+    place(&mut w, p(4, Y + 1, 4), rail);
+    place(&mut w, p(3, Y, 4), rail);
+    assert_eq!(shape_at(&w, p(3, Y, 4)), "ascending_east");
+    // Powered rails do not bend: a corner stays straight.
+    place(&mut w, p(8, Y, 0), s("minecraft:powered_rail"));
+    place(&mut w, p(9, Y, 0), s("minecraft:powered_rail"));
+    place(&mut w, p(8, Y, 1), s("minecraft:powered_rail"));
+    assert_eq!(shape_at(&w, p(8, Y, 0)), "east_west");
+    // Without a block below, a rail pops off.
+    set(&mut w, p(0, Y - 1, 0), blocks::AIR);
+    assert_eq!(name(&w, p(0, Y, 0)), "air");
+    // The slope needs the block on its high side.
+    set(&mut w, p(4, Y, 4), blocks::AIR);
+    assert_eq!(name(&w, p(3, Y, 4)), "air");
+}
+
+#[test]
+fn rail_junctions_switch_with_a_signal() {
+    let mut w = world();
+    let rail = s("minecraft:rail");
+    // A T: rails west, east and south of the middle one.
+    for pos in [p(-1, Y, 0), p(1, Y, 0), p(0, Y, 1), p(0, Y, 0)] {
+        place(&mut w, pos, rail);
+    }
+    assert_eq!(shape_at(&w, p(0, Y, 0)), "south_east");
+    assert_eq!(shape_at(&w, p(1, Y, 0)), "east_west");
+    // A lever next to it switches the curve the other way, and back. (A placed redstone
+    // block would not: vanilla tells the neighbours the block that was there before, air.)
+    set(&mut w, p(0, Y, -1), s("minecraft:lever[face=floor,facing=north]"));
+    assert_eq!(shape_at(&w, p(0, Y, 0)), "south_east");
+    use_block(&mut w, p(0, Y, -1));
+    assert_eq!(shape_at(&w, p(0, Y, 0)), "south_west");
+    assert_eq!(shape_at(&w, p(-1, Y, 0)), "east_west");
+    use_block(&mut w, p(0, Y, -1));
+    assert_eq!(shape_at(&w, p(0, Y, 0)), "south_east");
+}
+
+#[test]
+fn powered_rails_pass_power_along_eight_rails() {
+    let mut w = world();
+    let rail = s("minecraft:powered_rail[shape=east_west]");
+    for x in 0..10 {
+        set(&mut w, p(x, Y, 0), rail);
+    }
+    set(&mut w, p(0, Y, 1), s("minecraft:redstone_block"));
+    let powered: Vec<bool> = (0..10).map(|x| get_bool(get(&w, p(x, Y, 0)), "powered")).collect();
+    assert_eq!(powered, [true, true, true, true, true, true, true, true, true, false], "the source rail and eight more");
+    // Activator rails do not take power from powered rails.
+    set(&mut w, p(10, Y, 0), s("minecraft:activator_rail[shape=east_west]"));
+    set(&mut w, p(-1, Y, 0), s("minecraft:activator_rail[shape=east_west]"));
+    assert!(!get_bool(get(&w, p(-1, Y, 0)), "powered"));
+    // Taking the power away turns the line off.
+    set(&mut w, p(0, Y, 1), blocks::AIR);
+    assert!((0..10).all(|x| !get_bool(get(&w, p(x, Y, 0)), "powered")));
+}
+
+#[test]
+fn detector_rails_power_what_is_next_to_them_while_pressed() {
+    let mut w = world();
+    set(&mut w, p(0, Y, 0), s("minecraft:detector_rail[shape=east_west]"));
+    set(&mut w, p(0, Y, 1), s("minecraft:redstone_lamp"));
+    set(&mut w, p(1, Y, 0), s("minecraft:powered_rail[shape=east_west]"));
+    rails::check_pressed(&mut Level::new(&mut w), p(0, Y, 0), true);
+    assert!(get_bool(get(&w, p(0, Y, 0)), "powered"));
+    assert!(get_bool(get(&w, p(0, Y, 1)), "lit"), "the lamp lights");
+    assert!(get_bool(get(&w, p(1, Y, 0)), "powered"), "the rail it joins is powered");
+    // Pressed, it checks again a second later.
+    run(&mut w, 21);
+    assert!(w.updates.effects.iter().any(|e| matches!(e, Effect::CheckDetectorRail { pos } if *pos == p(0, Y, 0))));
+    rails::check_pressed(&mut Level::new(&mut w), p(0, Y, 0), false);
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "powered"));
+}
+
 fn wire_power(w: &World, pos: BlockPos) -> i32 {
     let state = get(w, pos);
     assert_eq!(kind(state), Kind::RedstoneWire, "wire at {pos:?}");

@@ -42,6 +42,7 @@ pub fn can_survive(level: &Level, state: u32, pos: BlockPos) -> bool {
         Kind::Vegetation => vegetation_on(level.state(pos.below())),
         Kind::Crop | Kind::Farmland | Kind::SugarCane | Kind::Cactus | Kind::Stem | Kind::AttachedStem | Kind::SweetBerryBush | Kind::NetherWart | Kind::Cocoa | Kind::SnowLayer => super::plants::can_survive(level, state, pos),
         Kind::PistonHead => super::piston::head_can_survive(level, state, pos),
+        Kind::Rail | Kind::PoweredRail | Kind::DetectorRail => super::rails::can_survive(level, pos),
         Kind::TallPlant => {
             if prop(state, "half") == Some("upper") {
                 let below = level.state(pos.below());
@@ -177,6 +178,7 @@ pub fn placement_state(level: &Level, state: u32, pos: BlockPos, ctx: PlaceConte
         Kind::Repeater => s = set_bool(s, "locked", redstone::repeater_locked(level, s, pos)),
         Kind::NoteBlock => s = with(s, "instrument", redstone::note_instrument(level, pos)),
         Kind::Observer => s = set_bool(set_dir(s, "facing", ctx.looking), "powered", false),
+        Kind::Rail | Kind::PoweredRail | Kind::DetectorRail => s = with(s, "shape", super::rails::placement_shape(matches!(ctx.facing, Dir::East | Dir::West))),
         Kind::Door { .. } => {
             let powered = level.has_neighbor_signal(pos) || level.has_neighbor_signal(pos.above());
             s = set_bool(set_bool(s, "powered", powered), "open", powered);

@@ -72,7 +72,9 @@ fn click(window_id: i32, slot: i16, button: i8, mode: i32) -> play::ContainerCli
 }
 
 /// Puts the player next to an entity, looking at it.
-fn stand_next_to(server: &paper_server::RunningServer, player: i32, entity: i32) {
+/// Puts the player next to an entity, and waits until their client has accepted the
+/// teleport: until then the server still goes by where they were.
+fn stand_next_to(server: &paper_server::RunningServer, client: &mut Client, player: i32, entity: i32) {
     server
         .handle
         .run(move |s| {
@@ -80,6 +82,11 @@ fn stand_next_to(server: &paper_server::RunningServer, player: i32, entity: i32)
             s.teleport(player, Location { x: at.x + 1.5, y: at.y, z: at.z, yaw: 90.0, pitch: 0.0 });
         })
         .unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while server.handle.run(move |s| s.players[&player].pending_teleport.is_some()).unwrap() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for the teleport to be accepted");
+        client.drain(Duration::from_millis(20));
+    }
 }
 
 fn count_of(server: &paper_server::RunningServer, player: i32, item: i32) -> i32 {
@@ -116,7 +123,7 @@ fn villagers_take_workstations_trade_and_level_up() {
         ]);
     });
     server.handle.run(move |s| s.set_inventory_slot(id, 36, Slot::of(wheat, 64))).unwrap();
-    stand_next_to(&server, id, villager);
+    stand_next_to(&server, &mut alice, id, villager);
     alice.drain(Duration::from_millis(200));
     alice.clear_backlog();
 
@@ -184,7 +191,7 @@ fn unemployed_villagers_shake_their_heads_and_new_hires_quit() {
     let id = alice.entity_id;
     let villager = server.handle.run(|s| s.spawn_mob(0, "minecraft:villager", Vec3::new(4.5, -60.0, 4.5), SpawnReason::Command).unwrap()).unwrap();
     // Nothing to trade: no window, just a head shake.
-    stand_next_to(&server, id, villager);
+    stand_next_to(&server, &mut alice, id, villager);
     alice.drain(Duration::from_millis(200));
     alice.clear_backlog();
     alice.send(&interact(villager));
@@ -218,7 +225,7 @@ fn wandering_traders_sell_and_leave() {
     // Its offers: two it buys, five common and two uncommon ones it sells.
     let offers = server.handle.run(move |s| s.merchant_offers(0, trader)).unwrap();
     assert_eq!(offers.len(), 9);
-    stand_next_to(&server, id, trader);
+    stand_next_to(&server, &mut alice, id, trader);
     alice.drain(Duration::from_millis(200));
     alice.clear_backlog();
     alice.send(&interact(trader));

@@ -901,6 +901,19 @@ impl Server {
     }
 }
 
+impl Server {
+    /// A detector rail is pressed while a minecart is in the middle of its block
+    /// (`DetectorRailBlock.checkPressed`).
+    pub(super) fn check_detector_rail(&mut self, world: usize, pos: BlockPos) {
+        let area = Aabb::new(Vec3::new(pos.x as f64 + 0.2, pos.y as f64, pos.z as f64 + 0.2), Vec3::new(pos.x as f64 + 0.8, pos.y as f64 + 0.8, pos.z as f64 + 0.8));
+        let w = &self.worlds[world];
+        let pressed = w.entities_in(&area).into_iter().filter_map(|id| w.entities.get(&id)).any(|e| e.is_alive() && e.info.name.ends_with("minecart"));
+        let Some(w) = self.worlds.get_mut(world) else { return };
+        crate::world::block_updates::rails::check_pressed(&mut Level::new(w), pos, pressed);
+        self.publish_block_updates(world);
+    }
+}
+
 fn in_block_tag(state: u32, tag: &str) -> bool {
     paper_data::synced::tag("minecraft:block", tag).is_some_and(|ids| ids.contains(&(blocks::block_id_of_state(state) as i32)))
 }

@@ -202,6 +202,7 @@ impl Server {
                 Effect::Dispense { pos } => self.dispense(world, pos),
                 Effect::CheckPlate { pos } => self.check_pressure_plate(world, pos),
                 Effect::CheckTripwire { pos } => self.check_tripwire(world, pos),
+                Effect::CheckDetectorRail { pos } => self.check_detector_rail(world, pos),
                 Effect::Craft { pos } => self.crafter_craft(world, pos),
                 Effect::CrafterPowered { pos } => self.send_crafter_data(world, pos),
             }

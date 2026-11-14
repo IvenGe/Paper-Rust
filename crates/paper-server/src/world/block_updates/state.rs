@@ -313,6 +313,10 @@ pub enum Kind {
     Pane,
     Stairs,
     Lectern,
+    /// Plain rails, the ones that curve.
+    Rail,
+    /// Powered and activator rails: straight, and powered along a line.
+    PoweredRail,
     DetectorRail,
     /// Signal sources whose power needs simulation not done here (trapped chests, playing
     /// jukeboxes, calibrated sculk sensors): wires connect to them.
@@ -385,6 +389,8 @@ fn classify(name: &str) -> Kind {
         "moss_carpet" | "pale_moss_carpet" => return Kind::Carpet,
         "lectern" => return Kind::Lectern,
         "detector_rail" => return Kind::DetectorRail,
+        "rail" => return Kind::Rail,
+        "powered_rail" | "activator_rail" => return Kind::PoweredRail,
         "trapped_chest" | "jukebox" | "calibrated_sculk_sensor" => return Kind::PassiveSource,
         _ => {}
     }
