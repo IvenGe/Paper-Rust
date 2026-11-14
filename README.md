@@ -135,7 +135,7 @@ What works:
   lead to an existing portal nearby or a new one built like vanilla's; frames that break put
   the portal out. End portal frames filled with eyes of ender open the End portal, players
   arrive on the obsidian platform, and the exit portal shows the credits and brings them
-  home. Fire burns, spreads and lights portals; buckets scoop up and pour water and lava
+  home. The gateways on the outer islands lead back to the main island. Fire burns, spreads and lights portals; buckets scoop up and pour water and lava
   (water boils away in the Nether).
 * **Weather**: vanilla's rain and thunder cycle (`advance_weather`) with `/weather`, saved in
   `level.dat`: clients see rain and thunder fade in and out, storms darken the sky (enough to
@@ -199,7 +199,7 @@ Not yet:
 * World generation: ocean monuments and woodland mansions are not generated, nor sculk
   patches (ancient cities have none). Structure starts are not saved: after a restart, a
   structure that was being placed can show seams. There is no dragon fight (the End's exit
-  portal is open from the start), and End gateways do not teleport yet.
+  portal is open from the start, and the gateways the dragon's death opens do not appear).
 * Gameplay: mobs beyond the common kinds have no special behaviour (endermen, villagers and
   trading, taming); poplar saplings do not grow (how they pick their tree is not in the
   data). Tripwires,

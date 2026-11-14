@@ -231,3 +231,34 @@ fn buckets_scoop_up_and_pour_water() {
     assert_eq!(poured, Some("minecraft:water"));
     server.stop();
 }
+
+#[test]
+fn end_gateways_send_players_to_their_exit() {
+    let server = start_server(|_| {});
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    alice.find(TIMEOUT, |c: &play::LevelChunkWithLight| c.x == 0 && c.z == 0).expect("spawn chunk");
+    let id = alice.entity_id;
+    let gateway = BlockPos::new(8, -59, 12);
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_and_update(0, gateway, paper_data::blocks::default_state("minecraft:end_gateway").unwrap());
+            let entity = paper_nbt::Compound::new()
+                .with("id", paper_nbt::Tag::String("minecraft:end_gateway".into()))
+                .with("exit_portal", paper_nbt::Tag::IntArray(vec![20, -60, 24]))
+                .with("ExactTeleport", paper_nbt::Tag::Byte(1));
+            let chunk = s.worlds[0].chunks.get_mut(&paper_server::world::chunk::ChunkPos::new(0, 0)).unwrap();
+            chunk.block_entities.insert((gateway.y, (gateway.z & 15) as u8, (gateway.x & 15) as u8), entity);
+            s.teleport(id, paper_server::server::player::Location { x: 8.5, y: -60.0, z: 10.5, yaw: 0.0, pitch: 0.0 });
+        })
+        .unwrap();
+    alice.drain(Duration::from_millis(300));
+    alice.clear_backlog();
+    // Walk into the gateway.
+    alice.send(&play::MovePlayerPos { x: 8.5, y: -59.5, z: 12.5, flags: 1 });
+    alice.send(&play::ClientTickEnd {});
+    let to: play::PlayerPosition = alice.find(TIMEOUT, |p: &play::PlayerPosition| (p.x - 20.5).abs() < 0.01).expect("sent to the exit");
+    assert_eq!((to.x, to.y, to.z), (20.5, -60.0, 24.5));
+    server.stop();
+}

@@ -196,6 +196,8 @@ pub struct Server {
     pub spawner_cache: HashMap<String, Vec<mobs::SpawnerEntry>>,
     /// What each brewing stand started brewing with (vanilla keeps it only in memory too).
     pub brewing_ingredients: HashMap<(usize, paper_protocol::codec::BlockPos), i32>,
+    /// End gateways cooling down after a teleport: (world, gateway) -> tick it was used.
+    pub gateway_cooldowns: HashMap<(usize, paper_protocol::codec::BlockPos), u64>,
     tasks: Receiver<MainTask>,
     status_dirty: bool,
 }
@@ -385,6 +387,7 @@ impl Server {
             damage_types: survival::load_damage_types(vanilla.as_deref()),
             spawner_cache: HashMap::new(),
             brewing_ingredients: HashMap::new(),
+            gateway_cooldowns: HashMap::new(),
             vanilla,
             tasks,
             status_dirty: true,

@@ -57,6 +57,7 @@ impl Server {
         let w = &self.worlds[world];
         let mut nether: Option<Axis> = None;
         let mut end = false;
+        let mut gateway: Option<BlockPos> = None;
         for y in area.min.y.floor() as i32..=area.max.y.floor() as i32 {
             for z in area.min.z.floor() as i32..=area.max.z.floor() as i32 {
                 for x in area.min.x.floor() as i32..=area.max.x.floor() as i32 {
@@ -65,6 +66,7 @@ impl Server {
                         "minecraft:nether_portal" => nether = Some(Axis::of_state(state)),
                         // The End portal is a slab-height block.
                         "minecraft:end_portal" if area.min.y < y as f64 + 0.75 => end = true,
+                        "minecraft:end_gateway" => gateway = Some(BlockPos::new(x, y, z)),
                         _ => {}
                     }
                 }
@@ -77,7 +79,7 @@ impl Server {
         let p = self.players.get_mut(&id).unwrap();
         // After arriving the player has to step out of the portal first.
         if p.portal_cooldown > 0 {
-            if nether.is_some() || end {
+            if nether.is_some() || end || gateway.is_some() {
                 p.portal_cooldown = 10;
             } else {
                 p.portal_cooldown -= 1;
@@ -86,6 +88,10 @@ impl Server {
         }
         if end {
             self.start_travel(id, TravelKind::End);
+            return;
+        }
+        if let Some(pos) = gateway {
+            self.use_end_gateway(id, world, pos);
             return;
         }
         match nether {
@@ -98,6 +104,63 @@ impl Server {
             }
             _ => p.portal_time = (p.portal_time - 4).max(0),
         }
+    }
+
+    /// `TheEndGatewayBlockEntity.teleportEntity`: a gateway that knows its exit (the return
+    /// gateways on the outer islands lead to the main island) sends the player there,
+    /// exactly or onto the tallest block beside it, then shows its beam and rests for two
+    /// seconds. Gateways without an exit (the dragon fight's) do nothing yet.
+    fn use_end_gateway(&mut self, id: i32, world: usize, pos: BlockPos) {
+        if self.gateway_cooldowns.get(&(world, pos)).is_some_and(|used| self.tick < used + 40) {
+            return;
+        }
+        let w = &self.worlds[world];
+        let Some(chunk) = w.chunks.get(&ChunkPos::of_block(pos.x, pos.z)) else { return };
+        let Some(entity) = chunk.block_entities.get(&(pos.y, (pos.z & 15) as u8, (pos.x & 15) as u8)) else { return };
+        let exit = match entity.get("exit_portal") {
+            Some(paper_nbt::Tag::IntArray(v)) if v.len() == 3 => BlockPos::new(v[0], v[1], v[2]),
+            Some(paper_nbt::Tag::Compound(c)) => match (c.i32("X"), c.i32("Y"), c.i32("Z")) {
+                (Some(x), Some(y), Some(z)) => BlockPos::new(x, y, z),
+                _ => return,
+            },
+            _ => return,
+        };
+        let target = if entity.bool("ExactTeleport").unwrap_or(false) {
+            Vec3::new(exit.x as f64 + 0.5, exit.y as f64, exit.z as f64 + 0.5)
+        } else {
+            // `findExitPosition`: on top of the tallest full block within five of the exit.
+            let top = exit.offset(0, 2, 0);
+            let mut tallest: Option<BlockPos> = None;
+            for dx in -5..=5 {
+                for dz in -5..=5 {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let floor = tallest.map_or(w.min_y, |t| t.y);
+                    let mut y = top.y;
+                    while y > floor {
+                        let state = w.block_at(top.x + dx, y, top.z + dz).unwrap_or(blocks::AIR);
+                        if blocks::has_collision(state) && blocks::block_of_state(state).name != "minecraft:bedrock" {
+                            tallest = Some(BlockPos::new(top.x + dx, y, top.z + dz));
+                            break;
+                        }
+                        y -= 1;
+                    }
+                }
+            }
+            let at = tallest.unwrap_or(top);
+            Vec3::new(at.x as f64 + 0.5, (at.y + 1) as f64, at.z as f64 + 0.5)
+        };
+        self.gateway_cooldowns.insert((world, pos), self.tick);
+        self.gateway_cooldowns.retain(|_, used| self.tick < *used + 40);
+        if let Some(block) = blocks::by_name("minecraft:end_gateway") {
+            let block = blocks::block_id_of_state(block.default_state) as i32;
+            self.send_near(world, pos, 64.0, None, &play::BlockEvent { pos, action: 1, param: 0, block: VarInt(block) });
+        }
+        let Some(p) = self.players.get_mut(&id) else { return };
+        p.portal_cooldown = 10;
+        let (yaw, pitch) = (p.loc.yaw, p.loc.pitch);
+        self.teleport(id, Location { x: target.x, y: target.y, z: target.z, yaw, pitch });
     }
 
     /// Picks the destination and starts loading its chunks.
