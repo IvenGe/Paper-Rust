@@ -1,16 +1,19 @@
 //! Boats and rafts (`AbstractBoat`): placed from their items on water or on a block, boarded
 //! with a click (two seats, one in chest boats), steered by the player in front (the client
 //! moves the boat and reports where it went, as with horses), floating when nobody steers
-//! them, and broken into their item by hits.
+//! them, and broken into their item by hits. Chest boats carry a chest (`AbstractChestBoat`)
+//! that spills when they break.
 
+use super::containers::MenuKind;
 use super::player::{HOTBAR_START, OFFHAND_SLOT};
 use super::survival::{fluid_of, Damage, Fluid};
 use super::Server;
 use crate::config::GameMode;
-use crate::world::entity::{collides, friction_below, Aabb, Entity, EntityKind, Vec3};
+use crate::world::entity::{collides, friction_below, Aabb, Entity, EntityChest, EntityKind, Vec3};
 use crate::world::World;
 use paper_data::{entity_types, items};
 use paper_protocol::types::{ItemStack, Slot};
+use rand::Rng;
 
 /// Whether an entity (or its item) is a boat or raft, chest ones included.
 pub fn is_boat(name: &str) -> bool {
@@ -24,6 +27,12 @@ fn seats(name: &str) -> usize {
     } else {
         2
     }
+}
+
+/// A new boat of type `name`: undamaged, with an empty chest if it is a chest boat.
+pub fn boat_kind(name: &str) -> EntityKind {
+    let chest = name.contains("_chest_").then(|| Box::new(EntityChest { items: vec![Slot::EMPTY; 27], ..Default::default() }));
+    EntityKind::Boat { damage: 0.0, hurt_time: 0, hurt_dir: 1, paddles: (false, false), chest }
 }
 
 /// Where riders' feet are, above the boat's base: its seat (`getPassengerAttachmentPoint`)
@@ -111,8 +120,10 @@ impl Server {
             (None, (0, 1, 0)) => Vec3::new(hit.x as f64 + 0.5, hit.y as f64 + 1.0, hit.z as f64 + 0.5),
             (None, (dx, dy, dz)) => Vec3::new((hit.x + dx) as f64 + 0.5, (hit.y + dy) as f64, (hit.z + dz) as f64 + 0.5),
         };
-        let mut e = Entity::new(self.next_entity_id(), info, at, EntityKind::Boat { damage: 0.0, hurt_time: 0, hurt_dir: 1, paddles: (false, false) });
+        let mut e = Entity::new(self.next_entity_id(), info, at, boat_kind(name));
         e.yaw = yaw;
+        // `createDefaultStackConfig`: a named boat item makes a named boat.
+        e.custom_name = super::workstations::custom_name_of(&stack);
         if collides(&self.worlds[world], &e.bounding_box()) {
             return false;
         }
@@ -126,12 +137,83 @@ impl Server {
     }
 
     /// A click on a boat (`AbstractBoat.interact`): the player gets in if there is room and
-    /// they are not sneaking.
+    /// they are not sneaking. Otherwise a chest boat opens its chest
+    /// (`AbstractChestBoat.interact`).
     pub(super) fn board_boat(&mut self, id: i32, world: usize, boat: i32) {
         let Some(e) = self.worlds[world].entities.get(&boat) else { return };
         let room = e.passengers.len() < seats(&e.info.name);
+        let chest = e.chest().is_some();
         if room && self.players.get(&id).is_some_and(|p| !p.sneaking) {
             self.mount(world, id, boat);
+        } else if chest {
+            self.open_boat_chest(id, world, boat);
+        }
+    }
+
+    /// Opens a chest boat's chest for a player (`interactWithContainerVehicle`, or the
+    /// rider's inventory key), rolling its loot table in first. Spectators cannot open one
+    /// whose loot is not rolled yet (`createMenu`). Returns whether it opened.
+    pub(super) fn open_boat_chest(&mut self, player: i32, world: usize, boat: i32) -> bool {
+        let spectator = self.players.get(&player).is_some_and(|p| p.game_mode == GameMode::Spectator);
+        let Some(chest) = self.worlds[world].entities.get(&boat).and_then(|e| e.chest()) else { return false };
+        if spectator && chest.loot_table.is_some() {
+            return false;
+        }
+        self.unpack_entity_loot(world, boat);
+        let Some(title) = self.entity_display_name(world, boat) else { return false };
+        self.open_menu(player, MenuKind::EntityChest { world, id: boat }, "minecraft:generic_9x3", title)
+    }
+
+    /// Rolls a chest boat's loot table into its chest (`unpackChestVehicleLootTable`).
+    pub(crate) fn unpack_entity_loot(&mut self, world: usize, id: i32) {
+        let Some(chest) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.chest_mut()) else { return };
+        let Some(table) = chest.loot_table.take() else { return };
+        let seed = std::mem::take(&mut chest.loot_seed);
+        let mut items = std::mem::take(&mut chest.items);
+        super::containers::fill_with_loot(&self.loot, &table, seed, &mut items);
+        if let Some(chest) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.chest_mut()) {
+            chest.items = items;
+        }
+    }
+
+    /// Changes a chest boat's slots (hoppers and droppers); players looking into it see it.
+    pub(super) fn set_entity_chest_items(&mut self, world: usize, id: i32, items: &[Slot]) {
+        let Some(chest) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.chest_mut()) else { return };
+        let n = chest.items.len().min(items.len());
+        chest.items[..n].clone_from_slice(&items[..n]);
+        let inv = crate::plugins::inventory::InvRef::Entity { world, id };
+        for viewer in inv.viewers(self) {
+            self.send_menu_contents(viewer);
+        }
+    }
+
+    /// A chest boat's slots (with its loot, if not rolled yet) spill where it is, as when it
+    /// breaks or is killed (`Containers.dropContents` from `remove`).
+    pub(crate) fn spill_entity_chest(&mut self, world: usize, id: i32) {
+        self.unpack_entity_loot(world, id);
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        let pos = e.pos;
+        let Some(chest) = e.chest_mut() else { return };
+        let empty = vec![Slot::EMPTY; chest.items.len()];
+        for stack in std::mem::replace(&mut chest.items, empty) {
+            if let Some(stack) = stack.0 {
+                self.drop_item_stack(world, pos, stack);
+            }
+        }
+    }
+
+    /// `Containers.dropItemStack`: a stack spills from a random spot in the block at `pos`,
+    /// in bits of 10 to 30 that can be picked up at once.
+    pub(crate) fn drop_item_stack(&mut self, world: usize, pos: Vec3, mut stack: ItemStack) {
+        let mut rng = rand::thread_rng();
+        // An item entity is 0.25 wide.
+        let spot = Vec3::new(pos.x.floor() + rng.gen::<f64>() * 0.75 + 0.125, pos.y.floor() + rng.gen::<f64>() * 0.75, pos.z.floor() + rng.gen::<f64>() * 0.75 + 0.125);
+        while stack.count > 0 {
+            let n = rng.gen_range(10..=30).min(stack.count);
+            let mut triangle = |mean: f64| mean + 0.114_850_001_711_398_36 * (rng.gen::<f64>() - rng.gen::<f64>());
+            let vel = Vec3::new(triangle(0.0), triangle(0.2), triangle(0.0));
+            self.spawn_item(world, spot, Slot(Some(stack.with_count(n))), vel, 0);
+            stack.count -= n;
         }
     }
 
@@ -154,15 +236,26 @@ impl Server {
             return true;
         }
         e.removed = true;
-        let (name, pos, riders) = (e.info.name.clone(), e.pos, e.passengers.clone());
+        let (name, pos, riders, label) = (e.info.name.clone(), e.pos, e.passengers.clone(), e.custom_name.clone());
         for rider in riders {
             self.dismount(rider);
         }
+        // `destroy`: the boat's item (named as the boat was), as `spawnAtLocation` drops it.
         if !creative && self.worlds[world].rules.bool("entity_drops") {
             if let Some(item) = items::id(&name) {
-                self.spawn_item(world, Vec3::new(pos.x, pos.y + 0.25, pos.z), Slot(Some(ItemStack::new(item as i32, 1))), Vec3::new(0.0, 0.2, 0.0), 10);
+                let mut stack = ItemStack::new(item as i32, 1);
+                if let Some(label) = label {
+                    let mut bytes = Vec::new();
+                    paper_nbt::write_network(&mut bytes, &label.to_nbt());
+                    super::enchanting::set_component(&mut stack, "minecraft:custom_name", bytes);
+                }
+                let mut rng = rand::thread_rng();
+                let vel = Vec3::new(rng.gen::<f64>() * 0.2 - 0.1, 0.2, rng.gen::<f64>() * 0.2 - 0.1);
+                self.spawn_item(world, pos, Slot(Some(stack)), vel, 10);
             }
         }
+        // A chest boat's chest spills, also when a creative player breaks it.
+        self.spill_entity_chest(world, id);
         true
     }
 

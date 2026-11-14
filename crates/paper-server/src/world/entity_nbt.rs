@@ -46,6 +46,31 @@ pub fn ages(name: &str) -> bool {
     !matches!(name, "minecraft:zombie" | "minecraft:husk" | "minecraft:drowned" | "minecraft:zombie_villager" | "minecraft:piglin" | "minecraft:zombified_piglin")
 }
 
+/// Slots in vanilla's `ContainerHelper.saveAllItems` form: the filled ones, each with its
+/// `Slot`.
+pub fn items_to_nbt(items: &[Slot]) -> Vec<Tag> {
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let mut entry = item_to_nbt(s)?;
+            entry.insert("Slot", Tag::Byte(i as i8));
+            Some(Tag::Compound(entry))
+        })
+        .collect()
+}
+
+/// `size` slots read back from the `Items` list of `c` (`ContainerHelper.loadAllItems`).
+pub fn items_from_nbt(c: &Compound, size: usize) -> Vec<Slot> {
+    let mut items = vec![Slot::EMPTY; size];
+    for entry in c.list("Items").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
+        if let Some(slot) = entry.i32("Slot").filter(|s| (0..size as i32).contains(s)) {
+            items[slot as usize] = item_from_nbt(entry);
+        }
+    }
+    items
+}
+
 /// The saved form of an entity, or `None` for entities that are not saved (dead ones).
 pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
     entity_to_nbt_in(e, "minecraft:overworld")
@@ -160,16 +185,7 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 // Donkeys', mules' and llamas' chests (slots count from 0 within the chest).
                 if let Some(chest) = &mob.chest {
                     c.insert("ChestedHorse", Tag::Byte(1));
-                    let items = chest
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, s)| {
-                            let mut entry = item_to_nbt(s)?;
-                            entry.insert("Slot", Tag::Byte(i as i8));
-                            Some(Tag::Compound(entry))
-                        })
-                        .collect();
-                    c.insert("Items", Tag::List(items));
+                    c.insert("Items", Tag::List(items_to_nbt(chest)));
                 }
                 if e.info.name.contains("llama") {
                     c.insert("Strength", Tag::Int(mob.strength));
@@ -180,6 +196,16 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                     c.insert("CollarColor", Tag::Byte(mob.collar as i8));
                 }
             }
+        }
+        // `addChestVehicleSaveData` (Paper keeps the slots even while a loot table is left).
+        EntityKind::Boat { chest: Some(chest), .. } => {
+            if let Some(table) = &chest.loot_table {
+                c.insert("LootTable", Tag::String(table.clone()));
+                if chest.loot_seed != 0 {
+                    c.insert("LootTableSeed", Tag::Long(chest.loot_seed));
+                }
+            }
+            c.insert("Items", Tag::List(items_to_nbt(&chest.items)));
         }
         EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
@@ -209,7 +235,15 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
         },
         "minecraft:falling_block" => EntityKind::FallingBlock { state: c.get("BlockState").and_then(state_from_nbt)?, time: c.i32("Time").unwrap_or(0) },
         "minecraft:tnt" => EntityKind::Tnt { fuse: c.i32("fuse").unwrap_or(80) },
-        n if crate::server::boats::is_boat(n) => EntityKind::Boat { damage: 0.0, hurt_time: 0, hurt_dir: 1, paddles: (false, false) },
+        n if crate::server::boats::is_boat(n) => {
+            let mut kind = crate::server::boats::boat_kind(n);
+            if let EntityKind::Boat { chest: Some(chest), .. } = &mut kind {
+                chest.items = items_from_nbt(c, chest.items.len());
+                chest.loot_table = c.string("LootTable").map(str::to_owned);
+                chest.loot_seed = c.i64("LootTableSeed").unwrap_or(0);
+            }
+            kind
+        }
         _ if info.mob => {
             let mut attributes = crate::world::attributes::Attributes::of_type(&info.name);
             attributes.load_nbt(c.list("attributes").unwrap_or(&[]));
@@ -260,13 +294,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 boost: 0,
                 chest: c.bool("ChestedHorse").unwrap_or(false).then(|| {
                     let size = crate::server::riding::chest_columns(&info.name, c.i32("Strength").unwrap_or(3)) as usize * 3;
-                    let mut items = vec![Slot::EMPTY; size];
-                    for entry in c.list("Items").unwrap_or(&[]).iter().filter_map(|t| t.as_compound()) {
-                        if let Some(slot) = entry.i32("Slot").filter(|s| (0..size as i32).contains(s)) {
-                            items[slot as usize] = item_from_nbt(entry);
-                        }
-                    }
-                    items
+                    items_from_nbt(c, size)
                 }),
                 strength: c.i32("Strength").unwrap_or(3).clamp(1, 5),
                 dragon: (info.name == crate::server::dragon::DRAGON).then(|| {
@@ -354,5 +382,19 @@ mod tests {
         let item = Entity::new(3, item_type, Vec3::new(0.0, 0.0, 0.0), EntityKind::Item { stack: stick.clone(), pickup_delay: 10, thrower: None, owner: Some(owner) });
         let back = entity_from_nbt(4, &entity_to_nbt(&item).unwrap()).unwrap();
         assert!(matches!(back.kind, EntityKind::Item { ref stack, pickup_delay: 10, thrower: None, owner: Some(o) } if *stack == stick && o == owner));
+
+        // A chest boat keeps its slots and the loot table still to roll.
+        let boat_type = paper_data::entity_types::by_name("minecraft:birch_chest_boat").unwrap();
+        let mut boat = Entity::new(5, boat_type, Vec3::new(0.5, -60.0, 0.5), crate::server::boats::boat_kind("minecraft:birch_chest_boat"));
+        let chest = boat.chest_mut().unwrap();
+        chest.items[26] = stick.clone();
+        chest.loot_table = Some("minecraft:chests/shipwreck_supply".to_owned());
+        chest.loot_seed = 42;
+        let back = entity_from_nbt(6, &entity_to_nbt(&boat).unwrap()).unwrap();
+        let chest = back.chest().expect("a chest boat again");
+        assert_eq!((chest.items.len(), &chest.items[26], chest.loot_table.as_deref(), chest.loot_seed), (27, &stick, Some("minecraft:chests/shipwreck_supply"), 42));
+        let plain = paper_data::entity_types::by_name("minecraft:oak_boat").unwrap();
+        let back = entity_from_nbt(8, &entity_to_nbt(&Entity::new(7, plain, Vec3::new(0.0, 0.0, 0.0), crate::server::boats::boat_kind("minecraft:oak_boat"))).unwrap()).unwrap();
+        assert!(matches!(back.kind, EntityKind::Boat { chest: None, .. }), "a plain boat has no chest");
     }
 }

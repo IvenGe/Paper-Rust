@@ -692,6 +692,15 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest items");
     expect_line(&mut alice, "items: ok");
 
+    // A chest boat a plugin spawns, with what the plugin put in its chest.
+    alice.command("apitest chestboat");
+    expect_line(&mut alice, "chestboat: ok");
+    let diamonds = server
+        .handle
+        .run(|s| s.worlds[0].entities.values().filter_map(|e| e.chest()).any(|c| c.items[4].0.as_ref().is_some_and(|i| i.count == 3)))
+        .unwrap();
+    assert!(diamonds, "the chest boat holds the diamonds");
+
     // A world a plugin makes (`Bukkit.createWorld`): flat as asked, with Alice sent there,
     // and saved in its own folder.
     alice.command("apitest worlds");

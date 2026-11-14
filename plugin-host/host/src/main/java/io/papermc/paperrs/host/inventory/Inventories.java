@@ -76,6 +76,11 @@ public final class Inventories {
         return proxy(impl, iface);
     }
 
+    /** A chest boat's chest ({@code ChestBoat#getInventory}). */
+    public static Inventory entity(final CraftServer server, final String world, final int id) {
+        return proxy(new HostInventory(server, Values.of("kind", "entity", "world", world, "entity", id), InventoryType.CHEST, 27, null, null), Inventory.class);
+    }
+
     /** {@code Bukkit.createInventory}: a custom inventory whose slots the server keeps. */
     public static Inventory create(final CraftServer server, final @Nullable InventoryHolder holder, final InventoryType type, final int size, final @Nullable Component title) {
         final Component shown = title != null ? title : type.defaultTitle();
@@ -115,6 +120,8 @@ public final class Inventories {
                 yield inventory != null ? inventory : proxy(new HostInventory(server, ref, type, size, null, null), Inventory.class);
             }
             case "block" -> block(server, ref, type, size);
+            // A chest boat's chest, or a mount's window (saddle and armour slots first).
+            case "entity", "mount" -> proxy(new HostInventory(server, ref, type, size, null, null), Inventory.class);
             default -> null;
         };
     }

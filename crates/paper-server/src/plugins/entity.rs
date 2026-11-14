@@ -245,6 +245,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         }
         "entity.remove" => {
             let (world, id) = entity_arg(server, args)?;
+            // A chest boat spills its chest, as `discard` does.
+            server.spill_entity_chest(world, id);
             server.worlds[world].entities.get_mut(&id).unwrap().removed = true;
             Ok(Value::Null)
         }

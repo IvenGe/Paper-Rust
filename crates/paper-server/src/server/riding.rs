@@ -484,17 +484,34 @@ impl Server {
     /// The vehicle's inventory, asked for from the saddle (`OPEN_INVENTORY`).
     pub(super) fn open_vehicle_inventory(&mut self, player: i32) {
         if let Some((world, vehicle)) = self.vehicle_of(player) {
-            self.open_mount_inventory(player, world, vehicle);
+            // A chest boat's rider opens its chest (`openCustomInventoryScreen`).
+            if self.worlds[world].entities.get(&vehicle).is_some_and(|e| e.chest().is_some()) {
+                self.open_boat_chest(player, world, vehicle);
+            } else {
+                self.open_mount_inventory(player, world, vehicle);
+            }
         }
     }
 
-    /// Mount windows close once the mount is gone, dead or out of reach (`stillValid`).
+    /// Mount windows close once the mount is gone, dead or out of reach (`stillValid`), and
+    /// chest boats' once the boat is gone or more than 4 blocks beyond the player's reach
+    /// (`isChestVehicleStillValid`).
     fn check_mount_menus(&mut self) {
         let stale: Vec<i32> = self
             .players
             .values()
             .filter(|p| match p.open_menu.as_ref().map(|m| &m.kind) {
                 Some(MenuKind::Mount { world, id, .. }) => *world != p.world || self.worlds[*world].entities.get(id).is_none_or(|e| !e.is_alive() || e.pos.distance_squared(Vec3::new(p.loc.x, p.loc.y, p.loc.z)) > 64.0),
+                Some(MenuKind::EntityChest { world, id }) => {
+                    let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
+                    let range = p.attributes.value("entity_interaction_range") + 4.0;
+                    *world != p.world
+                        || self.worlds[*world].entities.get(id).is_none_or(|e| {
+                            let b = e.bounding_box();
+                            let nearest = Vec3::new(eye.x.clamp(b.min.x, b.max.x), eye.y.clamp(b.min.y, b.max.y), eye.z.clamp(b.min.z, b.max.z));
+                            e.removed || nearest.distance_squared(eye) >= range * range
+                        })
+                }
                 _ => false,
             })
             .map(|p| p.entity_id)

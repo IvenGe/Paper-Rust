@@ -414,14 +414,23 @@ pub struct Mob {
     pub dragon: Option<Box<crate::server::dragon::DragonBrain>>,
 }
 
+/// The chest of a chest boat (`ContainerEntity`): its slots, and the loot table that fills
+/// them the first time anything reaches into them.
+#[derive(Clone, Debug, Default)]
+pub struct EntityChest {
+    pub items: Vec<Slot>,
+    pub loot_table: Option<String>,
+    pub loot_seed: i64,
+}
+
 /// Behaviour-specific data.
 #[derive(Clone, Debug)]
 pub enum EntityKind {
     /// A dropped item; with an `owner` (vanilla's `target`), only that player picks it up.
     Item { stack: Slot, pickup_delay: i32, thrower: Option<Uuid>, owner: Option<Uuid> },
-    /// A boat or raft: the damage it has taken (it breaks past 40), its wobble, and the
-    /// paddles its driver moves.
-    Boat { damage: f32, hurt_time: i32, hurt_dir: i32, paddles: (bool, bool) },
+    /// A boat or raft: the damage it has taken (it breaks past 40), its wobble, the paddles
+    /// its driver moves, and a chest boat's chest.
+    Boat { damage: f32, hurt_time: i32, hurt_dir: i32, paddles: (bool, bool), chest: Option<Box<EntityChest>> },
     Mob(Box<Mob>),
     Arrow { damage: f64, owner: Option<i32>, in_ground: bool, life: i32, pickup: bool, critical: bool },
     FallingBlock { state: u32, time: i32 },
@@ -543,6 +552,21 @@ impl Entity {
     pub fn mob_mut(&mut self) -> Option<&mut Mob> {
         match &mut self.kind {
             EntityKind::Mob(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// A chest boat's chest.
+    pub fn chest(&self) -> Option<&EntityChest> {
+        match &self.kind {
+            EntityKind::Boat { chest: Some(chest), .. } => Some(chest),
+            _ => None,
+        }
+    }
+
+    pub fn chest_mut(&mut self) -> Option<&mut EntityChest> {
+        match &mut self.kind {
+            EntityKind::Boat { chest: Some(chest), .. } => Some(chest),
             _ => None,
         }
     }

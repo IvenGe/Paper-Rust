@@ -187,6 +187,15 @@ public final class HostEntity implements HostProxies.Backed {
         return Values.bool(this.state(), "persistent", false);
     }
 
+    /** A chest boat's chest ({@code ChestBoat#getInventory}); other holders' are not supported yet. */
+    public org.bukkit.inventory.Inventory getInventory() {
+        if (!(this.self instanceof org.bukkit.entity.ChestBoat)) {
+            final Class<?> api = this.type.getEntityClass();
+            throw io.papermc.paperrs.host.Unsupported.method((api == null ? "Entity" : api.getSimpleName()) + "#getInventory");
+        }
+        return io.papermc.paperrs.host.inventory.Inventories.entity(this.server, this.getWorld().getName(), this.id);
+    }
+
     public void setPersistent(final boolean persistent) {
         this.set("persistent", persistent);
     }

@@ -214,6 +214,29 @@ fn count_of(slots: &[Slot], name: &str) -> i32 {
 }
 
 #[test]
+fn dispensers_put_boats_on_water() {
+    use paper_server::world::entity::EntityKind;
+    let server = server();
+    let _alice = join(&server, "Alice");
+    // Water one block down in front: the boat goes on it, 1.25 blocks out.
+    let d = BlockPos::new(-10, -60, 24);
+    set(&server, BlockPos::new(-9, -61, 24), blocks::default_state("minecraft:water").unwrap());
+    fire_dispenser(&server, d, "east", vec![Slot::of(item("minecraft:oak_boat"), 2)]);
+    let boat_at = |z: f64| server.handle.run(move |s| s.worlds[0].entities.values().any(|e| matches!(e.kind, EntityKind::Boat { .. }) && (e.pos.x + 8.25).abs() < 0.3 && (e.pos.z - z).abs() < 0.3)).unwrap();
+    wait_until("a boat on the water", TIMEOUT, || boat_at(24.5));
+    assert_eq!(count_of(&dispenser_items(&server, d), "minecraft:oak_boat"), 1);
+    // Without water, it flies out as an item.
+    let d = BlockPos::new(-10, -60, 28);
+    fire_dispenser(&server, d, "east", vec![Slot::of(item("minecraft:oak_boat"), 1)]);
+    let boat = item("minecraft:oak_boat");
+    wait_until("a boat item", TIMEOUT, || {
+        server.handle.run(move |s| s.worlds[0].entities.values().any(|e| matches!(&e.kind, EntityKind::Item { stack, .. } if stack.0.as_ref().is_some_and(|i| i.item == boat)))).unwrap()
+    });
+    assert!(!boat_at(28.5), "no boat without water");
+    server.stop();
+}
+
+#[test]
 fn dispensers_use_bone_meal_shears_bottles_and_buckets() {
     use paper_server::server::mobs::SpawnReason;
     use paper_server::world::entity::Vec3;

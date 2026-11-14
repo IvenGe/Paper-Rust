@@ -514,8 +514,8 @@ public final class HostInventory implements HostProxies.Backed {
                 final BlockState state = Inventories.blockOf(this.server, this.ref).getState(useSnapshot);
                 yield state instanceof InventoryHolder h ? h : null;
             }
-            // A mount's window: the horse (llama, donkey, ...) holds it.
-            case "mount" -> io.papermc.paperrs.host.entity.Entities.of(this.server, this.ref) instanceof InventoryHolder h ? h : null;
+            // A mount's window (the horse, llama, donkey, ... holds it) or a chest boat's chest.
+            case "mount", "entity" -> io.papermc.paperrs.host.entity.Entities.of(this.server, this.ref) instanceof InventoryHolder h ? h : null;
             default -> null;
         };
     }
@@ -523,7 +523,7 @@ public final class HostInventory implements HostProxies.Backed {
     public @Nullable Location getLocation() {
         return switch (this.kind()) {
             case "block" -> Inventories.blockOf(this.server, this.ref).getLocation();
-            case "mount" -> {
+            case "mount", "entity" -> {
                 final org.bukkit.entity.Entity mount = io.papermc.paperrs.host.entity.Entities.of(this.server, this.ref);
                 yield mount == null ? null : mount.getLocation();
             }

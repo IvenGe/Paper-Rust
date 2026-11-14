@@ -316,6 +316,7 @@ impl Server {
             let kind = match name.as_str() {
                 "minecraft:tnt" => EntityKind::Tnt { fuse: 80 },
                 "minecraft:experience_orb" => EntityKind::ExperienceOrb { value: 1 },
+                n if super::boats::is_boat(n) => super::boats::boat_kind(n),
                 _ => EntityKind::Other,
             };
             let e = Entity::new(self.next_entity_id(), info, pos, kind);

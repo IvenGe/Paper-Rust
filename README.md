@@ -85,7 +85,8 @@ What works:
   place and pick up water, lava and powder snow (fish come out of their buckets), light
   fires and TNT, use bone meal, shear sheep and full beehives, fill glass bottles with
   water or honey, make mud with water bottles, put armour, heads, elytra, saddles, horse
-  and wolf armour and llama carpets on players and mobs in front, and hatch spawn eggs;
+  and wolf armour and llama carpets on players and mobs in front, hatch spawn eggs and put
+  boats on water;
   droppers move items into containers. Crafters craft on each pulse (into the container in
   front, or out of the front), hoppers fill them evenly, players switch their slots off,
   and comparators count their used and switched-off slots. Players fill glass bottles at water and full
@@ -119,9 +120,11 @@ What works:
   Endermen turn on players who look them in the eyes (not through a carved pumpkin),
   teleport away from water, rain, daylight and arrows (and towards a far target), and pick
   up and put down blocks.
-* **Riding and pets**: boats and rafts are put on water, boarded (two to a boat), steered,
-  float, and break into their item; saddles go on pigs, striders, horses and camels;
-  players get on and steer (their client moves the mount; carrots and warped fungi on
+* **Riding and pets**: boats and rafts are put on water (by players and dispensers),
+  boarded (two to a boat, one beside a chest), steered, float, and break into their item;
+  chest boats' chests open with a sneaking click or the rider's inventory key, spill when
+  the boat breaks, and are reached by hoppers. Saddles go on pigs, striders, horses and
+  camels; players get on and steer (their client moves the mount; carrots and warped fungi on
   sticks steer and boost pigs and striders) and get off with the sneak key. Horses have
   random health, speed, jump and coat, buck their rider off until their temper (raised by
   feeding) lets them be tamed, wear horse armour and eat to heal and grow. Tamed ones open their inventory when
@@ -172,7 +175,7 @@ What works:
   work penalty and wear out. Brewing stands brew vanilla's potions (and splash and
   lingering ones) with blaze powder, also fed by hoppers.
 * **Redstone with items and entities**: hoppers move items between containers (furnace
-  sides included), pick up dropped items and lock when powered; droppers and dispensers
+  sides and chest boats included), pick up dropped items and lock when powered; droppers and dispensers
   fire on a rising signal (also from above), droppers into containers in front of them,
   dispensers shooting arrows, pouring and scooping buckets, priming TNT and lighting fire;
   pressure plates (wooden, stone, weighted) are pressed by players, mobs and items;
@@ -292,12 +295,12 @@ Not yet:
   block entities on the server.
 * The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
   portal.
-* Gameplay: minecarts cannot be ridden, chest boats' chests cannot be opened, parrots do not ride on shoulders, cats do not sleep on
+* Gameplay: minecarts cannot be ridden, parrots do not ride on shoulders, cats do not sleep on
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Withers and copper golems cannot be built. Dispensers do not place shulker boxes, build withers, or launch
-  fireworks, wind charges, boats or minecarts.
+  fireworks, wind charges or minecarts.
 * Statistics of what the server does not do yet (fishing, raids, note blocks, bells,
   cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
   used or broken only when placed, eaten or drunk, thrown, used as spawn eggs, buckets or

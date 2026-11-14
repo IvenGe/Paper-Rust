@@ -194,6 +194,22 @@ final class ApiTests implements Listener, CommandExecutor {
                     feather.setOwner(player.getUniqueId());
                     sender.sendMessage("owner: " + stranger.equals(stick.getOwner()) + " " + stranger.equals(stick.getThrower()) + " " + player.getUniqueId().equals(feather.getOwner()) + " " + (feather.getThrower() == null));
                 }
+                case "chestboat" -> {
+                    // A chest boat the plugin spawns: its chest takes items and knows its holder.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final org.bukkit.entity.Entity spawned = player.getWorld().spawnEntity(player.getLocation().add(3, 0, 0), org.bukkit.entity.EntityType.OAK_CHEST_BOAT);
+                    if (spawned instanceof org.bukkit.entity.ChestBoat boat) {
+                        final org.bukkit.inventory.Inventory chest = boat.getInventory();
+                        check(failures, chest.getSize() == 27, "27 slots");
+                        check(failures, chest.getHolder() == boat, "held by the boat");
+                        chest.setItem(4, new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND, 3));
+                        check(failures, boat.getInventory().contains(org.bukkit.Material.DIAMOND, 3), "the diamonds in the chest");
+                    } else {
+                        failures.add("not a chest boat: " + spawned.getType());
+                    }
+                    report(sender, "chestboat", failures);
+                }
                 case "worlds" -> {
                     // A flat world made by the plugin, once; Alice goes there.
                     final Player player = (Player) sender;

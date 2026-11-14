@@ -50,6 +50,8 @@ pub enum InvRef {
     Crafting(i32),
     /// A mount's saddle, body armour and chest, in its window's order.
     Mount { world: usize, id: i32 },
+    /// A chest boat's chest.
+    Entity { world: usize, id: i32 },
 }
 
 /// Bukkit `PlayerInventory` index to the player window slot.
@@ -104,6 +106,13 @@ impl InvRef {
                 };
                 InvRef::Mount { world, id: value.i32("entity").ok_or_else(|| anyhow!("missing entity"))? }
             }
+            Some("entity") => {
+                let world = match value.str("world") {
+                    Some(name) => server.worlds.iter().position(|w| w.name == name).ok_or_else(|| anyhow!("unknown world {name}"))?,
+                    None => 0,
+                };
+                InvRef::Entity { world, id: value.i32("entity").ok_or_else(|| anyhow!("missing entity"))? }
+            }
             other => bail!("unknown inventory kind {other:?}"),
         })
     }
@@ -117,6 +126,7 @@ impl InvRef {
             InvRef::Crafting(id) => bmap! { "kind" => "crafting", "uuid" => uuid(id) },
             InvRef::Custom(id) => bmap! { "kind" => "custom", "id" => *id as i64 },
             InvRef::Mount { world, id } => bmap! { "kind" => "mount", "world" => server.worlds[*world].name.clone(), "entity" => *id },
+            InvRef::Entity { world, id } => bmap! { "kind" => "entity", "world" => server.worlds[*world].name.clone(), "entity" => *id },
             InvRef::Block { world, positions } => {
                 let p = positions[0];
                 let mut v = bmap! { "kind" => "block", "world" => server.worlds[*world].name.clone(), "x" => p.x, "y" => p.y, "z" => p.z };
@@ -143,6 +153,7 @@ impl InvRef {
                     (InvRef::Ender(id), Some(MenuKind::EnderChest)) => p.entity_id == *id,
                     (InvRef::Custom(id), Some(MenuKind::Custom { id: open })) => open == id,
                     (InvRef::Mount { world, id }, Some(MenuKind::Mount { world: w, id: open, .. })) => w == world && open == id,
+                    (InvRef::Entity { world, id }, Some(MenuKind::EntityChest { world: w, id: open })) => w == world && open == id,
                     (InvRef::Block { world, positions }, Some(MenuKind::Container { world: w, positions: open })) => w == world && positions.iter().any(|p| open.contains(p)),
                     (InvRef::Block { world, positions }, Some(MenuKind::Furnace { world: w, pos, .. } | MenuKind::Brewing { world: w, pos })) => w == world && positions.contains(pos),
                     _ => false,
@@ -169,6 +180,7 @@ pub fn contents(server: &Server, inv: &InvRef) -> Result<Vec<Slot>> {
             }
         }
         InvRef::Custom(id) => server.plugin_data.inventories.get(id).ok_or_else(|| anyhow!("unknown custom inventory {id}"))?.items.clone(),
+        InvRef::Entity { world, id } => server.worlds[*world].entities.get(id).and_then(|e| e.chest()).ok_or_else(|| anyhow!("the chest boat is gone"))?.items.clone(),
         InvRef::Mount { world, id } => {
             let m = server.worlds[*world].entities.get(id).and_then(|e| e.mob()).ok_or_else(|| anyhow!("the mount is gone"))?;
             let mut out = vec![m.equipment[7].clone(), m.equipment[6].clone()];
@@ -227,6 +239,12 @@ pub fn set_slots(server: &mut Server, inv: &InvRef, changes: Vec<(usize, Slot)>)
                         p.inventory[index] = item;
                     }
                 }
+            }
+        }
+        InvRef::Entity { world, id } => {
+            let chest = server.worlds[*world].entities.get_mut(id).and_then(|e| e.chest_mut()).ok_or_else(|| anyhow!("the chest boat is gone"))?;
+            for (index, item) in changes {
+                chest.items[index] = item;
             }
         }
         InvRef::Mount { world, id } => {
@@ -346,6 +364,11 @@ pub fn open(server: &mut Server, id: i32, inv: &InvRef, title: Option<Component>
         }
         InvRef::Player(_) | InvRef::Crafting(_) | InvRef::Ender(_) => bail!("opening another player's inventory or a crafting grid is not supported by Paper-RS yet"),
         InvRef::Mount { .. } => bail!("opening a mount's inventory for a player is not supported by Paper-RS yet"),
+        InvRef::Entity { world, id: boat } => {
+            server.unpack_entity_loot(*world, *boat);
+            let title = server.entity_display_name(*world, *boat).ok_or_else(|| anyhow!("the chest boat is gone"))?;
+            (MenuKind::EntityChest { world: *world, id: *boat }, "minecraft:generic_9x3".to_owned(), title)
+        }
     };
     Ok(server.open_menu(id, kind, &menu, title.unwrap_or(default_title)))
 }
@@ -392,6 +415,7 @@ pub fn menu_value(server: &Server, id: i32, kind: Option<&MenuKind>) -> Value {
             let chest = server.worlds[*world].entities.get(mount).and_then(|e| e.mob()).and_then(|m| m.chest.as_ref()).map_or(0, Vec::len);
             ("CHEST".to_owned(), 2 + chest, InvRef::Mount { world: *world, id: *mount }, None)
         }
+        Some(MenuKind::EntityChest { world, id: boat }) => ("CHEST".to_owned(), 27, InvRef::Entity { world: *world, id: *boat }, None),
         Some(MenuKind::Custom { id: cid }) => match server.plugin_data.inventories.get(cid) {
             Some(custom) => (custom.kind.clone(), custom.items.len(), InvRef::Custom(*cid), Some(custom.title.clone())),
             None => ("CHEST".to_owned(), 0, InvRef::Custom(*cid), None),

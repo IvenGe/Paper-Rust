@@ -829,8 +829,12 @@ fn cmd_kill(server: &mut Server, source: &CommandSource, args: &[&str]) {
         let is_mob = server.worlds[world].entities.get(&id).is_some_and(|e| e.mob().is_some());
         if is_mob {
             server.hurt_entity(world, id, super::survival::Damage::new("minecraft:generic_kill"), f32::MAX);
-        } else if let Some(e) = server.worlds[world].entities.get_mut(&id) {
-            e.removed = true;
+        } else {
+            // A chest boat spills its chest (`remove` for a killed entity).
+            server.spill_entity_chest(world, id);
+            if let Some(e) = server.worlds[world].entities.get_mut(&id) {
+                e.removed = true;
+            }
         }
     }
     server.feedback(source, Component::translatable("commands.kill.success.multiple", vec![Component::text(count.to_string())]));

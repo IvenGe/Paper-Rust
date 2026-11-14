@@ -875,7 +875,7 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
                 m = m.varint(i, *value);
             }
         }
-        EntityKind::Boat { damage, hurt_time, hurt_dir, paddles } => {
+        EntityKind::Boat { damage, hurt_time, hurt_dir, paddles, .. } => {
             if let Some(i) = info.data_index("DATA_ID_HURT") {
                 m = m.varint(i, *hurt_time);
             }

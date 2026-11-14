@@ -53,6 +53,8 @@ pub enum MenuKind {
     Custom { id: u64 },
     /// A mount's inventory: what its saddle and body armour slots take, and its chest.
     Mount { world: usize, id: i32, saddle: super::menu::SlotKind, body: super::menu::SlotKind },
+    /// A chest boat's chest.
+    EntityChest { world: usize, id: i32 },
 }
 
 /// Who a trading window trades with.
@@ -620,7 +622,7 @@ impl Server {
     fn menu_layout(kind: Option<&MenuKind>, size: usize) -> Layout {
         match kind {
             None => Layout::player_inventory(),
-            Some(MenuKind::Container { .. } | MenuKind::EnderChest | MenuKind::Custom { .. }) => Layout::container(size),
+            Some(MenuKind::Container { .. } | MenuKind::EnderChest | MenuKind::Custom { .. } | MenuKind::EntityChest { .. }) => Layout::container(size),
             Some(MenuKind::CraftingTable) => Layout::crafting_table(),
             Some(MenuKind::Enchanting { .. }) => Layout::enchanting(),
             Some(MenuKind::Anvil { .. }) => Layout::anvil(),
@@ -648,6 +650,7 @@ impl Server {
                 slots.extend(m.and_then(|m| m.chest.clone()).unwrap_or_default());
                 slots
             }
+            MenuKind::EntityChest { world, id: boat } => self.worlds[*world].entities.get(boat).and_then(|e| e.chest()).map_or_else(|| vec![Slot::EMPTY; 27], |c| c.items.clone()),
             MenuKind::Crafter { world, pos } => {
                 let mut slots = self.container_items(*world, *pos);
                 slots.extend(player.inventory[9..45].iter().cloned());
@@ -712,6 +715,12 @@ impl Server {
             MenuKind::Custom { id } => {
                 if let Some(custom) = self.plugin_data.inventories.get_mut(id) {
                     custom.items.clone_from_slice(&slots[..container_len]);
+                }
+            }
+            MenuKind::EntityChest { world, id: boat } => {
+                if let Some(chest) = self.worlds[*world].entities.get_mut(boat).and_then(|e| e.chest_mut()) {
+                    let n = chest.items.len().min(container_len);
+                    chest.items[..n].clone_from_slice(&slots[..n]);
                 }
             }
         }
@@ -871,10 +880,14 @@ impl Server {
                 self.broadcast_container_slots(id, *world, &[*pos], &slots[..size], &changed);
             }
         }
-        if let Some(MenuKind::Custom { id: custom }) = &kind {
+        let shared = match &kind {
+            Some(MenuKind::Custom { id: custom }) => Some(crate::plugins::inventory::InvRef::Custom(*custom)),
+            Some(MenuKind::EntityChest { world, id: boat }) => Some(crate::plugins::inventory::InvRef::Entity { world: *world, id: *boat }),
+            _ => None,
+        };
+        if let Some(inv) = shared {
             let size = slots.len() - 36;
             if (0..size).any(|i| before[i] != slots[i]) {
-                let inv = crate::plugins::inventory::InvRef::Custom(*custom);
                 for viewer in inv.viewers(self).into_iter().filter(|v| *v != id) {
                     self.send_menu_contents(viewer);
                 }

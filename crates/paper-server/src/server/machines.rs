@@ -83,6 +83,8 @@ struct Inventory {
     brewing: bool,
     /// A crafter (filled evenly, never into switched-off slots).
     crafter: bool,
+    /// A chest boat holding the slots instead of blocks (`getEntityContainer`).
+    entity: Option<i32>,
 }
 
 fn is_fuel(server: &Server, stack: &ItemStack) -> bool {
@@ -98,7 +100,8 @@ impl Server {
     fn inventory_at(&self, world: usize, pos: BlockPos) -> Option<Inventory> {
         let state = self.worlds[world].block_at(pos.x, pos.y, pos.z)?;
         use super::containers::ContainerBlock;
-        match super::containers::container_block(state)? {
+        let Some(block) = super::containers::container_block(state) else { return self.entity_inventory_at(world, pos) };
+        match block {
             ContainerBlock::Chest => {
                 let mut positions = vec![pos];
                 if let Some(other) = self.double_chest_partner(world, pos, state) {
@@ -109,14 +112,27 @@ impl Server {
                         positions.insert(0, other);
                     }
                 }
-                Some(Inventory { positions, furnace: false, brewing: false, crafter: false })
+                Some(Inventory { positions, furnace: false, brewing: false, crafter: false, entity: None })
             }
-            ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false }),
-            ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true, brewing: false, crafter: false }),
-            ContainerBlock::BrewingStand => Some(Inventory { positions: vec![pos], furnace: false, brewing: true, crafter: false }),
-            ContainerBlock::Crafter => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: true }),
-            ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => None,
+            ContainerBlock::Barrel | ContainerBlock::Hopper | ContainerBlock::Dispenser => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false, entity: None }),
+            ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true, brewing: false, crafter: false, entity: None }),
+            ContainerBlock::BrewingStand => Some(Inventory { positions: vec![pos], furnace: false, brewing: true, crafter: false, entity: None }),
+            ContainerBlock::Crafter => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: true, entity: None }),
+            ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => self.entity_inventory_at(world, pos),
         }
+    }
+
+    /// `getEntityContainer`: a chest boat reaching into the block space at `pos` (a random
+    /// one if there are several), for blocks that are not containers.
+    fn entity_inventory_at(&self, world: usize, pos: BlockPos) -> Option<Inventory> {
+        let space = Aabb::new(Vec3::new(pos.x as f64, pos.y as f64, pos.z as f64), Vec3::new(pos.x as f64 + 1.0, pos.y as f64 + 1.0, pos.z as f64 + 1.0));
+        let w = &self.worlds[world];
+        let found: Vec<i32> = w.entities_in(&space).into_iter().filter(|id| w.entities.get(id).is_some_and(|e| e.is_alive() && e.chest().is_some())).collect();
+        if found.is_empty() {
+            return None;
+        }
+        let id = found[rand::thread_rng().gen_range(0..found.len())];
+        Some(Inventory { positions: Vec::new(), furnace: false, brewing: false, crafter: false, entity: Some(id) })
     }
 
     /// The inventory at a block, with any loot table rolled into it first (hoppers and
@@ -126,14 +142,24 @@ impl Server {
         for p in &inv.positions {
             self.unpack_loot(world, *p);
         }
+        if let Some(id) = inv.entity {
+            self.unpack_entity_loot(world, id);
+        }
         Some(inv)
     }
 
     fn inventory_items(&self, world: usize, inv: &Inventory) -> Vec<Slot> {
+        if let Some(id) = inv.entity {
+            return self.worlds[world].entities.get(&id).and_then(|e| e.chest()).map(|c| c.items.clone()).unwrap_or_default();
+        }
         inv.positions.iter().flat_map(|p| self.container_items(world, *p)).collect()
     }
 
     fn set_inventory_items(&mut self, world: usize, inv: &Inventory, items: &[Slot]) {
+        if let Some(id) = inv.entity {
+            self.set_entity_chest_items(world, id, items);
+            return;
+        }
         let per = items.len() / inv.positions.len().max(1);
         for (i, pos) in inv.positions.iter().enumerate() {
             self.set_container_items(world, *pos, &items[i * per..(i + 1) * per]);
@@ -281,7 +307,7 @@ impl Server {
         if blocks::property(state, "enabled") == Some("false") {
             return;
         }
-        let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false };
+        let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false, entity: None };
         self.unpack_loot(world, pos);
         let items = self.container_items(world, pos);
         let mut moved = false;
@@ -596,7 +622,7 @@ impl Server {
                     return Some(filled);
                 }
                 // The filled bucket goes into the dispenser, or out of it when full.
-                let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false };
+                let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false, entity: None };
                 let left = self.insert_into(world, &me, filled.clone(), None);
                 if left.count > 0 {
                     self.drop_from(world, pos, facing, filled);
@@ -617,6 +643,35 @@ impl Server {
                 let mut slot = Slot(Some(stack));
                 survival::hurt_item(&mut slot, 1, false);
                 slot.0
+            }
+            // `BoatDispenseItemBehavior`: a boat on the water in front (or over water one block
+            // down), facing away from the dispenser; anywhere else the item flies out.
+            boat if super::boats::is_boat(boat) => {
+                let water = |s: u32| survival::fluid_of(s).is_some_and(|(f, _)| f == Fluid::Water);
+                let below = w.block_at(front.x, front.y - 1, front.z).unwrap_or(blocks::AIR);
+                let lift = if water(in_front) {
+                    1.0
+                } else if blocks::is_air(in_front) && water(below) {
+                    0.0
+                } else {
+                    return Some(self.drop_from(world, pos, facing, stack));
+                };
+                let Some(info) = paper_data::entity_types::by_name(boat) else { return Some(self.drop_from(world, pos, facing, stack)) };
+                let (dx, dy, dz) = facing.offset();
+                let reach = 0.5625 + info.width as f64 / 2.0;
+                let at = Vec3::new(pos.x as f64 + 0.5 + dx as f64 * reach, pos.y as f64 + 0.5 + dy as f64 * 1.125 + lift, pos.z as f64 + 0.5 + dz as f64 * reach);
+                let mut e = crate::world::entity::Entity::new(self.next_entity_id(), info, at, super::boats::boat_kind(boat));
+                // `Direction.toYRot`.
+                e.yaw = match facing {
+                    Face::South => 0.0,
+                    Face::West => 90.0,
+                    Face::North => 180.0,
+                    _ => 270.0,
+                };
+                e.custom_name = super::workstations::custom_name_of(&stack);
+                self.spawn_entity(world, e);
+                self.dispensed(world, pos, facing, 1000);
+                Some(stack.with_count(stack.count - 1))
             }
             _ => {
                 // Armour, heads, elytra, saddles, horse and wolf armour and llama carpets go on
@@ -643,7 +698,7 @@ impl Server {
         if stack.count == 1 {
             return filled;
         }
-        let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false };
+        let me = Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: false, entity: None };
         let left = self.insert_into(world, &me, filled.clone(), None);
         if left.count > 0 {
             self.drop_from(world, pos, facing, filled);

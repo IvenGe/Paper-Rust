@@ -110,8 +110,10 @@ states, writable book pages, ...; see `MetaCodecs`) and passes unknown ones thro
 An inventory is named by a descriptor map with a `kind`: `player` (`uuid`; Bukkit's slot
 order: 0-8 hotbar, 9-35 main, 36-39 boots to helmet, 40 off hand), `ender` (`uuid`), `crafting`
 (`uuid`: the result and grid of the player's crafting table window, or of their 2x2 grid),
-`block` (`world`, `x`, `y`, `z`, and `positions` for both halves of a double chest) or `custom`
-(`id`, an inventory made with `inventory.create`). The contents always live on the server.
+`block` (`world`, `x`, `y`, `z`, and `positions` for both halves of a double chest), `entity`
+(`world`, `entity`: a chest boat's chest), `mount` (`world`, `entity`: a mount's window, saddle
+and armour first) or `custom` (`id`, an inventory made with `inventory.create`). The contents
+always live on the server.
 
 A window is described by `type` (Bukkit `InventoryType`), `size`, `title`, `top` (the
 descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`, `y`, `z`.
