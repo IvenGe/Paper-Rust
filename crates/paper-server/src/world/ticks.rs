@@ -12,7 +12,7 @@ use paper_data::blocks;
 use paper_nbt::{Compound, Tag};
 use paper_protocol::codec::BlockPos;
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 
 /// Ticks of each kind a world runs per game tick at most (vanilla's limit).
 pub const MAX_TICKS_PER_TICK: usize = 65536;
@@ -248,7 +248,7 @@ impl ChunkTicks {
 /// Collects the ticks of one kind to run at game time `now`: due ticks of the chunks
 /// `ticking` accepts, in run order, at most `budget`. They are removed from their chunks;
 /// ticks beyond the budget stay scheduled.
-pub fn collect_due(chunks: &mut HashMap<ChunkPos, Chunk>, kind: TickKind, now: i64, budget: usize, ticking: impl Fn(ChunkPos) -> bool) -> Vec<ScheduledTick> {
+pub fn collect_due(chunks: &mut crate::world::FastMap<ChunkPos, Chunk>, kind: TickKind, now: i64, budget: usize, ticking: impl Fn(ChunkPos) -> bool) -> Vec<ScheduledTick> {
     let mut due: Vec<ScheduledTick> = Vec::new();
     for (pos, chunk) in chunks.iter() {
         let queue = chunk.ticks.queue(kind);

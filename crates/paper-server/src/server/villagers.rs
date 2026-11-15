@@ -71,16 +71,22 @@ fn job_site_for(profession: &str, block: &str) -> bool {
 }
 
 /// Every block state of every workstation, to find them quickly in chunk sections.
-fn job_site_states() -> &'static [u16] {
-    static STATES: OnceLock<Vec<u16>> = OnceLock::new();
-    STATES.get_or_init(|| {
-        JOB_SITES
-            .iter()
-            .flat_map(|(_, b)| b.iter())
-            .filter_map(|name| blocks::by_name(name))
-            .flat_map(|b| (b.min_state..b.min_state + b.state_count).map(|s| s as u16))
-            .collect()
-    })
+/// Whether a block state is some workstation's, by state id (looked up, as whole sections are
+/// searched for them).
+fn is_job_site_state(state: u16) -> bool {
+    static STATES: OnceLock<Vec<bool>> = OnceLock::new();
+    let states = STATES.get_or_init(|| {
+        let mut set = Vec::new();
+        for b in JOB_SITES.iter().flat_map(|(_, b)| b.iter()).filter_map(|name| blocks::by_name(name)) {
+            let end = (b.min_state + b.state_count) as usize;
+            if set.len() < end {
+                set.resize(end, false);
+            }
+            set[b.min_state as usize..end].fill(true);
+        }
+        set
+    });
+    states.get(state as usize).copied().unwrap_or(false)
 }
 
 /// `VillagerType.byBiome`: villagers look like where they were born.
@@ -872,7 +878,6 @@ impl Server {
     /// nobody has claimed.
     fn find_job_site(&self, world: usize, from: Vec3, profession: &str, claimed: &HashSet<BlockPos>) -> Option<BlockPos> {
         let w = &self.worlds[world];
-        let states = job_site_states();
         let (x, y, z) = (from.x.floor() as i32, from.y.floor() as i32, from.z.floor() as i32);
         const R: i32 = 48;
         let mut best: Option<(f64, BlockPos)> = None;
@@ -881,12 +886,12 @@ impl Server {
                 let Some(chunk) = w.chunks.get(&ChunkPos::new(cx, cz)) else { continue };
                 for (si, section) in chunk.sections.iter().enumerate() {
                     let base = chunk.min_y + si as i32 * 16;
-                    if base + 15 < y - 16 || base > y + 16 || !section.contains_any(states) {
+                    if base + 15 < y - 16 || base > y + 16 || !section.contains_where(is_job_site_state) {
                         continue;
                     }
                     for (ly, lz, lx) in itertools_triples() {
                         let state = section.get(lx, ly, lz);
-                        if !states.contains(&(state as u16)) || !job_site_for(profession, blocks::block_of_state(state).name) {
+                        if !is_job_site_state(state as u16) || !job_site_for(profession, blocks::block_of_state(state).name) {
                             continue;
                         }
                         let pos = BlockPos::new(cx * 16 + lx as i32, base + ly as i32, cz * 16 + lz as i32);
@@ -1277,7 +1282,8 @@ mod tests {
         assert!(!job_site_for("minecraft:farmer", "minecraft:lectern"));
         assert_eq!(villager_type_for_biome("minecraft:snowy_taiga"), "minecraft:snow");
         assert_eq!(villager_type_for_biome("minecraft:forest"), "minecraft:plains");
-        assert!(job_site_states().len() > 20);
+        assert!(is_job_site_state(blocks::default_state("minecraft:composter").unwrap() as u16));
+        assert!(!is_job_site_state(blocks::default_state("minecraft:stone").unwrap() as u16));
     }
 
     #[test]

@@ -3,7 +3,9 @@
 //! extracted 26.3 assets by `tools/datagen/pumpkin_extra.py`; parsed on first use.
 
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::HashMap as StdHashMap;
+/// Hashed fast (`foldhash`): names are looked up all the time.
+type HashMap<K, V> = StdHashMap<K, V, foldhash::fast::RandomState>;
 use std::sync::OnceLock;
 
 fn normalize(name: &str) -> std::borrow::Cow<'_, str> {
@@ -197,7 +199,7 @@ pub mod item_data {
         static T: OnceLock<(Value, HashMap<String, ItemData>)> = OnceLock::new();
         let (_, map) = T.get_or_init(|| {
             let v: Value = serde_json::from_str(include_str!("../../../data/26.3/item_components.json")).expect("item_components.json");
-            let mut map = HashMap::new();
+            let mut map = HashMap::default();
             for (name, c) in v["items"].as_object().unwrap() {
                 let food = c.get("food").map(|f| Food {
                     nutrition: f["nutrition"].as_i64().unwrap_or(0) as i32,
@@ -328,8 +330,8 @@ pub mod entity_types {
         T.get_or_init(|| {
             let v: Value = serde_json::from_str(include_str!("../../../data/26.3/entities.json")).expect("entities.json");
             let d: Value = serde_json::from_str(include_str!("../../../data/26.3/entity_data.json")).expect("entity_data.json");
-            let mut by_name = HashMap::new();
-            let mut names_by_id = HashMap::new();
+            let mut by_name = HashMap::default();
+            let mut names_by_id = HashMap::default();
             for (name, e) in v["entities"].as_object().unwrap() {
                 let dim: Vec<f64> = e["dimension"].as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
                 let data = d["entities"].get(name).and_then(Value::as_object).map(|fields| {
@@ -634,7 +636,9 @@ pub mod effects {
 /// `tools/datagen`).
 pub mod variants {
     use serde_json::Value;
-    use std::collections::HashMap;
+    use std::collections::HashMap as StdHashMap;
+/// Hashed fast (`foldhash`): names are looked up all the time.
+type HashMap<K, V> = StdHashMap<K, V, foldhash::fast::RandomState>;
     use std::sync::OnceLock;
 
     /// When a variant may be picked (`SpawnCondition`).

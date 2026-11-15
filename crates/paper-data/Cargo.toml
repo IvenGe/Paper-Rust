@@ -9,6 +9,7 @@ description = "Generated Minecraft 26.3 data tables (packet ids, registries, blo
 build = "build.rs"
 
 [dependencies]
+foldhash.workspace = true
 serde_json.workspace = true
 
 [build-dependencies]

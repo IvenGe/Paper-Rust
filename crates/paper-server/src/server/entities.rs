@@ -304,6 +304,7 @@ impl Server {
             for id in ticking {
                 self.tick_entity(world, id);
             }
+            self.move_mobs(world);
             if self.tick % 2 == 0 {
                 self.merge_items(world);
             }
@@ -715,7 +716,7 @@ impl Server {
                     self.award_stat(player, "minecraft:picked_up", name, taken);
                 }
                 let packet = play::TakeItemEntity { collected_id: VarInt(item), collector_id: VarInt(player), count: VarInt(taken) };
-                let mut viewers: HashSet<i32> = self.worlds[world].entities.get(&item).map(|e| e.viewers.clone()).unwrap_or_default();
+                let mut viewers: crate::world::FastSet<i32> = self.worlds[world].entities.get(&item).map(|e| e.viewers.clone()).unwrap_or_default();
                 viewers.insert(player);
                 let payload = Bytes::from(encode_packet(&packet));
                 for v in viewers {
@@ -755,23 +756,50 @@ impl Server {
     /// Spawns entities for players who should see them, removes them for those who should
     /// not, and sends movement and metadata updates.
     fn track_entities(&mut self, world: usize) {
-        let watchers: Vec<(i32, ChunkPos, i32)> = self.players.values().filter(|p| p.world == world).map(|p| (p.entity_id, p.loc.chunk(), p.view.radius)).collect();
-        let ids: Vec<i32> = self.worlds[world].entities.keys().copied().collect();
-        for id in ids {
-            let (wanted, appeared, vanished) = {
-                let e = &self.worlds[world].entities[&id];
-                let wanted: HashSet<i32> = watchers
-                    .iter()
-                    .filter(|(pid, center, radius)| {
-                        center.distance(e.chunk) <= (*radius).min(e.info.tracking_range.max(1))
-                            && self.players.get(pid).is_some_and(|p| p.view.sent.contains(&e.chunk) && !p.api.hidden.contains(&e.uuid))
-                    })
-                    .map(|(pid, _, _)| *pid)
-                    .collect();
-                let appeared: Vec<i32> = wanted.difference(&e.viewers).copied().collect();
-                let vanished: Vec<i32> = e.viewers.difference(&wanted).copied().collect();
-                (wanted, appeared, vanished)
-            };
+        /// What a player sees entities by.
+        struct Watcher<'a> {
+            id: i32,
+            center: ChunkPos,
+            radius: i32,
+            sent: &'a crate::world::FastSet<ChunkPos>,
+            hidden: &'a HashSet<uuid::Uuid>,
+        }
+        /// What changed about an entity: players who see it now, players who no longer do,
+        /// and what its other viewers must be told.
+        struct Tracked {
+            id: i32,
+            appeared: Vec<i32>,
+            vanished: Vec<i32>,
+            updates: Vec<Bytes>,
+        }
+        let watchers: Vec<Watcher> = self
+            .players
+            .values()
+            .filter(|p| p.world == world)
+            .map(|p| Watcher { id: p.entity_id, center: p.loc.chunk(), radius: p.view.radius, sent: &p.view.sent, hidden: &p.api.hidden })
+            .collect();
+        // Each entity changes only itself here, so the entities are gone through in parallel
+        // on the tick pool; the packets are then sent from here, entity by entity.
+        let entities = &mut self.worlds[world].entities;
+        let tracked: Vec<Tracked> = self.tick_pool.install(|| {
+            use rayon::prelude::*;
+            entities
+                .par_iter_mut()
+                .filter_map(|(&id, e)| {
+                    let range = e.info.tracking_range.max(1);
+                    let sees = |w: &Watcher| w.center.distance(e.chunk) <= w.radius.min(range) && w.sent.contains(&e.chunk) && (w.hidden.is_empty() || !w.hidden.contains(&e.uuid));
+                    let appeared: Vec<i32> = watchers.iter().filter(|w| sees(w) && !e.viewers.contains(&w.id)).map(|w| w.id).collect();
+                    let vanished: Vec<i32> = e.viewers.iter().copied().filter(|v| !watchers.iter().any(|w| w.id == *v && sees(w))).collect();
+                    for v in &vanished {
+                        e.viewers.remove(v);
+                    }
+                    e.viewers.extend(appeared.iter().copied());
+                    let updates = update_packets(id, e);
+                    (!appeared.is_empty() || !vanished.is_empty() || !updates.is_empty()).then_some(Tracked { id, appeared, vanished, updates })
+                })
+                .collect()
+        });
+        for Tracked { id, appeared, vanished, updates } in tracked {
             if !appeared.is_empty() {
                 let spawn = self.spawn_packets(world, id);
                 for pid in &appeared {
@@ -790,15 +818,12 @@ impl Server {
                     }
                 }
             }
-            let updates = self.update_packets(world, id);
-            let e = self.worlds[world].entities.get_mut(&id).unwrap();
-            e.viewers = wanted;
             if updates.is_empty() {
                 continue;
             }
-            let viewers: Vec<i32> = e.viewers.iter().copied().filter(|v| !appeared.contains(v)).collect();
-            for v in viewers {
-                if let Some(p) = self.players.get(&v) {
+            let Some(e) = self.worlds[world].entities.get(&id) else { continue };
+            for v in e.viewers.iter().filter(|v| !appeared.contains(v)) {
+                if let Some(p) = self.players.get(v) {
                     for payload in &updates {
                         p.conn.send_payload(payload.clone());
                     }
@@ -854,56 +879,60 @@ impl Server {
         }
         out
     }
+}
 
-    /// Movement, rotation, velocity, metadata and equipment changes since the last send.
-    fn update_packets(&mut self, world: usize, id: i32) -> Vec<Bytes> {
-        let e = self.worlds[world].entities.get_mut(&id).unwrap();
-        let mut out = Vec::new();
-        e.ticks_since_sync += 1;
-        let interval = e.info.update_interval.max(1);
-        let is_mob = matches!(e.kind, EntityKind::Mob(_));
-        if e.force_sync || e.ticks_since_sync % interval == 0 || e.on_ground != e.sent_on_ground {
-            let (dx, dy, dz) = (fixed(e.pos.x) - fixed(e.sent_pos.x), fixed(e.pos.y) - fixed(e.sent_pos.y), fixed(e.pos.z) - fixed(e.sent_pos.z));
-            let moved = dx != 0 || dy != 0 || dz != 0;
-            let rotated = angle(e.yaw) != angle(e.sent_yaw) || angle(e.pitch) != angle(e.sent_pitch);
-            let fits = |d: i64| (i16::MIN as i64..=i16::MAX as i64).contains(&d);
-            if e.force_sync || e.ticks_since_sync > SYNC_INTERVAL * interval || !(fits(dx) && fits(dy) && fits(dz)) {
-                out.push(Bytes::from(encode_packet(&play::EntityPositionSync { entity_id: id, x: e.pos.x, y: e.pos.y, z: e.pos.z, yaw: e.yaw, pitch: e.pitch, on_ground: e.on_ground })));
-                e.ticks_since_sync = 0;
-                e.force_sync = false;
-            } else if moved && rotated {
-                out.push(Bytes::from(encode_packet(&play::MoveEntityPosRot { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, yaw: e.yaw, pitch: e.pitch, on_ground: e.on_ground })));
-            } else if moved {
-                out.push(Bytes::from(encode_packet(&play::MoveEntityPos { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, on_ground: e.on_ground })));
-            } else if rotated {
-                out.push(Bytes::from(encode_packet(&play::MoveEntityRot { entity_id: VarInt(id), on_ground: e.on_ground, yaw: Angle(e.yaw), pitch: Angle(e.pitch) })));
-            }
-            e.sent_pos = e.pos;
-            e.sent_yaw = e.yaw;
-            e.sent_pitch = e.pitch;
-            e.sent_on_ground = e.on_ground;
-            if e.info.track_deltas && e.vel.distance_squared(e.sent_vel) > 1.0e-7 {
-                out.push(Bytes::from(encode_packet(&play::SetEntityMotion { entity_id: VarInt(id), velocity: LpVec3(e.vel.x, e.vel.y, e.vel.z) })));
-                e.sent_vel = e.vel;
-            }
+/// What the viewers of an entity must be told of its movement, rotation, velocity, metadata
+/// and equipment since the last send (`ServerEntity.sendChanges`), which is then taken as
+/// sent.
+fn update_packets(id: i32, e: &mut Entity) -> Vec<Bytes> {
+    let mut out = Vec::new();
+    e.ticks_since_sync += 1;
+    let interval = e.info.update_interval.max(1);
+    let is_mob = matches!(e.kind, EntityKind::Mob(_));
+    if e.force_sync || e.ticks_since_sync % interval == 0 || e.on_ground != e.sent_on_ground {
+        let (dx, dy, dz) = (fixed(e.pos.x) - fixed(e.sent_pos.x), fixed(e.pos.y) - fixed(e.sent_pos.y), fixed(e.pos.z) - fixed(e.sent_pos.z));
+        let moved = dx != 0 || dy != 0 || dz != 0;
+        let rotated = angle(e.yaw) != angle(e.sent_yaw) || angle(e.pitch) != angle(e.sent_pitch);
+        let fits = |d: i64| (i16::MIN as i64..=i16::MAX as i64).contains(&d);
+        if e.force_sync || e.ticks_since_sync > SYNC_INTERVAL * interval || !(fits(dx) && fits(dy) && fits(dz)) {
+            out.push(Bytes::from(encode_packet(&play::EntityPositionSync { entity_id: id, x: e.pos.x, y: e.pos.y, z: e.pos.z, yaw: e.yaw, pitch: e.pitch, on_ground: e.on_ground })));
+            e.ticks_since_sync = 0;
+            e.force_sync = false;
+        } else if moved && rotated {
+            out.push(Bytes::from(encode_packet(&play::MoveEntityPosRot { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, yaw: e.yaw, pitch: e.pitch, on_ground: e.on_ground })));
+        } else if moved {
+            out.push(Bytes::from(encode_packet(&play::MoveEntityPos { entity_id: id, dx: dx as i16, dy: dy as i16, dz: dz as i16, on_ground: e.on_ground })));
+        } else if rotated {
+            out.push(Bytes::from(encode_packet(&play::MoveEntityRot { entity_id: VarInt(id), on_ground: e.on_ground, yaw: Angle(e.yaw), pitch: Angle(e.pitch) })));
         }
-        if is_mob && angle(e.head_yaw) != angle(e.sent_head_yaw) {
-            out.push(Bytes::from(encode_packet(&play::RotateHead { entity_id: VarInt(id), head_yaw: Angle(e.head_yaw) })));
-            e.sent_head_yaw = e.head_yaw;
+        e.sent_pos = e.pos;
+        e.sent_yaw = e.yaw;
+        e.sent_pitch = e.pitch;
+        e.sent_on_ground = e.on_ground;
+        if e.info.track_deltas && e.vel.distance_squared(e.sent_vel) > 1.0e-7 {
+            out.push(Bytes::from(encode_packet(&play::SetEntityMotion { entity_id: VarInt(id), velocity: LpVec3(e.vel.x, e.vel.y, e.vel.z) })));
+            e.sent_vel = e.vel;
         }
-        if e.metadata_dirty {
-            e.metadata_dirty = false;
-            out.push(Bytes::from(encode_packet(&play::SetEntityData { entity_id: VarInt(id), metadata: RemainingBytes(entity_metadata(e, false)) })));
-        }
-        if e.equipment_dirty {
-            e.equipment_dirty = false;
-            if let EntityKind::Mob(m) = &e.kind {
-                let equipment: Vec<(u8, Slot)> = m.equipment.iter().enumerate().map(|(i, s)| (i as u8, s.clone())).collect();
-                out.push(Bytes::from(encode_packet(&play::SetEquipment { entity_id: id, equipment })));
-            }
-        }
-        out
     }
+    if is_mob && angle(e.head_yaw) != angle(e.sent_head_yaw) {
+        out.push(Bytes::from(encode_packet(&play::RotateHead { entity_id: VarInt(id), head_yaw: Angle(e.head_yaw) })));
+        e.sent_head_yaw = e.head_yaw;
+    }
+    if e.metadata_dirty {
+        e.metadata_dirty = false;
+        out.push(Bytes::from(encode_packet(&play::SetEntityData { entity_id: VarInt(id), metadata: RemainingBytes(entity_metadata(e, false)) })));
+    }
+    if e.equipment_dirty {
+        e.equipment_dirty = false;
+        if let EntityKind::Mob(m) = &e.kind {
+            let equipment: Vec<(u8, Slot)> = m.equipment.iter().enumerate().map(|(i, s)| (i as u8, s.clone())).collect();
+            out.push(Bytes::from(encode_packet(&play::SetEquipment { entity_id: id, equipment })));
+        }
+    }
+    out
+}
+
+impl Server {
 
     /// Sends a packet to everyone who sees a (non-player) entity.
     pub fn broadcast_entity(&self, world: usize, id: i32, payload: Bytes) {

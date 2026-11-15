@@ -345,11 +345,14 @@ pub struct ThreadsConfig {
     /// Worker threads for chunk generation, lighting, packet encoding and saving
     /// (0 = one per CPU core).
     pub workers: usize,
+    /// Threads that share the work of a tick that can be split up, such as tracking entities
+    /// and moving mobs, while the main thread waits (0 = one per CPU core; 1 = no sharing).
+    pub tick: usize,
 }
 
 impl Default for ThreadsConfig {
     fn default() -> Self {
-        Self { io: 0, workers: 0 }
+        Self { io: 0, workers: 0, tick: 0 }
     }
 }
 
@@ -448,7 +451,8 @@ const CONFIG_HEADER: &str = "\
 # server.properties keeps the vanilla settings (port, MOTD, game mode, ...).
 # This file holds what is specific to the Rust server.
 #
-# [threads]  io / workers: 0 picks one thread per CPU core.
+# [threads]  io / workers / tick: 0 picks one thread per CPU core. The tick threads share
+#            the work of a tick that can be split up (tracking entities, moving mobs).
 # [plugins]  Java plugins run in a separate JVM process (\"separate mode\") that talks to
 #            the server over a local socket. Set enabled = false to run without plugins.
 
@@ -526,6 +530,13 @@ impl Config {
 
     pub fn worker_threads(&self) -> usize {
         match self.paper.threads.workers {
+            0 => std::thread::available_parallelism().map_or(2, |n| n.get()),
+            n => n,
+        }
+    }
+
+    pub fn tick_threads(&self) -> usize {
+        match self.paper.threads.tick {
             0 => std::thread::available_parallelism().map_or(2, |n| n.get()),
             n => n,
         }

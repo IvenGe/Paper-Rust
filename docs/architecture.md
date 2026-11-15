@@ -59,12 +59,52 @@ paper-server     the server itself, and the `paper` binary
 * **Workers** (`threads.workers`, a rayon pool). Pure jobs over snapshots: loading or
   generating a chunk, lighting a chunk from its 3x3 neighbourhood, encoding and compressing
   a chunk packet. Results come back to the main thread as `WorldEvent`s.
+* **Tick pool** (`threads.tick`, a second rayon pool). Parts of the tick that split into
+  independent pieces run here while the main thread waits for them, so the game state is
+  still changed from one place at a time and plugins still see a single-threaded world. It
+  is a pool of its own so that a tick never waits behind chunk generation. See
+  [work shared within a tick](#work-shared-within-a-tick).
 * **Chunk I/O** (one thread). Writes chunks, `level.dat` and player data in the order they
   were queued.
 
 Sections and light arrays sit behind `Arc`s, so snapshotting a chunk for a worker copies
 pointers; the main thread copies a section only if it changes it while a snapshot is alive
 (`Arc::make_mut`).
+
+### Work shared within a tick
+
+A piece of the tick goes to the tick pool only if it reads the game state and changes
+nothing but its own entity. The server state is `Sync` for this (checked at compile time).
+
+* **Moving mobs.** Every mob first has its turn in order: fire, drowning, AI, attacks. Then
+  all of them move at once, each among the blocks around it (`mobs::travel`), with the
+  world's entities taken out of it meanwhile. The blocks they land on and the falls that hurt
+  are then applied in order. A mob therefore sees where the others stood at the start of the
+  tick.
+* **Natural spawning.** The chunks around players are searched for spawn spots in parallel
+  (`find_spawns`). The mobs are then spawned in order, with `PreCreatureSpawnEvent` and
+  `CreatureSpawnEvent`, until the category's cap is reached.
+* **Entity tracking.** Who sees each entity, and what its viewers must be told of its
+  movement, metadata and equipment, is worked out per entity in parallel. The packets are
+  then sent from the main thread.
+
+The maps looked up for nearly every block and entity access (chunks by position, entities
+and players by id, the data tables by name) are hashed with `foldhash` instead of SipHash.
+
+### Measuring
+
+`Server::profile` (`TickProfile`) adds up the time each phase of the tick and each kind of
+main-thread task takes. `tests/load.rs` is a load benchmark, ignored by default: it joins
+bots that walk about, spawns mobs around them and prints the time per phase.
+
+```bash
+cargo test --release -p paper-server --test load -- --ignored --nocapture
+```
+
+`BENCH_PLAYERS`, `BENCH_MOBS`, `BENCH_SECONDS`, `BENCH_VIEW` and `BENCH_WORLD` (`flat` or
+`vanilla`) set the load. On a 4-core machine, with 20 players, about 900 mobs and view
+distance 8 in a flat world, a tick took 6.8 ms on average (17.2 ms before the changes
+above), and the slowest tick took 12.6 ms (36.7 ms before).
 
 ## The chunk pipeline
 

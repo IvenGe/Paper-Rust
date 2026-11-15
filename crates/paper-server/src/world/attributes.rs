@@ -3,6 +3,7 @@
 
 use paper_nbt::{Compound, Tag};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 /// How a modifier changes the value (`AttributeModifier.Operation`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,20 +82,55 @@ struct Instance {
     modifiers: Vec<(Modifier, Source)>,
 }
 
-/// The attributes of a living entity, by full name (`minecraft:max_health`).
+/// The attributes of a living entity. They are kept by their index in the attribute registry
+/// (looked up from the name once per call, not compared name by name), and named in full
+/// (`minecraft:max_health`) or short (`max_health`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Attributes {
-    instances: BTreeMap<String, Instance>,
-    /// Attributes changed since the last [`Attributes::take_dirty`].
-    dirty: BTreeSet<String>,
+    /// By registry index, as long as the registry for a living entity; `None` for the
+    /// attributes it does not have.
+    instances: Vec<Option<Instance>>,
+    /// Attributes changed since the last [`Attributes::take_dirty`], by registry index.
+    dirty: BTreeSet<usize>,
+    inputs: InputsSeen,
 }
 
-fn full(name: &str) -> String {
-    if name.contains(':') {
-        name.to_owned()
-    } else {
-        format!("minecraft:{name}")
+/// What the equipment and effect modifiers were last worked out from (a fingerprint of the
+/// equipment and effects); not part of the attributes' value.
+#[derive(Clone, Copy, Debug, Default)]
+struct InputsSeen(Option<u64>);
+
+impl PartialEq for InputsSeen {
+    fn eq(&self, _: &Self) -> bool {
+        true
     }
+}
+
+/// The attributes there are (`minecraft:attribute`), in registry order.
+fn registry() -> &'static [&'static str] {
+    paper_data::registries::entries("minecraft:attribute").unwrap_or(&[])
+}
+
+/// The registry index of an attribute named in full or short.
+fn index(name: &str) -> Option<usize> {
+    static INDEX: OnceLock<crate::world::FastMap<&'static str, usize>> = OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut index = crate::world::FastMap::default();
+        for (i, name) in registry().iter().enumerate() {
+            index.insert(*name, i);
+            if let Some(short) = name.strip_prefix("minecraft:") {
+                index.insert(short, i);
+            }
+        }
+        index
+    });
+    index.get(name).copied()
+}
+
+/// [`range`] by registry index, worked out once.
+fn range_at(i: usize) -> Option<(f64, f64, f64)> {
+    static RANGES: OnceLock<Vec<Option<(f64, f64, f64)>>> = OnceLock::new();
+    RANGES.get_or_init(|| registry().iter().map(|name| range(name)).collect()).get(i).copied().flatten()
 }
 
 /// `RangedAttribute`'s default, minimum and maximum, for the attributes vanilla clamps.
@@ -151,7 +187,7 @@ pub fn default_value(name: &str) -> f64 {
 
 /// Whether the name is an attribute.
 pub fn is_attribute(name: &str) -> bool {
-    paper_data::registries::id("minecraft:attribute", &full(name)).is_some()
+    index(name).is_some()
 }
 
 impl Attributes {
@@ -160,41 +196,70 @@ impl Attributes {
         let mut out = Self::default();
         if let Some(info) = paper_data::entity_types::by_name(entity_type) {
             for (name, base) in &info.attributes {
-                out.instances.insert(full(name), Instance { base: *base, modifiers: Vec::new() });
+                if let Some(i) = index(name) {
+                    *out.slot(i) = Some(Instance { base: *base, modifiers: Vec::new() });
+                }
             }
         }
         out
     }
 
+    /// The place of the attribute at a registry index (every living entity has room for all).
+    fn slot(&mut self, i: usize) -> &mut Option<Instance> {
+        if self.instances.len() <= i {
+            self.instances.resize(registry().len().max(i + 1), None);
+        }
+        &mut self.instances[i]
+    }
+
+    /// The registry index of an attribute the entity has.
+    fn at(&self, name: &str) -> Option<usize> {
+        index(name).filter(|i| self.instances.get(*i).is_some_and(Option::is_some))
+    }
+
+    fn get(&self, name: &str) -> Option<&Instance> {
+        self.instances.get(index(name)?)?.as_ref()
+    }
+
     pub fn has(&self, name: &str) -> bool {
-        self.instances.contains_key(&full(name))
+        self.at(name).is_some()
+    }
+
+    /// Whether the equipment and effects (by their `fingerprint`) changed since the modifiers
+    /// were last worked out from them; remembers them.
+    pub fn inputs_changed(&mut self, fingerprint: u64) -> bool {
+        if self.inputs.0 == Some(fingerprint) {
+            return false;
+        }
+        self.inputs.0 = Some(fingerprint);
+        true
     }
 
     /// Adds an attribute the entity type does not have (Bukkit's `registerAttribute`).
     pub fn register(&mut self, name: &str) -> bool {
-        let name = full(name);
-        if self.instances.contains_key(&name) || !is_attribute(&name) {
+        let Some(i) = index(name) else { return false };
+        if self.has(name) {
             return false;
         }
-        self.instances.insert(name.clone(), Instance { base: default_value(&name), modifiers: Vec::new() });
-        self.dirty.insert(name);
+        *self.slot(i) = Some(Instance { base: default_value(registry()[i]), modifiers: Vec::new() });
+        self.dirty.insert(i);
         true
     }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.instances.keys().map(String::as_str)
+        self.instances.iter().enumerate().filter(|(_, instance)| instance.is_some()).map(|(i, _)| registry()[i])
     }
 
     pub fn base(&self, name: &str) -> Option<f64> {
-        self.instances.get(&full(name)).map(|i| i.base)
+        self.get(name).map(|i| i.base)
     }
 
     pub fn set_base(&mut self, name: &str, base: f64) -> bool {
-        let name = full(name);
-        let Some(instance) = self.instances.get_mut(&name) else { return false };
+        let Some(i) = self.at(name) else { return false };
+        let Some(instance) = self.instances[i].as_mut() else { return false };
         if instance.base != base {
             instance.base = base;
-            self.dirty.insert(name);
+            self.dirty.insert(i);
         }
         true
     }
@@ -202,8 +267,9 @@ impl Attributes {
     /// `AttributeInstance.calculateValue`, clamped to the attribute's range. An attribute the
     /// entity does not have is at its default.
     pub fn value(&self, name: &str) -> f64 {
-        let name = full(name);
-        let Some(instance) = self.instances.get(&name) else { return default_value(&name) };
+        let Some(i) = index(name) else { return default_value(name) };
+        let range = range_at(i);
+        let Some(instance) = self.instances.get(i).and_then(Option::as_ref) else { return range.map_or(0.0, |(d, _, _)| d) };
         let mut base = instance.base;
         for (m, _) in &instance.modifiers {
             if m.operation == Operation::AddValue {
@@ -221,18 +287,18 @@ impl Attributes {
                 result *= 1.0 + m.amount;
             }
         }
-        match range(&name) {
+        match range {
             Some((_, min, max)) => result.clamp(min, max),
             None => result,
         }
     }
 
     pub fn modifiers(&self, name: &str) -> Vec<Modifier> {
-        self.instances.get(&full(name)).map(|i| i.modifiers.iter().map(|(m, _)| m.clone()).collect()).unwrap_or_default()
+        self.get(name).map(|i| i.modifiers.iter().map(|(m, _)| m.clone()).collect()).unwrap_or_default()
     }
 
     pub fn modifier(&self, name: &str, id: &str) -> Option<Modifier> {
-        self.instances.get(&full(name))?.modifiers.iter().find(|(m, _)| m.id == id).map(|(m, _)| m.clone())
+        self.get(name)?.modifiers.iter().find(|(m, _)| m.id == id).map(|(m, _)| m.clone())
     }
 
     /// Adds a modifier, replacing one with the same id. `persistent` ones are saved with the
@@ -243,66 +309,71 @@ impl Attributes {
 
     /// Adds a modifier from a source, replacing one with the same id.
     pub fn add_from(&mut self, name: &str, modifier: Modifier, source: Source) -> bool {
-        let name = full(name);
-        let Some(instance) = self.instances.get_mut(&name) else { return false };
+        let Some(i) = self.at(name) else { return false };
+        let Some(instance) = self.instances[i].as_mut() else { return false };
         match instance.modifiers.iter_mut().find(|(m, _)| m.id == modifier.id) {
             Some(slot) if *slot == (modifier.clone(), source) => return true,
             Some(slot) => *slot = (modifier, source),
             None => instance.modifiers.push((modifier, source)),
         }
-        self.dirty.insert(name);
+        self.dirty.insert(i);
         true
     }
 
     /// Replaces every modifier from `source` with `modifiers` (attribute, modifier), marking
     /// only the attributes whose modifiers really changed.
     pub fn replace_source(&mut self, source: Source, modifiers: &[(String, Modifier)]) {
-        let mut wanted: BTreeMap<String, Vec<Modifier>> = BTreeMap::new();
+        let mut wanted: BTreeMap<usize, Vec<Modifier>> = BTreeMap::new();
         for (name, m) in modifiers {
-            let list = wanted.entry(full(name)).or_default();
+            let Some(i) = index(name) else { continue };
+            let list = wanted.entry(i).or_default();
             // The same id twice: the later one wins, as in vanilla's remove-then-add.
             list.retain(|old| old.id != m.id);
             list.push(m.clone());
         }
-        for (name, instance) in &mut self.instances {
-            let old: Vec<Modifier> = instance.modifiers.iter().filter(|(_, s)| *s == source).map(|(m, _)| m.clone()).collect();
-            let new = wanted.remove(name).unwrap_or_default();
-            if old == new {
+        for (i, instance) in self.instances.iter_mut().enumerate() {
+            let Some(instance) = instance else { continue };
+            let new = wanted.remove(&i).unwrap_or_default();
+            let mut old = instance.modifiers.iter().filter(|(_, s)| *s == source).map(|(m, _)| m);
+            if old.by_ref().eq(new.iter()) {
                 continue;
             }
             instance.modifiers.retain(|(m, s)| *s != source && !new.iter().any(|n| n.id == m.id));
             instance.modifiers.extend(new.into_iter().map(|m| (m, source)));
-            self.dirty.insert(name.clone());
+            self.dirty.insert(i);
         }
     }
 
     pub fn remove_modifier(&mut self, name: &str, id: &str) -> bool {
-        let name = full(name);
-        let Some(instance) = self.instances.get_mut(&name) else { return false };
+        let Some(i) = self.at(name) else { return false };
+        let Some(instance) = self.instances[i].as_mut() else { return false };
         let before = instance.modifiers.len();
         instance.modifiers.retain(|(m, _)| m.id != id);
         let removed = instance.modifiers.len() != before;
         if removed {
-            self.dirty.insert(name);
+            self.dirty.insert(i);
         }
         removed
     }
 
     /// The attributes changed since the last call.
     pub fn take_dirty(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.dirty).into_iter().collect()
+        if self.dirty.is_empty() {
+            return Vec::new();
+        }
+        std::mem::take(&mut self.dirty).into_iter().map(|i| registry()[i].to_owned()).collect()
     }
 
     pub fn mark_all_dirty(&mut self) {
-        self.dirty = self.instances.keys().cloned().collect();
+        self.dirty = self.instances.iter().enumerate().filter(|(_, instance)| instance.is_some()).map(|(i, _)| i).collect();
     }
 
     /// Entries of `ClientboundUpdateAttributesPacket` for these attributes.
     pub fn packet_entries<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> Vec<(i32, f64, Vec<(String, f64, i8)>)> {
         let mut out = Vec::new();
         for name in names {
-            let name = full(name);
-            let (Some(instance), Some(id)) = (self.instances.get(&name), paper_data::registries::id("minecraft:attribute", &name)) else { continue };
+            let Some(i) = self.at(name) else { continue };
+            let (Some(instance), Some(id)) = (self.instances[i].as_ref(), paper_data::registries::id("minecraft:attribute", registry()[i])) else { continue };
             out.push((id as i32, instance.base, instance.modifiers.iter().map(|(m, _)| (m.id.clone(), m.amount, m.operation.id())).collect()));
         }
         out
@@ -310,7 +381,9 @@ impl Attributes {
 
     /// Whether every attribute is at its type's base value without modifiers.
     pub fn is_default_for(&self, entity_type: &str) -> bool {
-        *self == Self { dirty: self.dirty.clone(), ..Self::of_type(entity_type) }
+        let of_type = Self::of_type(entity_type);
+        let len = self.instances.len().max(of_type.instances.len());
+        (0..len).all(|i| self.instances.get(i).cloned().flatten() == of_type.instances.get(i).cloned().flatten())
     }
 
     /// Vanilla's `attributes` list: base values and the saved modifiers.
@@ -318,6 +391,8 @@ impl Attributes {
         let list = self
             .instances
             .iter()
+            .enumerate()
+            .filter_map(|(i, instance)| Some((registry()[i], instance.as_ref()?)))
             .map(|(name, instance)| {
                 let modifiers: Vec<Tag> = instance
                     .modifiers
@@ -325,7 +400,7 @@ impl Attributes {
                     .filter(|(_, source)| *source == Source::Saved)
                     .map(|(m, _)| Tag::Compound(Compound::new().with("id", Tag::String(m.id.clone())).with("amount", Tag::Double(m.amount)).with("operation", Tag::String(m.operation.name().to_owned()))))
                     .collect();
-                let mut c = Compound::new().with("id", Tag::String(name.clone())).with("base", Tag::Double(instance.base));
+                let mut c = Compound::new().with("id", Tag::String(name.to_owned())).with("base", Tag::Double(instance.base));
                 if !modifiers.is_empty() {
                     c.insert("modifiers", Tag::List(modifiers));
                 }
@@ -339,11 +414,8 @@ impl Attributes {
     pub fn load_nbt(&mut self, list: &[Tag]) {
         for entry in list {
             let Some(c) = entry.as_compound() else { continue };
-            let Some(name) = c.string("id").map(full) else { continue };
-            if !is_attribute(&name) {
-                continue;
-            }
-            let instance = self.instances.entry(name.clone()).or_insert_with(|| Instance { base: default_value(&name), modifiers: Vec::new() });
+            let Some(i) = c.string("id").and_then(index) else { continue };
+            let instance = self.slot(i).get_or_insert_with(|| Instance { base: default_value(registry()[i]), modifiers: Vec::new() });
             if let Some(base) = c.f64("base") {
                 instance.base = base;
             }
@@ -353,7 +425,7 @@ impl Attributes {
                 instance.modifiers.retain(|(old, _)| old.id != id);
                 instance.modifiers.push((Modifier::new(id, amount, operation), Source::Saved));
             }
-            self.dirty.insert(name);
+            self.dirty.insert(i);
         }
     }
 }

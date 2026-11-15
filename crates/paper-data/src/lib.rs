@@ -4,7 +4,8 @@
 //! The tables are generated at build time from `data/<version>/*.json`; see `build.rs` and
 //! `tools/datagen/README.md` for where the JSON comes from.
 
-use std::collections::HashMap;
+/// The lookup tables here are hashed fast (`foldhash`): names are looked up all the time.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
 use std::sync::OnceLock;
 
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
@@ -299,24 +300,50 @@ pub mod synced {
 
     include!(concat!(env!("OUT_DIR"), "/synced.rs"));
 
+    /// The registries and tags by name, indexed once.
+    struct Index {
+        /// Entries of each registry, and the network id of each entry.
+        registries: HashMap<&'static str, (&'static [&'static str], HashMap<&'static str, i32>)>,
+        /// The tags of each registry.
+        tags: HashMap<&'static str, HashMap<&'static str, &'static [i32]>>,
+    }
+
+    fn index() -> &'static Index {
+        static INDEX: OnceLock<Index> = OnceLock::new();
+        INDEX.get_or_init(|| {
+            let mut registries: HashMap<&'static str, (&'static [&'static str], HashMap<&'static str, i32>)> = HashMap::default();
+            for (registry, names) in SYNCED_REGISTRIES {
+                let mut ids = HashMap::default();
+                for (i, name) in names.iter().enumerate() {
+                    ids.entry(*name).or_insert(i as i32);
+                }
+                registries.entry(*registry).or_insert((*names, ids));
+            }
+            let mut tags: HashMap<&'static str, HashMap<&'static str, &'static [i32]>> = HashMap::default();
+            for (registry, list) in TAGS {
+                let of = tags.entry(*registry).or_default();
+                for (tag, ids) in list.iter() {
+                    of.entry(*tag).or_insert(*ids);
+                }
+            }
+            Index { registries, tags }
+        })
+    }
+
     /// Entries of a synchronised registry in network id order.
     pub fn entries(registry: &str) -> Option<&'static [&'static str]> {
-        let registry = normalize(registry);
-        SYNCED_REGISTRIES.iter().find(|(r, _)| *r == registry.as_ref()).map(|(_, e)| *e)
+        index().registries.get(normalize(registry).as_ref()).map(|(names, _)| *names)
     }
 
     /// Network id of an entry of a synchronised registry.
     pub fn id(registry: &str, entry: &str) -> Option<i32> {
-        let entry = normalize(entry);
-        entries(registry)?.iter().position(|e| *e == entry.as_ref()).map(|i| i as i32)
+        let (_, ids) = index().registries.get(normalize(registry).as_ref())?;
+        ids.get(normalize(entry).as_ref()).copied()
     }
 
     /// Numeric ids in a tag, e.g. `tag("minecraft:block", "minecraft:mineable/pickaxe")`.
     pub fn tag(registry: &str, tag: &str) -> Option<&'static [i32]> {
-        let registry = normalize(registry);
-        let tag = normalize(tag);
-        let (_, tags) = TAGS.iter().find(|(r, _)| *r == registry.as_ref())?;
-        tags.iter().find(|(t, _)| *t == tag.as_ref()).map(|(_, ids)| *ids)
+        index().tags.get(normalize(registry).as_ref())?.get(normalize(tag).as_ref()).copied()
     }
 
     pub fn dimension_type(name: &str) -> Option<&'static DimensionTypeInfo> {

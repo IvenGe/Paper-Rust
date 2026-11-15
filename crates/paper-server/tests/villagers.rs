@@ -78,6 +78,11 @@ fn stand_next_to(server: &paper_server::RunningServer, client: &mut Client, play
     server
         .handle
         .run(move |s| {
+            // It stays put rather than wander out of reach while the player deals with it.
+            if let Some(m) = s.worlds[0].entities.get_mut(&entity).and_then(|e| e.mob_mut()) {
+                m.brain.idle_ticks = 1_000_000;
+                m.brain.path.clear();
+            }
             let at = s.worlds[0].entities[&entity].pos;
             s.teleport(player, Location { x: at.x + 1.5, y: at.y, z: at.z, yaw: 90.0, pitch: 0.0 });
         })

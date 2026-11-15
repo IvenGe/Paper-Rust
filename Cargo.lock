@@ -674,6 +674,7 @@ dependencies = [
 name = "paper-data"
 version = "0.1.0"
 dependencies = [
+ "foldhash",
  "serde_json",
 ]
 
@@ -709,6 +710,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "flate2",
+ "foldhash",
  "log",
  "md-5",
  "num-bigint",

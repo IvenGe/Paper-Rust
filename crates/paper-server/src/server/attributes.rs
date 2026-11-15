@@ -132,10 +132,24 @@ impl Server {
         }
     }
 
-    /// The same for a mob.
+    /// The same for a mob, when its equipment or effects changed.
     pub fn refresh_mob_attributes(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds.get_mut(world).and_then(|w| w.entities.get_mut(&id)) else { return };
         let EntityKind::Mob(mob) = &mut e.kind else { return };
+        let fingerprint = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for slot in mob.equipment.iter() {
+                slot.0.as_ref().map(|s| (s.item, &s.added, &s.removed)).hash(&mut h);
+            }
+            for (effect, amplifier, _) in &mob.living.effects {
+                (effect, amplifier).hash(&mut h);
+            }
+            h.finish()
+        };
+        if !mob.attributes.inputs_changed(fingerprint) {
+            return;
+        }
         let slots: Vec<(&str, &Slot)> = MOB_SLOTS.iter().copied().zip(mob.equipment.iter()).collect();
         let equipment = equipment_modifiers(&slots);
         let effect_mods = effect_modifiers(mob.living.effects.iter().map(|(effect, amplifier, _)| (*effect, *amplifier)));

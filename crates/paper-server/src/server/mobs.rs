@@ -335,6 +335,12 @@ impl BiomeSpawns {
 
 /// Mob caps per category (`MobCategory`): (category, spawn list, cap, persistent: spawned only
 /// every 400 ticks).
+/// A place a mob could spawn, found by [`Server::find_spawns`].
+struct SpawnSpot {
+    entity: String,
+    at: Vec3,
+}
+
 const CATEGORIES: [(&str, &str, i32, bool); 7] = [
     ("MONSTER", "monster", 70, false),
     ("CREATURE", "creature", 10, true),
@@ -346,22 +352,36 @@ const CATEGORIES: [(&str, &str, i32, bool); 7] = [
 ];
 
 impl Server {
-    /// What spawns at a block position for a category (`getMobsAt`): a structure's own list
-    /// where one overrides the biome's (guardians in ocean monuments, witches in swamp huts,
-    /// pillagers at outposts, the mobs of nether fortresses), else the biome's.
-    pub fn spawners_at(&mut self, world: usize, x: i32, y: i32, z: i32, category: &str) -> Vec<SpawnerEntry> {
+    /// What spawns at a block position for a category (`getRandomSpawnMobAt`): an entry of the
+    /// spawn list there, picked by weight. That is a structure's own list where one overrides
+    /// the biome's (`getMobsAt`: guardians in ocean monuments, witches in swamp huts, pillagers
+    /// at outposts, the mobs of nether fortresses), else the biome's.
+    fn pick_spawner(&self, world: usize, x: i32, y: i32, z: i32, category: &str, rng: &mut impl Rng) -> Option<SpawnerEntry> {
+        fn pick<'a>(list: &'a [SpawnerEntry], rng: &mut impl Rng) -> Option<&'a SpawnerEntry> {
+            let total: i32 = list.iter().map(|s| s.weight).sum();
+            if total <= 0 {
+                return None;
+            }
+            let mut left = rng.gen_range(0..total);
+            list.iter().find(|s| {
+                left -= s.weight;
+                left < 0
+            })
+        }
         if let Some(g) = self.worlds[world].generator.staged() {
             if let Some(list) = g.inner.structure_spawns_at(x, y, z, category) {
-                return list.into_iter().map(|s| SpawnerEntry { entity: s.entity, weight: s.weight, min: s.min_count, max: s.max_count }).collect();
+                let list: Vec<SpawnerEntry> = list.into_iter().map(|s| SpawnerEntry { entity: s.entity, weight: s.weight, min: s.min_count, max: s.max_count }).collect();
+                return pick(&list, rng).cloned();
             }
         }
         let biome = self.biome_at(world, x, y, z);
-        self.biome_spawners(biome, category)
+        let spawns = self.biome_spawns(biome);
+        pick(spawns.by_category.get(category)?, rng).cloned()
     }
 
     /// What a biome spawns, read from the vanilla data and cached.
-    pub fn biome_spawns(&mut self, biome: &str) -> Arc<BiomeSpawns> {
-        if let Some(spawns) = self.spawner_cache.get(biome) {
+    pub fn biome_spawns(&self, biome: &str) -> Arc<BiomeSpawns> {
+        if let Some(spawns) = self.spawner_cache.read().get(biome) {
             return spawns.clone();
         }
         let spawns = Arc::new(match &self.vanilla {
@@ -371,12 +391,12 @@ impl Server {
             }
             None => BiomeSpawns::fallback(),
         });
-        self.spawner_cache.insert(biome.to_owned(), spawns.clone());
+        self.spawner_cache.write().insert(biome.to_owned(), spawns.clone());
         spawns
     }
 
     /// The spawn list of a biome for a category (`monster`, `creature`, ...).
-    pub fn biome_spawners(&mut self, biome: &str, category: &str) -> Vec<SpawnerEntry> {
+    pub fn biome_spawners(&self, biome: &str, category: &str) -> Vec<SpawnerEntry> {
         self.biome_spawns(biome).by_category.get(category).cloned().unwrap_or_default()
     }
 
@@ -551,8 +571,43 @@ impl Server {
         } else {
             self.mob_ai(world, id);
         }
-        self.mob_travel(world, id);
         self.mob_sounds(world, id);
+        // It moves once every mob has had its turn (see `move_mobs`).
+        self.moving.push(id);
+    }
+
+    /// Moves the mobs that had their turn this tick ([`travel`]). Each moves by itself among
+    /// the blocks, so they are moved in parallel on the tick pool, the world's entities taken
+    /// out of it meanwhile; what their moves lead to (the blocks they land on, falls that
+    /// hurt) is then seen to here, mob by mob. A mob thinks before any has moved, so it sees
+    /// where the others were at the start of the tick.
+    pub(super) fn move_mobs(&mut self, world: usize) {
+        let moving: crate::world::FastSet<i32> = self.moving.drain(..).collect();
+        if moving.is_empty() {
+            return;
+        }
+        let mut entities = std::mem::take(&mut self.worlds[world].entities);
+        let mut moved: Vec<(i32, Moved)> = {
+            let w = &self.worlds[world];
+            self.tick_pool.install(|| {
+                use rayon::prelude::*;
+                entities.par_iter_mut().filter(|(id, e)| moving.contains(id) && e.is_alive()).map(|(&id, e)| (id, travel(w, e))).collect()
+            })
+        };
+        self.worlds[world].entities = entities;
+        moved.sort_unstable_by_key(|(id, _)| *id);
+        for (id, m) in moved {
+            self.worlds[world].reindex_entity(id);
+            if let Some((feet, distance)) = m.came_down {
+                self.landed_on(world, feet, distance, id);
+            }
+            if let Some(distance) = m.landed {
+                let amount = (distance - 3.0).ceil() as f32;
+                if amount > 0.0 {
+                    self.hurt_entity(world, id, Damage::new("minecraft:fall"), amount);
+                }
+            }
+        }
     }
 
     /// Fire, lava, drowning, the void, sunlight and suffocation. Returns true if the mob died.
@@ -1207,154 +1262,6 @@ impl Server {
         self.explode_with(world, center, radius, griefing, fire, Some(id));
     }
 
-    /// Walking physics (`LivingEntity.travel` with the mob's move control).
-    fn mob_travel(&mut self, world: usize, id: i32) {
-        let Some(mut e) = self.worlds[world].entities.remove(&id) else { return };
-        let w = &self.worlds[world];
-        let info = e.info;
-        let kind = behavior(&info.name, &info.category);
-        let (speed_attr, step) = match e.mob() {
-            Some(mob) => (mob.attributes.value("movement_speed"), mob.attributes.value("step_height")),
-            None => (info.attribute("movement_speed").unwrap_or(0.25), info.attribute("step_height").unwrap_or(0.6)),
-        };
-        let area = e.bounding_box();
-        let in_water = survival::box_in_fluid(w, &area, Fluid::Water);
-        let in_lava = survival::box_in_fluid(w, &area, Fluid::Lava);
-        let was_on_ground = e.on_ground;
-        let y_before = e.pos.y;
-        let mut forward = 0.0;
-        let mut jump = false;
-
-        let eye = e.eye_pos();
-        if let EntityKind::Mob(mob) = &mut e.kind {
-            // Follow the path: aim at the centre of the next node.
-            while let Some(&(nx, ny, nz)) = mob.brain.path.first() {
-                let node = Vec3::new(nx as f64 + 0.5, ny as f64, nz as f64 + 0.5);
-                let d = node.sub(e.pos);
-                let reach = if info.width > 0.75 { info.width as f64 / 2.0 } else { 0.75 - info.width as f64 / 2.0 };
-                if d.horizontal_length() < reach && (d.y.abs() < 1.0) {
-                    mob.brain.path.remove(0);
-                    continue;
-                }
-                let target_yaw = (d.z.atan2(d.x).to_degrees() as f32) - 90.0;
-                e.yaw = rotate_towards(e.yaw, target_yaw, 90.0);
-                forward = speed_attr * mob.brain.speed_factor;
-                if d.y > step - 0.01 && d.horizontal_length() < info.width.max(1.0) as f64 + 0.5 || e.horizontal_collision && d.y > 0.0 {
-                    jump = true;
-                }
-                break;
-            }
-            // Swimmers and fliers drift towards where they look.
-            if matches!(kind, Behavior::Swimmer | Behavior::Flyer) {
-                if let Some(at) = mob.brain.look_at {
-                    let d = at.sub(e.pos);
-                    if d.length_squared() > 1.0 {
-                        e.yaw = rotate_towards(e.yaw, (d.z.atan2(d.x).to_degrees() as f32) - 90.0, 10.0);
-                        forward = speed_attr * 0.5;
-                        if kind == Behavior::Flyer {
-                            e.vel.y += (d.y.signum() * 0.1 - e.vel.y) * 0.1;
-                        }
-                    }
-                }
-            }
-            // Head and body look at what interests them.
-            if let Some(at) = mob.brain.look_at {
-                let d = at.sub(eye);
-                e.head_yaw = rotate_towards(e.head_yaw, (d.z.atan2(d.x).to_degrees() as f32) - 90.0, 10.0);
-                e.pitch = -(d.y.atan2(d.horizontal_length()).to_degrees() as f32).clamp(-40.0, 40.0);
-            } else {
-                e.head_yaw = rotate_towards(e.head_yaw, e.yaw, 10.0);
-            }
-            if forward > 0.0 {
-                e.head_yaw = rotate_towards(e.head_yaw, e.yaw, 75.0);
-            }
-            // Creepers stand still while their fuse burns.
-            if mob.brain.swelling || mob.living.is_dead() {
-                forward = 0.0;
-                jump = false;
-            }
-        }
-
-        let gravity = if e.no_gravity || kind == Behavior::Flyer { 0.0 } else { 0.08 };
-        let (sin, cos) = ((e.yaw as f64).to_radians().sin(), (e.yaw as f64).to_radians().cos());
-        let input = Vec3::new(-sin * forward * 0.98, 0.0, cos * forward * 0.98);
-        if in_water || in_lava {
-            // Swimming: slow and buoyant; land mobs paddle upwards (`FloatGoal`).
-            let accel = if kind == Behavior::Swimmer { 0.1 } else { 0.02 };
-            e.vel = e.vel.add(input.scale(accel / forward.max(1.0e-6) * if forward > 0.0 { 1.0 } else { 0.0 }));
-            if kind != Behavior::Swimmer && e.mob().is_some_and(|m| !m.living.is_dead()) {
-                e.vel.y += 0.04;
-            }
-            let d = e.vel;
-            e.move_by(w, d, step);
-            let drag = if in_lava { 0.5 } else { 0.8 };
-            e.vel = Vec3::new(e.vel.x * drag, e.vel.y * 0.8, e.vel.z * drag);
-            e.vel.y -= gravity / 4.0;
-        } else {
-            let slip = if e.on_ground { friction_below(w, e.pos) } else { 1.0 };
-            let friction = if e.on_ground { slip * 0.91 } else { 0.91 };
-            // `moveRelative(getFrictionInfluencedSpeed(), input)`: a mob's input is its speed
-            // (`Mob.setSpeed` sets `zza` too), so it speeds up by its speed squared.
-            let accel = if e.on_ground { forward * (0.216_000_02 / (slip * slip * slip)) } else { 0.02 };
-            if forward > 0.0 {
-                e.vel = e.vel.add(input.scale(accel));
-            }
-            if jump && e.on_ground {
-                e.vel.y = info.attribute("jump_strength").unwrap_or(0.42);
-            }
-            // Spiders climb walls.
-            if e.horizontal_collision && matches!(info.name.as_str(), "minecraft:spider" | "minecraft:cave_spider") && forward > 0.0 {
-                e.vel.y = 0.2;
-            }
-            let d = e.vel;
-            e.move_by(w, d, step);
-            e.vel = Vec3::new(e.vel.x * friction, (e.vel.y - gravity) * 0.98, e.vel.z * friction);
-        }
-        if e.vel.horizontal_length() < 0.003 && forward == 0.0 {
-            e.vel.x = 0.0;
-            e.vel.z = 0.0;
-        }
-
-        // Falling.
-        let fall_immune = is_fall_immune(&info.name) || kind == Behavior::Flyer || info.name == "minecraft:chicken";
-        let mut landed = None;
-        // Where it came down after a fall, for the block there (`Block.fallOn`: farmland).
-        let mut came_down = None;
-        let (pos_y, on_ground) = (e.pos.y, e.on_ground);
-        let feet = paper_protocol::codec::BlockPos::new(e.pos.x.floor() as i32, (e.pos.y - 0.2).floor() as i32, e.pos.z.floor() as i32);
-        if let EntityKind::Mob(mob) = &mut e.kind {
-            let dy = pos_y - y_before;
-            if in_water || in_lava {
-                mob.living.fall_distance = 0.0;
-            } else if on_ground {
-                if mob.living.fall_distance > 3.0 && !was_on_ground && !fall_immune {
-                    landed = Some(mob.living.fall_distance);
-                }
-                if mob.living.fall_distance > 0.5 && !was_on_ground {
-                    came_down = Some(mob.living.fall_distance as f64);
-                }
-                mob.living.fall_distance = 0.0;
-            } else if dy < 0.0 {
-                mob.living.fall_distance -= dy;
-            }
-        }
-        // Chickens flutter down.
-        if info.name == "minecraft:chicken" && !e.on_ground && e.vel.y < 0.0 {
-            e.vel.y *= 0.6;
-        }
-        self.worlds[world].entities.insert(id, e);
-        self.worlds[world].reindex_entity(id);
-        if let Some(distance) = came_down {
-            self.landed_on(world, feet, distance, id);
-        }
-        if let Some(distance) = landed {
-            let amount = (distance - 3.0).ceil() as f32;
-            if amount > 0.0 {
-                self.hurt_entity(world, id, Damage::new("minecraft:fall"), amount);
-            }
-        }
-    }
-
     /// Ambient noises now and then (`Mob.baseTick`).
     fn mob_sounds(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get_mut(&id).filter(|e| !e.flags.silent) else { return };
@@ -1382,14 +1289,16 @@ impl Server {
             if !self.worlds[world].rules.bool("spawn_mobs") {
                 continue;
             }
-            // Chunks within eight chunks of a player that are loaded and lit.
+            // Chunks within eight chunks of a player that are loaded and lit, in random order
+            // (`ServerChunkCache.tickChunks` shuffles them).
+            let mut seen: std::collections::HashSet<ChunkPos> = std::collections::HashSet::new();
             let mut chunks: Vec<ChunkPos> = Vec::new();
             for p in self.players.values().filter(|p| p.world == world && p.game_mode != GameMode::Spectator) {
                 let c = p.loc.chunk();
                 for dz in -8..=8 {
                     for dx in -8..=8 {
                         let pos = ChunkPos::new(c.x + dx, c.z + dz);
-                        if self.worlds[world].is_ready(pos) && !chunks.contains(&pos) {
+                        if self.worlds[world].is_ready(pos) && seen.insert(pos) {
                             chunks.push(pos);
                         }
                     }
@@ -1398,6 +1307,7 @@ impl Server {
             if chunks.is_empty() {
                 continue;
             }
+            rand::seq::SliceRandom::shuffle(chunks.as_mut_slice(), &mut rand::thread_rng());
             // Mob counts per category against the caps scaled by the spawnable area.
             let mut counts: HashMap<&str, i32> = HashMap::new();
             for e in self.worlds[world].entities.values() {
@@ -1407,6 +1317,8 @@ impl Server {
             }
             let spawn_monsters = self.worlds[world].rules.bool("spawn_monsters") && self.difficulty != Difficulty::Peaceful;
             let friendly_tick = self.worlds[world].age % 400 == 0;
+            // Where the players are, for the distance checks of every try (looked up once).
+            let players: Vec<Vec3> = self.players.values().filter(|p| p.world == world && p.game_mode != GameMode::Spectator).map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z)).collect();
             let mut rng = rand::thread_rng();
             for (category, key, cap, persistent) in CATEGORIES {
                 if category == "MONSTER" && !spawn_monsters || persistent && !friendly_tick {
@@ -1416,11 +1328,22 @@ impl Server {
                 if counts.get(category).copied().unwrap_or(0) >= cap {
                     continue;
                 }
-                for &chunk in &chunks {
-                    if rng.gen_range(0..2) == 0 && category == "MONSTER" {
-                        continue;
-                    }
-                    let spawned = self.spawn_category_in_chunk(world, chunk, category, key);
+                // Monsters are tried in half of the chunks.
+                let tried: Vec<ChunkPos> = chunks.iter().copied().filter(|_| category != "MONSTER" || rng.gen_range(0..2) != 0).collect();
+                // Where they could spawn in each chunk: the search only reads the world, so the
+                // chunks are searched in parallel on the tick pool. Spawning is then done here,
+                // chunk by chunk in order, until the cap is reached. (The spots are all found
+                // before any of these mobs spawn; spawning one does not change where the others
+                // fit, as only blocks are in the way.)
+                let found: Vec<Vec<SpawnSpot>> = {
+                    let this = &*self;
+                    this.tick_pool.install(|| {
+                        use rayon::prelude::*;
+                        tried.par_iter().map(|&chunk| this.find_spawns(world, chunk, category, key, &players)).collect()
+                    })
+                };
+                for spots in found.into_iter().filter(|s| !s.is_empty()) {
+                    let spawned = self.spawn_found(world, spots);
                     *counts.entry(category).or_default() += spawned;
                     if counts[category] >= cap {
                         break;
@@ -1430,18 +1353,48 @@ impl Server {
         }
     }
 
-    fn spawn_category_in_chunk(&mut self, world: usize, chunk: ChunkPos, category: &str, key: &str) -> i32 {
+    /// Spawns mobs at the spots [`Server::find_spawns`] found in a chunk, plugins permitting,
+    /// until the chunk has had as many as one type takes (`getMaxSpawnClusterSize`). Returns
+    /// how many spawned.
+    fn spawn_found(&mut self, world: usize, spots: Vec<SpawnSpot>) -> i32 {
+        let mut count = 0;
+        for spot in spots {
+            // Plugins may skip this one, or end this whole attempt (Paper's
+            // `PreCreatureSpawnEvent`). Paper asks before checking the spot; asking the plugin
+            // host for every try would cost far more than the check, so only spots where the
+            // mob would spawn are asked about.
+            match crate::plugins::events::on_pre_creature_spawn(self, world, &spot.entity, spot.at, "NATURAL") {
+                crate::plugins::events::PreSpawn::Spawn => {}
+                crate::plugins::events::PreSpawn::Skip => continue,
+                crate::plugins::events::PreSpawn::Abort => return count,
+            }
+            if self.spawn_mob(world, &spot.entity, spot.at, SpawnReason::Natural).is_some() {
+                count += 1;
+                let limit = entity_types::by_name(&spot.entity).map_or(4, |i| i.limit_per_chunk.max(1));
+                if count >= limit {
+                    return count;
+                }
+            }
+        }
+        count
+    }
+
+    /// Where mobs of a category could spawn in a chunk now (`spawnCategoryForChunk`, short of
+    /// spawning them): up to three groups from a random spot, each trying as many places as
+    /// the group is big; the places that pass every check, in order. Only reads the world.
+    fn find_spawns(&self, world: usize, chunk: ChunkPos, category: &str, key: &str, players: &[Vec3]) -> Vec<SpawnSpot> {
+        let mut out = Vec::new();
         let mut rng = rand::thread_rng();
         let w = &self.worlds[world];
         let spawn_center = Vec3::new(w.spawn.x as f64 + 0.5, w.spawn.y as f64 + 0.5, w.spawn.z as f64 + 0.5);
         let (x0, z0) = (chunk.x * 16 + rng.gen_range(0..16), chunk.z * 16 + rng.gen_range(0..16));
-        let Some(top) = w.chunks.get(&chunk).map(|c| c.min_y + c.world_surface[(((z0 & 15) << 4) | (x0 & 15)) as usize] as i32 + 1) else { return 0 };
+        let Some(top) = w.chunks.get(&chunk).map(|c| c.min_y + c.world_surface[(((z0 & 15) << 4) | (x0 & 15)) as usize] as i32 + 1) else { return out };
         let y = rng.gen_range(w.min_y..=top.max(w.min_y));
         if y < w.min_y + 1 {
-            return 0;
+            return out;
         }
         if w.block_at(x0, y, z0).is_none_or(|s| paper_data::physics::flags(s) & paper_data::physics::SOLID_BLOCK != 0) {
-            return 0;
+            return out;
         }
         // Mobs of most categories only spawn where they would not despawn at once
         // (`canSpawnFarFromPlayer`, `getDespawnDistance`); animals anywhere in range.
@@ -1450,19 +1403,17 @@ impl Server {
             "WATER_AMBIENT" => 64.0 * 64.0,
             _ => 128.0 * 128.0,
         };
-        let mut count = 0;
         for _ in 0..3 {
             let (mut x, mut z) = (x0, z0);
             let mut pack = (rng.gen::<f32>() * 4.0).ceil() as i32;
             let mut chosen: Option<SpawnerEntry> = None;
-            let mut in_pack = 0;
             let mut r = 0;
             while r < pack {
                 r += 1;
                 x += rng.gen_range(0..6) - rng.gen_range(0..6);
                 z += rng.gen_range(0..6) - rng.gen_range(0..6);
                 let at = Vec3::new(x as f64 + 0.5, y as f64, z as f64 + 0.5);
-                let nearest = self.players.values().filter(|p| p.world == world).map(|p| Vec3::new(p.loc.x, p.loc.y, p.loc.z).distance_squared(at)).fold(f64::MAX, f64::min);
+                let nearest = players.iter().map(|p| p.distance_squared(at)).fold(f64::MAX, f64::min);
                 // Not too close to a player, not so far that it would despawn at once, and not
                 // within 24 blocks of the world spawn (`isRightDistanceToPlayerAndSpawnPoint`).
                 if nearest <= 576.0 || nearest > far || spawn_center.distance_squared(at) < 576.0 {
@@ -1470,46 +1421,17 @@ impl Server {
                 }
                 if chosen.is_none() {
                     // What spawns here (`getRandomSpawnMobAt`), structures included.
-                    let spawners = self.spawners_at(world, x, y, z, key);
-                    let total: i32 = spawners.iter().map(|s| s.weight).sum();
-                    if total <= 0 {
-                        break;
-                    }
-                    let mut pick = rng.gen_range(0..total);
-                    for s in &spawners {
-                        pick -= s.weight;
-                        if pick < 0 {
-                            chosen = Some(s.clone());
-                            break;
-                        }
-                    }
+                    chosen = self.pick_spawner(world, x, y, z, key, &mut rng);
                     let Some(c) = &chosen else { break };
                     pack = c.min + rng.gen_range(0..=(c.max - c.min).max(0));
                 }
-                let entry = chosen.clone().unwrap();
-                if !self.can_spawn_at(world, &entry.entity, x, y, z, SpawnReason::Natural) {
-                    continue;
-                }
-                // Plugins may skip this one, or end this whole attempt (Paper's
-                // `PreCreatureSpawnEvent`). Paper asks before checking the spot; asking the
-                // plugin host for every try would cost far more than the check, so only spots
-                // where the mob would spawn are asked about.
-                match crate::plugins::events::on_pre_creature_spawn(self, world, &entry.entity, at, "NATURAL") {
-                    crate::plugins::events::PreSpawn::Spawn => {}
-                    crate::plugins::events::PreSpawn::Skip => continue,
-                    crate::plugins::events::PreSpawn::Abort => return count,
-                }
-                if self.spawn_mob(world, &entry.entity, at, SpawnReason::Natural).is_some() {
-                    count += 1;
-                    in_pack += 1;
-                    let limit = entity_types::by_name(&entry.entity).map_or(4, |i| i.limit_per_chunk.max(1));
-                    if count >= limit || in_pack >= pack {
-                        return count;
-                    }
+                let Some(entry) = chosen.as_ref() else { break };
+                if self.can_spawn_at(world, &entry.entity, x, y, z, SpawnReason::Natural) {
+                    out.push(SpawnSpot { entity: entry.entity.clone(), at });
                 }
             }
         }
-        count
+        out
     }
 
     /// Whether a mob of a type may spawn at a block position (`isValidSpawnPostitionForType`
@@ -1882,6 +1804,150 @@ fn category_key(category: &str) -> &'static str {
         "WATER_CREATURE" => "WATER_CREATURE",
         _ => "MISC",
     }
+}
+
+/// What came of a mob's move for the server to see to: the block it came down on after a
+/// fall (and how far it fell), and a fall long enough to hurt.
+pub(super) struct Moved {
+    came_down: Option<(paper_protocol::codec::BlockPos, f64)>,
+    landed: Option<f64>,
+}
+
+/// Walking physics (`LivingEntity.travel` with the mob's move control). A mob moves by
+/// itself among the blocks around it, so mobs can be moved in parallel.
+pub(super) fn travel(w: &World, e: &mut Entity) -> Moved {
+    let info = e.info;
+    let kind = behavior(&info.name, &info.category);
+    let (speed_attr, step) = match e.mob() {
+        Some(mob) => (mob.attributes.value("movement_speed"), mob.attributes.value("step_height")),
+        None => (info.attribute("movement_speed").unwrap_or(0.25), info.attribute("step_height").unwrap_or(0.6)),
+    };
+    let area = e.bounding_box();
+    let in_water = survival::box_in_fluid(w, &area, Fluid::Water);
+    let in_lava = survival::box_in_fluid(w, &area, Fluid::Lava);
+    let was_on_ground = e.on_ground;
+    let y_before = e.pos.y;
+    let mut forward = 0.0;
+    let mut jump = false;
+
+    let eye = e.eye_pos();
+    if let EntityKind::Mob(mob) = &mut e.kind {
+        // Follow the path: aim at the centre of the next node.
+        while let Some(&(nx, ny, nz)) = mob.brain.path.first() {
+            let node = Vec3::new(nx as f64 + 0.5, ny as f64, nz as f64 + 0.5);
+            let d = node.sub(e.pos);
+            let reach = if info.width > 0.75 { info.width as f64 / 2.0 } else { 0.75 - info.width as f64 / 2.0 };
+            if d.horizontal_length() < reach && (d.y.abs() < 1.0) {
+                mob.brain.path.remove(0);
+                continue;
+            }
+            let target_yaw = (d.z.atan2(d.x).to_degrees() as f32) - 90.0;
+            e.yaw = rotate_towards(e.yaw, target_yaw, 90.0);
+            forward = speed_attr * mob.brain.speed_factor;
+            if d.y > step - 0.01 && d.horizontal_length() < info.width.max(1.0) as f64 + 0.5 || e.horizontal_collision && d.y > 0.0 {
+                jump = true;
+            }
+            break;
+        }
+        // Swimmers and fliers drift towards where they look.
+        if matches!(kind, Behavior::Swimmer | Behavior::Flyer) {
+            if let Some(at) = mob.brain.look_at {
+                let d = at.sub(e.pos);
+                if d.length_squared() > 1.0 {
+                    e.yaw = rotate_towards(e.yaw, (d.z.atan2(d.x).to_degrees() as f32) - 90.0, 10.0);
+                    forward = speed_attr * 0.5;
+                    if kind == Behavior::Flyer {
+                        e.vel.y += (d.y.signum() * 0.1 - e.vel.y) * 0.1;
+                    }
+                }
+            }
+        }
+        // Head and body look at what interests them.
+        if let Some(at) = mob.brain.look_at {
+            let d = at.sub(eye);
+            e.head_yaw = rotate_towards(e.head_yaw, (d.z.atan2(d.x).to_degrees() as f32) - 90.0, 10.0);
+            e.pitch = -(d.y.atan2(d.horizontal_length()).to_degrees() as f32).clamp(-40.0, 40.0);
+        } else {
+            e.head_yaw = rotate_towards(e.head_yaw, e.yaw, 10.0);
+        }
+        if forward > 0.0 {
+            e.head_yaw = rotate_towards(e.head_yaw, e.yaw, 75.0);
+        }
+        // Creepers stand still while their fuse burns.
+        if mob.brain.swelling || mob.living.is_dead() {
+            forward = 0.0;
+            jump = false;
+        }
+    }
+
+    let gravity = if e.no_gravity || kind == Behavior::Flyer { 0.0 } else { 0.08 };
+    let (sin, cos) = ((e.yaw as f64).to_radians().sin(), (e.yaw as f64).to_radians().cos());
+    let input = Vec3::new(-sin * forward * 0.98, 0.0, cos * forward * 0.98);
+    if in_water || in_lava {
+        // Swimming: slow and buoyant; land mobs paddle upwards (`FloatGoal`).
+        let accel = if kind == Behavior::Swimmer { 0.1 } else { 0.02 };
+        e.vel = e.vel.add(input.scale(accel / forward.max(1.0e-6) * if forward > 0.0 { 1.0 } else { 0.0 }));
+        if kind != Behavior::Swimmer && e.mob().is_some_and(|m| !m.living.is_dead()) {
+            e.vel.y += 0.04;
+        }
+        let d = e.vel;
+        e.move_by(w, d, step);
+        let drag = if in_lava { 0.5 } else { 0.8 };
+        e.vel = Vec3::new(e.vel.x * drag, e.vel.y * 0.8, e.vel.z * drag);
+        e.vel.y -= gravity / 4.0;
+    } else {
+        let slip = if e.on_ground { friction_below(w, e.pos) } else { 1.0 };
+        let friction = if e.on_ground { slip * 0.91 } else { 0.91 };
+        // `moveRelative(getFrictionInfluencedSpeed(), input)`: a mob's input is its speed
+        // (`Mob.setSpeed` sets `zza` too), so it speeds up by its speed squared.
+        let accel = if e.on_ground { forward * (0.216_000_02 / (slip * slip * slip)) } else { 0.02 };
+        if forward > 0.0 {
+            e.vel = e.vel.add(input.scale(accel));
+        }
+        if jump && e.on_ground {
+            e.vel.y = info.attribute("jump_strength").unwrap_or(0.42);
+        }
+        // Spiders climb walls.
+        if e.horizontal_collision && matches!(info.name.as_str(), "minecraft:spider" | "minecraft:cave_spider") && forward > 0.0 {
+            e.vel.y = 0.2;
+        }
+        let d = e.vel;
+        e.move_by(w, d, step);
+        e.vel = Vec3::new(e.vel.x * friction, (e.vel.y - gravity) * 0.98, e.vel.z * friction);
+    }
+    if e.vel.horizontal_length() < 0.003 && forward == 0.0 {
+        e.vel.x = 0.0;
+        e.vel.z = 0.0;
+    }
+
+    // Falling.
+    let fall_immune = is_fall_immune(&info.name) || kind == Behavior::Flyer || info.name == "minecraft:chicken";
+    let mut landed = None;
+    // Where it came down after a fall, for the block there (`Block.fallOn`: farmland).
+    let mut came_down = None;
+    let (pos_y, on_ground) = (e.pos.y, e.on_ground);
+    let feet = paper_protocol::codec::BlockPos::new(e.pos.x.floor() as i32, (e.pos.y - 0.2).floor() as i32, e.pos.z.floor() as i32);
+    if let EntityKind::Mob(mob) = &mut e.kind {
+        let dy = pos_y - y_before;
+        if in_water || in_lava {
+            mob.living.fall_distance = 0.0;
+        } else if on_ground {
+            if mob.living.fall_distance > 3.0 && !was_on_ground && !fall_immune {
+                landed = Some(mob.living.fall_distance);
+            }
+            if mob.living.fall_distance > 0.5 && !was_on_ground {
+                came_down = Some(mob.living.fall_distance as f64);
+            }
+            mob.living.fall_distance = 0.0;
+        } else if dy < 0.0 {
+            mob.living.fall_distance -= dy;
+        }
+    }
+    // Chickens flutter down.
+    if info.name == "minecraft:chicken" && !e.on_ground && e.vel.y < 0.0 {
+        e.vel.y *= 0.6;
+    }
+    Moved { came_down: came_down.map(|d| (feet, d)), landed }
 }
 
 /// Turns `from` towards `to` by at most `max` degrees.

@@ -98,9 +98,14 @@ impl Section {
 
     /// Whether any block of the section is one of `states`.
     pub fn contains_any(&self, states: &[u16]) -> bool {
+        self.contains_where(|v| states.contains(&v))
+    }
+
+    /// Whether any block of the section is in a state `wanted` says yes to.
+    pub fn contains_where(&self, wanted: impl Fn(u16) -> bool) -> bool {
         match &self.blocks {
-            BlockStorage::Uniform(v) => states.contains(v),
-            BlockStorage::Dense(data) => data.iter().any(|v| states.contains(v)),
+            BlockStorage::Uniform(v) => wanted(*v),
+            BlockStorage::Dense(data) => data.iter().any(|v| wanted(*v)),
         }
     }
 

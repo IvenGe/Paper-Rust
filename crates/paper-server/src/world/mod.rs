@@ -41,6 +41,12 @@ use paper_protocol::packets::encode_packet;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
+/// A map hashed fast (`foldhash`) rather than with SipHash: for the maps by chunk position
+/// and by entity id that nearly every block and entity access looks things up in.
+pub type FastMap<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
+/// A set hashed the same way.
+pub type FastSet<K> = HashSet<K, foldhash::fast::RandomState>;
+
 /// Results of worker jobs, delivered to the main thread.
 pub enum WorldEvent {
     /// A finished chunk was generated or loaded.
@@ -97,7 +103,7 @@ pub struct World {
     /// (trees from saplings in a flat world).
     pub vanilla: Option<Arc<crate::vanilla::VanillaData>>,
     grown_features: std::sync::OnceLock<Option<Arc<staged::VanillaGenerator>>>,
-    pub chunks: HashMap<ChunkPos, Chunk>,
+    pub chunks: FastMap<ChunkPos, Chunk>,
     pub spawn: BlockPos,
     pub spawn_yaw: f32,
     /// A new vanilla overworld's spawn, found on the spawn finder's own copy of the spawn
@@ -130,9 +136,9 @@ pub struct World {
     /// saves it; `None` until a plugin sets something or the world had some.
     pub plugin_data: Option<paper_nbt::Compound>,
     /// Entities other than players, by entity id.
-    pub entities: HashMap<i32, entity::Entity>,
+    pub entities: FastMap<i32, entity::Entity>,
     /// Entity ids per chunk, for area queries and saving.
-    pub entity_chunks: HashMap<ChunkPos, HashSet<i32>>,
+    pub entity_chunks: FastMap<ChunkPos, FastSet<i32>>,
     /// Block entities removed by block changes since the server last looked (position, old
     /// block state, data).
     pub removed_block_entities: Vec<(BlockPos, u32, paper_nbt::Compound)>,
@@ -311,7 +317,7 @@ impl World {
             generator,
             vanilla: None,
             grown_features: std::sync::OnceLock::new(),
-            chunks: HashMap::new(),
+            chunks: FastMap::default(),
             age: 0,
             day_time: 0,
             daylight_cycle: true,
@@ -327,8 +333,8 @@ impl World {
             biome_count: paper_data::synced::entries("minecraft:worldgen/biome").map_or(1, |e| e.len() as u32),
             storage: None,
             plugin_data: None,
-            entities: HashMap::new(),
-            entity_chunks: HashMap::new(),
+            entities: FastMap::default(),
+            entity_chunks: FastMap::default(),
             removed_block_entities: Vec::new(),
             updates: block_updates::BlockUpdateState::new(dimension, seed),
             tickets: HashMap::new(),

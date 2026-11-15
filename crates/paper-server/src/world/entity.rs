@@ -12,7 +12,6 @@ use paper_data::entity_types::EntityTypeInfo;
 use paper_data::physics;
 use paper_protocol::text::Component;
 use paper_protocol::types::Slot;
-use std::collections::HashSet;
 use uuid::Uuid;
 
 /// A 3D vector.
@@ -602,7 +601,7 @@ pub struct Entity {
     /// The chunk it is indexed under.
     pub chunk: ChunkPos,
     // --- client tracking ---
-    pub viewers: HashSet<i32>,
+    pub viewers: crate::world::FastSet<i32>,
     pub sent_pos: Vec3,
     pub sent_yaw: f32,
     pub sent_pitch: f32,
@@ -642,7 +641,7 @@ impl Entity {
             removed: false,
             kind,
             chunk: pos.chunk(),
-            viewers: HashSet::new(),
+            viewers: Default::default(),
             sent_pos: pos,
             sent_yaw: 0.0,
             sent_pitch: 0.0,

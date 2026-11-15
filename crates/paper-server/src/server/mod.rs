@@ -10,6 +10,9 @@
 //!   single-threaded world, exactly as on Paper.
 //! * **Worker pool** (rayon): chunk generation, lighting, chunk packet encoding and
 //!   compression. Jobs are pure functions over snapshots and report back with a task.
+//! * **Tick pool** (rayon): parts of the tick that split into independent pieces (moving
+//!   mobs, searching for spawn spots, tracking entities) while the main thread waits, so the
+//!   game state is still changed from one place at a time.
 
 pub mod block_updates;
 pub mod borders;
@@ -75,7 +78,7 @@ use crate::config::{Config, GameMode};
 use crate::net::{auth, ConfigPackets, PlayerConn, Shared, StatusSnapshot};
 use crate::world::generator::{FlatGenerator, Generator, NoiseGenerator};
 use crate::world::storage::{ChunkIo, WorldStorage};
-use crate::world::{WorkerContext, World, WorldEvent};
+use crate::world::{FastMap, WorkerContext, World, WorldEvent};
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use crossbeam_channel::{Receiver, RecvTimeoutError};
@@ -119,6 +122,22 @@ pub enum MainTask {
     /// The plugin host process went away.
     PluginHostDied(String),
     Shutdown,
+}
+
+impl MainTask {
+    /// What kind of work it is, for the tick profile.
+    fn kind(&self) -> &'static str {
+        match self {
+            MainTask::Join(_) => "tasks: joins",
+            MainTask::Packet { .. } => "tasks: packets",
+            MainTask::Disconnected { .. } => "tasks: disconnects",
+            MainTask::World { .. } => "tasks: chunk results",
+            MainTask::ConsoleCommand(_) => "tasks: console",
+            MainTask::Run(_) => "tasks: closures",
+            MainTask::PluginWake | MainTask::PluginHostDied(_) => "tasks: plugin host",
+            MainTask::Shutdown => "tasks: shutdown",
+        }
+    }
 }
 
 /// Rolling tick statistics for `/tps` and `/mspt`.
@@ -177,11 +196,37 @@ impl TickStats {
     }
 }
 
+/// Time spent in each part of the tick, and on tasks between ticks (packets, finished worker
+/// jobs), summed until taken (`Server::take_profile`). Two clock reads a part, so it is
+/// always on.
+#[derive(Clone, Debug, Default)]
+pub struct TickProfile {
+    pub ticks: u64,
+    pub phases: Vec<(&'static str, Duration)>,
+}
+
+impl TickProfile {
+    pub fn add(&mut self, phase: &'static str, took: Duration) {
+        match self.phases.iter_mut().find(|(name, _)| *name == phase) {
+            Some((_, total)) => *total += took,
+            None => self.phases.push((phase, took)),
+        }
+    }
+
+    /// Milliseconds a tick, per part, most first.
+    pub fn per_tick(&self) -> Vec<(&'static str, f64)> {
+        let ticks = self.ticks.max(1) as f64;
+        let mut out: Vec<(&'static str, f64)> = self.phases.iter().map(|(name, total)| (*name, total.as_secs_f64() * 1000.0 / ticks)).collect();
+        out.sort_by(|a, b| b.1.total_cmp(&a.1));
+        out
+    }
+}
+
 pub struct Server {
     pub config: Arc<Config>,
     pub shared: Arc<Shared>,
     pub worlds: Vec<World>,
-    pub players: HashMap<i32, Player>,
+    pub players: FastMap<i32, Player>,
     /// Entity ids in join order.
     pub player_order: Vec<i32>,
     pub by_uuid: HashMap<Uuid, i32>,
@@ -224,14 +269,23 @@ pub struct Server {
     /// `minecraft:damage_type` entries (death messages, exhaustion, difficulty scaling).
     pub damage_types: HashMap<String, survival::DamageTypeInfo>,
     /// What each biome spawns, read from the vanilla data on demand.
-    pub spawner_cache: HashMap<String, Arc<mobs::BiomeSpawns>>,
+    pub spawner_cache: RwLock<HashMap<String, Arc<mobs::BiomeSpawns>>>,
     /// What each brewing stand started brewing with (vanilla keeps it only in memory too).
     pub brewing_ingredients: HashMap<(usize, paper_protocol::codec::BlockPos), i32>,
     /// End gateways cooling down after a teleport: (world, gateway) -> tick it was used.
     pub gateway_cooldowns: HashMap<(usize, paper_protocol::codec::BlockPos), u64>,
+    /// Where the time of recent ticks went (see `TickProfile`).
+    pub profile: TickProfile,
+    /// Threads that share the work of a tick that can be split up; the main thread waits
+    /// for them, so the game state is still only changed from one place at a time.
+    pub(crate) tick_pool: Arc<rayon::ThreadPool>,
+    /// Mobs that had their turn this tick and are still to move (see `mobs::move_mobs`).
+    moving: Vec<i32>,
     tasks: Receiver<MainTask>,
     /// Tasks put aside while the main thread waited for chunks (`load_chunk_now`).
-    deferred: std::collections::VecDeque<MainTask>,
+    /// (Behind a lock that is never taken, only reached through `get_mut`, so that the server
+    /// can be shared with the tick pool: tasks can be sent, not shared.)
+    deferred: parking_lot::Mutex<std::collections::VecDeque<MainTask>>,
     status_dirty: bool,
 }
 
@@ -305,6 +359,13 @@ impl Server {
             .thread_name(|i| format!("Worker-{i}"))
             .build()
             .context("creating the worker pool")?;
+        let tick_pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(config.tick_threads())
+                .thread_name(|i| format!("Tick-{i}"))
+                .build()
+                .context("creating the tick pool")?,
+        );
         let notify_tx = to_main.clone();
         let workers = WorkerContext {
             pool: Arc::new(pool),
@@ -396,7 +457,7 @@ impl Server {
             config,
             shared: shared.clone(),
             worlds,
-            players: HashMap::new(),
+            players: FastMap::default(),
             player_order: Vec::new(),
             by_uuid: HashMap::new(),
             tick: 0,
@@ -420,9 +481,12 @@ impl Server {
             trades: villagers::Trades::new(vanilla.clone()),
             recipes: vanilla.as_ref().map(|v| Arc::new(recipes::Recipes::load(v))),
             damage_types: survival::load_damage_types(vanilla.as_deref()),
-            spawner_cache: HashMap::new(),
+            spawner_cache: Default::default(),
             brewing_ingredients: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
+            profile: TickProfile::default(),
+            tick_pool,
+            moving: Vec::new(),
             vanilla,
             tasks,
             deferred: Default::default(),
@@ -577,13 +641,18 @@ impl Server {
         let mut next_tick = Instant::now();
         while self.running {
             // Tasks put aside while waiting for chunks come first.
-            while let Some(task) = self.deferred.pop_front() {
+            while let Some(task) = self.deferred.get_mut().pop_front() {
                 self.handle_task(task);
             }
             // Until the next tick is due, handle tasks the moment they arrive.
             loop {
                 match self.tasks.recv_deadline(next_tick) {
-                    Ok(task) => self.handle_task(task),
+                    Ok(task) => {
+                        let started = Instant::now();
+                        let kind = task.kind();
+                        self.handle_task(task);
+                        self.profile.add(kind, started.elapsed());
+                    }
                     Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => {
                         self.running = false;
@@ -610,6 +679,11 @@ impl Server {
             }
         }
         self.shutdown();
+    }
+
+    /// What has been timed so far, starting over.
+    pub fn take_profile(&mut self) -> TickProfile {
+        std::mem::take(&mut self.profile)
     }
 
     /// Unloads the chunks of every world that nobody needs any more, telling plugins that
@@ -668,20 +742,31 @@ impl Server {
 
     fn tick(&mut self) {
         self.tick += 1;
+        self.profile.ticks += 1;
+        // Each part of the tick, timed (see `TickProfile`).
+        macro_rules! phase {
+            ($name:literal, $body:expr) => {{
+                let started = Instant::now();
+                $body;
+                self.profile.add($name, started.elapsed());
+            }};
+        }
         // Plugin scheduler tasks run at the start of the tick, as in Paper.
-        crate::plugins::events::tick(self);
+        phase!("plugin tasks", crate::plugins::events::tick(self));
 
         let workers = self.workers.clone();
-        for world in &mut self.worlds {
-            world.tick_time();
-            world.pump(&workers);
-        }
+        phase!("chunk jobs", {
+            for world in &mut self.worlds {
+                world.tick_time();
+                world.pump(&workers);
+            }
+        });
         // Rain, thunder and what they do (see `weather`).
-        self.tick_weather();
+        phase!("weather", self.tick_weather());
         // World borders moving to a new size (see `borders`).
-        self.tick_borders();
+        phase!("borders", self.tick_borders());
         // Scheduled block and fluid ticks and block events (see `block_updates`).
-        self.tick_block_updates();
+        phase!("block updates", self.tick_block_updates());
         // Clients run their own clock; resynchronise once a second like vanilla.
         if self.tick % 20 == 0 {
             for index in 0..self.worlds.len() {
@@ -689,35 +774,35 @@ impl Server {
             }
         }
 
-        self.tick_keep_alive();
-        self.tick_chunk_views();
-        self.tick_players();
-        self.tick_effects();
-        self.tick_digging();
-        self.tick_sleeping();
-        self.tick_entities();
-        self.tick_riding();
-        self.tick_merchants();
-        self.tick_attributes();
-        self.tick_spawning();
-        self.tick_furnaces();
-        self.tick_spawners();
-        self.tick_brewing_stands();
-        self.tick_hoppers();
-        self.tick_pressure_plates();
-        self.tick_dragon_fights();
-        self.tick_stats();
-        self.tick_tracker();
+        phase!("keep alive", self.tick_keep_alive());
+        phase!("chunk views", self.tick_chunk_views());
+        phase!("players", self.tick_players());
+        phase!("effects", self.tick_effects());
+        phase!("digging", self.tick_digging());
+        phase!("sleeping", self.tick_sleeping());
+        phase!("entities", self.tick_entities());
+        phase!("riding", self.tick_riding());
+        phase!("merchants", self.tick_merchants());
+        phase!("attributes", self.tick_attributes());
+        phase!("spawning", self.tick_spawning());
+        phase!("furnaces", self.tick_furnaces());
+        phase!("spawners", self.tick_spawners());
+        phase!("brewing", self.tick_brewing_stands());
+        phase!("hoppers", self.tick_hoppers());
+        phase!("pressure plates", self.tick_pressure_plates());
+        phase!("dragon fights", self.tick_dragon_fights());
+        phase!("stats", self.tick_stats());
+        phase!("player tracker", self.tick_tracker());
 
         if self.tick % 100 == 0 {
             self.broadcast_latency();
         }
         if self.tick % 200 == 0 {
-            self.unload_unused_chunks();
+            phase!("chunk unloading", self.unload_unused_chunks());
         }
         let autosave = self.config.paper.world.autosave_interval_ticks;
         if autosave > 0 && self.tick % autosave == 0 {
-            self.save_all(false);
+            phase!("autosave", self.save_all(false));
         }
         if self.status_dirty {
             self.refresh_status();
@@ -840,7 +925,7 @@ impl Server {
             self.worlds[world].pump(&workers);
             match self.tasks.recv_timeout(Duration::from_millis(2)) {
                 Ok(task @ MainTask::World { .. }) => self.handle_task(task),
-                Ok(other) => self.deferred.push_back(other),
+                Ok(other) => self.deferred.get_mut().push_back(other),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -1025,3 +1110,9 @@ fn save_world_files(world: &mut World, game_type: i32, hardcore: bool) {
     }
     log::debug!("Queued {chunks} chunk(s) of '{}' for saving", world.name);
 }
+
+/// The tick pool reads the server while the main thread waits, so it must be shareable.
+const _: fn() = || {
+    fn shareable<T: Sync>() {}
+    shareable::<Server>();
+};

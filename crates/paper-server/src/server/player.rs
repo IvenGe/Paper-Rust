@@ -44,9 +44,9 @@ pub struct ChunkView {
     pub center: ChunkPos,
     pub radius: i32,
     /// Chunks the player holds a ticket for.
-    pub tracked: HashSet<ChunkPos>,
+    pub tracked: crate::world::FastSet<ChunkPos>,
     /// Chunks already sent to the client.
-    pub sent: HashSet<ChunkPos>,
+    pub sent: crate::world::FastSet<ChunkPos>,
     /// Tracked chunks not sent yet, nearest last (so the next one pops off the end).
     pub pending: Vec<ChunkPos>,
     /// Chunks the client says it can take per tick.
@@ -61,8 +61,8 @@ impl ChunkView {
         Self {
             center,
             radius,
-            tracked: HashSet::new(),
-            sent: HashSet::new(),
+            tracked: Default::default(),
+            sent: Default::default(),
             pending: Vec::new(),
             // Vanilla's starting values: 9 chunks per tick, one unacknowledged batch.
             desired_per_tick: 9.0,

@@ -17,7 +17,7 @@
 
 use super::chunk::{BlockStorage, Chunk, ChunkPos, LightSection, Section};
 use paper_data::blocks;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 /// The terrain of one chunk, as needed for lighting.
@@ -257,7 +257,7 @@ pub enum LightKind {
 pub type ChangedSection = (ChunkPos, usize, LightKind);
 
 struct Access<'a> {
-    chunks: &'a mut HashMap<ChunkPos, Chunk>,
+    chunks: &'a mut crate::world::FastMap<ChunkPos, Chunk>,
     kind: LightKind,
     changed: &'a mut HashSet<ChangedSection>,
 }
@@ -361,7 +361,7 @@ impl Access<'_> {
 /// Repairs lighting after the block at `(x, y, z)` changed from `old_state` to `new_state`
 /// (the chunk must already hold the new state). Returns the light sections that changed.
 pub fn update_after_block_change(
-    chunks: &mut HashMap<ChunkPos, Chunk>,
+    chunks: &mut crate::world::FastMap<ChunkPos, Chunk>,
     has_skylight: bool,
     x: i32,
     y: i32,
@@ -434,7 +434,7 @@ mod tests {
         chunk.lit = true;
     }
 
-    fn world_of(chunks: Vec<Chunk>) -> HashMap<ChunkPos, Chunk> {
+    fn world_of(chunks: Vec<Chunk>) -> crate::world::FastMap<ChunkPos, Chunk> {
         chunks.into_iter().map(|c| (c.pos, c)).collect()
     }
 
@@ -519,7 +519,7 @@ mod tests {
             }
         }
         let mut world = world_of(chunks);
-        let relight_all = |world: &mut HashMap<ChunkPos, Chunk>| {
+        let relight_all = |world: &mut crate::world::FastMap<ChunkPos, Chunk>| {
             let positions: Vec<ChunkPos> = world.keys().copied().collect();
             for pos in positions {
                 let mut grid: [[Option<Terrain>; 3]; 3] = Default::default();

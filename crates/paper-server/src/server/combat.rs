@@ -870,7 +870,7 @@ impl Server {
         }
         let packet = play::TakeItemEntity { collected_id: VarInt(id), collector_id: VarInt(player), count: VarInt(1) };
         let payload = Bytes::from(encode_packet(&packet));
-        let mut viewers: HashSet<i32> = self.worlds[world].entities.get(&id).map(|e| e.viewers.clone()).unwrap_or_default();
+        let mut viewers: crate::world::FastSet<i32> = self.worlds[world].entities.get(&id).map(|e| e.viewers.clone()).unwrap_or_default();
         viewers.insert(player);
         for v in viewers {
             if let Some(p) = self.players.get(&v) {
