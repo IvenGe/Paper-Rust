@@ -2265,6 +2265,66 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest hanging");
     expect_line(&mut alice, "hanging: ok");
 
+    // Fishing (PlayerFishEvent): a cast refused, then let be. The plugin shortens the hook's
+    // waits, so a fish is soon lured and bites; the catch it turns into a diamond worth 42
+    // experience.
+    let pond: Vec<(BlockPos, &'static str)> = (-4..=4).flat_map(|dx| (3..=12).flat_map(move |dz| (-3..=-1).map(move |dy| (feet.offset(dx, dy, dz), "minecraft:water")))).collect();
+    put(&server, &pond, false);
+    let rod = Slot::of(paper_data::items::id("minecraft:fishing_rod").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            s.teleport(alice_id, home);
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = rod;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    let bobber = |server: &paper_server::RunningServer| server.handle.run(|s| s.worlds[0].entities.values().any(|e| !e.removed && matches!(e.kind, EntityKind::Fishing(_)))).unwrap();
+    let cast = |alice: &mut Client, sequence: i32| alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(sequence), yaw: 0.0, pitch: 20.0 });
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    cast(&mut alice, 192);
+    seen = poll(&mut alice, "FISH FISHING");
+    assert!(seen.contains("FISH FISHING UNHOOKED 100-600 true") && !bobber(&server), "{seen}");
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    cast(&mut alice, 193);
+    seen = poll(&mut alice, "FISH BITE");
+    assert!(seen.contains("FISH LURED") && seen.contains("FISH BITE") && bobber(&server), "{seen}");
+    let xp_before = server.handle.run(move |s| s.players[&alice_id].xp_total).unwrap();
+    cast(&mut alice, 194);
+    seen = poll(&mut alice, "FISH CAUGHT_FISH");
+    assert!(seen.contains("FISH CAUGHT_FISH"), "{seen}");
+    let diamond = paper_data::items::id("minecraft:diamond").unwrap() as i32;
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        let (caught, xp, orbs) = server
+            .handle
+            .run(move |s| {
+                let lying = s.worlds[0].entities.values().any(|e| !e.removed && matches!(&e.kind, EntityKind::Item { stack, .. } if stack.0.as_ref().is_some_and(|i| i.item == diamond)));
+                let held = s.players[&alice_id].inventory.iter().any(|i| i.0.as_ref().is_some_and(|i| i.item == diamond));
+                let orbs: i32 = s.worlds[0].entities.values().filter(|e| !e.removed).filter_map(|e| match e.kind { EntityKind::ExperienceOrb { value } => Some(value), _ => None }).sum();
+                (lying || held, s.players[&alice_id].xp_total, orbs)
+            })
+            .unwrap();
+        if caught && (xp - xp_before + orbs >= 42) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "caught {caught}, experience {xp_before} -> {xp} with {orbs} in orbs");
+        pause(&mut alice, Duration::from_millis(100));
+    }
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    let drained: Vec<(BlockPos, &'static str)> = pond.iter().map(|(pos, _)| (*pos, "minecraft:air")).collect();
+    put(&server, &drained, false);
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+
     // A plugin's block populator and ChunkPopulateEvent: chunks newly made far away get both.
     alice.command("apitest populator");
     expect_line(&mut alice, "populator: added");

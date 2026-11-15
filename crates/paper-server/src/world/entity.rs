@@ -425,6 +425,75 @@ pub struct EntityChest {
     pub loot_seed: i64,
 }
 
+/// What a fishing bobber is doing (`FishingHook.FishHookState`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookState {
+    Flying,
+    HookedInEntity,
+    Bobbing,
+}
+
+/// A fishing bobber (`FishingHook`): the player fishing, what it does, and vanilla's timers of
+/// a fish coming: lured (`time_until_lured`), on its way (`time_until_hooked`, from
+/// `fish_angle`), and biting (`nibble`). The waits and angles are the settings plugins may
+/// change (Bukkit's `FishHook`).
+#[derive(Clone, Debug)]
+pub struct FishingHook {
+    pub owner: i32,
+    pub state: HookState,
+    pub hooked: Option<i32>,
+    /// Ticks on the ground; it goes after a minute.
+    pub life: i32,
+    pub nibble: i32,
+    pub time_until_lured: i32,
+    pub time_until_hooked: i32,
+    pub fish_angle: f32,
+    pub open_water: bool,
+    pub out_of_water_time: i32,
+    pub biting: bool,
+    /// Luck of the Sea's levels, and Lure's ticks off each wait.
+    pub luck: i32,
+    pub lure_speed: i32,
+    pub min_wait: i32,
+    pub max_wait: i32,
+    pub min_lure: i32,
+    pub max_lure: i32,
+    pub min_lure_angle: f32,
+    pub max_lure_angle: f32,
+    pub apply_lure: bool,
+    pub rain_influenced: bool,
+    pub sky_influenced: bool,
+}
+
+impl FishingHook {
+    pub fn new(owner: i32, luck: i32, lure_speed: i32) -> Self {
+        FishingHook {
+            owner,
+            state: HookState::Flying,
+            hooked: None,
+            life: 0,
+            nibble: 0,
+            time_until_lured: 0,
+            time_until_hooked: 0,
+            fish_angle: 0.0,
+            open_water: true,
+            out_of_water_time: 0,
+            biting: false,
+            luck,
+            lure_speed,
+            min_wait: 100,
+            max_wait: 600,
+            min_lure: 20,
+            max_lure: 80,
+            min_lure_angle: 0.0,
+            max_lure_angle: 360.0,
+            apply_lure: true,
+            rain_influenced: true,
+            sky_influenced: true,
+        }
+    }
+}
+
 /// Behaviour-specific data.
 #[derive(Clone, Debug)]
 pub enum EntityKind {
@@ -453,6 +522,8 @@ pub enum EntityKind {
     Cloud { potion: String, owner: Option<i32>, radius: f32, duration: i32, wait: i32, uses: Vec<(i32, u64)>, growth: f32, on_use: f32, breath: bool },
     /// An item frame, glow item frame or painting (see `hanging`).
     Hanging(Box<super::hanging::Hanging>),
+    /// A fishing bobber (see `server::fishing`).
+    Fishing(Box<FishingHook>),
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }

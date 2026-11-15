@@ -144,6 +144,12 @@ What works:
 * **Signs**: the editor opens when a sign is placed and when it is clicked (on the side the
   player faces); the text is kept and shown to everyone, dyes colour it, glow ink sacs make
   it glow (ink sacs undo that), and honeycomb waxes the sign against editing.
+* **Fishing**: a fishing rod casts a bobber that hooks what it hits or bobs in water, where
+  after vanilla's waits (shorter in rain and with Lure, longer under a roof) a fish is
+  lured, swims up with its wake and bites. Reeling in then catches from the
+  `gameplay/fishing` loot table (Luck of the Sea and luck turn junk into treasure, treasure
+  only in open water, bamboo only in jungles) with 1-6 experience, pulls a hooked mob or
+  item, or brings the bobber back; the rod wears as in vanilla.
 * **Item frames and paintings**: item frames and glow item frames hang on any side of a
   block, paintings on walls, taking a random one of the largest variants that fit. Frames
   take an item, turn it an eighth at each click and give it back when hit; a hit, an arrow or
@@ -351,8 +357,9 @@ What works:
   (`WorldBorderBoundsChangeEvent`, `WorldBorderCenterChangeEvent` and
   `WorldBorderBoundsChangeFinishEvent`) come from `/worldborder` and plugins' changes alike, as
   do `HangingPlaceEvent`, `HangingBreakEvent` (`...ByEntityEvent` for hits and explosions),
-  Paper's `EntityBreakEvent` after it, and Paper's `PlayerItemFrameChangeEvent` for item
-  frames. Players,
+  Paper's `EntityBreakEvent` after it, Paper's `PlayerItemFrameChangeEvent` for item frames,
+  and `PlayerFishEvent` in all its states (a plugin may change the catch and its
+  experience). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -427,6 +434,8 @@ What works:
     methods, what a player looks at (`getTargetBlock`, `getLineOfSight`), client options, and
     packets for one client (`sendExperienceChange`, `sendBlockDamage`, `sendEquipmentChange`,
     `sendHurtAnimation`, the demo and credits screens, `transfer`);
+  * fishing bobbers (`FishHook`: waits, lure times and angles, Lure, rain and sky, open
+    water, what it hooked and pulling it, its state);
   * item frames and paintings (`ItemFrame`: item, rotation, fixed, visible, drop chance;
     `Painting#setArt`, which like `Hanging#setFacingDirection` only takes where it then
     fits unless forced; `Art`'s sizes; spawned against a neighbouring block as on Paper);
@@ -506,7 +515,7 @@ Not yet:
   so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
   data). Withers and copper golems cannot be built. Dispensers do not place shulker boxes, build withers, or launch
   fireworks, wind charges or minecarts.
-* Statistics of what the server does not do yet (fishing, raids, note blocks, bells,
+* Statistics of what the server does not do yet (raids, note blocks, bells,
   cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
   used or broken only when placed, eaten or drunk, thrown, used as spawn eggs, buckets or
   bottles, or worn out as tools.

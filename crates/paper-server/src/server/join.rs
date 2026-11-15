@@ -72,6 +72,7 @@ impl Server {
             loaded: false,
             load_timeout: 60,
             own_border: None,
+            fishing: None,
             op_level,
             display_name: None,
             list_name: None,

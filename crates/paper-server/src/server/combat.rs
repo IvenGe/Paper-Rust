@@ -551,7 +551,7 @@ impl Server {
             let tool = killer.and_then(|k| self.players.get(&k)).map(|p| p.held_item().clone());
             let table = format!("minecraft:entities/{}", info.name.strip_prefix("minecraft:").unwrap_or(&info.name));
             let loot = if self.loot.available() {
-                let context = LootContext { tool: tool.as_ref(), killed_by_player: killer.is_some(), on_fire, explosion_radius: None, block_state: None };
+                let context = LootContext { tool: tool.as_ref(), killed_by_player: killer.is_some(), on_fire, ..Default::default() };
                 self.loot.roll(&table, &context)
             } else {
                 Vec::new()

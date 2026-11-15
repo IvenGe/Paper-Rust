@@ -77,7 +77,7 @@ impl Server {
     }
 
     /// `spawn_item` without asking plugins yet (see `keep_spawned_item`).
-    fn spawn_item_unannounced(&mut self, world: usize, pos: Vec3, stack: Slot, vel: Vec3, pickup_delay: i32) -> Option<i32> {
+    pub(super) fn spawn_item_unannounced(&mut self, world: usize, pos: Vec3, stack: Slot, vel: Vec3, pickup_delay: i32) -> Option<i32> {
         if stack.0.as_ref().is_none_or(|s| s.count <= 0) {
             return None;
         }
@@ -102,7 +102,7 @@ impl Server {
 
     /// `ItemSpawnEvent` for an item that was just added: whether it stays. A refused one is
     /// gone before anyone sees it.
-    fn keep_spawned_item(&mut self, world: usize, id: i32) -> bool {
+    pub(super) fn keep_spawned_item(&mut self, world: usize, id: i32) -> bool {
         if crate::plugins::events::on_item_spawn(self, world, id) {
             return true;
         }
@@ -381,6 +381,11 @@ impl Server {
             EntityKind::Hanging(_) => {
                 self.worlds[world].entities.insert(id, e);
                 self.tick_hanging(world, id);
+                return;
+            }
+            EntityKind::Fishing(_) => {
+                self.worlds[world].entities.insert(id, e);
+                self.tick_fishing(world, id);
                 return;
             }
             EntityKind::FallingBlock { state, time, fall } => {
@@ -804,6 +809,8 @@ impl Server {
             EntityKind::FallingBlock { state, .. } => *state as i32,
             EntityKind::Arrow { owner, .. } | EntityKind::Thrown { owner, .. } => owner.unwrap_or(0),
             EntityKind::Hanging(h) => h.facing as i32,
+            // A bobber names its player, or the client drops it.
+            EntityKind::Fishing(h) => h.owner,
             _ => 0,
         };
         // A hanging entity is sent at its block (`getAddEntityPacket`); the client works out
@@ -969,6 +976,15 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         EntityKind::Item { stack, .. } => {
             if let Some(i) = info.data_index("DATA_ITEM") {
                 m = m.item_stack(i, stack);
+            }
+        }
+        // What a bobber hooked (its id + 1, or 0) and whether a fish bites.
+        EntityKind::Fishing(h) => {
+            if let Some(i) = info.data_index("DATA_HOOKED_ENTITY").filter(|_| !spawning || h.hooked.is_some()) {
+                m = m.varint(i, h.hooked.map_or(0, |t| t + 1));
+            }
+            if let Some(i) = info.data_index("DATA_BITING").filter(|_| !spawning || h.biting) {
+                m = m.boolean(i, h.biting);
             }
         }
         // The way it faces, a frame's item and turn, a painting's variant (an entry of

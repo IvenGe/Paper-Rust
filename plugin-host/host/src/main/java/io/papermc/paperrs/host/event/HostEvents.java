@@ -192,6 +192,7 @@ public final class HostEvents {
         GATED.put("WorldBorderBoundsChangeEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent.class);
         GATED.put("WorldBorderCenterChangeEvent", io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent.class);
         GATED.put("WorldBorderBoundsChangeFinishEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent.class);
+        GATED.put("PlayerFishEvent", org.bukkit.event.player.PlayerFishEvent.class);
         GATED.put("HangingPlaceEvent", org.bukkit.event.hanging.HangingPlaceEvent.class);
         GATED.put("HangingBreakEvent", org.bukkit.event.hanging.HangingBreakEvent.class);
         GATED.put("EntityBreakEvent", io.papermc.paper.event.entity.EntityBreakEvent.class);
@@ -1111,6 +1112,18 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.hanging_break" -> this.hangingBreak(args);
+            case "event.fish" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("hook"))) instanceof org.bukkit.entity.FishHook hook)) {
+                    yield Values.of();
+                }
+                final org.bukkit.entity.Entity caught = args.get("caught") instanceof Map<?, ?> c ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(c)) : null;
+                final EquipmentSlot hand = args.containsKey("hand") ? (Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND) : null;
+                final org.bukkit.event.player.PlayerFishEvent event = new org.bukkit.event.player.PlayerFishEvent(this.player(args), caught, hook, hand,
+                    org.bukkit.event.player.PlayerFishEvent.State.valueOf(Values.str(args, "state", "FISHING")));
+                event.setExpToDrop(Values.i32(args, "exp", 0));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "exp", event.getExpToDrop());
+            }
             case "event.item_frame_change" -> {
                 if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.ItemFrame frame)) {
                     yield Values.of();

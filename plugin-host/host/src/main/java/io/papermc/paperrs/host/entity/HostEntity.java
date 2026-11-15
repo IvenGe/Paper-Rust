@@ -935,6 +935,151 @@ public final class HostEntity implements HostProxies.Backed {
         return Entities.launch(this.server, this.self(), projectile, velocity, function);
     }
 
+    // fishing bobbers (FishHook), with CraftFishHook's checks
+
+    private int hookInt(final String key, final int fallback) {
+        return Values.i32(this.state(), key, fallback);
+    }
+
+    /** {@code FishHook#getState}; other entities' {@code getState} are not this one. */
+    public Object getState() {
+        if (!(this.self instanceof org.bukkit.entity.FishHook)) {
+            throw io.papermc.paperrs.host.Unsupported.method("Entity#getState");
+        }
+        return org.bukkit.entity.FishHook.HookState.valueOf(Values.str(this.state(), "hook_state", "UNHOOKED"));
+    }
+
+    public @Nullable Entity getHookedEntity() {
+        return this.state().get("hooked") instanceof Map<?, ?> ref ? Entities.of(this.server, Values.map(ref)) : null;
+    }
+
+    public void setHookedEntity(final @Nullable Entity entity) {
+        this.set("hooked", entity == null ? Values.of() : Entities.ref(entity));
+    }
+
+    public boolean pullHookedEntity() {
+        return this.getHookedEntity() != null && Values.bool(Values.map(this.server.call("entity.pull_hooked", Values.of("id", this.id))), "pulled", false);
+    }
+
+    public boolean isInOpenWater() {
+        return Values.bool(this.state(), "open_water", false);
+    }
+
+    public int getMinWaitTime() {
+        return this.hookInt("min_wait", 100);
+    }
+
+    public void setMinWaitTime(final int minWaitTime) {
+        com.google.common.base.Preconditions.checkArgument(minWaitTime >= 0 && minWaitTime <= this.getMaxWaitTime(), "The minimum wait time should be between %s and %s (the maximum wait time)", 0, this.getMaxWaitTime());
+        this.set("min_wait", minWaitTime);
+    }
+
+    public int getMaxWaitTime() {
+        return this.hookInt("max_wait", 600);
+    }
+
+    public void setMaxWaitTime(final int maxWaitTime) {
+        com.google.common.base.Preconditions.checkArgument(maxWaitTime >= 0 && maxWaitTime >= this.getMinWaitTime(), "The maximum wait time should be between %s and %s (the minimum wait time)", 0, this.getMinWaitTime());
+        this.set("max_wait", maxWaitTime);
+    }
+
+    public void setWaitTime(final int min, final int max) {
+        com.google.common.base.Preconditions.checkArgument(min >= 0 && max >= 0 && min <= max, "The minimum/maximum wait time should be higher than or equal to 0 and the minimum wait time");
+        this.set("min_wait", min, "max_wait", max);
+    }
+
+    public int getMinLureTime() {
+        return this.hookInt("min_lure", 20);
+    }
+
+    public void setMinLureTime(final int minLureTime) {
+        com.google.common.base.Preconditions.checkArgument(minLureTime >= 0 && minLureTime <= this.getMaxLureTime(), "The minimum lure time (%s) should be between 0 and %s (the maximum wait time)", minLureTime, this.getMaxLureTime());
+        this.set("min_lure", minLureTime);
+    }
+
+    public int getMaxLureTime() {
+        return this.hookInt("max_lure", 80);
+    }
+
+    public void setMaxLureTime(final int maxLureTime) {
+        com.google.common.base.Preconditions.checkArgument(maxLureTime >= 0 && maxLureTime >= this.getMinLureTime(), "The maximum lure time (%s) should be higher than or equal to 0 and %s (the minimum wait time)", maxLureTime, this.getMinLureTime());
+        this.set("max_lure", maxLureTime);
+    }
+
+    public void setLureTime(final int min, final int max) {
+        com.google.common.base.Preconditions.checkArgument(min >= 0 && max >= 0 && min <= max, "The minimum/maximum lure time should be higher than or equal to 0 and the minimum wait time.");
+        this.set("min_lure", min, "max_lure", max);
+    }
+
+    public float getMinLureAngle() {
+        return (float) Values.f64(this.state(), "min_lure_angle", 0);
+    }
+
+    public void setMinLureAngle(final float minLureAngle) {
+        com.google.common.base.Preconditions.checkArgument(minLureAngle <= this.getMaxLureAngle(), "The minimum lure angle (%s) should be less than %s (the maximum lure angle)", minLureAngle, this.getMaxLureAngle());
+        this.set("min_lure_angle", (double) minLureAngle);
+    }
+
+    public float getMaxLureAngle() {
+        return (float) Values.f64(this.state(), "max_lure_angle", 360);
+    }
+
+    public void setMaxLureAngle(final float maxLureAngle) {
+        com.google.common.base.Preconditions.checkArgument(maxLureAngle >= this.getMinLureAngle(), "The minimum lure angle (%s) should be less than %s (the maximum lure angle)", this.getMinLureAngle(), maxLureAngle);
+        this.set("max_lure_angle", (double) maxLureAngle);
+    }
+
+    public void setLureAngle(final float min, final float max) {
+        com.google.common.base.Preconditions.checkArgument(min <= max, "The minimum lure (%s) angle should be less than the maximum lure angle (%s)", min, max);
+        this.set("min_lure_angle", (double) min, "max_lure_angle", (double) max);
+    }
+
+    public boolean getApplyLure() {
+        return Values.bool(this.state(), "apply_lure", true);
+    }
+
+    public void setApplyLure(final boolean applyLure) {
+        this.set("apply_lure", applyLure);
+    }
+
+    public boolean isRainInfluenced() {
+        return Values.bool(this.state(), "rain_influenced", true);
+    }
+
+    public void setRainInfluenced(final boolean rainInfluenced) {
+        this.set("rain_influenced", rainInfluenced);
+    }
+
+    public boolean isSkyInfluenced() {
+        return Values.bool(this.state(), "sky_influenced", true);
+    }
+
+    public void setSkyInfluenced(final boolean skyInfluenced) {
+        this.set("sky_influenced", skyInfluenced);
+    }
+
+    /** Deprecated in Bukkit and without effect: fish bite after their waits. */
+    public double getBiteChance() {
+        return -1;
+    }
+
+    public void setBiteChance(final double chance) {
+        com.google.common.base.Preconditions.checkArgument((chance >= 0 && chance <= 1) || chance == -1, "The bite chance must be between 0 and 1.");
+    }
+
+    public int getTimeUntilBite() {
+        return this.hookInt("time_until_bite", 0);
+    }
+
+    public void setTimeUntilBite(final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(ticks > 0, "Time until bite must be positive");
+        this.set("time_until_bite", ticks);
+    }
+
+    public void resetFishingState() {
+        this.set("reset_fishing", true);
+    }
+
     // item frames and paintings (Hanging, ItemFrame, Painting)
 
     /** The side of the block it hangs on ({@code Attachable}): opposite the way it faces. */
@@ -1110,11 +1255,15 @@ public final class HostEntity implements HostProxies.Backed {
         this.set("duration", duration);
     }
 
+    /** An area effect cloud's wait, or a fishing bobber's wait for a fish ({@code FishHook}). */
     public int getWaitTime() {
         return Values.i32(this.state(), "wait_time", 10);
     }
 
     public void setWaitTime(final int waitTime) {
+        if (this.self instanceof org.bukkit.entity.FishHook) {
+            com.google.common.base.Preconditions.checkArgument(waitTime >= 0, "Wait time must be positive");
+        }
         this.set("wait_time", waitTime);
     }
 

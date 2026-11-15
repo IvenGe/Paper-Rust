@@ -30,6 +30,12 @@ pub struct LootContext<'a> {
     pub killed_by_player: bool,
     /// The killed entity was burning (cooked drops).
     pub on_fire: bool,
+    /// Luck (`LootParams.getLuck`): each entry's `quality` times it is added to its weight.
+    pub luck: f32,
+    /// For fishing: whether the bobber is in open water (`FishingHookPredicate`).
+    pub in_open_water: Option<bool>,
+    /// The biome at the origin, for `location_check`'s `biomes`.
+    pub biome: Option<&'a str>,
 }
 
 /// Cached, parsed loot tables.
@@ -216,7 +222,11 @@ impl LootTables {
                     }
                 }
             }
-            _ => out.push((entry, entry["weight"].as_i64().unwrap_or(1) as i32)),
+            // `getWeight(luck)`: the weight, plus its quality times the luck.
+            _ => {
+                let weight = entry["weight"].as_i64().unwrap_or(1) as f32 + entry["quality"].as_i64().unwrap_or(0) as f32 * ctx.luck;
+                out.push((entry, (weight.floor() as i32).max(0)));
+            }
         }
     }
 
@@ -603,12 +613,37 @@ fn condition_holds(c: &Value, ctx: &LootContext, rng: &mut impl Rng) -> bool {
             let Some(fields) = predicate.as_object() else { return true };
             fields.iter().all(|(k, v)| match k.as_str() {
                 "minecraft:flags" | "flags" => v.get("is_on_fire").and_then(Value::as_bool).is_none_or(|f| f == ctx.on_fire),
+                // A fishing bobber in open water (fishing treasure).
+                "minecraft:type_specific/fishing_hook" => match (v.get("in_open_water").and_then(Value::as_bool), ctx.in_open_water) {
+                    (None, Some(_)) => true,
+                    (Some(wanted), Some(open)) => wanted == open,
+                    (_, None) => false,
+                },
                 // Vehicles, equipment, locations, ...: not modelled, so not matched.
                 _ => false,
             })
         }
-        // Unknown conditions (weather, location, ...) are treated as met.
+        // Where: the biome (jungle bamboo when fishing); other location tests are not modelled.
+        "minecraft:location_check" => {
+            let biomes = &c["predicate"]["biomes"];
+            match (biomes, ctx.biome) {
+                (Value::Null, _) => true,
+                (_, None) => false,
+                (Value::String(one), Some(biome)) => biome_matches(one, biome),
+                (Value::Array(list), Some(biome)) => list.iter().filter_map(Value::as_str).any(|b| biome_matches(b, biome)),
+                _ => false,
+            }
+        }
+        // Unknown conditions (weather, ...) are treated as met.
         _ => true,
+    }
+}
+
+/// A biome or `#tag` of biomes against the biome there.
+fn biome_matches(wanted: &str, biome: &str) -> bool {
+    match wanted.strip_prefix('#') {
+        Some(tag) => paper_data::synced::id("minecraft:worldgen/biome", biome).is_some_and(|id| paper_data::synced::tag("minecraft:worldgen/biome", tag).is_some_and(|ids| ids.contains(&id))),
+        None => wanted == biome,
     }
 }
 
@@ -716,6 +751,30 @@ mod tests {
 
     fn item(name: &str) -> i32 {
         items::id(name).unwrap() as i32
+    }
+
+    #[test]
+    fn fishing_luck_treasure_and_bamboo() {
+        let Some(tables) = tables() else { return };
+        let rod = Slot::of(item("minecraft:fishing_rod"), 1);
+        let treasure = ["minecraft:name_tag", "minecraft:saddle", "minecraft:nautilus_shell", "minecraft:book", "minecraft:bow", "minecraft:fishing_rod"];
+        let fish = ["minecraft:cod", "minecraft:salmon", "minecraft:tropical_fish", "minecraft:pufferfish"];
+        let roll = |open: bool, luck: f32, biome: &'static str, n: usize| -> Vec<&'static str> {
+            let ctx = LootContext { tool: Some(&rod), luck, in_open_water: Some(open), biome: Some(biome), ..Default::default() };
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(7);
+            (0..n).flat_map(|_| tables.roll_with("minecraft:gameplay/fishing", &ctx, &mut rng)).map(|s| items::get(s.0.unwrap().item as u32).unwrap().name).collect()
+        };
+        // Without open water there is no treasure; fish are most of the catch.
+        let closed = roll(false, 0.0, "minecraft:plains", 400);
+        assert!(!closed.iter().any(|i| treasure.contains(i) && *i != "minecraft:fishing_rod" && *i != "minecraft:bow"), "{closed:?}");
+        assert!(closed.iter().filter(|i| fish.contains(i)).count() > 300);
+        // Luck of the Sea III turns junk into treasure (quality 2 against -2).
+        let lucky = roll(true, 3.0, "minecraft:plains", 400);
+        let count = |caught: &[&str]| caught.iter().filter(|i| ["minecraft:name_tag", "minecraft:saddle", "minecraft:nautilus_shell"].contains(i)).count();
+        assert!(count(&lucky) > count(&roll(true, 0.0, "minecraft:plains", 400)), "luck brings treasure");
+        // Bamboo only from jungles.
+        assert!(!roll(true, 0.0, "minecraft:plains", 600).contains(&"minecraft:bamboo"));
+        assert!(roll(false, 0.0, "minecraft:jungle", 600).contains(&"minecraft:bamboo"));
     }
 
     #[test]

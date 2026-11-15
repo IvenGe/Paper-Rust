@@ -181,6 +181,35 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
                 out.set("art", h.variant.clone());
             }
         }
+        // `FishHook`: its player, what it hooked, its state and waits.
+        EntityKind::Fishing(h) => {
+            out.set("shooter", match server.players.get(&h.owner) {
+                Some(p) => bmap! { "player" => p.uuid().to_string() },
+                None => bmap! { "entity" => h.owner as i64 },
+            });
+            out.set("hooked", h.hooked.map(|t| match server.players.get(&t) {
+                Some(p) => bmap! { "player" => p.uuid().to_string() },
+                None => bmap! { "entity" => t as i64 },
+            }));
+            let state = match h.state {
+                crate::world::entity::HookState::Flying => "UNHOOKED",
+                crate::world::entity::HookState::HookedInEntity => "HOOKED_ENTITY",
+                crate::world::entity::HookState::Bobbing => "BOBBING",
+            };
+            out.set("hook_state", state);
+            out.set("wait_time", h.time_until_lured);
+            out.set("time_until_bite", h.time_until_hooked);
+            out.set("min_wait", h.min_wait);
+            out.set("max_wait", h.max_wait);
+            out.set("min_lure", h.min_lure);
+            out.set("max_lure", h.max_lure);
+            out.set("min_lure_angle", h.min_lure_angle as f64);
+            out.set("max_lure_angle", h.max_lure_angle as f64);
+            out.set("apply_lure", h.apply_lure);
+            out.set("rain_influenced", h.rain_influenced);
+            out.set("sky_influenced", h.sky_influenced);
+            out.set("open_water", h.open_water);
+        }
         EntityKind::Other if e.info.name == "minecraft:lightning_bolt" => out.set("effect", e.flags.visual_only),
         EntityKind::EyeOfEnder { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
@@ -306,6 +335,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let id = server.spawn_item(world, pos, stack, vel, 10).ok_or_else(|| anyhow!("the item was not dropped"))?;
             let e = &server.worlds[world].entities[&id];
             Ok(entity_value(server, world, e))
+        }
+        "entity.pull_hooked" => {
+            let (world, id) = entity_arg(server, args)?;
+            Ok(bmap! { "pulled" => server.pull_hooked(world, id) })
         }
         "entity.state" => {
             let id = args.i32("id").ok_or_else(|| anyhow!("missing id"))?;
@@ -540,6 +573,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let shooter = target_id(server, args.get("shooter"));
             // `AreaEffectCloud.setSource` (an empty map for none).
             let source = target_id(server, args.get("source"));
+            // `FishHook.setHookedEntity` (an empty map for none).
+            let hooked = target_id(server, args.get("hooked"));
             // Players by uuid, for `Animals.setBreedCause`.
             let server_players: Vec<(i32, String)> = if args.get("love_cause").is_null() { Vec::new() } else { server.players.values().map(|p| (p.entity_id, p.uuid().to_string())).collect() };
             // `Painting.setArt` and `Hanging.setFacingDirection`: only where it can then still
@@ -853,6 +888,46 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 EntityKind::ExperienceOrb { value } => {
                     if let Some(v) = args.i32("experience") {
                         *value = v.max(0);
+                        e.metadata_dirty = true;
+                    }
+                }
+                EntityKind::Fishing(h) => {
+                    // `FishHook`'s setters: waits, lure times and angles, influences, and what it
+                    // hooked (an empty map for nothing).
+                    let int = |key: &str| args.i32(key);
+                    if let Some(v) = int("wait_time") {
+                        h.time_until_lured = v.max(0);
+                    }
+                    if let Some(v) = int("time_until_bite") {
+                        h.time_until_hooked = v.max(0);
+                    }
+                    for (key, field) in [("min_wait", &mut h.min_wait), ("max_wait", &mut h.max_wait), ("min_lure", &mut h.min_lure), ("max_lure", &mut h.max_lure)] {
+                        if let Some(v) = int(key) {
+                            *field = v.max(0);
+                        }
+                    }
+                    if let Some(v) = args.f64("min_lure_angle") {
+                        h.min_lure_angle = v as f32;
+                    }
+                    if let Some(v) = args.f64("max_lure_angle") {
+                        h.max_lure_angle = v as f32;
+                    }
+                    for (key, field) in [("apply_lure", &mut h.apply_lure), ("rain_influenced", &mut h.rain_influenced), ("sky_influenced", &mut h.sky_influenced)] {
+                        if let Some(v) = args.bool(key) {
+                            *field = v;
+                        }
+                    }
+                    if args.bool("reset_fishing") == Some(true) {
+                        // `resetFishingState`: back to waiting for a fish.
+                        h.nibble = 0;
+                        h.time_until_lured = 0;
+                        h.time_until_hooked = 0;
+                        h.biting = false;
+                        e.metadata_dirty = true;
+                    }
+                    if !args.get("hooked").is_null() {
+                        h.hooked = hooked;
+                        h.state = if h.hooked.is_some() { crate::world::entity::HookState::HookedInEntity } else { crate::world::entity::HookState::Flying };
                         e.metadata_dirty = true;
                     }
                 }

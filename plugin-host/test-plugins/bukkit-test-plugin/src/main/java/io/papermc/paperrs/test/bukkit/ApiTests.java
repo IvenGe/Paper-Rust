@@ -1595,6 +1595,29 @@ final class ApiTests implements Listener, CommandExecutor {
     /** The border {@code apitest borders} gave Alice. */
     private org.bukkit.WorldBorder virtualBorder;
 
+    /** Fishing: each state; a catch becomes a diamond worth 42 experience. */
+    @EventHandler
+    public void onFish(final org.bukkit.event.player.PlayerFishEvent event) {
+        String what = "FISH " + event.getState();
+        if (event.getCaught() instanceof org.bukkit.entity.Item item) {
+            what += " " + item.getItemStack().getType();
+            if (this.blockMode.equals("record")) {
+                item.setItemStack(new ItemStack(Material.DIAMOND));
+                event.setExpToDrop(42);
+            }
+        }
+        if (event.getState() == org.bukkit.event.player.PlayerFishEvent.State.FISHING) {
+            final org.bukkit.entity.FishHook hook = event.getHook();
+            what += " " + hook.getState() + " " + hook.getMinWaitTime() + "-" + hook.getMaxWaitTime() + " " + (event.getHand() == org.bukkit.inventory.EquipmentSlot.HAND);
+            if (this.blockMode.equals("record")) {
+                // A quick fish, as plugins speed fishing up.
+                hook.setWaitTime(5, 10);
+                hook.setLureTime(5, 10);
+            }
+        }
+        this.blockEvent(event, what);
+    }
+
     @EventHandler
     public void onHangingPlace(final org.bukkit.event.hanging.HangingPlaceEvent event) {
         this.blockEvent(event, "HANGPLACE " + event.getEntity().getType() + " " + event.getBlockFace() + " " + event.getItemStack().getType());

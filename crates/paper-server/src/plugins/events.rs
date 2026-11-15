@@ -2614,3 +2614,27 @@ pub fn on_item_frame_change(server: &mut Server, world: usize, frame: i32, playe
         None => Some(item.clone()),
     }
 }
+
+/// `PlayerFishEvent`: the player's bobber `hook` reached `state` (`FISHING`, `LURED`, `BITE`,
+/// `FAILED_ATTEMPT`, `CAUGHT_FISH`, `CAUGHT_ENTITY`, `IN_GROUND` or `REEL_IN`), with what it
+/// caught (an item not yet announced, or a hooked entity) and the experience a catch gives.
+/// `None` if plugins stopped it, else the experience as they left it.
+#[allow(clippy::too_many_arguments)]
+pub fn on_fish(server: &mut Server, world: usize, player: i32, caught: Option<i32>, hook: i32, hand: Option<i32>, state: &str, exp: i32) -> Option<i32> {
+    if !listens(server, "PlayerFishEvent") || !server.worlds[world].entities.contains_key(&hook) {
+        return Some(exp);
+    }
+    let Some(p) = server.players.get(&player) else { return Some(exp) };
+    let mut args = bmap! { "uuid" => p.uuid().to_string(), "hook" => actor_value(server, world, hook), "state" => state, "exp" => exp };
+    if let Some(c) = caught.filter(|c| server.players.contains_key(c) || server.worlds[world].entities.contains_key(c)) {
+        args.set("caught", entity_ref(server, c));
+    }
+    if let Some(h) = hand {
+        args.set("hand", h);
+    }
+    match fire(server, "PlayerFishEvent", "event.fish", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.i32("exp").unwrap_or(exp)),
+        None => Some(exp),
+    }
+}

@@ -1276,6 +1276,15 @@ impl Server {
             self.throw_held(id, hand);
             return;
         }
+        // A fishing rod casts a bobber, or reels it in.
+        if name == "minecraft:fishing_rod" {
+            // The player turns the way the use says first (`absSnapRotationTo`).
+            if let Some(p) = self.players.get_mut(&id) {
+                (p.loc.yaw, p.loc.pitch) = (yaw, pitch);
+            }
+            self.use_fishing_rod(id, hand);
+            return;
+        }
         // A carrot or warped fungus on a stick boosts the pig or strider being ridden.
         if matches!(name, "minecraft:carrot_on_a_stick" | "minecraft:warped_fungus_on_a_stick") {
             self.boost_ridden(id, hand);

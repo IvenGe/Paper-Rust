@@ -231,6 +231,8 @@ pub struct Player {
     /// A border a plugin shows this player instead of their world's (CraftPlayer's
     /// `clientWorldBorder`, set by `Player#setWorldBorder`); only the client sees it.
     pub own_border: Option<crate::world::Border>,
+    /// The fishing bobber this player has out (`Player.fishing`).
+    pub fishing: Option<i32>,
     pub op_level: u8,
     pub display_name: Option<Component>,
     pub list_name: Option<Component>,
