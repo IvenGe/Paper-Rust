@@ -144,6 +144,10 @@ What works:
 * **Signs**: the editor opens when a sign is placed and when it is clicked (on the side the
   player faces); the text is kept and shown to everyone, dyes colour it, glow ink sacs make
   it glow (ink sacs undo that), and honeycomb waxes the sign against editing.
+* **Shields**: a raised shield blocks after a quarter second, taking hits from within 90
+  degrees of where the player looks whole (not damage that bypasses shields), with its
+  sound and wear from 3 damage up; an axe blow disables it for five seconds. Others see it
+  raised.
 * **Elytra and fireworks**: a player in the air glides when wearing an elytra (anything with
   the `glider` component that its next wear would not break), shown to others; the elytra
   wears a point a second, and gliding stops on landing, riding or levitating. A firework
@@ -367,7 +371,9 @@ What works:
   Paper's `EntityBreakEvent` after it, Paper's `PlayerItemFrameChangeEvent` for item frames,
   `PlayerFishEvent` in all its states (a plugin may change the catch and its experience),
   `EntityToggleGlideEvent`, Paper's `PlayerElytraBoostEvent` (which may keep the rocket in
-  hand) and `FireworkExplodeEvent` (a cancelled one keeps flying, as on Paper). Players,
+  hand), `FireworkExplodeEvent` (a cancelled one keeps flying, as on Paper) and Paper's
+  `PlayerShieldDisableEvent` (a fully blocked hit fires no damage event, where Paper fires
+  one with a blocking modifier). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -443,7 +449,8 @@ What works:
     packets for one client (`sendExperienceChange`, `sendBlockDamage`, `sendEquipmentChange`,
     `sendHurtAnimation`, the demo and credits screens, `transfer`);
   * firework rockets (`Firework`: item and meta, which sets the flight, ticks flown and to
-    fly, what it is attached to, shot at an angle, detonating) and `isGliding`/`setGliding`;
+    fly, what it is attached to, shot at an angle, detonating), `isGliding`/`setGliding` and
+    `HumanEntity#isBlocking`;
   * fishing bobbers (`FishHook`: waits, lure times and angles, Lure, rain and sky, open
     water, what it hooked and pulling it, its state);
   * item frames and paintings (`ItemFrame`: item, rotation, fixed, visible, drop chance;

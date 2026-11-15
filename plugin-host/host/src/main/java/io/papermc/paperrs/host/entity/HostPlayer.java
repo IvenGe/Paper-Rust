@@ -1036,6 +1036,12 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         return Values.bool(this.state, "sprinting", false);
     }
 
+    /** {@code HumanEntity#isBlocking}: a shield raised long enough to block. */
+    @Override
+    public boolean isBlocking() {
+        return Values.bool(this.state, "blocking", false);
+    }
+
     @Override
     public boolean isGliding() {
         return Values.bool(this.state, "gliding", false);

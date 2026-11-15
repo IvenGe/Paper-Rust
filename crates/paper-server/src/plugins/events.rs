@@ -2670,3 +2670,18 @@ pub fn on_firework_explode(server: &mut Server, world: usize, rocket: i32) -> bo
         None => true,
     }
 }
+
+/// Paper's `PlayerShieldDisableEvent`: `attacker`'s axe is about to disable the player's
+/// shield for `ticks`. `None` if plugins stopped it, else the cooldown as they left it.
+pub fn on_shield_disable(server: &mut Server, player: i32, attacker: i32, ticks: i32) -> Option<i32> {
+    if !listens(server, "PlayerShieldDisableEvent") {
+        return Some(ticks);
+    }
+    let Some(p) = server.players.get(&player) else { return Some(ticks) };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "damager" => entity_ref(server, attacker), "cooldown" => ticks };
+    match fire(server, "PlayerShieldDisableEvent", "event.shield_disable", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.i32("cooldown").unwrap_or(ticks)),
+        None => Some(ticks),
+    }
+}

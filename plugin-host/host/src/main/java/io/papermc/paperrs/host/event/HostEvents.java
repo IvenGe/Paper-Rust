@@ -194,6 +194,7 @@ public final class HostEvents {
         GATED.put("WorldBorderBoundsChangeFinishEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent.class);
         GATED.put("PlayerFishEvent", org.bukkit.event.player.PlayerFishEvent.class);
         GATED.put("EntityToggleGlideEvent", org.bukkit.event.entity.EntityToggleGlideEvent.class);
+        GATED.put("PlayerShieldDisableEvent", io.papermc.paper.event.player.PlayerShieldDisableEvent.class);
         GATED.put("PlayerElytraBoostEvent", com.destroystokyo.paper.event.player.PlayerElytraBoostEvent.class);
         GATED.put("FireworkExplodeEvent", org.bukkit.event.entity.FireworkExplodeEvent.class);
         GATED.put("HangingPlaceEvent", org.bukkit.event.hanging.HangingPlaceEvent.class);
@@ -1115,6 +1116,15 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.hanging_break" -> this.hangingBreak(args);
+            case "event.shield_disable" -> {
+                final org.bukkit.entity.Entity damager = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("damager")));
+                if (damager == null) {
+                    yield Values.of();
+                }
+                final io.papermc.paper.event.player.PlayerShieldDisableEvent event = new io.papermc.paper.event.player.PlayerShieldDisableEvent(this.player(args), damager, Values.i32(args, "cooldown", 100));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "cooldown", event.getCooldown());
+            }
             case "event.toggle_glide" -> {
                 final org.bukkit.event.entity.EntityToggleGlideEvent event = new org.bukkit.event.entity.EntityToggleGlideEvent(this.player(args), Values.bool(args, "gliding", false));
                 event.callEvent();

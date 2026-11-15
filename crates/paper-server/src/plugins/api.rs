@@ -225,6 +225,7 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "sneaking" => p.sneaking,
         "sprinting" => p.sprinting,
         "gliding" => p.gliding,
+        "blocking" => server.blocking_slot(p.entity_id).is_some(),
         "flying" => p.flying,
         "allow_flight" => p.allow_flight,
         "held_slot" => p.held_slot as i64,

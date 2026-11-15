@@ -863,6 +863,15 @@ impl Server {
         if damage.is("is_fire") && !damage.is("bypasses_effects") && self.effect_level(world, id, "minecraft:fire_resistance").is_some() {
             return false;
         }
+        // A raised shield takes what it blocks (`applyItemBlocking`); a hit it takes whole
+        // does not land.
+        let blocked = self.shield_blocks(id, &damage, amount);
+        if blocked > 0.0 {
+            amount -= blocked;
+            if amount <= 0.0 {
+                return false;
+            }
+        }
         let resistance = if damage.is("bypasses_resistance") { None } else { self.effect_level(world, id, "minecraft:resistance") };
         if !crate::plugins::events::on_entity_damage(self, id, &damage, &mut amount) {
             return false;
@@ -1281,6 +1290,11 @@ impl Server {
         // Snowballs, eggs, ender pearls, bottles o' enchanting and splash potions are thrown.
         if super::throwing::throwable(name).is_some() {
             self.throw_held(id, hand);
+            return;
+        }
+        // A shield is raised.
+        if name == "minecraft:shield" {
+            self.raise_shield(id, hand);
             return;
         }
         // A firework rocket boosts a glider.

@@ -1617,6 +1617,16 @@ final class ApiTests implements Listener, CommandExecutor {
     /** The border {@code apitest borders} gave Alice. */
     private org.bukkit.WorldBorder virtualBorder;
 
+    /** A shield disabled: the plugin shortens it to three seconds while recording. */
+    @EventHandler
+    public void onShieldDisable(final io.papermc.paper.event.player.PlayerShieldDisableEvent event) {
+        final String what = "SHIELD " + event.getDamager().getType() + " " + event.getCooldown() + " " + event.getPlayer().isBlocking();
+        if (this.blockMode.equals("record")) {
+            event.setCooldown(60);
+        }
+        this.blockEvent(event, what);
+    }
+
     @EventHandler
     public void onGlide(final org.bukkit.event.entity.EntityToggleGlideEvent event) {
         this.blockEvent(event, "GLIDE " + event.isGliding());

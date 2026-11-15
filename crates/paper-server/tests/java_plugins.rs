@@ -2367,6 +2367,55 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest fireworks");
     expect_line(&mut alice, "fireworks: ok");
 
+    // A shield (Paper's PlayerShieldDisableEvent): an axe-wielding zombie's blow disables
+    // Alice's raised shield, for the three seconds the plugin says.
+    let shield = Slot::of(paper_data::items::id("minecraft:shield").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Survival);
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.inventory[45] = shield;
+            p.loc.yaw = 0.0;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    alice.send(&play::UseItem { hand: VarInt(1), sequence: VarInt(196), yaw: 0.0, pitch: 0.0 });
+    pause(&mut alice, Duration::from_millis(400));
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    alice.clear_backlog();
+    let axe = Slot::of(paper_data::items::id("minecraft:iron_axe").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            let at = s.players[&alice_id].loc;
+            let front = paper_server::world::entity::Vec3::new(at.x, at.y, at.z + 2.0);
+            let zombie = s.spawn_mob(0, "minecraft:zombie", front, paper_server::server::mobs::SpawnReason::Command).unwrap();
+            if let Some(m) = s.worlds[0].entities.get_mut(&zombie).and_then(|e| e.mob_mut()) {
+                m.equipment[0] = axe;
+            }
+            let blow = paper_server::server::survival::Damage { kind: "minecraft:mob_attack", attacker: Some(zombie), direct: Some(zombie), position: Some(front) };
+            let landed = s.hurt_player(alice_id, blow, 4.0);
+            s.worlds[0].entities.get_mut(&zombie).unwrap().removed = true;
+            assert!(!landed, "the blow is blocked");
+        })
+        .unwrap();
+    let cooldown: play::Cooldown = alice.find(TIMEOUT, |c: &play::Cooldown| c.group == "minecraft:shield").expect("the shield cools down");
+    assert_eq!(cooldown.duration.0, 60, "as the plugin said");
+    seen = poll(&mut alice, "SHIELD ZOMBIE");
+    assert!(seen.contains("SHIELD ZOMBIE 100 true"), "{seen}");
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+            s.players.get_mut(&alice_id).unwrap().inventory[45] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+
     // A plugin's block populator and ChunkPopulateEvent: chunks newly made far away get both.
     alice.command("apitest populator");
     expect_line(&mut alice, "populator: added");
@@ -2724,8 +2773,13 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let kept = server.handle.run(|s| s.player_by_name("Alice").unwrap().inventory[36].clone()).unwrap();
     assert_eq!(kept.0.as_ref().map(|s| s.item), Some(item("minecraft:diamond_sword")), "PlayerDeathEvent kept the inventory");
     alice.send(&play::ClientCommand { action: VarInt(0) });
-    let respawned: play::PlayerPosition = alice.find(TIMEOUT, |p: &play::PlayerPosition| p.y > spawn_y as f64 + 3.0).expect("PlayerRespawnEvent moved the respawn point up");
-    assert!(respawned.y >= spawn_y as f64 + 4.9, "{}", respawned.y);
+    alice.expect::<play::Respawn>();
+    // The respawn point is spread around the world spawn, onto the ground there; the plugin
+    // moves it five blocks up from that.
+    let respawned: play::PlayerPosition = alice.expect();
+    let (x, z) = (respawned.x.floor() as i32, respawned.z.floor() as i32);
+    let ground = server.handle.run(move |s| s.worlds[0].top_y(x, z)).unwrap().unwrap_or(spawn_y);
+    assert!(respawned.y >= ground as f64 + 4.9, "PlayerRespawnEvent moved the respawn point up: {} over ground at {ground}", respawned.y);
 
     // --- /reload: a new plugin host with the players already online ----------------------------
     alice.drain(QUIET);
