@@ -117,6 +117,10 @@ public final class HostEvents {
         GATED.put("BlockBurnEvent", org.bukkit.event.block.BlockBurnEvent.class);
         GATED.put("BlockIgniteEvent", org.bukkit.event.block.BlockIgniteEvent.class);
         GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
+        GATED.put("PlayerChangedWorldEvent", org.bukkit.event.player.PlayerChangedWorldEvent.class);
+        GATED.put("PlayerLoginEvent", org.bukkit.event.player.PlayerLoginEvent.class);
+        GATED.put("ChunkLoadEvent", org.bukkit.event.world.ChunkLoadEvent.class);
+        GATED.put("ChunkUnloadEvent", org.bukkit.event.world.ChunkUnloadEvent.class);
     }
 
     private final CraftServer server;
@@ -403,6 +407,21 @@ public final class HostEvents {
                 // A listener that changes the target to nothing keeps the mob from targeting.
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
             }
+            case "event.changed_world" -> {
+                new org.bukkit.event.player.PlayerChangedWorldEvent(this.player(args), this.server.getWorld(Values.str(args, "from"))).callEvent();
+                yield Values.of();
+            }
+            case "event.login" -> this.login(args);
+            case "event.chunk_load" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                new org.bukkit.event.world.ChunkLoadEvent(world.getChunkAt(Values.i32(args, "x", 0), Values.i32(args, "z", 0), false), Values.bool(args, "new", false)).callEvent();
+                yield Values.of();
+            }
+            case "event.chunk_unload" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                new org.bukkit.event.world.ChunkUnloadEvent(world.getChunkAt(Values.i32(args, "x", 0), Values.i32(args, "z", 0), false), true).callEvent();
+                yield Values.of();
+            }
             case "event.piston" -> {
                 final Block piston = this.block(args);
                 final List<Block> blocks = new ArrayList<>();
@@ -544,6 +563,28 @@ public final class HostEvents {
         }
         event.callEvent();
         return Values.of("cancelled", event.isCancelled());
+    }
+
+    /**
+     * {@code PlayerLoginEvent}, which Paper still fires for its listeners, with the result of
+     * the server's own checks: the result and message as plugins leave them. The player joins
+     * as the same object, as in Paper.
+     */
+    private Object login(final Map<String, Object> args) {
+        final HostPlayer player = this.server.loggingIn(Values.map(args.get("player")));
+        InetAddress address;
+        try {
+            address = InetAddress.getByName(Values.str(args, "address"));
+        } catch (final java.net.UnknownHostException e) {
+            address = InetAddress.getLoopbackAddress();
+        }
+        final org.bukkit.event.player.PlayerLoginEvent event = new org.bukkit.event.player.PlayerLoginEvent(player, Values.str(args, "hostname", ""), address,
+            org.bukkit.event.player.PlayerLoginEvent.Result.valueOf(Values.str(args, "result", "ALLOWED")), Components.fromJson(args.get("message")), address);
+        event.callEvent();
+        if (event.getResult() != org.bukkit.event.player.PlayerLoginEvent.Result.ALLOWED) {
+            this.server.forgetLogin(player.getUniqueId());
+        }
+        return Values.of("result", event.getResult().name(), "message", Components.toJson(event.kickMessage()));
     }
 
     private Object join(final Map<String, Object> args) {

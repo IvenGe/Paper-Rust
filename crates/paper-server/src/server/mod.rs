@@ -589,6 +589,19 @@ impl Server {
         self.shutdown();
     }
 
+    /// Unloads the chunks of every world that nobody needs any more, telling plugins that
+    /// listen first (`ChunkUnloadEvent`).
+    pub fn unload_unused_chunks(&mut self) {
+        for index in 0..self.worlds.len() {
+            if crate::plugins::events::listens(self, "ChunkUnloadEvent") {
+                for pos in self.worlds[index].unloadable_chunks() {
+                    crate::plugins::events::on_chunk_unload(self, index, pos);
+                }
+            }
+            self.worlds[index].unload_unused();
+        }
+    }
+
     fn handle_task(&mut self, task: MainTask) {
         match task {
             MainTask::Join(request) => self.handle_join(*request),
@@ -610,6 +623,7 @@ impl Server {
                     if fresh {
                         self.spawn_for_chunk_generation(world, pos);
                     }
+                    crate::plugins::events::on_chunk_load(self, world, pos, fresh);
                 }
             }
             MainTask::ConsoleCommand(line) => {
@@ -675,9 +689,7 @@ impl Server {
             self.broadcast_latency();
         }
         if self.tick % 200 == 0 {
-            for world in &mut self.worlds {
-                world.unload_unused();
-            }
+            self.unload_unused_chunks();
         }
         let autosave = self.config.paper.world.autosave_interval_ticks;
         if autosave > 0 && self.tick % autosave == 0 {

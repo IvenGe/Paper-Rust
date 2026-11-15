@@ -927,6 +927,58 @@ pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: cra
     }
 }
 
+/// `PlayerLoginEvent` (Paper still fires it for listeners): plugins may change the verdict
+/// of the server's own checks (bans, the whitelist, a full server). The host keeps the
+/// player it gives the event and joins it as that player.
+pub fn on_login(server: &mut Server, profile: &paper_protocol::types::GameProfile, address: &str, hostname: &str, verdict: Result<(), (crate::access::Refusal, Component)>) -> Result<(), Component> {
+    if !listens(server, "PlayerLoginEvent") {
+        return verdict.map_err(|(_, message)| message);
+    }
+    let (result, message) = match &verdict {
+        Ok(()) => ("ALLOWED", Component::default()),
+        Err((refusal, message)) => (refusal.bukkit_name(), message.clone()),
+    };
+    // Where a new player would appear; the server sends the real state as the player joins.
+    let world = &server.worlds[0];
+    let spawn = world.spawn;
+    let player = bmap! {
+        "uuid" => profile.uuid.to_string(),
+        "name" => profile.name.clone(),
+        "entity_id" => 0,
+        "world" => world.name.clone(),
+        "x" => spawn.x as f64 + 0.5, "y" => spawn.y as f64, "z" => spawn.z as f64 + 0.5, "yaw" => 0.0, "pitch" => 0.0,
+        "game_mode" => server.default_game_mode.name(),
+        "op_level" => server.shared.access.read().op_level(profile.uuid) as i64,
+        "health" => 20.0, "food" => 20, "saturation" => 5.0,
+        "address" => address, "virtual_host" => hostname,
+        "properties" => Value::List(profile.properties.iter().map(|prop| bmap! { "name" => prop.name.clone(), "value" => prop.value.clone(), "signature" => prop.signature.clone() }).collect()),
+    };
+    let args = bmap! { "player" => player, "address" => address, "hostname" => hostname, "result" => result, "message" => component_value(&message) };
+    match fire(server, "PlayerLoginEvent", "event.login", args) {
+        Some(answer) => match answer.str("result") {
+            Some("ALLOWED") => Ok(()),
+            Some(_) => Err(component_from(answer.get("message")).unwrap_or(message)),
+            None => verdict.map_err(|(_, message)| message),
+        },
+        None => verdict.map_err(|(_, message)| message),
+    }
+}
+
+/// `ChunkLoadEvent`: a chunk became ready in a world (`new`: just generated).
+pub fn on_chunk_load(server: &mut Server, world: usize, pos: crate::world::chunk::ChunkPos, new: bool) {
+    if !listens(server, "ChunkLoadEvent") {
+        return;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "z" => pos.z, "new" => new };
+    fire(server, "ChunkLoadEvent", "event.chunk_load", args);
+}
+
+/// `ChunkUnloadEvent`: a chunk is about to leave a world (its changes are saved either way).
+pub fn on_chunk_unload(server: &mut Server, world: usize, pos: crate::world::chunk::ChunkPos) {
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "z" => pos.z };
+    fire(server, "ChunkUnloadEvent", "event.chunk_unload", args);
+}
+
 /// PlayerChangedWorldEvent, after a player moved to another world.
 pub fn on_changed_world(server: &mut Server, id: i32, from: usize) {
     if server.plugins.is_none() || !server.plugin_events.contains("PlayerChangedWorldEvent") {

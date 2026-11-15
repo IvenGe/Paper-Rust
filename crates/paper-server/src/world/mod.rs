@@ -741,39 +741,41 @@ impl World {
         None
     }
 
-    /// Drops chunks nobody needs: no ticket on the chunk or any neighbour (neighbours keep
-    /// terrain around for lighting). Unsaved changes are saved first; without storage, chunks
-    /// with changes stay loaded.
+    /// Whether a chunk stays loaded: while it or a neighbour has a ticket, or light or
+    /// generation work (neighbours keep terrain around for lighting). Worlds kept in memory
+    /// also keep edited chunks and chunks with entities; others are generated again when
+    /// needed.
+    fn keeps_loaded(&self, pos: ChunkPos, chunk: &Chunk) -> bool {
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let p = ChunkPos::new(pos.x + dx, pos.z + dz);
+                if self.tickets.contains_key(&p) || self.lighting.contains_key(&p) || self.generating.contains(&p) {
+                    return true;
+                }
+            }
+        }
+        self.storage.is_none() && (chunk.dirty || self.entity_chunks.get(&pos).is_some_and(|ids| !ids.is_empty()))
+    }
+
+    /// The chunks [`Self::unload_unused`] would drop now.
+    pub fn unloadable_chunks(&self) -> Vec<ChunkPos> {
+        self.chunks.iter().filter(|(pos, chunk)| !self.keeps_loaded(**pos, chunk)).map(|(pos, _)| *pos).collect()
+    }
+
+    /// Drops chunks nobody needs (see [`Self::keeps_loaded`]). Unsaved changes are saved
+    /// first.
     pub fn unload_unused(&mut self) -> usize {
         let before = self.chunks.len();
-        let tickets = &self.tickets;
-        let (generating, lighting) = (&self.generating, &self.lighting);
-        let (storage, has_skylight, age) = (&self.storage, self.has_skylight, self.age);
-        let generator = &self.generator;
         let mut unloaded: Vec<(ChunkPos, bool)> = Vec::new();
-        let entity_chunks = &self.entity_chunks;
-        self.chunks.retain(|pos, chunk| {
-            for dz in -1..=1 {
-                for dx in -1..=1 {
-                    let p = ChunkPos::new(pos.x + dx, pos.z + dz);
-                    if tickets.contains_key(&p) || lighting.contains_key(&p) || generating.contains(&p) {
-                        return true;
-                    }
+        for pos in self.unloadable_chunks() {
+            let Some(chunk) = self.chunks.remove(&pos) else { continue };
+            if let Some(storage) = &self.storage {
+                if chunk.dirty {
+                    storage.save_chunk(SaveChunk { structures: structures_to_save(&self.generator, pos), ..SaveChunk::full(&chunk, self.has_skylight, self.age) });
                 }
+                unloaded.push((pos, chunk.entities_saved));
             }
-            if storage.is_none() {
-                // Worlds kept in memory keep edited chunks and chunks with entities; others
-                // are generated again when needed.
-                return chunk.dirty || entity_chunks.get(pos).is_some_and(|ids| !ids.is_empty());
-            }
-            if chunk.dirty {
-                if let Some(storage) = storage {
-                    storage.save_chunk(SaveChunk { structures: structures_to_save(generator, *pos), ..SaveChunk::full(chunk, has_skylight, age) });
-                }
-            }
-            unloaded.push((*pos, chunk.entities_saved));
-            false
-        });
+        }
         let chunks = &self.chunks;
         self.packets.retain(|pos, _| chunks.contains_key(pos));
         // Unfinished chunks stay while finishing a ticketed chunk may need them (decorating

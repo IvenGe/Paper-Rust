@@ -117,6 +117,24 @@ fn bukkit_and_paper_plugins_run_against_the_rust_server() {
     alice.drain(QUIET);
     alice.clear_backlog();
 
+    // PlayerLoginEvent: a plugin refuses a player, and lets in one the server banned.
+    let (_, reply) = Client::begin_login(server.port(), paper_data::PROTOCOL_VERSION, "Loki");
+    let refusal: paper_protocol::packets::login::LoginDisconnect = decode(&reply.expect("login refusal"));
+    assert_eq!(refusal.reason.0.to_plain(), "No Loki today");
+    server.handle.console_command("ban Wally testing");
+    server.handle.run(|s| assert!(s.shared.access.read().banned_players.iter().any(|b| b.name == "Wally"))).unwrap();
+    let mut wally = Client::join(server.port(), "Wally");
+    wally.expect::<play::PlayerPosition>();
+    assert_eq!(next_text(&mut wally), "Welcome, Wally, from a Bukkit plugin");
+    drop(wally);
+    server.handle.console_command("pardon Wally");
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while server.handle.run(|s| s.players.len()).unwrap() > 1 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    alice.drain(QUIET);
+    alice.clear_backlog();
+
     // A plugin.yml command with configuration, an alias, and a permission check.
     alice.command("greet");
     assert_eq!(next_text(&mut alice), "Hello, Alice!");
@@ -133,12 +151,18 @@ fn bukkit_and_paper_plugins_run_against_the_rust_server() {
     alice.command("where");
     assert!(next_text(&mut alice).starts_with("You are in "));
 
-    // Tab completion from a TabCompleter and from a BasicCommand (which, as on Paper, is not
-    // filtered by what was typed).
+    // Tab completion from a TabCompleter (with one more from TabCompleteEvent) and from a
+    // BasicCommand (which, as on Paper, is not filtered by what was typed).
     alice.send(&play::CommandSuggestion { transaction_id: VarInt(1), text: "/greet ".into() });
     let suggestions: play::CommandSuggestions = alice.expect();
     assert_eq!((suggestions.start, suggestions.length), (7, 0));
-    assert_eq!(suggestions.matches.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), vec!["world", "everyone"]);
+    assert_eq!(suggestions.matches.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), vec!["world", "everyone", "galaxy"]);
+    // AsyncTabCompleteEvent answers before the command, off the main thread.
+    alice.send(&play::CommandSuggestion { transaction_id: VarInt(3), text: "/greet @".into() });
+    let suggestions: play::CommandSuggestions = alice.expect();
+    assert_eq!((suggestions.start, suggestions.length), (7, 1));
+    assert_eq!(suggestions.matches.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), vec!["alpha", "beta"]);
+    assert_eq!(suggestions.matches[0].1.as_ref().map(|t| t.to_plain()), Some("async".to_owned()));
     alice.send(&play::CommandSuggestion { transaction_id: VarInt(2), text: "/where t".into() });
     let suggestions: play::CommandSuggestions = alice.expect();
     assert_eq!((suggestions.start, suggestions.length), (7, 1));
@@ -966,6 +990,14 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let cleared: Vec<_> =
         area(-2..=6, 4).map(|p| (p, "minecraft:air")).chain([piston, front, two, behind, plain, plain.offset(1, 0, 0), lava.offset(0, -1, 0)].map(|p| (p, "minecraft:air"))).collect();
     put(&server, &cleared, false);
+
+    // PlayerChangedWorldEvent on the way to the nether and back.
+    alice.command("apitest worldhop");
+    expect_line(&mut alice, &format!("worldhop: {0} -> {0}_nether, {0}_nether -> {0}", server.handle.run(|s| s.worlds[0].name.clone()).unwrap()));
+    // ChunkLoadEvent (new chunks too) and, once chunks nobody needs go, ChunkUnloadEvent.
+    server.handle.run(|s| s.unload_unused_chunks()).unwrap();
+    alice.command("apitest chunks");
+    expect_line(&mut alice, "chunks: true true true");
 
     // Crafting tables and anvils without a block, as Essentials' /craft and /anvil open them.
     alice.command("apitest stations");

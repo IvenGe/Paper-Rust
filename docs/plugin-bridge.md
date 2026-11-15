@@ -175,14 +175,18 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.chat` (async) | `uuid`, `message`, `default` | `cancelled`, `deliveries`: `[{viewer, message}]` rendered per viewer (`viewer` is a UUID or `console`) |
 | `event.server_list_ping` (async) | `address`, `motd`, `online`, `max`, `protocol`, `version` | the same fields as changed, `hide_players`, `sample`, `cancelled` |
 | `event.pre_login` (async) | `name`, `uuid`, `address` | `result` (`ALLOWED`, `KICK_BANNED`, ...), `message` |
+| `event.login` | `player` (a state for a player that has not joined yet), `address`, `hostname`, `result` (the server's own verdict: `ALLOWED`, `KICK_BANNED`, `KICK_WHITELIST`, `KICK_FULL`), `message` | `result`, `message` (`PlayerLoginEvent`; the host keeps the player and joins it as that object) |
+| `event.changed_world` | `uuid`, `from` (the world left) | nothing (`PlayerChangedWorldEvent`) |
+| `event.chunk_load` / `event.chunk_unload` | `world`, `x`, `z` (chunk coordinates), and for a load `new` (just generated) | nothing (`ChunkLoadEvent` once a chunk is ready, `ChunkUnloadEvent` before it goes) |
 | `command.execute` | `sender` (UUID or `console`), `command` | `handled` |
-| `command.suggest` | `sender`, `text` (with `/`) | `start`, `length`, `matches`: `[{text, tooltip}]` |
+| `command.suggest` | `sender`, `text` (with `/`) | `start`, `length`, `matches`: `[{text, tooltip}]` (a player's `AsyncTabCompleteEvent` first, on a host thread of its own; completions it handled are the answer; then the commands, with `TabCompleteEvent` for Bukkit commands) |
 | `command.visible` | `uuid` | `labels`: the plugin commands this player may see |
 
 Some events are only fired when a plugin listens to them (the host reports which in
 `events`): command preprocess, server command, block break and place, interactions and
 explosions, move, game mode change, chat, the inventory, item, damage, death, respawn
-and spawn events, and pistons and fire. Join, quit,
+and spawn events, pistons and fire, login, changing worlds, and chunks loading and
+unloading. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 

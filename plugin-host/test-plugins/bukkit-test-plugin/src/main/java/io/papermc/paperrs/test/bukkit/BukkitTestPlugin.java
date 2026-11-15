@@ -12,6 +12,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 /** A classic plugin.yml plugin: commands, listeners, configuration and the scheduler. */
 public final class BukkitTestPlugin extends JavaPlugin implements Listener {
+    /** The players PlayerLoginEvent gave, to compare with the ones that join. */
+    private final java.util.Map<java.util.UUID, org.bukkit.entity.Player> loggedIn = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Override
     public void onLoad() {
@@ -49,9 +51,43 @@ public final class BukkitTestPlugin extends JavaPlugin implements Listener {
     }
 
     @EventHandler
+    public void onLogin(final org.bukkit.event.player.PlayerLoginEvent event) {
+        final String name = event.getPlayer().getName();
+        if (name.equals("Loki")) {
+            event.disallow(org.bukkit.event.player.PlayerLoginEvent.Result.KICK_OTHER, Component.text("No Loki today"));
+        } else if (name.equals("Wally") && event.getResult() == org.bukkit.event.player.PlayerLoginEvent.Result.KICK_BANNED) {
+            // Let in past the server's own ban, as plugins with ban lists of their own decide.
+            event.allow();
+        }
+        this.loggedIn.put(event.getPlayer().getUniqueId(), event.getPlayer());
+    }
+
+    @EventHandler
     public void onJoin(final PlayerJoinEvent event) {
-        event.getPlayer().sendMessage(Component.text("Welcome, " + event.getPlayer().getName() + ", from a Bukkit plugin"));
+        // The player that joins is the one PlayerLoginEvent gave, as in Paper.
+        final boolean same = this.loggedIn.remove(event.getPlayer().getUniqueId()) == event.getPlayer();
+        event.getPlayer().sendMessage(Component.text("Welcome, " + event.getPlayer().getName() + ", from a Bukkit plugin" + (same ? "" : " (not the player from PlayerLoginEvent)")));
         event.joinMessage(Component.text(event.getPlayer().getName() + " joined (bukkit-test)"));
+    }
+
+    @EventHandler
+    public void onTabComplete(final org.bukkit.event.server.TabCompleteEvent event) {
+        if (event.getBuffer().startsWith("/greet ")) {
+            final List<String> completions = new java.util.ArrayList<>(event.getCompletions());
+            completions.add("galaxy");
+            event.setCompletions(completions);
+        }
+    }
+
+    @EventHandler
+    public void onAsyncTabComplete(final com.destroystokyo.paper.event.server.AsyncTabCompleteEvent event) {
+        // Completions a plugin works out off the main thread.
+        if (event.getBuffer().equals("/greet @")) {
+            final String thread = org.bukkit.Bukkit.isPrimaryThread() ? "main thread" : "async";
+            event.completions(List.of(com.destroystokyo.paper.event.server.AsyncTabCompleteEvent.Completion.completion("alpha", Component.text(thread)),
+                com.destroystokyo.paper.event.server.AsyncTabCompleteEvent.Completion.completion("beta")));
+            event.setHandled(true);
+        }
     }
 
     @EventHandler

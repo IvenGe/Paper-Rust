@@ -113,6 +113,8 @@ public final class CraftServer extends AbstractServer {
     private final ConsoleCommandSender console;
     private final List<World> worlds = new ArrayList<>();
     private final Map<UUID, HostPlayer> players = Collections.synchronizedMap(new LinkedHashMap<>());
+    /** Players between {@code PlayerLoginEvent} and joining. */
+    private final Map<UUID, Login> loggingIn = new java.util.concurrent.ConcurrentHashMap<>();
     private final org.bukkit.craftbukkit.metadata.EntityMetadataStore entityMetadata = new org.bukkit.craftbukkit.metadata.EntityMetadataStore();
     private volatile long epoch;
     private volatile Component motd;
@@ -322,10 +324,35 @@ public final class CraftServer extends AbstractServer {
 
     // --- players ----------------------------------------------------------------------------
 
-    public HostPlayer addPlayer(final Map<String, Object> state) {
+    /** A player that has not joined yet, for {@code PlayerLoginEvent}; it joins as this player. */
+    public HostPlayer loggingIn(final Map<String, Object> state) {
+        final long now = System.nanoTime();
+        // Logins that never joined (the client left during configuration).
+        this.loggingIn.values().removeIf(login -> now - login.since() > java.util.concurrent.TimeUnit.MINUTES.toNanos(5));
         final HostPlayer player = new HostPlayer(this, state);
+        player.markOffline();
+        this.loggingIn.put(player.getUniqueId(), new Login(player, now));
+        return player;
+    }
+
+    public void forgetLogin(final UUID uuid) {
+        this.loggingIn.remove(uuid);
+    }
+
+    public HostPlayer addPlayer(final Map<String, Object> state) {
+        final Login login = this.loggingIn.remove(Values.uuid(state, "uuid"));
+        final HostPlayer player;
+        if (login != null) {
+            player = login.player();
+            player.joined(state);
+        } else {
+            player = new HostPlayer(this, state);
+        }
         this.players.put(player.getUniqueId(), player);
         return player;
+    }
+
+    private record Login(HostPlayer player, long since) {
     }
 
     public @Nullable HostPlayer removePlayer(final UUID uuid) {

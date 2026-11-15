@@ -276,7 +276,12 @@ What works:
   as in Paper, a cancelled pull still lets a sticky piston retract), `BlockBurnEvent`,
   `BlockIgniteEvent` with `BlockSpreadEvent` for fire spreading, and `BlockIgniteEvent` for
   fires players light with flint and steel or fire charges (campfires and candles too) and
-  fires lightning, lava, small fireballs, dispensers and explosions start. Players,
+  fires lightning, lava, small fireballs, dispensers and explosions start,
+  `PlayerLoginEvent` (with the server's own verdict on bans, the whitelist and a full server
+  for plugins to change; the player then joins as the same object, as in Paper),
+  `PlayerChangedWorldEvent`, `ChunkLoadEvent` and `ChunkUnloadEvent` (a chunk's changes are
+  saved even if a listener asks not to), and `AsyncTabCompleteEvent` (off the main thread)
+  and `TabCompleteEvent` for command completions. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -436,8 +441,8 @@ Not yet:
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
   Events not fired yet include fluids flowing, blocks growing, fading and forming,
-  `TNTPrimeEvent`, `EntityChangeBlockEvent`, projectiles being launched and hitting,
-  vehicles, and chunks loading and unloading.
+  `TNTPrimeEvent`, `EntityChangeBlockEvent`, projectiles being launched and hitting, and
+  vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

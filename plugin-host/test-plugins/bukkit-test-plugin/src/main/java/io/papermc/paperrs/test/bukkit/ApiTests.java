@@ -73,6 +73,12 @@ final class ApiTests implements Listener, CommandExecutor {
     /** Piston and fire events seen ("apitest blocks record|cancel|off"); cancelled in cancel mode. */
     private final java.util.TreeSet<String> blockEvents = new java.util.TreeSet<>();
     private String blockMode = "off";
+    /** PlayerChangedWorldEvents seen ("apitest worldhop"). */
+    private final List<String> changedWorlds = new ArrayList<>();
+    /** ChunkLoadEvents (and of new chunks) and ChunkUnloadEvents seen. */
+    private int chunkLoads;
+    private int newChunks;
+    private int chunkUnloads;
 
     ApiTests(final JavaPlugin plugin) {
         this.plugin = plugin;
@@ -230,6 +236,16 @@ final class ApiTests implements Listener, CommandExecutor {
                     sender.sendMessage("blocks: " + this.blockMode);
                 }
                 case "blockevents" -> sender.sendMessage("blockevents: " + String.join(", ", this.blockEvents));
+                case "worldhop" -> {
+                    // To the nether and back: PlayerChangedWorldEvent each time.
+                    final Player player = (Player) sender;
+                    final Location home = player.getLocation();
+                    this.changedWorlds.clear();
+                    player.teleport(Bukkit.getWorlds().get(1).getSpawnLocation());
+                    player.teleport(home);
+                    sender.sendMessage("worldhop: " + String.join(", ", this.changedWorlds));
+                }
+                case "chunks" -> sender.sendMessage("chunks: " + (this.chunkLoads > 0) + " " + (this.newChunks > 0) + " " + (this.chunkUnloads > 0));
                 case "interactions" -> {
                     sender.sendMessage("interactions: " + String.join(", ", this.interactions));
                     this.interactions.clear();
@@ -1389,6 +1405,24 @@ final class ApiTests implements Listener, CommandExecutor {
             this.interactions.add("ENTITY " + event.getRightClicked().getType() + " " + event.getHand());
             event.setCancelled(true);
         }
+    }
+
+    @EventHandler
+    public void onChangedWorld(final org.bukkit.event.player.PlayerChangedWorldEvent event) {
+        this.changedWorlds.add(event.getFrom().getName() + " -> " + event.getPlayer().getWorld().getName());
+    }
+
+    @EventHandler
+    public void onChunkLoad(final org.bukkit.event.world.ChunkLoadEvent event) {
+        this.chunkLoads++;
+        if (event.isNewChunk()) {
+            this.newChunks++;
+        }
+    }
+
+    @EventHandler
+    public void onChunkUnload(final org.bukkit.event.world.ChunkUnloadEvent event) {
+        this.chunkUnloads++;
     }
 
     private void blockEvent(final org.bukkit.event.Cancellable event, final String what) {

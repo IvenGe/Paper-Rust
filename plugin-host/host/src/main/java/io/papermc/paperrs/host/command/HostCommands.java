@@ -309,6 +309,42 @@ public final class HostCommands implements Commands, PaperRegistrar<LifecycleEve
         }
     }
 
+    /** Paper runs {@code AsyncTabCompleteEvent} on threads of its own. */
+    private static final java.util.concurrent.ExecutorService ASYNC_TAB_COMPLETE = java.util.concurrent.Executors.newFixedThreadPool(2, runnable -> {
+        final Thread thread = new Thread(runnable, "Async Tab Complete Thread");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    /**
+     * {@code AsyncTabCompleteEvent}, as Paper fires it before asking the commands: the
+     * completions a listener handled (all of them, unfiltered, after the last space), none if it
+     * was cancelled, or {@code null} to ask the commands.
+     */
+    private @Nullable Map<String, Object> asyncTabComplete(final CommandSender sender, final String text) {
+        if (!(sender instanceof org.bukkit.entity.Player) || com.destroystokyo.paper.event.server.AsyncTabCompleteEvent.getHandlerList().getRegisteredListeners().length == 0) {
+            return null;
+        }
+        final com.destroystokyo.paper.event.server.AsyncTabCompleteEvent event = new com.destroystokyo.paper.event.server.AsyncTabCompleteEvent(sender, text, true, null);
+        try {
+            java.util.concurrent.CompletableFuture.runAsync(event::callEvent, ASYNC_TAB_COMPLETE).get(10, TimeUnit.SECONDS);
+        } catch (final Exception e) {
+            LOGGER.log(Level.WARNING, "AsyncTabCompleteEvent for " + text + " failed", e);
+            return null;
+        }
+        final List<Object> matches = new ArrayList<>();
+        final int start = text.lastIndexOf(' ') + 1;
+        if (!event.isHandled()) {
+            return event.isCancelled() ? Values.of("start", start, "length", text.length() - start, "matches", matches) : null;
+        }
+        if (!event.isCancelled()) {
+            for (final com.destroystokyo.paper.event.server.AsyncTabCompleteEvent.Completion completion : event.completions()) {
+                matches.add(Values.of("text", completion.suggestion(), "tooltip", completion.tooltip() == null ? null : Components.toJson(completion.tooltip())));
+            }
+        }
+        return Values.of("start", start, "length", text.length() - start, "matches", matches);
+    }
+
     /** Completions for the input {@code text} (with its leading slash), in the server's format. */
     public Map<String, Object> suggest(final CommandSender sender, final String text) {
         final String line = strip(text);
@@ -316,6 +352,10 @@ public final class HostCommands implements Commands, PaperRegistrar<LifecycleEve
         final List<Object> matches = new ArrayList<>();
         if (this.commandMap == null) {
             return Values.of("start", text.length(), "length", 0, "matches", matches);
+        }
+        final Map<String, Object> handled = this.asyncTabComplete(sender, text);
+        if (handled != null) {
+            return handled;
         }
         final Command command = this.commandMap.getCommand(label(line));
         if (command instanceof BrigadierCommand) {
@@ -332,6 +372,11 @@ public final class HostCommands implements Commands, PaperRegistrar<LifecycleEve
             LOGGER.log(Level.SEVERE, "Exception when " + sender.getName() + " attempted to tab complete " + line, e);
             completions = null;
         }
+        // TabCompleteEvent, as Paper's Bukkit command nodes fire it.
+        final org.bukkit.event.server.TabCompleteEvent tabEvent = sender instanceof org.bukkit.entity.Player player
+            ? new org.bukkit.event.server.TabCompleteEvent(player, text, completions != null ? completions : new ArrayList<>(), true, player.getLocation())
+            : new org.bukkit.event.server.TabCompleteEvent(sender, text, completions != null ? completions : new ArrayList<>());
+        completions = tabEvent.callEvent() ? tabEvent.getCompletions() : null;
         final int start = offset + line.lastIndexOf(' ') + 1;
         if (completions != null) {
             for (String completion : completions) {

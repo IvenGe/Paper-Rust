@@ -50,7 +50,8 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
     private final CraftServer server;
     private final UUID uuid;
     private final String name;
-    private final int entityId;
+    /** 0 until the player joins (a player in {@code PlayerLoginEvent} has none yet). */
+    private volatile int entityId;
     private final HostPlayerProfile profile;
     private volatile Map<String, Object> state;
     private volatile boolean online = true;
@@ -86,6 +87,13 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     public void markOffline() {
         this.online = false;
+    }
+
+    /** The player from {@code PlayerLoginEvent} joined with this state. */
+    public void joined(final Map<String, Object> state) {
+        this.entityId = Values.i32(state, "entity_id", 0);
+        this.updateState(state);
+        this.online = true;
     }
 
     private Map<String, Object> args(final Object... kv) {

@@ -270,26 +270,44 @@ impl AccessLists {
 
     /// Decides whether a player may log in, in the order vanilla checks: player ban,
     /// whitelist, IP ban, player limit.
-    pub fn check_login(&self, profile: &GameProfile, ip: IpAddr, online: usize, props: &ServerProperties) -> Result<(), Component> {
+    pub fn check_login(&self, profile: &GameProfile, ip: IpAddr, online: usize, props: &ServerProperties) -> Result<(), (Refusal, Component)> {
         if let Some(ban) = self.banned_players.iter().find(|b| b.uuid == profile.uuid && in_force(&b.expires)) {
             let mut message = Component::translatable("multiplayer.disconnect.banned.reason", vec![Component::text(ban.reason.clone())]);
             if !ban.expires.eq_ignore_ascii_case("forever") {
                 message = message.append(Component::translatable("multiplayer.disconnect.banned.expiration", vec![Component::text(ban.expires.clone())]));
             }
-            return Err(message);
+            return Err((Refusal::Banned, message));
         }
         let op = self.ops.iter().find(|op| op.uuid == profile.uuid);
         if props.white_list && op.is_none() && !self.is_whitelisted(profile.uuid) {
-            return Err(Component::translatable("multiplayer.disconnect.not_whitelisted", vec![]));
+            return Err((Refusal::Whitelist, Component::translatable("multiplayer.disconnect.not_whitelisted", vec![])));
         }
         let ip_text = ip.to_string();
         if let Some(ban) = self.banned_ips.iter().find(|b| b.ip == ip_text && in_force(&b.expires)) {
-            return Err(Component::translatable("multiplayer.disconnect.banned_ip.reason", vec![Component::text(ban.reason.clone())]));
+            return Err((Refusal::Banned, Component::translatable("multiplayer.disconnect.banned_ip.reason", vec![Component::text(ban.reason.clone())])));
         }
         if online >= props.max_players as usize && !op.is_some_and(|op| op.bypasses_player_limit) {
-            return Err(Component::translatable("multiplayer.disconnect.server_full", vec![]));
+            return Err((Refusal::Full, Component::translatable("multiplayer.disconnect.server_full", vec![])));
         }
         Ok(())
+    }
+}
+
+/// Why a login is refused, as Bukkit's `PlayerLoginEvent.Result` tells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    Banned,
+    Whitelist,
+    Full,
+}
+
+impl Refusal {
+    pub fn bukkit_name(self) -> &'static str {
+        match self {
+            Refusal::Banned => "KICK_BANNED",
+            Refusal::Whitelist => "KICK_WHITELIST",
+            Refusal::Full => "KICK_FULL",
+        }
     }
 }
 
@@ -334,7 +352,8 @@ mod tests {
 
         // Bans.
         assert!(lists.ban(steve.uuid, "Steve", "Console", Some("griefing")));
-        let err = lists.check_login(&steve, ip, 0, &props(&[])).unwrap_err();
+        let (refusal, err) = lists.check_login(&steve, ip, 0, &props(&[])).unwrap_err();
+        assert_eq!(refusal, Refusal::Banned);
         assert!(err.to_json_string().contains("griefing"));
         assert!(lists.pardon("STEVE"));
         assert!(lists.check_login(&steve, ip, 0, &props(&[])).is_ok());

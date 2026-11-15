@@ -224,8 +224,22 @@ async fn login_flow(conn: &mut Connection, shared: &Arc<Shared>, intention: Inte
         }
     }
 
-    // --- may this player join? ---
+    // --- may this player join? (plugins may change the verdict: PlayerLoginEvent) ---
     let verdict = shared.access.read().check_login(&profile, conn.addr.ip(), shared.player_count.load(Ordering::Relaxed), props);
+    let verdict = if shared.plugin_host.read().is_some() {
+        let (to_main, profile, address, host) = (shared.to_main.clone(), profile.clone(), conn.addr.ip().to_string(), intention.server_address.clone());
+        let decided = tokio::task::spawn_blocking(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let task = move |s: &mut crate::server::Server| {
+                let _ = tx.send(crate::plugins::events::on_login(s, &profile, &address, &host, verdict));
+            };
+            to_main.send(crate::server::MainTask::Run(Box::new(task))).ok()?;
+            rx.recv().ok()
+        });
+        decided.await.ok().flatten().unwrap_or(Ok(()))
+    } else {
+        verdict.map_err(|(_, reason)| reason)
+    };
     if let Err(reason) = verdict {
         log::info!("Disconnecting {} ({}): {}", profile.name, conn.addr, reason.to_plain());
         conn.login_disconnect(reason).await?;
