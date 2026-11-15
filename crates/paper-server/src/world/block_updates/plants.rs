@@ -581,7 +581,7 @@ pub fn bone_meal(level: &mut Level, state: u32, pos: BlockPos) -> bool {
             // `MushroomBlock.growMushroom`, 40% of the time.
             if level.random_float() < 0.4 {
                 let feature = if block_name(state) == "minecraft:red_mushroom" { "huge_red_mushroom" } else { "huge_brown_mushroom" };
-                crate::world::staged::place_grown_feature(level, feature, pos, &[(pos, blocks::AIR)]);
+                crate::world::staged::place_grown_feature(level, feature, pos, pos, &[(pos, blocks::AIR)]);
             }
             true
         }
@@ -593,7 +593,7 @@ pub fn bone_meal(level: &mut Level, state: u32, pos: BlockPos) -> bool {
                 return false;
             }
             if level.random_float() < 0.4 {
-                crate::world::staged::place_grown_feature(level, if crimson { "crimson_fungus_planted" } else { "warped_fungus_planted" }, pos, &[]);
+                crate::world::staged::place_grown_feature(level, if crimson { "crimson_fungus_planted" } else { "warped_fungus_planted" }, pos, pos, &[]);
             }
             true
         }
@@ -657,7 +657,7 @@ pub fn grow_tree(level: &mut Level, state: u32, pos: BlockPos) -> bool {
                 let square = [corner, corner.offset(1, 0, 0), corner.offset(0, 0, 1), corner.offset(1, 0, 1)];
                 if square.iter().all(|p| block_id(level.state(*p)) == block_id(state)) {
                     let clear: Vec<(BlockPos, u32)> = square.iter().map(|p| (*p, blocks::AIR)).collect();
-                    return place_grown_feature(level, mega, corner, &clear);
+                    return place_grown_feature(level, mega, corner, pos, &clear);
                 }
             }
         }
@@ -670,7 +670,7 @@ pub fn grow_tree(level: &mut Level, state: u32, pos: BlockPos) -> bool {
     let tree = tree.or(if flowers && g.flowers.is_some() { g.flowers } else { g.tree });
     let Some(tree) = tree else { return false };
     let fill = if get_bool(state, "waterlogged") { blocks::default_state("minecraft:water").unwrap_or(blocks::AIR) } else { blocks::AIR };
-    place_grown_feature(level, tree, pos, &[(pos, fill)])
+    place_grown_feature(level, tree, pos, pos, &[(pos, fill)])
 }
 
 /// `TreeGrower.hasFlowers`: a flower within two blocks.

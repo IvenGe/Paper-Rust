@@ -297,8 +297,11 @@ What works:
   `ByEntity` and `ByBlock` forms (fire aspect, burning zombies, lightning, small fireballs,
   and players catching fire in lava or fire), `ProjectileLaunchEvent` (thrown items, arrows
   and fireballs; a stopped throw keeps the item in hand), `ProjectileHitEvent` (a stopped hit
-  lets the projectile fly on, as in Paper) and `BlockDispenseEvent` (plugins may stop a
-  dispenser or dropper, or send another item). Players,
+  lets the projectile fly on, as in Paper), `BlockDispenseEvent` (plugins may stop a
+  dispenser or dropper, or send another item), `StructureGrowEvent` (trees and huge
+  mushrooms growing on their own or from bone meal, with all the blocks they change, which
+  plugins may edit) and `BlockFertilizeEvent` (bone meal from players and dispensers; a
+  stopped one keeps the bone meal, as in Paper). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -457,8 +460,7 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
-  Events not fired yet include trees and huge mushrooms growing (`StructureGrowEvent`),
-  bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`, mobs catching fire in lava, fire or
+  Events not fired yet include `TNTPrimeEvent`, mobs catching fire in lava, fire or
   daylight, and vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without

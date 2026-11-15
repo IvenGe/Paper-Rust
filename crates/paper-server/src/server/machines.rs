@@ -533,11 +533,12 @@ impl Server {
             }
             // Bone meal grows what is in front, or the dispenser clicks.
             "minecraft:bone_meal" => {
-                let used = {
-                    let mut level = Level::new(&mut self.worlds[world]);
-                    crate::world::block_updates::plants::bone_meal(&mut level, in_front, front)
-                };
-                self.publish_block_updates(world);
+                // (Stopped by plugins, it keeps its bone meal.)
+                let used = self.apply_bone_meal(world, front, in_front, None);
+                if used.is_none() {
+                    return Some(stack);
+                }
+                let used = used == Some(true);
                 self.dispensed(world, pos, facing, if used { 1000 } else { 1001 });
                 if !used {
                     return Some(stack);

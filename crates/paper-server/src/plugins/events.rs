@@ -1215,6 +1215,58 @@ pub fn on_dispense(server: &mut Server, world: usize, pos: BlockPos, item: &pape
     }
 }
 
+fn blocks_value(blocks: &[(BlockPos, u32)]) -> Value {
+    Value::List(blocks.iter().map(|(p, s)| bmap! { "x" => p.x, "y" => p.y, "z" => p.z, "state" => paper_data::blocks::state_to_string(*s) }).collect())
+}
+
+fn blocks_from(value: &Value) -> Option<Vec<(BlockPos, u32)>> {
+    value.as_list()?.iter().map(|b| Some((BlockPos::new(b.i64("x")? as i32, b.i64("y")? as i32, b.i64("z")? as i32), paper_data::blocks::parse_state(b.str("state")?)?))).collect()
+}
+
+/// `StructureGrowEvent`: a tree or huge mushroom is to grow (`capture` holds its changes, its
+/// feature and the sapling), on its own or from bone meal (`bonemeal`, by `player`). The
+/// changes as plugins leave them, or `None` if cancelled.
+pub fn on_structure_grow(server: &mut Server, world: usize, capture: &crate::world::block_updates::Capture, player: Option<i32>, bonemeal: bool) -> Option<Vec<(BlockPos, u32)>> {
+    let blocks: Vec<(BlockPos, u32)> = capture.blocks.iter().map(|(p, s, _)| (*p, *s)).collect();
+    let Some((feature, sapling)) = capture.structure.clone() else { return Some(blocks) };
+    if !listens(server, "StructureGrowEvent") {
+        return Some(blocks);
+    }
+    let mut args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => sapling.x, "y" => sapling.y, "z" => sapling.z,
+        "feature" => feature,
+        "bonemeal" => bonemeal,
+        "blocks" => blocks_value(&blocks),
+    };
+    if let Some(p) = player.and_then(|id| server.players.get(&id)) {
+        args.set("uuid", p.uuid().to_string());
+    }
+    match fire(server, "StructureGrowEvent", "event.structure_grow", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(blocks_from(result.get("blocks")).unwrap_or(blocks)),
+        None => Some(blocks),
+    }
+}
+
+/// `BlockFertilizeEvent`: bone meal on `pos` (by `player`, or a dispenser) is to make the
+/// changes `blocks`; `cancelled` presets it (when the tree it grows was stopped). The changes
+/// as plugins leave them, or `None` if cancelled.
+pub fn on_fertilize(server: &mut Server, world: usize, pos: BlockPos, player: Option<i32>, blocks: Vec<(BlockPos, u32)>, cancelled: bool) -> Option<Vec<(BlockPos, u32)>> {
+    if !listens(server, "BlockFertilizeEvent") {
+        return (!cancelled).then_some(blocks);
+    }
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "blocks" => blocks_value(&blocks), "cancelled" => cancelled };
+    if let Some(p) = player.and_then(|id| server.players.get(&id)) {
+        args.set("uuid", p.uuid().to_string());
+    }
+    match fire(server, "BlockFertilizeEvent", "event.fertilize", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(blocks_from(result.get("blocks")).unwrap_or(blocks)),
+        None => (!cancelled).then_some(blocks),
+    }
+}
+
 /// `EntityChangeBlockEvent`: an entity is to change the block at `pos` to `to` (an enderman
 /// taking or placing a block, a block starting to fall or landing, a sheep eating grass, a
 /// player trampling farmland). `cancelled` presets it (a sheep without mob griefing). Returns

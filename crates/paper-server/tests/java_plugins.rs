@@ -931,7 +931,10 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
 
-    // Fire on a floor of planks: plugins stop it burning and spreading, then let it.
+    // Fire on a floor of planks: plugins stop it burning and spreading, then let it. (In
+    // clear weather: rain puts fires out.)
+    server.handle.console_command("weather clear 1000000");
+    server.handle.run(|_| ()).unwrap();
     let floor = feet.offset(-12, 4, 12);
     let area = move |dy: std::ops::RangeInclusive<i32>, r: i32| (-r..=r).flat_map(move |dx| dy.clone().flat_map(move |y| (-r..=r).map(move |dz| floor.offset(dx, y, dz))));
     let planks: Vec<_> = area(0..=0, 3).map(|p| (p, "minecraft:oak_planks")).collect();
@@ -980,7 +983,13 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert_eq!(server.handle.run(fire_count).unwrap(), (49, 0), "nothing burned or caught fire");
     alice.command("apitest blocks record");
     expect_line(&mut alice, "blocks: record");
-    for _ in 0..30 {
+    // (Fires burn their planks away and go out within a few hundred ticks, which may be before
+    // they spread: fresh ones now and then.)
+    for round in 0..30 {
+        if round % 3 == 0 {
+            put(&server, &planks, false);
+            put(&server, &fires, true);
+        }
         run_block_ticks(&server, 1000);
         alice.command("apitest blockevents");
         seen = line_starting(&mut alice, "blockevents: ");
@@ -1023,6 +1032,7 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         assert!(seen.contains("FORM LAVA -> OBSIDIAN") && (seen.contains("DECAY OAK_LEAVES") || mode == "record"), "{mode}: {seen}");
         assert_eq!((name_at(leaves).as_str(), name_at(hot) == "minecraft:obsidian"), (leaves_left, hardened), "{mode}");
     }
+    random_tick_speed(&server, 0);
     let cleared: Vec<_> = basin.iter().map(|(p, _)| (*p, "minecraft:air")).chain([(hot, "minecraft:air")]).collect();
     put(&server, &cleared, false);
 
@@ -1130,6 +1140,45 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         assert!(expected.iter().all(|e| seen.contains(e)), "{mode}: {seen}");
         put(&server, &[(dispenser, "minecraft:air"), (dispenser.offset(1, 0, 0), "minecraft:air")], false);
     }
+
+    // Bone meal on an oak sapling: the tree (and so the bone meal) stopped, then let grow.
+    let sapling = feet.offset(2, 0, -3);
+    let held = server.handle.run(move |s| s.players[&alice_id].held_slot as usize).unwrap();
+    let in_hand = server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&alice_id).unwrap();
+            let in_hand = std::mem::replace(&mut p.inventory[36 + held], Slot::of(paper_data::items::id("minecraft:bone_meal").unwrap() as i32, 64));
+            s.resync_inventory(alice_id);
+            in_hand
+        })
+        .unwrap();
+    for (mode, grows) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(sapling, "minecraft:oak_sapling[stage=1]")], false);
+        // (It grows 45% of the time.)
+        for attempt in 0..30 {
+            alice.send(&play::UseItemOn { hand: VarInt(0), pos: sapling, face: VarInt(1), cursor_x: 0.5, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(100 + attempt) });
+            alice.drain(Duration::from_millis(150));
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            if seen.contains("STRUCTURE") {
+                break;
+            }
+        }
+        assert!(seen.contains("STRUCTURE true player") && seen.contains("FERTILIZE OAK_SAPLING player"), "{mode}: {seen}");
+        assert_eq!(name_at(sapling), if grows { "minecraft:oak_log" } else { "minecraft:oak_sapling" }, "{mode}");
+        let tree: Vec<_> = (-3..=3).flat_map(|x| (0..=9).flat_map(move |y| (-3..=3).map(move |z| (sapling.offset(x, y, z), "minecraft:air")))).collect();
+        put(&server, &tree, false);
+    }
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = in_hand;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");

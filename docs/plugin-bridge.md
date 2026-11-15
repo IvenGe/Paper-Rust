@@ -172,6 +172,8 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.block_changes` | `world`, `changes`: `[{event, x, y, z, state, from}]` with `event` `grow`, `fade`, `form`, `spread` (with `from` `[x, y, z]`), `decay` or `moisture` and `state` the new block | `results`: `[{cancelled, state}]`, one per change (`BlockGrowEvent`, `BlockFadeEvent`, `BlockFormEvent`, `BlockSpreadEvent`, `LeavesDecayEvent`, `MoistureChangeEvent`, fired one after another; `state` as listeners left it) |
 | `event.block_flows` | `world`, `flows`: `[{x, y, z, face}]` (the fluid's block and the `BlockFace` it flows towards) | `results`: `[{cancelled}]` (`BlockFromToEvent`, one per flow) |
 | `event.entity_change_block` | `entity`, `world`, `x`, `y`, `z`, `to` (the new block), `cancelled` (preset: a sheep without mob griefing) | `cancelled` (`EntityChangeBlockEvent`) |
+| `event.structure_grow` | `world`, `x`, `y`, `z` (the sapling or mushroom), `feature` (the tree grown, e.g. `fancy_oak`), `bonemeal`, `uuid` (who used it), `blocks` `[{x, y, z, state}]` | `cancelled`, `blocks` (`StructureGrowEvent`; only the blocks left are changed) |
+| `event.fertilize` | `world`, `x`, `y`, `z` (the block bone meal was used on), `uuid` (none for a dispenser), `blocks`, `cancelled` (preset when the tree it grows was stopped) | `cancelled`, `blocks` (`BlockFertilizeEvent`; stopped, the bone meal is kept) |
 | `event.projectile_launch` | `entity` (the projectile, in the world but not yet seen) | `cancelled` (`ProjectileLaunchEvent`: it is removed again) |
 | `event.projectile_hit` | `entity`, `world`, and `hit_entity` or `hit_block` `[x, y, z]` | `cancelled` (`ProjectileHitEvent`: it flies on) |
 | `event.dispense` | `world`, `x`, `y`, `z` (the dispenser or dropper), `item`, `velocity` `[x, y, z]` | `cancelled`, `item` (`BlockDispenseEvent`; another item goes out instead) |
@@ -200,9 +202,9 @@ unloading. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 
-Piston moves, fire burning or spreading, lava setting fires, fluids flowing, and blocks
-growing, fading, forming, spreading and decaying happen inside the block engine, which has
-no access to the plugin connection. While plugins listen for their events, the engine
+Piston moves, fire burning or spreading, lava setting fires, fluids flowing, trees growing,
+and blocks growing, fading, forming, spreading and decaying happen inside the block engine,
+which has no access to the plugin connection. While plugins listen for their events, the engine
 leaves them as asks (`block_updates::Ask`) instead of carrying them out. The server fires
 the events and has the engine carry out the answers once the tick's block ticks and block
 events have run (before block entities tick, as Paper fires these events during those
@@ -210,7 +212,9 @@ steps), and again after random ticks. A piston runs its block event either way a
 where Paper stops a cancelled move; moves that an allowed move sets off are asked about in
 a further round. A round's block changes go to the host in one call, and so do its flows;
 a change is carried out only if its block has not changed meanwhile, a flow only if it can
-still happen.
+still happen. A growing tree's block changes are held back (as Paper captures them) and
+made once plugins have seen and perhaps edited them; bone meal is held back the same way,
+and answered at once.
 
 `plugins` is a list of `{name, version, enabled, kind}` with `kind` `paper` or `bukkit`.
 `commands` lists every label of every plugin command (with and without the plugin's

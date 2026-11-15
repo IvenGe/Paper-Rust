@@ -166,6 +166,40 @@ pub enum Ask {
     /// Fluid at `from` is to flow towards `dir` as `new` (`BlockFromToEvent`); after a flow down,
     /// `sides_after` it spreads to the sides too.
     Flow { from: BlockPos, dir: Dir, fluid: fluid::Fluid, new: fluid::FluidState, sides_after: bool },
+    /// A tree or huge mushroom is to grow from a sapling on its own (`StructureGrowEvent`):
+    /// the block changes it makes.
+    Structure { capture: Capture },
+}
+
+/// Block changes held back instead of made (Paper's captured block states), for plugins to see
+/// whole first: a tree or huge mushroom growing, bone meal.
+#[derive(Clone, Debug, Default)]
+pub struct Capture {
+    /// The changes in the order they were made: where, the new state, the flags.
+    pub blocks: Vec<(BlockPos, u32, u32)>,
+    /// The block entities that come with them (beehives).
+    pub block_entities: Vec<(BlockPos, Compound)>,
+    /// The tree or huge mushroom grown, if one was: its feature and the sapling's place.
+    pub structure: Option<(String, BlockPos)>,
+}
+
+impl Capture {
+    /// Makes the changes plugins let through: `blocks` (where and the state, as they may have
+    /// changed it), with the flags captured for each place.
+    pub fn apply(&self, world: &mut World, blocks: &[(BlockPos, u32)]) {
+        let mut level = Level::new(world);
+        for (pos, state) in blocks {
+            let flags = self.blocks.iter().find(|(p, _, _)| p == pos).map_or(flags::ALL, |(_, _, f)| *f);
+            level.set_block(*pos, *state, flags);
+        }
+        for (pos, nbt) in &self.block_entities {
+            if blocks.iter().any(|(p, _)| p == pos) {
+                if let Some(chunk) = level.world.chunks.get_mut(&ChunkPos::of_block(pos.x, pos.z)) {
+                    chunk.block_entities.insert((pos.y, (pos.z & 15) as u8, (pos.x & 15) as u8), nbt.clone());
+                }
+            }
+        }
+    }
 }
 
 /// The plugin events the engine asks about because plugins listen to them (see [`Ask`]).
@@ -182,6 +216,8 @@ pub struct Vetting {
     pub moisture: bool,
     /// Fluids flowing.
     pub flow: bool,
+    /// Trees and huge mushrooms growing.
+    pub structures: bool,
 }
 
 impl Vetting {
@@ -255,6 +291,8 @@ pub struct BlockUpdateState {
     approved_pistons: HashMap<BlockEventData, (bool, Vec<BlockPos>)>,
     /// The piston event of the block event running was cancelled.
     pub(crate) piston_denied: bool,
+    /// While set, block changes are held back here instead of made (see [`Capture`]).
+    pub capture: Option<Capture>,
 }
 
 impl BlockUpdateState {
@@ -275,6 +313,7 @@ impl BlockUpdateState {
             asks: Vec::new(),
             approved_pistons: HashMap::new(),
             piston_denied: false,
+            capture: None,
         }
     }
 
@@ -423,6 +462,10 @@ impl<'w> Level<'w> {
     }
 
     pub fn set_block_limited(&mut self, pos: BlockPos, state: u32, flags: u32, limit: i32) -> bool {
+        if let Some(capture) = self.world.updates.capture.as_mut() {
+            capture.blocks.push((pos, state, flags));
+            return true;
+        }
         let Some(change) = self.world.set_block(pos.x, pos.y, pos.z, state) else { return false };
         let old = change.old;
         self.world.updates.effects.push(Effect::Block(change));
@@ -1107,6 +1150,10 @@ pub fn answer(world: &mut World, ask: &Ask, allowed: bool, ticking: &dyn Fn(&Wor
         Ask::Burn { pos, age, .. } if allowed => fire::burn_away(&mut Level::new(world), *pos, *age),
         Ask::Spread { pos, state, .. } | Ask::Ignite { pos, state, .. } if allowed => fire::set_fire(&mut Level::new(world), *pos, *state),
         Ask::Flow { from, dir, fluid, new, sides_after } if allowed => fluid::flow(&mut Level::new(world), *fluid, *from, *dir, *new, *sides_after),
+        Ask::Structure { capture } if allowed => {
+            let blocks: Vec<(BlockPos, u32)> = capture.blocks.iter().map(|(p, s, _)| (*p, *s)).collect();
+            capture.apply(world, &blocks);
+        }
         // Unless the block changed meanwhile.
         Ask::Change { pos, old, new, flags, drops, then, .. } if allowed && world.block_at(pos.x, pos.y, pos.z) == Some(*old) => {
             Level::new(world).apply_change(*pos, *old, *new, *flags, *drops, *then)

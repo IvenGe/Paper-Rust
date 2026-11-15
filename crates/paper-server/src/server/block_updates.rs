@@ -71,6 +71,32 @@ impl Server {
 
     /// [`Server::set_block_and_update`] with vanilla's update flags (`world::block_updates::flags`),
     /// e.g. `flags::CLIENTS | flags::KNOWN_SHAPE` to change a block without any updates.
+    /// Bone meal on the block at `pos` (by `player`, or a dispenser): with plugins listening,
+    /// its changes are held back and shown to them first (`StructureGrowEvent` for a tree or
+    /// huge mushroom, then `BlockFertilizeEvent`). Returns whether the bone meal was used
+    /// (`Some(false)`: it did nothing), or `None` if plugins stopped it, which keeps the bone
+    /// meal, as in Paper.
+    pub fn apply_bone_meal(&mut self, world: usize, pos: BlockPos, state: u32, player: Option<i32>) -> Option<bool> {
+        let watching = events::listens(self, "StructureGrowEvent") || events::listens(self, "BlockFertilizeEvent");
+        let (used, capture) = {
+            let mut level = Level::new(&mut self.worlds[world]);
+            if watching {
+                level.world.updates.capture = Some(Default::default());
+            }
+            let used = crate::world::block_updates::plants::bone_meal(&mut level, state, pos);
+            (used, level.world.updates.capture.take())
+        };
+        if let Some(capture) = capture.filter(|c| !c.blocks.is_empty()) {
+            let grown = if capture.structure.is_some() { events::on_structure_grow(self, world, &capture, player, true) } else { None };
+            let blocks = grown.clone().unwrap_or_else(|| capture.blocks.iter().map(|(p, s, _)| (*p, *s)).collect());
+            let stopped = capture.structure.is_some() && grown.is_none();
+            let blocks = events::on_fertilize(self, world, pos, player, blocks, stopped)?;
+            capture.apply(&mut self.worlds[world], &blocks);
+        }
+        self.publish_block_updates(world);
+        Some(used)
+    }
+
     /// A block change Paper fires an event for (ice and snow forming): made at once, or asked
     /// about while plugins listen (see [`Level::change_block`]).
     pub fn change_block(&mut self, world: usize, change: block_updates::Change, pos: BlockPos, state: u32) {
@@ -136,6 +162,7 @@ impl Server {
             decay: listens("LeavesDecayEvent"),
             moisture: listens("MoistureChangeEvent"),
             flow: listens("BlockFromToEvent"),
+            structures: listens("StructureGrowEvent"),
         };
         for index in 0..self.worlds.len() {
             self.worlds[index].updates.vetting = vetting;
@@ -188,6 +215,13 @@ impl Server {
                         None => false,
                     },
                     Ask::Ignite { pos, from, .. } => events::on_block_ignite(self, world, *pos, "LAVA", events::Igniter::Block(*from)),
+                    Ask::Structure { capture } => match events::on_structure_grow(self, world, capture, None, false) {
+                        Some(blocks) => {
+                            capture.blocks = blocks.iter().map(|(p, s)| (*p, *s, capture.blocks.iter().find(|(q, _, _)| q == p).map_or(flags::ALL, |(_, _, f)| *f))).collect();
+                            true
+                        }
+                        None => false,
+                    },
                     Ask::Change { .. } | Ask::Flow { .. } => unreachable!("answered above"),
                 };
                 block_updates::answer(&mut self.worlds[world], &ask, allowed, &ticking);

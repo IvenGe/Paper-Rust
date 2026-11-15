@@ -1503,6 +1503,16 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     @EventHandler
+    public void onStructureGrow(final org.bukkit.event.world.StructureGrowEvent event) {
+        this.blockEvent(event, "STRUCTURE " + event.isFromBonemeal() + " " + (event.getPlayer() == null ? "-" : "player") + " " + event.getSpecies());
+    }
+
+    @EventHandler
+    public void onFertilize(final org.bukkit.event.block.BlockFertilizeEvent event) {
+        this.blockEvent(event, "FERTILIZE " + event.getBlock().getType() + " " + (event.getPlayer() == null ? "-" : "player"));
+    }
+
+    @EventHandler
     public void onDispense(final org.bukkit.event.block.BlockDispenseEvent event) {
         this.blockEvent(event, "DISPENSE " + event.getItem().getType());
     }

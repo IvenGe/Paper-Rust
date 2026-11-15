@@ -119,6 +119,8 @@ public final class HostEvents {
         GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
         GATED.put("BlockFromToEvent", org.bukkit.event.block.BlockFromToEvent.class);
         GATED.put("BlockDamageEvent", org.bukkit.event.block.BlockDamageEvent.class);
+        GATED.put("StructureGrowEvent", org.bukkit.event.world.StructureGrowEvent.class);
+        GATED.put("BlockFertilizeEvent", org.bukkit.event.block.BlockFertilizeEvent.class);
         GATED.put("ProjectileLaunchEvent", org.bukkit.event.entity.ProjectileLaunchEvent.class);
         GATED.put("ProjectileHitEvent", org.bukkit.event.entity.ProjectileHitEvent.class);
         GATED.put("BlockDispenseEvent", org.bukkit.event.block.BlockDispenseEvent.class);
@@ -273,6 +275,43 @@ public final class HostEvents {
         return new Location(world, Values.f64(loc, "x", 0), Values.f64(loc, "y", 0), Values.f64(loc, "z", 0), (float) Values.f64(loc, "yaw", 0), (float) Values.f64(loc, "pitch", 0));
     }
 
+    /** Paper's {@code CraftTreeType.fromFeature}: the TreeType of a grown feature. */
+    private static final Map<String, org.bukkit.TreeType> TREE_TYPES = Map.ofEntries(
+        Map.entry("oak", org.bukkit.TreeType.TREE), Map.entry("oak_bees_005", org.bukkit.TreeType.TREE),
+        Map.entry("fancy_oak", org.bukkit.TreeType.BIG_TREE), Map.entry("fancy_oak_bees_005", org.bukkit.TreeType.BIG_TREE),
+        Map.entry("spruce", org.bukkit.TreeType.REDWOOD), Map.entry("pine", org.bukkit.TreeType.TALL_REDWOOD),
+        Map.entry("mega_spruce", org.bukkit.TreeType.MEGA_REDWOOD), Map.entry("mega_pine", org.bukkit.TreeType.MEGA_PINE),
+        Map.entry("birch", org.bukkit.TreeType.BIRCH), Map.entry("birch_bees_005", org.bukkit.TreeType.BIRCH),
+        Map.entry("super_birch_bees_0002", org.bukkit.TreeType.TALL_BIRCH),
+        Map.entry("mega_jungle_tree", org.bukkit.TreeType.JUNGLE), Map.entry("jungle_tree_no_vine", org.bukkit.TreeType.SMALL_JUNGLE),
+        Map.entry("jungle_tree", org.bukkit.TreeType.COCOA_TREE), Map.entry("jungle_bush", org.bukkit.TreeType.JUNGLE_BUSH),
+        Map.entry("huge_red_mushroom", org.bukkit.TreeType.RED_MUSHROOM), Map.entry("huge_brown_mushroom", org.bukkit.TreeType.BROWN_MUSHROOM),
+        Map.entry("swamp_oak", org.bukkit.TreeType.SWAMP), Map.entry("acacia", org.bukkit.TreeType.ACACIA), Map.entry("dark_oak", org.bukkit.TreeType.DARK_OAK),
+        Map.entry("crimson_fungus", org.bukkit.TreeType.CRIMSON_FUNGUS), Map.entry("crimson_fungus_planted", org.bukkit.TreeType.CRIMSON_FUNGUS),
+        Map.entry("warped_fungus", org.bukkit.TreeType.WARPED_FUNGUS), Map.entry("warped_fungus_planted", org.bukkit.TreeType.WARPED_FUNGUS),
+        Map.entry("azalea_tree", org.bukkit.TreeType.AZALEA), Map.entry("mangrove", org.bukkit.TreeType.MANGROVE),
+        Map.entry("tall_mangrove", org.bukkit.TreeType.TALL_MANGROVE), Map.entry("cherry", org.bukkit.TreeType.CHERRY),
+        Map.entry("cherry_bees_005", org.bukkit.TreeType.CHERRY), Map.entry("pale_oak", org.bukkit.TreeType.PALE_OAK),
+        Map.entry("pale_oak_bonemeal", org.bukkit.TreeType.PALE_OAK), Map.entry("pale_oak_creaking", org.bukkit.TreeType.PALE_OAK_CREAKING));
+
+    /** Snapshots of the {@code [{x, y, z, state}]} a change is to make, for plugins to edit. */
+    private List<org.bukkit.block.BlockState> blockStates(final World world, final Object list) {
+        final List<org.bukkit.block.BlockState> out = new ArrayList<>();
+        for (final Object b : Values.list(list)) {
+            final Map<String, Object> block = Values.map(b);
+            out.add(HostBlockState.of((HostBlock) world.getBlockAt(Values.i32(block, "x", 0), Values.i32(block, "y", 0), Values.i32(block, "z", 0)), Values.str(block, "state")));
+        }
+        return out;
+    }
+
+    private static List<Object> blockStatesValue(final List<org.bukkit.block.BlockState> states) {
+        final List<Object> out = new ArrayList<>();
+        for (final org.bukkit.block.BlockState state : states) {
+            out.add(Values.of("x", (long) state.getX(), "y", (long) state.getY(), "z", (long) state.getZ(), "state", state.getBlockData().getAsString()));
+        }
+        return out;
+    }
+
     /** The block at an {@code [x, y, z]} list. */
     private Block at(final World world, final Object xyz) {
         final List<Object> at = Values.list(xyz);
@@ -423,6 +462,25 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
             }
             case "event.block_changes" -> this.blockChanges(args);
+            case "event.structure_grow" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final Location at = new Location(world, Values.i32(args, "x", 0), Values.i32(args, "y", 0), Values.i32(args, "z", 0));
+                final List<org.bukkit.block.BlockState> blocks = this.blockStates(world, args.get("blocks"));
+                final HostPlayer player = args.get("uuid") == null ? null : this.player(args);
+                final org.bukkit.event.world.StructureGrowEvent event = new org.bukkit.event.world.StructureGrowEvent(at,
+                    TREE_TYPES.getOrDefault(Values.str(args, "feature"), org.bukkit.TreeType.TREE), Values.bool(args, "bonemeal", false), player, blocks);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "blocks", blockStatesValue(event.getBlocks()));
+            }
+            case "event.fertilize" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final List<org.bukkit.block.BlockState> blocks = this.blockStates(world, args.get("blocks"));
+                final HostPlayer player = args.get("uuid") == null ? null : this.player(args);
+                final org.bukkit.event.block.BlockFertilizeEvent event = new org.bukkit.event.block.BlockFertilizeEvent(this.block(args), player, blocks);
+                event.setCancelled(Values.bool(args, "cancelled", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "blocks", blockStatesValue(event.getBlocks()));
+            }
             case "event.projectile_launch" -> {
                 final org.bukkit.event.entity.ProjectileLaunchEvent event = new org.bukkit.event.entity.ProjectileLaunchEvent(
                     io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))));

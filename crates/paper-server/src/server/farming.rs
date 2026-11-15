@@ -105,11 +105,11 @@ impl Server {
             let target = blocks::property(state, "axis").and_then(|a| blocks::with_property(target, "axis", a)).unwrap_or(target);
             (Some(target), "minecraft:item.axe.strip")
         } else if item == "minecraft:bone_meal" {
-            let used = {
-                let mut level = Level::new(&mut self.worlds[world]);
-                plants::bone_meal(&mut level, state, pos)
+            let Some(used) = self.apply_bone_meal(world, pos, state, Some(id)) else {
+                // Stopped by plugins: the bone meal stays in hand.
+                self.resync_inventory(id);
+                return true;
             };
-            self.publish_block_updates(world);
             if !used {
                 return false;
             }

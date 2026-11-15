@@ -316,7 +316,7 @@ fn entity_nbt(entity: &Entity) -> Compound {
 /// changed are set in the world (neighbours notified, clients told), with the block entities
 /// the feature made (bee nests). False if it does not fit, the feature is unknown, or a chunk
 /// around it is not loaded; then the world is unchanged.
-pub fn place_grown_feature(level: &mut Level, feature: &str, origin: BlockPos, clear: &[(BlockPos, u32)]) -> bool {
+pub fn place_grown_feature(level: &mut Level, feature: &str, origin: BlockPos, sapling: BlockPos, clear: &[(BlockPos, u32)]) -> bool {
     // The world's own vanilla generator, or the one flat worlds build for this.
     let generator = Arc::clone(&level.world.generator);
     let fallback;
@@ -364,15 +364,35 @@ pub fn place_grown_feature(level: &mut Level, feature: &str, origin: BlockPos, c
             }
         }
     }
+    // Plugins listening see a tree grow on its own whole first (`StructureGrowEvent`, see
+    // `Ask`); bone meal holds its changes back already.
+    let ask = level.world.updates.vetting.structures && level.world.updates.capture.is_none();
+    if ask {
+        level.world.updates.capture = Some(Default::default());
+    }
     // As features set blocks (`setBlock` with 19): neighbours notified, shapes already right.
-    for (pos, state) in changes {
-        level.set_block(pos, state, flags::NEIGHBORS | flags::CLIENTS | flags::KNOWN_SHAPE);
+    for (pos, state) in &changes {
+        level.set_block(*pos, *state, flags::NEIGHBORS | flags::CLIENTS | flags::KNOWN_SHAPE);
     }
     for ((x, y, z), block_entity) in new_block_entities {
-        let state = level.state(BlockPos::new(x, y, z));
+        let pos = BlockPos::new(x, y, z);
+        let state = changes.iter().rev().find(|(p, _)| *p == pos).map_or_else(|| level.state(pos), |(_, s)| *s);
         let Some(c) = block_entity_nbt(state, &block_entity) else { continue };
-        if let Some(chunk) = level.world.chunks.get_mut(&ChunkPos::of_block(x, z)) {
-            chunk.block_entities.insert((y, (z & 15) as u8, (x & 15) as u8), c);
+        match level.world.updates.capture.as_mut() {
+            Some(capture) => capture.block_entities.push((pos, c)),
+            None => {
+                if let Some(chunk) = level.world.chunks.get_mut(&ChunkPos::of_block(x, z)) {
+                    chunk.block_entities.insert((y, (z & 15) as u8, (x & 15) as u8), c);
+                }
+            }
+        }
+    }
+    if let Some(capture) = level.world.updates.capture.as_mut() {
+        capture.structure.get_or_insert_with(|| (feature.to_owned(), sapling));
+    }
+    if ask {
+        if let Some(capture) = level.world.updates.capture.take() {
+            level.world.updates.asks.push(crate::world::block_updates::Ask::Structure { capture });
         }
     }
     true
