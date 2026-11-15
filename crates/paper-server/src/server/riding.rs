@@ -157,7 +157,7 @@ impl Server {
         let spot = self.dismount_spot(world, pos, yaw, width).unwrap_or(Vec3::new(pos.x, pos.y + height, pos.z));
         if let Some(p) = self.players.get(&rider) {
             let loc = Location { x: spot.x, y: spot.y, z: spot.z, yaw: p.loc.yaw, pitch: p.loc.pitch };
-            self.teleport(rider, loc);
+            self.teleport_for(rider, world, loc, "DISMOUNT");
             if let Some(p) = self.players.get_mut(&rider) {
                 p.fall_distance = 0.0;
             }

@@ -369,8 +369,10 @@ impl Server {
             if ground && free(y) && free(y + 1) {
                 let target = super::player::Location { x, y: y as f64, z, ..loc };
                 let at = crate::world::entity::Vec3::new(loc.x, loc.y, loc.z);
+                if !self.teleport_for(id, world, target, "CONSUMABLE_EFFECT") {
+                    break;
+                }
                 self.play_sound(world, at, "minecraft:item.chorus_fruit.teleport", super::survival::category::PLAYERS, 1.0, 1.0, None);
-                self.teleport(id, target);
                 if let Some(p) = self.players.get_mut(&id) {
                     p.fall_distance = 0.0;
                 }

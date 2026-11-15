@@ -579,11 +579,7 @@ fn cmd_teleport(server: &mut Server, source: &CommandSource, args: &[&str]) {
         let Some((world, loc, name)) = server.players.get(&targets[0]).map(|p| (p.world, p.loc, p.name().to_owned())) else { return };
         for id in who {
             let Some(mover) = server.players.get(&id).map(|p| (p.world, p.name().to_owned())) else { continue };
-            if mover.0 != world {
-                server.fail(source, "Teleporting between worlds is not supported yet");
-                continue;
-            }
-            server.teleport(id, loc);
+            server.teleport_for(id, world, loc, "COMMAND");
             server.feedback(source, Component::translatable("commands.teleport.success.entity.single", vec![Component::text(mover.1), Component::text(name.clone())]));
         }
         return;
@@ -599,7 +595,8 @@ fn cmd_teleport(server: &mut Server, source: &CommandSource, args: &[&str]) {
         if x.abs() > 3.0e7 || z.abs() > 3.0e7 || y.abs() > 2.0e7 {
             return server.fail(source, "That position is outside the world");
         }
-        server.teleport(id, Location { x, y, z, ..base });
+        let world = server.players[&id].world;
+        server.teleport_for(id, world, Location { x, y, z, ..base }, "COMMAND");
         let fmt = |v: f64| Component::text(format!("{v:.2}"));
         server.feedback(source, Component::translatable("commands.teleport.success.location.single", vec![Component::text(name), fmt(x), fmt(y), fmt(z)]));
     }

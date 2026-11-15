@@ -296,6 +296,63 @@ pub fn on_entity_target(server: &mut Server, world: usize, mob: i32, target: i32
     }
 }
 
+fn location_value(server: &Server, world: usize, loc: &crate::server::player::Location) -> Value {
+    bmap! { "world" => server.worlds[world].name.clone(), "x" => loc.x, "y" => loc.y, "z" => loc.z, "yaw" => loc.yaw as f64, "pitch" => loc.pitch as f64 }
+}
+
+/// A location a plugin gave back: its world (by name) and position.
+fn location_from(server: &Server, value: &Value) -> Option<(usize, crate::server::player::Location)> {
+    let world = server.worlds.iter().position(|w| Some(w.name.as_str()) == value.str("world"))?;
+    let loc = crate::server::player::Location { x: value.f64("x")?, y: value.f64("y")?, z: value.f64("z")?, yaw: value.f64("yaw").unwrap_or(0.0) as f32, pitch: value.f64("pitch").unwrap_or(0.0) as f32 };
+    Some((world, loc))
+}
+
+/// The server moves a player (`PlayerTeleportEvent`; `cause` as Bukkit's `TeleportCause`):
+/// where to, as plugins leave it (perhaps another world), or `None` if they cancelled it.
+pub fn on_teleport(server: &mut Server, id: i32, to_world: usize, to: crate::server::player::Location, cause: &str) -> Option<(usize, crate::server::player::Location)> {
+    if !listens(server, "PlayerTeleportEvent") {
+        return Some((to_world, to));
+    }
+    let player = server.players.get(&id)?;
+    let args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "from" => location_value(server, player.world, &player.loc),
+        "to" => location_value(server, to_world, &to),
+        "cause" => cause,
+    };
+    match fire(server, "PlayerTeleportEvent", "event.teleport", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(location_from(server, result.get("to")).unwrap_or((to_world, to))),
+        None => Some((to_world, to)),
+    }
+}
+
+/// A player is about to go through a portal (`PlayerPortalEvent`, `cause` `NETHER_PORTAL`
+/// or `END_PORTAL`): where to, as plugins leave it (perhaps another world), or `None` if
+/// they cancelled the trip.
+pub fn on_portal(server: &mut Server, id: i32, to_world: usize, to: crate::server::player::Location, cause: &str) -> Option<(usize, crate::server::player::Location)> {
+    if !listens(server, "PlayerPortalEvent") {
+        return Some((to_world, to));
+    }
+    let player = server.players.get(&id)?;
+    let nether = cause == "NETHER_PORTAL";
+    let args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "from" => location_value(server, player.world, &player.loc),
+        "to" => location_value(server, to_world, &to),
+        "cause" => cause,
+        // Vanilla's search and creation radii (`PortalForcer`).
+        "search_radius" => if nether { if server.worlds[to_world].dimension == "minecraft:the_nether" { 16 } else { 128 } } else { 0 },
+        "can_create" => nether,
+        "creation_radius" => if nether { 16 } else { 0 },
+    };
+    match fire(server, "PlayerPortalEvent", "event.portal", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(location_from(server, result.get("to")).unwrap_or((to_world, to))),
+        None => Some((to_world, to)),
+    }
+}
+
 /// Runs the plugin scheduler and the tick events once per server tick.
 pub fn tick(server: &mut Server) {
     // Scores of criteria that follow player values (health, food, ...), twice a second.

@@ -710,14 +710,16 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             let p = s.players.get_mut(&alice_id).unwrap();
             (p.food, p.saturation, p.exhaustion) = (20, 0.0, 4.5);
             let at = paper_server::world::entity::Vec3::new(p.loc.x + 3.0, p.loc.y, p.loc.z);
-            s.spawn_mob(0, "minecraft:zombie", at, paper_server::server::mobs::SpawnReason::Command).unwrap()
+            let zombie = s.spawn_mob(0, "minecraft:zombie", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+            s.worlds[0].entities.get_mut(&zombie).unwrap().flags.tags.push("watched".into());
+            zombie
         })
         .unwrap();
     let deadline = std::time::Instant::now() + TIMEOUT;
     loop {
         alice.command("apitest watched");
         let text = alice.expect::<play::SystemChat>().content.to_plain();
-        if text.contains("TARGET") {
+        if text.contains("TARGET ZOMBIE") {
             assert_eq!(text, format!("watched: BUCKET WATER_BUCKET UP, FOOD 19, HELD {held_before} {}, SNEAK true, SWAP WATER_BUCKET, TARGET ZOMBIE PLAYER CLOSEST_PLAYER, WEATHER true COMMAND", (held_before + 3) % 9));
             break;
         }
@@ -735,13 +737,37 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
     assert_eq!(after, (false, held_before, hands_before, false, false, 20, None), "nothing changed");
-    server
+    let home = server
         .handle
         .run(move |s| {
             s.worlds[0].entities.get_mut(&zombie).unwrap().removed = true;
             s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+            s.players[&alice_id].loc
         })
         .unwrap();
+    // A trip through a nether portal the plugin stops, and a teleport it moves up.
+    let feet = BlockPos::new(home.x.floor() as i32, home.y.floor() as i32, home.z.floor() as i32);
+    server.handle.run(move |s| s.worlds[0].set_block(feet.x, feet.y, feet.z, paper_data::blocks::default_state("minecraft:nether_portal").unwrap())).unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        alice.command("apitest watched");
+        if alice.expect::<play::SystemChat>().content.to_plain().contains("PORTAL") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no portal trip");
+        alice.drain(Duration::from_millis(200));
+    }
+    let in_overworld = server.handle.run(move |s| {
+        s.worlds[0].set_block(feet.x, feet.y, feet.z, paper_data::blocks::AIR);
+        s.players[&alice_id].world == 0 && s.players[&alice_id].travel.is_none()
+    });
+    assert!(in_overworld.unwrap(), "the trip was stopped");
+    server.handle.console_command("tp Alice 100 -60 100");
+    alice.command("apitest watched");
+    expect_line(&mut alice, &format!("watched: BUCKET WATER_BUCKET UP, FOOD 19, HELD {held_before} {}, PORTAL NETHER_PORTAL NETHER, SNEAK true, SWAP WATER_BUCKET, TARGET ZOMBIE PLAYER CLOSEST_PLAYER, TELEPORT COMMAND, WEATHER true COMMAND", (held_before + 3) % 9));
+    let at = server.handle.run(move |s| s.players[&alice_id].loc).unwrap();
+    assert_eq!((at.x, at.y, at.z), (100.5, -57.0, 100.5), "moved up by the plugin");
+    server.handle.run(move |s| s.teleport(alice_id, home)).unwrap();
     alice.command("apitest watch");
     expect_line(&mut alice, "watch: false");
 

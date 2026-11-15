@@ -164,6 +164,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.food_level_change` | `uuid`, `level`, `item` (what was eaten, if anything) | `cancelled`, `level` (`FoodLevelChangeEvent`) |
 | `event.bucket_empty` / `event.bucket_fill` | `uuid`, `world`, `x`, `y`, `z` (where the liquid goes or comes from), `clicked` `[x, y, z]`, `face`, `bucket`, `item` (what the bucket becomes), `hand` | `cancelled`, `item` if changed (`PlayerBucketEmptyEvent`, `PlayerBucketFillEvent`) |
 | `event.weather_change` | `world`, `thunder`, `to`, `cause` (`NATURAL`, `COMMAND`, `PLUGIN`, `SLEEP`) | `cancelled` (`WeatherChangeEvent`, `ThunderChangeEvent`) |
+| `event.teleport` / `event.portal` | `uuid`, `from`, `to` (`{world, x, y, z, yaw, pitch}`), `cause` (`TeleportCause`), and for a portal `search_radius`, `can_create`, `creation_radius` | `cancelled`, or `to` where the player goes instead, another world too (`PlayerTeleportEvent` for the server's own teleports, `PlayerPortalEvent` as a nether or end portal trip starts) |
 | `event.entity_target` | `entity`, `target`, `reason` | `cancelled` (`EntityTargetLivingEntityEvent`; a listener clearing the target cancels too) |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |

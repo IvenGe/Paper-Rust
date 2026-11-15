@@ -106,6 +106,9 @@ public final class HostEvents {
         GATED.put("PlayerBucketFillEvent", org.bukkit.event.player.PlayerBucketFillEvent.class);
         GATED.put("WeatherChangeEvent", org.bukkit.event.weather.WeatherChangeEvent.class);
         GATED.put("ThunderChangeEvent", org.bukkit.event.weather.ThunderChangeEvent.class);
+        // Teleports the server makes (plugins' own are fired where they ask for them).
+        GATED.put("PlayerTeleportEvent", org.bukkit.event.player.PlayerTeleportEvent.class);
+        GATED.put("PlayerPortalEvent", org.bukkit.event.player.PlayerPortalEvent.class);
         // (EntityTargetLivingEntityEvent shares its handler list.)
         GATED.put("EntityTargetEvent", org.bukkit.event.entity.EntityTargetEvent.class);
     }
@@ -236,6 +239,11 @@ public final class HostEvents {
         return player;
     }
 
+    /** A location with its world given by name. */
+    private Location worldLocation(final Map<String, Object> loc) {
+        return this.location(this.server.getWorld(Values.str(loc, "world")), loc);
+    }
+
     private Location location(final World world, final Map<String, Object> loc) {
         return new Location(world, Values.f64(loc, "x", 0), Values.f64(loc, "y", 0), Values.f64(loc, "z", 0), (float) Values.f64(loc, "yaw", 0), (float) Values.f64(loc, "pitch", 0));
     }
@@ -353,6 +361,23 @@ public final class HostEvents {
                     cancelled = event.isCancelled();
                 }
                 yield Values.of("cancelled", cancelled);
+            }
+            case "event.teleport", "event.portal" -> {
+                final HostPlayer player = this.player(args);
+                final Location from = this.worldLocation(Values.map(args.get("from")));
+                final Location to = this.worldLocation(Values.map(args.get("to")));
+                final org.bukkit.event.player.PlayerTeleportEvent.TeleportCause cause = org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.valueOf(Values.str(args, "cause", "UNKNOWN"));
+                final org.bukkit.event.player.PlayerTeleportEvent event = method.equals("event.portal")
+                    ? new org.bukkit.event.player.PlayerPortalEvent(player, from, to, cause, Values.i32(args, "search_radius", 128), Values.bool(args, "can_create", true), Values.i32(args, "creation_radius", 16))
+                    : new org.bukkit.event.player.PlayerTeleportEvent(player, from, to, cause);
+                event.callEvent();
+                final Location target = event.getTo();
+                if (event.isCancelled() || target == null) {
+                    yield Values.of("cancelled", true);
+                }
+                final World world = target.getWorld() != null ? target.getWorld() : to.getWorld();
+                yield Values.of("to", Values.of("world", world.getName(), "x", target.getX(), "y", target.getY(), "z", target.getZ(),
+                    "yaw", (double) target.getYaw(), "pitch", (double) target.getPitch()));
             }
             case "event.entity_target" -> {
                 final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));

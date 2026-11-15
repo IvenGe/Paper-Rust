@@ -284,3 +284,28 @@ fn end_gateways_send_players_to_their_exit() {
     assert_eq!((to.x, to.y, to.z), (20.5, -60.0, 24.5));
     server.stop();
 }
+
+#[test]
+fn tp_takes_players_to_players_in_other_worlds() {
+    let server = start_server(|_| {});
+    let mut alice = join(&server);
+    let mut bob = Client::join(server.port(), "Bob");
+    bob.expect::<play::PlayerPosition>();
+    let bob_id = bob.entity_id;
+    // Bob goes to the Nether; Alice follows with /tp.
+    let nether = server
+        .handle
+        .run(move |s| {
+            let nether = s.world_of_dimension("minecraft:the_nether").unwrap();
+            s.change_dimension(bob_id, nether, paper_server::server::player::Location { x: 0.5, y: 70.0, z: 0.5, yaw: 0.0, pitch: 0.0 });
+            nether
+        })
+        .unwrap();
+    server.handle.console_command("tp Alice Bob");
+    alice.find(TIMEOUT, |r: &play::Respawn| r.spawn.dimension_name == "minecraft:the_nether").expect("Alice goes to the Nether");
+    let alice_id = alice.entity_id;
+    let (world, at) = server.handle.run(move |s| (s.players[&alice_id].world, s.players[&alice_id].loc)).unwrap();
+    assert_eq!(world, nether);
+    assert_eq!((at.x, at.y, at.z), (0.5, 70.0, 0.5));
+    server.stop();
+}

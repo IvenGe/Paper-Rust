@@ -169,7 +169,7 @@ impl Server {
         let Some(p) = self.players.get_mut(&id) else { return };
         p.portal_cooldown = 10;
         let (yaw, pitch) = (p.loc.yaw, p.loc.pitch);
-        self.teleport(id, Location { x: target.x, y: target.y, z: target.z, yaw, pitch });
+        self.teleport_for(id, world, Location { x: target.x, y: target.y, z: target.z, yaw, pitch }, "END_GATEWAY");
     }
 
     /// Picks the destination and starts loading its chunks.
@@ -205,10 +205,21 @@ impl Server {
                 }
             }
         };
+        // Plugins may stop the trip or send it elsewhere (`PlayerPortalEvent`).
+        let cause = if matches!(kind, TravelKind::Nether(_)) { "NETHER_PORTAL" } else { "END_PORTAL" };
+        let (yaw, pitch) = self.players.get(&id).map_or((0.0, 0.0), |p| (p.loc.yaw, p.loc.pitch));
+        let planned = Location { x: approx.x as f64 + 0.5, y: approx.y as f64, z: approx.z as f64 + 0.5, yaw, pitch };
+        let Some((dest_world, dest)) = crate::plugins::events::on_portal(self, id, to, planned, cause) else { return };
+        let redirected = dest_world != to || dest != planned;
         if kind == TravelKind::EndExit {
-            self.leave_the_end(id);
+            if redirected {
+                self.change_dimension(id, dest_world, dest);
+            } else {
+                self.leave_the_end(id);
+            }
             return;
         }
+        let (to, approx) = (dest_world, BlockPos::new(dest.x.floor() as i32, dest.y.floor() as i32, dest.z.floor() as i32));
         let radius = if matches!(kind, TravelKind::Nether(_)) { 2 } else { 1 };
         let center = ChunkPos::of_block(approx.x, approx.z);
         let mut chunks = Vec::new();
@@ -483,6 +494,19 @@ impl Server {
         for e in self.worlds[world].entities.values_mut() {
             e.viewers.remove(&id);
         }
+    }
+
+    /// Teleports a player the way the game does for `cause` (Bukkit's `TeleportCause`),
+    /// after plugins have had their say (`PlayerTeleportEvent`): they may cancel it, or send
+    /// the player elsewhere, another world too. Returns whether the player was moved.
+    pub fn teleport_for(&mut self, id: i32, to_world: usize, to: Location, cause: &str) -> bool {
+        let Some((world, target)) = crate::plugins::events::on_teleport(self, id, to_world, to, cause) else { return false };
+        if self.players.get(&id).is_some_and(|p| p.world == world) {
+            self.teleport(id, target);
+        } else {
+            self.change_dimension(id, world, target);
+        }
+        true
     }
 
     /// Moves a player to another world (`ServerPlayer.teleport` across dimensions): the

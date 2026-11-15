@@ -267,7 +267,11 @@ What works:
   `PlayerItemHeldEvent`, `PlayerSwapHandItemsEvent`, `PlayerItemConsumeEvent`,
   `FoodLevelChangeEvent`, `PlayerBucketEmptyEvent` and `PlayerBucketFillEvent`,
   `WeatherChangeEvent` and `ThunderChangeEvent` (natural, `/weather`, plugins, sleeping)
-  and `EntityTargetLivingEntityEvent` (a mob finding a player). Players,
+  and `EntityTargetLivingEntityEvent` (a mob finding a player), `PlayerTeleportEvent` for
+  the teleports the game makes too (`/tp`, ender pearls, chorus fruit, end gateways,
+  getting out of bed, dismounting; plugins may stop them or send the player elsewhere, to
+  another world as well) and `PlayerPortalEvent` (a trip through a nether or end portal
+  stopped or sent to another world and place, as Multiverse-NetherPortals does). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,

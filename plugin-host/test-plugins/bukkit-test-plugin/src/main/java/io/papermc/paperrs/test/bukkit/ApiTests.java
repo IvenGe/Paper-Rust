@@ -1307,8 +1307,30 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     @EventHandler
+    public void onTeleport(final org.bukkit.event.player.PlayerTeleportEvent event) {
+        if (!this.watch) {
+            return;
+        }
+        // Commands' teleports go three blocks higher; the rest are stopped.
+        this.watched.add("TELEPORT " + event.getCause());
+        if (event.getCause() == org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.COMMAND) {
+            event.setTo(event.getTo().clone().add(0, 3, 0));
+        } else {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onPortal(final org.bukkit.event.player.PlayerPortalEvent event) {
+        this.watched(event, "PORTAL " + event.getCause() + " " + event.getTo().getWorld().getEnvironment());
+    }
+
+    /** Only the mobs the test tags "watched" (others may spawn and look for players too). */
+    @EventHandler
     public void onTarget(final org.bukkit.event.entity.EntityTargetLivingEntityEvent event) {
-        this.watched(event, "TARGET " + event.getEntityType() + " " + (event.getTarget() == null ? "-" : event.getTarget().getType()) + " " + event.getReason());
+        if (event.getEntity().getScoreboardTags().contains("watched")) {
+            this.watched(event, "TARGET " + event.getEntityType() + " " + (event.getTarget() == null ? "-" : event.getTarget().getType()) + " " + event.getReason());
+        }
     }
 
     @EventHandler

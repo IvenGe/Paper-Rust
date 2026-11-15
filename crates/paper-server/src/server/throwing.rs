@@ -300,13 +300,20 @@ impl Server {
         }
         let id = p.entity_id;
         let loc = super::player::Location { x: at.x, y: at.y, z: at.z, ..p.loc };
+        // Plugins may stop it, or send the player elsewhere (`PlayerTeleportEvent`); a
+        // stopped pearl does nothing at all.
+        let Some((to_world, loc)) = crate::plugins::events::on_teleport(self, id, world, loc, "ENDER_PEARL") else { return };
         if rand::thread_rng().gen::<f32>() < 0.05 && self.worlds[world].rules.bool("spawn_mobs") {
             self.spawn_mob(world, "minecraft:endermite", at, SpawnReason::Natural);
         }
         if self.players.get(&id).is_some_and(|p| p.vehicle.is_some()) {
             self.dismount_quietly(id);
         }
-        self.teleport(id, loc);
+        if to_world == world {
+            self.teleport(id, loc);
+        } else {
+            self.change_dimension(id, to_world, loc);
+        }
         if let Some(p) = self.players.get_mut(&id) {
             p.fall_distance = 0.0;
         }
