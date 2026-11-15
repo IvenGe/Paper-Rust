@@ -1192,13 +1192,16 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             // `World.setStorm`, `setThundering` and the durations; the weather tick fades
             // the levels and tells the players.
             let world = world_index(server, args)?;
-            let w = &mut server.worlds[world].weather;
+            // (Plugins' `WeatherChangeEvent`s may keep it as it is.)
             if let Some(b) = args.bool("raining") {
-                w.raining = b;
+                let (_, raining) = server.weather_may_change(world, false, b, "PLUGIN");
+                server.worlds[world].weather.raining = raining;
             }
             if let Some(b) = args.bool("thundering") {
-                w.thundering = b;
+                let (_, thundering) = server.weather_may_change(world, true, b, "PLUGIN");
+                server.worlds[world].weather.thundering = thundering;
             }
+            let w = &mut server.worlds[world].weather;
             if let Some(t) = args.i32("rain_time") {
                 w.rain_time = t.max(0);
             }

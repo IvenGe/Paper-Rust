@@ -157,6 +157,14 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.interact` | `uuid`, `world`, `action` (`LEFT_CLICK_BLOCK`, `RIGHT_CLICK_BLOCK`, `LEFT_CLICK_AIR`, `RIGHT_CLICK_AIR`, `PHYSICAL`), `hand` (0 main, 1 off), and for a block `x`, `y`, `z`, `face` (0 down to 5 east, -1 none) and `cursor` `[x, y, z]` on it | `use_block`, `use_item` (`DEFAULT`, `ALLOW`, `DENY`; `PlayerInteractEvent`): a denied block is not used (no door, chest, lever, plate or trampled farmland), a denied item not used on it or in the air; a cancelled left click breaks nothing |
 | `event.interact_entity` | `uuid`, `entity`, `hand` | `cancelled` (`PlayerInteractEntityEvent`: no riding, trading, taming, ...) |
 | `event.entity_explode` / `event.block_explode` | `world`, `x`, `y`, `z` (the centre), `blocks` `[[x, y, z]]`, `result` (`DESTROY`, `DESTROY_WITH_DECAY`), and `entity` for the first | `cancelled`, `blocks` (`EntityExplodeEvent`, `BlockExplodeEvent`): only the blocks left are broken |
+| `event.toggle_sneak` / `event.toggle_sprint` / `event.toggle_flight` | `uuid`, `sneaking` / `sprinting` / `flying` | `cancelled` (`PlayerToggleSneakEvent`, ...: the server keeps the old state; a player kept from flying is told so) |
+| `event.item_held` | `uuid`, `previous`, `new` (hotbar slots) | `cancelled` (`PlayerItemHeldEvent`: the player is sent back to the old slot) |
+| `event.swap_hands` | `uuid`, `main`, `off` (the items each hand is to get) | `cancelled`, `main`, `off` (`PlayerSwapHandItemsEvent`) |
+| `event.item_consume` | `uuid`, `item`, `hand` | `cancelled`, `item` (what is eaten instead), `replacement` (what the hand holds afterwards) (`PlayerItemConsumeEvent`) |
+| `event.food_level_change` | `uuid`, `level`, `item` (what was eaten, if anything) | `cancelled`, `level` (`FoodLevelChangeEvent`) |
+| `event.bucket_empty` / `event.bucket_fill` | `uuid`, `world`, `x`, `y`, `z` (where the liquid goes or comes from), `clicked` `[x, y, z]`, `face`, `bucket`, `item` (what the bucket becomes), `hand` | `cancelled`, `item` if changed (`PlayerBucketEmptyEvent`, `PlayerBucketFillEvent`) |
+| `event.weather_change` | `world`, `thunder`, `to`, `cause` (`NATURAL`, `COMMAND`, `PLUGIN`, `SLEEP`) | `cancelled` (`WeatherChangeEvent`, `ThunderChangeEvent`) |
+| `event.entity_target` | `entity`, `target`, `reason` | `cancelled` (`EntityTargetLivingEntityEvent`; a listener clearing the target cancels too) |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
 | `event.chat` (async) | `uuid`, `message`, `default` | `cancelled`, `deliveries`: `[{viewer, message}]` rendered per viewer (`viewer` is a UUID or `console`) |

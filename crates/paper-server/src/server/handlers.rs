@@ -161,9 +161,11 @@ impl Server {
             }
             Serverbound::PlayerInput(p) => {
                 let sneaking = p.flags & play::input_flags::SNEAK != 0;
-                if sneaking != player.sneaking {
-                    player.sneaking = sneaking;
-                    player.metadata_dirty = true;
+                if sneaking != player.sneaking && events::on_player_toggle(self, id, "PlayerToggleSneakEvent", "event.toggle_sneak", paper_bridge::bmap! { "sneaking" => sneaking }) {
+                    if let Some(player) = self.players.get_mut(&id) {
+                        player.sneaking = sneaking;
+                        player.metadata_dirty = true;
+                    }
                 }
             }
             Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::LEAVE_BED => self.wake_up(id),
@@ -175,17 +177,36 @@ impl Server {
                     _ => None,
                 };
                 if let Some(sprinting) = sprinting {
-                    if sprinting != player.sprinting {
-                        player.sprinting = sprinting;
-                        player.metadata_dirty = true;
+                    if sprinting != player.sprinting && events::on_player_toggle(self, id, "PlayerToggleSprintEvent", "event.toggle_sprint", paper_bridge::bmap! { "sprinting" => sprinting }) {
+                        if let Some(player) = self.players.get_mut(&id) {
+                            player.sprinting = sprinting;
+                            player.metadata_dirty = true;
+                        }
                     }
                 }
             }
             Serverbound::PlayerAbilities(p) => {
-                player.flying = player.allow_flight && p.flags & play::abilities::FLYING != 0;
+                let flying = player.allow_flight && p.flags & play::abilities::FLYING != 0;
+                if flying != player.flying {
+                    // Plugins may keep the player from starting or stopping to fly.
+                    if events::on_player_toggle(self, id, "PlayerToggleFlightEvent", "event.toggle_flight", paper_bridge::bmap! { "flying" => flying }) {
+                        if let Some(player) = self.players.get_mut(&id) {
+                            player.flying = flying;
+                        }
+                    } else if let Some(player) = self.players.get(&id) {
+                        player.conn.send(&player.abilities_packet());
+                    }
+                }
             }
             Serverbound::SetCarriedItem(p) => {
                 if (0..9).contains(&p.slot) {
+                    let previous = player.held_slot;
+                    // Plugins may keep the player on the slot they had (`PlayerItemHeldEvent`).
+                    if previous != p.slot as u8 && !events::on_player_toggle(self, id, "PlayerItemHeldEvent", "event.item_held", paper_bridge::bmap! { "previous" => previous as i32, "new" => p.slot as i32 }) {
+                        self.send(id, &play::SetHeldSlot { slot: VarInt(previous as i32) });
+                        return;
+                    }
+                    let Some(player) = self.players.get_mut(&id) else { return };
                     if player.held_slot != p.slot as u8 {
                         // Switching items resets the attack cooldown and stops eating.
                         player.last_swing = self.tick;
@@ -443,9 +464,23 @@ impl Server {
                 self.player_drop(id, Slot(Some(stack.with_count(amount))), true);
             }
             SWAP_ITEM_WITH_OFFHAND => {
+                // Plugins may stop the swap or hand out other items (`PlayerSwapHandItemsEvent`).
                 let held = HOTBAR_START + player.held_slot as usize;
-                player.inventory.swap(held, OFFHAND_SLOT);
-                player.equipment_dirty = true;
+                let (to_main, to_off) = (player.inventory[OFFHAND_SLOT].clone(), player.inventory[held].clone());
+                match events::on_swap_hands(self, id, &to_main, &to_off) {
+                    Some((main, off)) => {
+                        let Some(player) = self.players.get_mut(&id) else { return };
+                        let changed = main != to_main || off != to_off;
+                        player.inventory[held] = main;
+                        player.inventory[OFFHAND_SLOT] = off;
+                        player.equipment_dirty = true;
+                        player.using_item = None;
+                        if changed {
+                            self.resync_inventory(id);
+                        }
+                    }
+                    None => self.resync_inventory(id),
+                }
             }
             _ => {}
         }

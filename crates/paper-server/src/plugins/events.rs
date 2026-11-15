@@ -172,6 +172,130 @@ pub fn on_explode(server: &mut Server, world: usize, source: Option<i32>, center
     }
 }
 
+/// A player-only event that only says whether plugins cancelled it: `PlayerToggleSneakEvent`
+/// (`args`: `sneaking`), `PlayerToggleSprintEvent` (`sprinting`), `PlayerToggleFlightEvent`
+/// (`flying`), `PlayerItemHeldEvent` (`previous`, `new`). Returns whether it goes ahead.
+pub fn on_player_toggle(server: &mut Server, id: i32, event: &str, method: &str, mut args: Value) -> bool {
+    if !listens(server, event) {
+        return true;
+    }
+    let Some(player) = server.players.get(&id) else { return true };
+    args.set("uuid", player.uuid().to_string());
+    match fire(server, event, method, args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `PlayerSwapHandItemsEvent`: the items each hand gets as plugins leave them, or `None`
+/// if they cancelled the swap.
+pub fn on_swap_hands(server: &mut Server, id: i32, main: &paper_protocol::types::Slot, off: &paper_protocol::types::Slot) -> Option<(paper_protocol::types::Slot, paper_protocol::types::Slot)> {
+    if !listens(server, "PlayerSwapHandItemsEvent") {
+        return Some((main.clone(), off.clone()));
+    }
+    let player = server.players.get(&id)?;
+    let args = bmap! { "uuid" => player.uuid().to_string(), "main" => super::api::item_value(main), "off" => super::api::item_value(off) };
+    match fire(server, "PlayerSwapHandItemsEvent", "event.swap_hands", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some((super::api::slot_from(result.get("main")).unwrap_or_else(|_| main.clone()), super::api::slot_from(result.get("off")).unwrap_or_else(|_| off.clone()))),
+        None => Some((main.clone(), off.clone())),
+    }
+}
+
+/// `PlayerItemConsumeEvent`: what a player finishes eating or drinking. Returns `None` if
+/// plugins cancelled it, else the item that is consumed (they may replace it) and whether
+/// they replaced the hand's item afterwards (`setReplacement`).
+pub fn on_item_consume(server: &mut Server, id: i32, item: &paper_protocol::types::Slot, hand: i32) -> Option<(paper_protocol::types::Slot, Option<paper_protocol::types::Slot>)> {
+    if !listens(server, "PlayerItemConsumeEvent") {
+        return Some((item.clone(), None));
+    }
+    let player = server.players.get(&id)?;
+    let args = bmap! { "uuid" => player.uuid().to_string(), "item" => super::api::item_value(item), "hand" => hand };
+    match fire(server, "PlayerItemConsumeEvent", "event.item_consume", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => {
+            let consumed = super::api::slot_from(result.get("item")).unwrap_or_else(|_| item.clone());
+            let replacement = (!result.get("replacement").is_null()).then(|| super::api::slot_from(result.get("replacement")).ok()).flatten();
+            Some((consumed, replacement))
+        }
+        None => Some((item.clone(), None)),
+    }
+}
+
+/// `FoodLevelChangeEvent`: the food level a player gets as plugins leave it (`item` is what
+/// they ate, if anything), or `None` if they cancelled the change.
+pub fn on_food_level_change(server: &mut Server, id: i32, level: i32, item: Option<&paper_protocol::types::Slot>) -> Option<i32> {
+    if !listens(server, "FoodLevelChangeEvent") {
+        return Some(level);
+    }
+    let player = server.players.get(&id)?;
+    let mut args = bmap! { "uuid" => player.uuid().to_string(), "level" => level };
+    if let Some(item) = item {
+        args.set("item", super::api::item_value(item));
+    }
+    match fire(server, "FoodLevelChangeEvent", "event.food_level_change", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.i32("level").unwrap_or(level).clamp(0, 20)),
+        None => Some(level),
+    }
+}
+
+/// `PlayerBucketEmptyEvent` / `PlayerBucketFillEvent`: a player empties a bucket at
+/// `block` (clicking `clicked` on `face`) or fills one from it. Returns the item the bucket
+/// becomes as plugins leave it (empty for the usual one), or `None` if they cancelled it.
+pub fn on_bucket(server: &mut Server, id: i32, fill: bool, block: BlockPos, clicked: BlockPos, face: i32, bucket: &str, result_item: &paper_protocol::types::Slot, hand: i32) -> Option<Option<paper_protocol::types::Slot>> {
+    let event = if fill { "PlayerBucketFillEvent" } else { "PlayerBucketEmptyEvent" };
+    if !listens(server, event) {
+        return Some(None);
+    }
+    let player = server.players.get(&id)?;
+    let args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "world" => server.worlds[player.world].name.clone(),
+        "x" => block.x, "y" => block.y, "z" => block.z,
+        "clicked" => Value::List(vec![clicked.x.into(), clicked.y.into(), clicked.z.into()]),
+        "face" => face,
+        "bucket" => bucket,
+        "item" => super::api::item_value(result_item),
+        "hand" => hand,
+    };
+    match fire(server, event, if fill { "event.bucket_fill" } else { "event.bucket_empty" }, args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) if !result.get("item").is_null() => Some(super::api::slot_from(result.get("item")).ok()),
+        _ => Some(None),
+    }
+}
+
+/// `WeatherChangeEvent` / `ThunderChangeEvent`: whether a world's rain or thunder may
+/// start or stop (`cause`: `NATURAL`, `COMMAND`, `PLUGIN`, `SLEEP`).
+pub fn on_weather_change(server: &mut Server, world: usize, thunder: bool, to: bool, cause: &str) -> bool {
+    let event = if thunder { "ThunderChangeEvent" } else { "WeatherChangeEvent" };
+    if !listens(server, event) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "thunder" => thunder, "to" => to, "cause" => cause };
+    match fire(server, event, "event.weather_change", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `EntityTargetLivingEntityEvent`: a mob is about to target a player or another mob
+/// (`reason` as Bukkit's `TargetReason`). Returns whether it may.
+pub fn on_entity_target(server: &mut Server, world: usize, mob: i32, target: i32, reason: &str) -> bool {
+    if !listens(server, "EntityTargetLivingEntityEvent") && !listens(server, "EntityTargetEvent") {
+        return true;
+    }
+    if !server.worlds[world].entities.contains_key(&mob) {
+        return true;
+    }
+    let args = bmap! { "entity" => super::entity::shallow_ref(server, mob), "target" => super::entity::shallow_ref(server, target), "reason" => reason };
+    match fire(server, "", "event.entity_target", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
 /// Runs the plugin scheduler and the tick events once per server tick.
 pub fn tick(server: &mut Server) {
     // Scores of criteria that follow player values (health, food, ...), twice a second.

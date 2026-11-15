@@ -691,6 +691,60 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     expect_line(&mut alice, "guard: false");
     server.handle.run(move |s| s.players.get_mut(&alice_id).unwrap().loc.pitch = 0.0).unwrap();
 
+    // --- player state and world events plugins stop (the test plugin's watch) -----------------
+    alice.command("apitest watch");
+    expect_line(&mut alice, "watch: true");
+    let held_before = server.handle.run(move |s| s.players[&alice_id].held_slot).unwrap();
+    let hands_before = server.handle.run(move |s| (s.players[&alice_id].inventory[36 + s.players[&alice_id].held_slot as usize].clone(), s.players[&alice_id].inventory[45].clone())).unwrap();
+    alice.send(&play::PlayerInput { flags: play::input_flags::SNEAK });
+    alice.send(&play::SetCarriedItem { slot: (held_before as i16 + 3) % 9 });
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::SWAP_ITEM_WITH_OFFHAND), pos: BlockPos::new(0, 0, 0), face: 0, sequence: VarInt(93) });
+    // Emptying the water bucket at the ground below her.
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(94), yaw: 0.0, pitch: 90.0 });
+    server.handle.console_command("weather rain");
+    // (In survival, so that the zombie looks for her.)
+    let zombie = server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Survival);
+            let p = s.players.get_mut(&alice_id).unwrap();
+            (p.food, p.saturation, p.exhaustion) = (20, 0.0, 4.5);
+            let at = paper_server::world::entity::Vec3::new(p.loc.x + 3.0, p.loc.y, p.loc.z);
+            s.spawn_mob(0, "minecraft:zombie", at, paper_server::server::mobs::SpawnReason::Command).unwrap()
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        alice.command("apitest watched");
+        let text = alice.expect::<play::SystemChat>().content.to_plain();
+        if text.contains("TARGET") {
+            assert_eq!(text, format!("watched: BUCKET WATER_BUCKET UP, FOOD 19, HELD {held_before} {}, SNEAK true, SWAP WATER_BUCKET, TARGET ZOMBIE PLAYER CLOSEST_PLAYER, WEATHER true COMMAND", (held_before + 3) % 9));
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the zombie never looked for Alice: {text}");
+        alice.drain(Duration::from_millis(200));
+    }
+    let after = server
+        .handle
+        .run(move |s| {
+            let p = &s.players[&alice_id];
+            let below = BlockPos::new(p.loc.x.floor() as i32, p.loc.y.floor() as i32, p.loc.z.floor() as i32);
+            let water = s.worlds[0].block_at(below.x, below.y, below.z).is_some_and(|b| paper_data::blocks::block_of_state(b).name == "minecraft:water");
+            let target = s.worlds[0].entities.get(&zombie).and_then(|e| e.mob()).and_then(|m| m.brain.target);
+            (p.sneaking, p.held_slot, (p.inventory[36 + p.held_slot as usize].clone(), p.inventory[45].clone()), water, s.worlds[0].weather.raining, p.food, target)
+        })
+        .unwrap();
+    assert_eq!(after, (false, held_before, hands_before, false, false, 20, None), "nothing changed");
+    server
+        .handle
+        .run(move |s| {
+            s.worlds[0].entities.get_mut(&zombie).unwrap().removed = true;
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+        })
+        .unwrap();
+    alice.command("apitest watch");
+    expect_line(&mut alice, "watch: false");
+
     // The host's main thread waiting for one of its async threads, which calls the server.
     alice.command("apitest asyncwait");
     expect_line(&mut alice, "asyncwait: ok");

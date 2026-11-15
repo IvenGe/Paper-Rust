@@ -95,6 +95,19 @@ public final class HostEvents {
         GATED.put("PlayerInteractEntityEvent", org.bukkit.event.player.PlayerInteractEntityEvent.class);
         GATED.put("EntityExplodeEvent", org.bukkit.event.entity.EntityExplodeEvent.class);
         GATED.put("BlockExplodeEvent", org.bukkit.event.block.BlockExplodeEvent.class);
+        GATED.put("PlayerToggleSneakEvent", org.bukkit.event.player.PlayerToggleSneakEvent.class);
+        GATED.put("PlayerToggleSprintEvent", org.bukkit.event.player.PlayerToggleSprintEvent.class);
+        GATED.put("PlayerToggleFlightEvent", org.bukkit.event.player.PlayerToggleFlightEvent.class);
+        GATED.put("PlayerItemHeldEvent", org.bukkit.event.player.PlayerItemHeldEvent.class);
+        GATED.put("PlayerSwapHandItemsEvent", org.bukkit.event.player.PlayerSwapHandItemsEvent.class);
+        GATED.put("PlayerItemConsumeEvent", org.bukkit.event.player.PlayerItemConsumeEvent.class);
+        GATED.put("FoodLevelChangeEvent", org.bukkit.event.entity.FoodLevelChangeEvent.class);
+        GATED.put("PlayerBucketEmptyEvent", org.bukkit.event.player.PlayerBucketEmptyEvent.class);
+        GATED.put("PlayerBucketFillEvent", org.bukkit.event.player.PlayerBucketFillEvent.class);
+        GATED.put("WeatherChangeEvent", org.bukkit.event.weather.WeatherChangeEvent.class);
+        GATED.put("ThunderChangeEvent", org.bukkit.event.weather.ThunderChangeEvent.class);
+        // (EntityTargetLivingEntityEvent shares its handler list.)
+        GATED.put("EntityTargetEvent", org.bukkit.event.entity.EntityTargetEvent.class);
     }
 
     private final CraftServer server;
@@ -193,6 +206,28 @@ public final class HostEvents {
         return Values.of("cancelled", cancelled, "blocks", out);
     }
 
+    /**
+     * {@code PlayerBucketEmptyEvent} / {@code PlayerBucketFillEvent}: the block the liquid goes
+     * to (or comes from), the clicked block and face, the bucket and what it becomes.
+     */
+    private Map<String, Object> bucket(final Map<String, Object> args, final boolean fill) {
+        final HostPlayer player = this.player(args);
+        final Block block = this.block(args);
+        final List<Object> at = Values.list(args.get("clicked"));
+        final Block clicked = block.getWorld().getBlockAt(((Number) at.get(0)).intValue(), ((Number) at.get(1)).intValue(), ((Number) at.get(2)).intValue());
+        final int face = Values.i32(args, "face", 1);
+        final org.bukkit.block.BlockFace blockFace = face >= 0 && face < FACES.length ? FACES[face] : org.bukkit.block.BlockFace.SELF;
+        final org.bukkit.Material bucket = org.bukkit.Registry.MATERIAL.getOrThrow(org.bukkit.NamespacedKey.fromString(Values.str(args, "bucket")));
+        final org.bukkit.inventory.ItemStack item = io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item"));
+        final EquipmentSlot hand = Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND;
+        final org.bukkit.event.player.PlayerBucketEvent event = fill
+            ? new org.bukkit.event.player.PlayerBucketFillEvent(player, block, clicked, blockFace, bucket, item, hand)
+            : new org.bukkit.event.player.PlayerBucketEmptyEvent(player, block, clicked, blockFace, bucket, item, hand);
+        event.callEvent();
+        final org.bukkit.inventory.ItemStack result = event.getItemStack();
+        return Values.of("cancelled", event.isCancelled(), "item", result == null || result.equals(item) ? null : io.papermc.paperrs.host.item.HostItemStack.toValue(result));
+    }
+
     private HostPlayer player(final Map<String, Object> args) {
         final HostPlayer player = this.server.player(Values.uuid(args, "uuid"));
         if (player == null) {
@@ -260,6 +295,77 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.entity_explode", "event.block_explode" -> this.explode(args);
+            case "event.toggle_sneak" -> {
+                final org.bukkit.event.player.PlayerToggleSneakEvent event = new org.bukkit.event.player.PlayerToggleSneakEvent(this.player(args), Values.bool(args, "sneaking", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.toggle_sprint" -> {
+                final org.bukkit.event.player.PlayerToggleSprintEvent event = new org.bukkit.event.player.PlayerToggleSprintEvent(this.player(args), Values.bool(args, "sprinting", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.toggle_flight" -> {
+                final org.bukkit.event.player.PlayerToggleFlightEvent event = new org.bukkit.event.player.PlayerToggleFlightEvent(this.player(args), Values.bool(args, "flying", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.item_held" -> {
+                final org.bukkit.event.player.PlayerItemHeldEvent event = new org.bukkit.event.player.PlayerItemHeldEvent(this.player(args), Values.i32(args, "previous", 0), Values.i32(args, "new", 0));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.swap_hands" -> {
+                final org.bukkit.event.player.PlayerSwapHandItemsEvent event = new org.bukkit.event.player.PlayerSwapHandItemsEvent(this.player(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("main")), io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("off")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "main", io.papermc.paperrs.host.item.HostItemStack.toValue(event.getMainHandItem()),
+                    "off", io.papermc.paperrs.host.item.HostItemStack.toValue(event.getOffHandItem()));
+            }
+            case "event.item_consume" -> {
+                final org.bukkit.event.player.PlayerItemConsumeEvent event = new org.bukkit.event.player.PlayerItemConsumeEvent(this.player(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")), Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
+                event.callEvent();
+                final org.bukkit.inventory.ItemStack replacement = event.getReplacement();
+                yield Values.of("cancelled", event.isCancelled(), "item", io.papermc.paperrs.host.item.HostItemStack.toValue(event.getItem()),
+                    "replacement", replacement == null ? null : io.papermc.paperrs.host.item.HostItemStack.toValue(replacement));
+            }
+            case "event.food_level_change" -> {
+                final Object item = args.get("item");
+                final org.bukkit.event.entity.FoodLevelChangeEvent event = new org.bukkit.event.entity.FoodLevelChangeEvent(this.player(args), Values.i32(args, "level", 0),
+                    item == null ? null : io.papermc.paperrs.host.item.HostItemStack.fromValue(item));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "level", event.getFoodLevel());
+            }
+            case "event.bucket_empty", "event.bucket_fill" -> this.bucket(args, method.equals("event.bucket_fill"));
+            case "event.weather_change" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final boolean to = Values.bool(args, "to", false);
+                final String cause = Values.str(args, "cause", "UNKNOWN");
+                final boolean cancelled;
+                if (Values.bool(args, "thunder", false)) {
+                    final org.bukkit.event.weather.ThunderChangeEvent event = new org.bukkit.event.weather.ThunderChangeEvent(world, to, org.bukkit.event.weather.ThunderChangeEvent.Cause.valueOf(cause));
+                    event.callEvent();
+                    cancelled = event.isCancelled();
+                } else {
+                    final org.bukkit.event.weather.WeatherChangeEvent event = new org.bukkit.event.weather.WeatherChangeEvent(world, to, org.bukkit.event.weather.WeatherChangeEvent.Cause.valueOf(cause));
+                    event.callEvent();
+                    cancelled = event.isCancelled();
+                }
+                yield Values.of("cancelled", cancelled);
+            }
+            case "event.entity_target" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                final org.bukkit.entity.Entity target = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("target")));
+                if (entity == null || !(target instanceof org.bukkit.entity.LivingEntity living)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.EntityTargetLivingEntityEvent event = new org.bukkit.event.entity.EntityTargetLivingEntityEvent(entity, living,
+                    org.bukkit.event.entity.EntityTargetEvent.TargetReason.valueOf(Values.str(args, "reason", "UNKNOWN")));
+                event.callEvent();
+                // A listener that changes the target to nothing keeps the mob from targeting.
+                yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
+            }
             case "event.block_break" -> {
                 final BlockBreakEvent event = new BlockBreakEvent(this.block(args), this.player(args));
                 event.callEvent();

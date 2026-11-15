@@ -263,7 +263,11 @@ What works:
   blocks and in the air, stepping on pressure plates and trampling farmland; a denied
   block or item is not used, as in CraftBukkit), `PlayerInteractEntityEvent`,
   `EntityExplodeEvent` and `BlockExplodeEvent` (only the blocks plugins leave are
-  broken). Players,
+  broken), `PlayerToggleSneakEvent`, `PlayerToggleSprintEvent`, `PlayerToggleFlightEvent`,
+  `PlayerItemHeldEvent`, `PlayerSwapHandItemsEvent`, `PlayerItemConsumeEvent`,
+  `FoodLevelChangeEvent`, `PlayerBucketEmptyEvent` and `PlayerBucketFillEvent`,
+  `WeatherChangeEvent` and `ThunderChangeEvent` (natural, `/weather`, plugins, sleeping)
+  and `EntityTargetLivingEntityEvent` (a mob finding a player). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,

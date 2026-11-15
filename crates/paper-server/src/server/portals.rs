@@ -716,6 +716,15 @@ impl Server {
         let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
         let dir = Vec3::from_rotation(yaw, pitch);
         let Some((hit, face, fluid_source)) = raycast(&self.worlds[world], eye, dir, 4.5, content.is_none()) else { return false };
+        // The clicked face, 0 down to 5 east, for plugins.
+        let face_index = match face {
+            (0, -1, 0) => 0,
+            (0, 1, 0) => 1,
+            (0, 0, -1) => 2,
+            (0, 0, 1) => 3,
+            (-1, 0, 0) => 4,
+            _ => 5,
+        };
         match content {
             None => {
                 // Scoop up a source block (or the water of a waterlogged block).
@@ -726,10 +735,18 @@ impl Server {
                     Fluid::Water => (blocks::AIR, "minecraft:water_bucket"),
                     Fluid::Lava => (blocks::AIR, "minecraft:lava_bucket"),
                 };
+                // Plugins may stop it, or have the bucket become something else
+                // (`PlayerBucketFillEvent`).
+                let filled_stack = ItemStack::new(items::id(filled).unwrap_or(0) as i32, 1);
+                let Some(given) = crate::plugins::events::on_bucket(self, id, true, hit, hit, face_index, item, &Slot(Some(filled_stack.clone())), hand) else {
+                    self.resend_block(id, hit);
+                    self.resync_inventory(id);
+                    return true;
+                };
                 self.set_block_and_update(world, hit, new_state);
                 let sound = if fluid == Fluid::Lava { "minecraft:item.bucket.fill_lava" } else { "minecraft:item.bucket.fill" };
                 self.play_sound(world, Vec3::new(hit.x as f64 + 0.5, hit.y as f64 + 0.5, hit.z as f64 + 0.5), sound, category::BLOCKS, 1.0, 1.0, None);
-                let filled = ItemStack::new(items::id(filled).unwrap_or(0) as i32, 1);
+                let filled = given.and_then(|g| g.0).unwrap_or(filled_stack);
                 self.fill_container_item(id, slot, &stack, filled, creative);
                 self.award_stat(id, "minecraft:used", item, 1);
                 true
@@ -749,6 +766,16 @@ impl Server {
                     let source = if fluid == Fluid::Water { "minecraft:water" } else { "minecraft:lava" };
                     (target, blocks::default_state(source).unwrap_or(blocks::AIR))
                 };
+                // Plugins may stop it, or have the bucket become something else
+                // (`PlayerBucketEmptyEvent`).
+                let emptied = if creative { stack.clone() } else { ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1) };
+                let Some(given) = crate::plugins::events::on_bucket(self, id, false, target, hit, face_index, item, &Slot(Some(emptied.clone())), hand) else {
+                    self.resend_block(id, target);
+                    self.resend_block(id, hit);
+                    self.resync_inventory(id);
+                    return true;
+                };
+                let w = &self.worlds[world];
                 let at = Vec3::new(target.x as f64 + 0.5, target.y as f64 + 0.5, target.z as f64 + 0.5);
                 let evaporates = fluid == Fluid::Water && paper_data::synced::dimension_type(&w.dimension).is_some_and(|d| d.water_evaporates);
                 if evaporates {
@@ -771,9 +798,8 @@ impl Server {
                 if let Some((mob, _)) = bucketed {
                     self.release_bucket_mob(world, &stack, mob, Vec3::new(target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5));
                 }
-                if !creative {
-                    let empty = ItemStack::new(items::id("minecraft:bucket").unwrap_or(0) as i32, 1);
-                    self.set_inventory_slot(id, slot, Slot(Some(empty)));
+                if !creative || given.is_some() {
+                    self.set_inventory_slot(id, slot, given.unwrap_or(Slot(Some(emptied))));
                 }
                 self.award_stat(id, "minecraft:used", item, 1);
                 true

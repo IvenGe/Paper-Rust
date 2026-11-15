@@ -80,8 +80,22 @@ impl Server {
         }
     }
 
+    /// Whether rain (or thunder) may start or stop for this `cause` (Bukkit's
+    /// `WeatherChangeEvent.Cause`): plugins may keep the weather as it is.
+    pub fn weather_may_change(&mut self, world: usize, thunder: bool, to: bool, cause: &str) -> (bool, bool) {
+        let w = &self.worlds[world].weather;
+        let now = if thunder { w.thundering } else { w.raining };
+        if now == to {
+            return (true, now);
+        }
+        let allowed = crate::plugins::events::on_weather_change(self, world, thunder, to, cause);
+        (allowed, if allowed { to } else { now })
+    }
+
     /// `setWeatherParameters` (what `/weather` does).
     pub fn set_weather(&mut self, world: usize, clear_time: i32, weather_time: i32, raining: bool, thundering: bool) {
+        let (_, raining) = self.weather_may_change(world, false, raining, "COMMAND");
+        let (_, thundering) = self.weather_may_change(world, true, thundering, "COMMAND");
         let w = &mut self.worlds[world].weather;
         w.clear_time = clear_time;
         w.rain_time = weather_time;
@@ -92,11 +106,13 @@ impl Server {
 
     /// Clears rain and thunder after a night slept through (`resetWeatherCycle`).
     pub fn reset_weather_cycle(&mut self, world: usize) {
+        let (_, raining) = self.weather_may_change(world, false, false, "SLEEP");
+        let (_, thundering) = self.weather_may_change(world, true, false, "SLEEP");
         let w = &mut self.worlds[world].weather;
         w.rain_time = 0;
-        w.raining = false;
+        w.raining = raining;
         w.thunder_time = 0;
-        w.thundering = false;
+        w.thundering = thundering;
     }
 
     pub(super) fn tick_weather(&mut self) {
@@ -107,32 +123,39 @@ impl Server {
             let advance = self.worlds[world].rules.bool("advance_weather");
             let w = &mut self.worlds[world].weather;
             let was_raining = w.is_raining();
+            let (mut raining, mut thundering) = (w.raining, w.thundering);
             if advance {
                 if w.clear_time > 0 {
                     w.clear_time -= 1;
-                    w.thunder_time = if w.thundering { 0 } else { 1 };
-                    w.rain_time = if w.raining { 0 } else { 1 };
-                    w.thundering = false;
-                    w.raining = false;
+                    w.thunder_time = if thundering { 0 } else { 1 };
+                    w.rain_time = if raining { 0 } else { 1 };
+                    thundering = false;
+                    raining = false;
                 } else {
                     if w.thunder_time > 0 {
                         w.thunder_time -= 1;
                         if w.thunder_time == 0 {
-                            w.thundering = !w.thundering;
+                            thundering = !thundering;
                         }
                     } else {
-                        w.thunder_time = sample(if w.thundering { THUNDER_DURATION } else { THUNDER_DELAY });
+                        w.thunder_time = sample(if thundering { THUNDER_DURATION } else { THUNDER_DELAY });
                     }
                     if w.rain_time > 0 {
                         w.rain_time -= 1;
                         if w.rain_time == 0 {
-                            w.raining = !w.raining;
+                            raining = !raining;
                         }
                     } else {
-                        w.rain_time = sample(if w.raining { RAIN_DURATION } else { RAIN_DELAY });
+                        w.rain_time = sample(if raining { RAIN_DURATION } else { RAIN_DELAY });
                     }
                 }
             }
+            // Plugins may keep the weather as it is (`ThunderChangeEvent`, `WeatherChangeEvent`).
+            let (_, thundering) = self.weather_may_change(world, true, thundering, "NATURAL");
+            let (_, raining) = self.weather_may_change(world, false, raining, "NATURAL");
+            let w = &mut self.worlds[world].weather;
+            w.raining = raining;
+            w.thundering = thundering;
             let (old_rain, old_thunder) = (w.rain_level, w.thunder_level);
             w.thunder_level = (w.thunder_level + if w.thundering { 0.01 } else { -0.01 }).clamp(0.0, 1.0);
             w.rain_level = (w.rain_level + if w.raining { 0.01 } else { -0.01 }).clamp(0.0, 1.0);

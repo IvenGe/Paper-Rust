@@ -539,9 +539,16 @@ impl Server {
             if p.saturation > 0.0 {
                 p.saturation = (p.saturation - 1.0).max(0.0);
             } else if difficulty != Difficulty::Peaceful {
-                p.food = (p.food - 1).max(0);
+                // Getting hungry: plugins may keep the food bar where it is.
+                let level = (p.food - 1).max(0);
+                if let Some(level) = crate::plugins::events::on_food_level_change(self, id, level, None) {
+                    if let Some(p) = self.players.get_mut(&id) {
+                        p.food = level;
+                    }
+                }
             }
         }
+        let Some(p) = self.players.get_mut(&id) else { return };
         let hurt = p.health > 0.0 && p.health < p.max_health();
         if regen && p.saturation > 0.0 && hurt && p.food >= 20 {
             p.food_timer += 1;
@@ -1254,20 +1261,44 @@ impl Server {
         let Some((hand, _)) = p.using_item.take() else { return };
         p.metadata_dirty = true;
         let slot = if hand == 1 { OFFHAND_SLOT } else { HOTBAR_START + p.held_slot as usize };
-        let Some(stack) = p.inventory[slot].0.clone() else { return };
+        let Some(held) = p.inventory[slot].0.clone() else { return };
+        // Plugins may stop it, or have another item eaten (`PlayerItemConsumeEvent`).
+        let Some((consumed, replacement)) = crate::plugins::events::on_item_consume(self, id, &Slot(Some(held.clone())), hand as i32) else {
+            self.resync_inventory(id);
+            if let Some(p) = self.players.get(&id) {
+                p.conn.send(&play::SetHealth { health: p.health, food: VarInt(p.food), saturation: p.saturation });
+            }
+            return;
+        };
+        let stack = consumed.0.unwrap_or_else(|| held.clone());
         let data = item_data::by_id(stack.item as u32);
+        // Eating fills the food bar, as far as plugins let it (`FoodLevelChangeEvent`).
+        let food_level = match &data.food {
+            Some(food) => {
+                let level = (self.players[&id].food + food.nutrition).clamp(0, 20);
+                crate::plugins::events::on_food_level_change(self, id, level, Some(&Slot(Some(stack.clone()))))
+            }
+            None => None,
+        };
+        let Some(p) = self.players.get_mut(&id) else { return };
         let creative = p.game_mode == GameMode::Creative;
         p.conn.send(&play::EntityEvent { entity_id: id, status: 9 });
-        if let Some(food) = &data.food {
-            p.food = (p.food + food.nutrition).clamp(0, 20);
+        if let (Some(food), Some(level)) = (&data.food, food_level) {
+            p.food = level;
             p.saturation = (p.saturation + food.saturation).clamp(0.0, p.food as f32);
         }
         let (world, pos) = (p.world, Vec3::new(p.loc.x, p.loc.y, p.loc.z));
-        if !creative {
-            let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
+        if !creative || replacement.is_some() {
+            let rest = if let Some(replacement) = &replacement {
+                replacement.clone()
+            } else if held.count > 1 {
+                Slot(Some(held.with_count(held.count - 1)))
+            } else {
+                Slot::EMPTY
+            };
             p.inventory[slot] = rest;
             p.equipment_dirty = true;
-            if let Some(remainder) = data.use_remainder.as_deref().and_then(items::id) {
+            if let Some(remainder) = data.use_remainder.as_deref().and_then(items::id).filter(|_| replacement.is_none()) {
                 let leftover = ItemStack::new(remainder as i32, 1);
                 if p.inventory[slot].is_empty() {
                     p.inventory[slot] = Slot(Some(leftover));

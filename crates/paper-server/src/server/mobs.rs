@@ -634,6 +634,7 @@ impl Server {
         let mut brain = mob.brain.clone();
         let mut rng = rand::thread_rng();
 
+        let mut found_target: Option<i32> = None;
         // Forget targets that left, died, went creative or out of range.
         if let Some(t) = brain.target {
             let keep = match self.players.get(&t) {
@@ -672,9 +673,15 @@ impl Server {
                     best = Some((d, p.entity_id));
                 }
             }
+            // Plugins may keep it from targeting the player it found
+            // (`EntityTargetLivingEntityEvent`): asked once this tick's work is done.
             if let Some((_, t)) = best {
-                brain.target = Some(t);
-                brain.path.clear();
+                if crate::plugins::events::listens(self, "EntityTargetLivingEntityEvent") || crate::plugins::events::listens(self, "EntityTargetEvent") {
+                    found_target = Some(t);
+                } else {
+                    brain.target = Some(t);
+                    brain.path.clear();
+                }
             }
         }
         let target_pos = brain.target.and_then(|t| self.entity_position(world, t));
@@ -952,6 +959,17 @@ impl Server {
         }
         if swelling_changed {
             e.metadata_dirty = true;
+        }
+        if let Some(t) = found_target {
+            if crate::plugins::events::on_entity_target(self, world, id, t, "CLOSEST_PLAYER") {
+                if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+                    if let Some(m) = e.mob_mut() {
+                        m.brain.target = Some(t);
+                        m.brain.path.clear();
+                    }
+                    e.metadata_dirty = true;
+                }
+            }
         }
         if swing {
             let payload = Bytes::from(encode_packet(&play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(0), animation_type: VarInt(1), duration: VarInt(6) }));

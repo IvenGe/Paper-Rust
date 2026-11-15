@@ -66,6 +66,9 @@ final class ApiTests implements Listener, CommandExecutor {
     /** Interactions and explosions seen, and whether the plugin stops them ("apitest guard"). */
     private final List<String> interactions = new ArrayList<>();
     private boolean guard;
+    /** Player state and world events seen while watching ("apitest watch"); all cancelled. */
+    private final java.util.TreeSet<String> watched = new java.util.TreeSet<>();
+    private boolean watch;
     private @org.jetbrains.annotations.Nullable ItemStack guardHeld;
 
     ApiTests(final JavaPlugin plugin) {
@@ -162,6 +165,21 @@ final class ApiTests implements Listener, CommandExecutor {
                     }
                     sender.sendMessage("asyncwait: " + outcome);
                 }
+                case "watch" -> {
+                    // Stops sneaking, slot changes, swaps, hunger, buckets, weather and targeting
+                    // while on, with a water bucket in hand.
+                    final Player player = (Player) sender;
+                    this.watch = !this.watch;
+                    if (this.watch) {
+                        this.watched.clear();
+                        this.guardHeld = player.getInventory().getItemInMainHand();
+                        player.getInventory().setItemInMainHand(new ItemStack(Material.WATER_BUCKET));
+                    } else {
+                        player.getInventory().setItemInMainHand(this.guardHeld);
+                    }
+                    sender.sendMessage("watch: " + this.watch);
+                }
+                case "watched" -> sender.sendMessage("watched: " + String.join(", ", this.watched));
                 case "interactions" -> {
                     sender.sendMessage("interactions: " + String.join(", ", this.interactions));
                     this.interactions.clear();
@@ -1249,6 +1267,48 @@ final class ApiTests implements Listener, CommandExecutor {
         this.interactions.add(event.getAction() + " " + (block == null ? "-" : block.getType()) + " " + event.getBlockFace() + " " + event.getHand()
             + " " + (event.getItem() == null ? "-" : event.getItem().getType()));
         event.setCancelled(true);
+    }
+
+    private void watched(final org.bukkit.event.Cancellable event, final String what) {
+        if (this.watch) {
+            this.watched.add(what);
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onSneak(final org.bukkit.event.player.PlayerToggleSneakEvent event) {
+        this.watched(event, "SNEAK " + event.isSneaking());
+    }
+
+    @EventHandler
+    public void onHeld(final org.bukkit.event.player.PlayerItemHeldEvent event) {
+        this.watched(event, "HELD " + event.getPreviousSlot() + " " + event.getNewSlot());
+    }
+
+    @EventHandler
+    public void onSwap(final org.bukkit.event.player.PlayerSwapHandItemsEvent event) {
+        this.watched(event, "SWAP " + event.getOffHandItem().getType());
+    }
+
+    @EventHandler
+    public void onFood(final org.bukkit.event.entity.FoodLevelChangeEvent event) {
+        this.watched(event, "FOOD " + event.getFoodLevel());
+    }
+
+    @EventHandler
+    public void onBucketEmpty(final org.bukkit.event.player.PlayerBucketEmptyEvent event) {
+        this.watched(event, "BUCKET " + event.getBucket() + " " + event.getBlockFace());
+    }
+
+    @EventHandler
+    public void onWeather(final org.bukkit.event.weather.WeatherChangeEvent event) {
+        this.watched(event, "WEATHER " + event.toWeatherState() + " " + event.getCause());
+    }
+
+    @EventHandler
+    public void onTarget(final org.bukkit.event.entity.EntityTargetLivingEntityEvent event) {
+        this.watched(event, "TARGET " + event.getEntityType() + " " + (event.getTarget() == null ? "-" : event.getTarget().getType()) + " " + event.getReason());
     }
 
     @EventHandler
