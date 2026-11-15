@@ -261,6 +261,13 @@ same name, which stay reachable as `minecraft:<name>`.
 | `world.block_drops` | `world`, `x`, `y`, `z`, `tool` (answers the items breaking the block would drop) |
 | `world.tile_data` / `world.set_tile_data` | `world`, `x`, `y`, `z` (answers the block entity's `nbt` and `name`) / and `set` (tags as network NBT), `remove` (tag names), `name_changed`, `name` (JSON) |
 | `world.save` | `world`, `flush` |
+| `world.play_sound` | `world`, `x`, `y`, `z`, `sound`, `category`, `volume`, `pitch`, `seed` (players within 16 blocks, or 16 times a louder volume) |
+| `world.counts` | `world` (answers `entities`, `players`, `block_entities`) |
+| `server.add_recipe` | `key`, `type` (`shaped`, `shapeless`, `transmute`, `smelting`, `blasting`, `smoking`, `campfire_cooking`), `result`; `rows` and `keys` (a letter to an ingredient), `ingredients`, `input` and `material`, or `input`, `experience`, `cooking_time`; an ingredient has `items` (item names) or `exact` (items) (answers false for a key there is) |
+| `server.remove_recipe` / `has_recipe` | `key` |
+| `server.clear_recipes` / `reset_recipes` / `recipes` | (`recipes` answers every recipe as `add_recipe` takes them) |
+| `server.craft` | `grid` (4 or 9 items) (answers the recipe's `key` and the `result`, or null) |
+| `server.difficulty` / `set_difficulty` | / `difficulty` |
 | `server.create_world` | `name`, `environment` (`NORMAL`, `NETHER`, `THE_END`), `seed`, `type` (`NORMAL`, `FLAT`), `structures` (answers the world, like `worlds` in the welcome) |
 | `server.dispatch_command` | `sender`, `command` (built-in commands; answers whether one ran) |
 | `server.broadcast` | `message` |

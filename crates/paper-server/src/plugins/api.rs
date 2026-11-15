@@ -115,6 +115,21 @@ fn world_info(w: &crate::world::World) -> Value {
         "height" => w.height,
         "seed" => w.seed,
         "sea_level" => w.generator.sea_level(),
+        // What its dimension type says (`World#getCoordinateScale`, `hasCeiling`, ...).
+        "dimension_type" => match paper_data::synced::dimension_type(&w.dimension) {
+            Some(d) => bmap! {
+                "coordinate_scale" => d.coordinate_scale,
+                "has_skylight" => d.has_skylight,
+                "has_ceiling" => d.has_ceiling,
+                "ultrawarm" => d.water_evaporates && d.fast_lava,
+                "fixed_time" => d.has_fixed_time,
+                "piglin_safe" => !d.piglins_zombify,
+                "respawn_anchor_works" => d.respawn_anchor_works,
+                "raids" => d.can_start_raid,
+                "bed_works" => d.bed_works,
+            },
+            None => Value::Null,
+        },
         // The world's folder (`level.dat`, `region`...), for `World#getWorldPath`.
         "folder" => w.storage.as_ref().map_or(Value::Null, |s| Value::Str(s.dir.display().to_string())),
         "spawn" => Value::List(vec![w.spawn.x.into(), w.spawn.y.into(), w.spawn.z.into()]),
@@ -642,6 +657,44 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             };
             player.conn.send(&packet);
             Ok(Value::Null)
+        }
+        // `World#playSound`: everyone in the world within earshot hears it (16 blocks, or 16
+        // times the volume for louder sounds, as `ServerLevel.playSeededSound`).
+        "world.play_sound" => {
+            let world = world_index(server, args)?;
+            let sound = args.str("sound").ok_or_else(|| anyhow!("missing sound"))?;
+            let sound = match paper_data::registries::id("minecraft:sound_event", sound) {
+                Some(i) => play::SoundRef::Id(i as i32),
+                None => play::SoundRef::Named { name: sound.to_owned(), fixed_range: None },
+            };
+            let (x, y, z) = (args.f64("x").unwrap_or(0.0), args.f64("y").unwrap_or(0.0), args.f64("z").unwrap_or(0.0));
+            let volume = args.f64("volume").unwrap_or(1.0) as f32;
+            let packet = play::Sound {
+                sound,
+                category: args.i32("category").unwrap_or(0),
+                x,
+                y,
+                z,
+                volume,
+                pitch: args.f64("pitch").unwrap_or(1.0) as f32,
+                seed: args.i64("seed").unwrap_or_else(rand::random),
+            };
+            let range = if volume > 1.0 { 16.0 * volume as f64 } else { 16.0 };
+            for player in server.players.values().filter(|p| p.world == world) {
+                let (dx, dy, dz) = (player.loc.x - x, player.loc.y - y, player.loc.z - z);
+                if dx * dx + dy * dy + dz * dz < range * range {
+                    player.conn.send(&packet);
+                }
+            }
+            Ok(Value::Null)
+        }
+        // How many entities, players and block entities a world has (`World#getEntityCount`...).
+        "world.counts" => {
+            let world = world_index(server, args)?;
+            let w = &server.worlds[world];
+            let players = server.players.values().filter(|p| p.world == world).count();
+            let block_entities: usize = w.chunks.values().map(|c| c.block_entities.len()).sum();
+            Ok(bmap! { "entities" => (w.entities.len() + players) as i64, "players" => players as i64, "block_entities" => block_entities as i64 })
         }
         "player.block_change" => {
             // Player#sendBlockChange: only this player sees the block (until the chunk resends it).
@@ -1210,6 +1263,62 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             };
             Ok(Value::Bool(server.dispatch_builtin_command(&source, &command)))
         }
+        // The server's difficulty, which all its worlds share (`World#getDifficulty`,
+        // `World#setDifficulty`).
+        "server.difficulty" => Ok(Value::Str(server.difficulty.name().to_owned())),
+        "server.set_difficulty" => {
+            let name = args.str("difficulty").unwrap_or("");
+            let difficulty = crate::config::Difficulty::parse(name).ok_or_else(|| anyhow!("unknown difficulty {name}"))?;
+            server.difficulty = difficulty;
+            server.broadcast(&play::ChangeDifficulty { difficulty: difficulty.id(), locked: false });
+            Ok(Value::Null)
+        }
+        // Plugins' recipes (`Server#addRecipe`): shaped, shapeless, transmute and cooking
+        // recipes, whose ingredients name item types (`items`) or exact items (`exact`).
+        // False if there is a recipe of that key already.
+        "server.add_recipe" => {
+            let recipe = recipe_from(args)?;
+            let recipes = std::sync::Arc::make_mut(server.recipes.get_or_insert_with(Default::default));
+            Ok(Value::Bool(match recipe {
+                AnyRecipe::Crafting(r) => recipes.add_crafting(r),
+                AnyRecipe::Cooking(r) => recipes.add_cooking(r),
+            }))
+        }
+        "server.remove_recipe" => {
+            let key = args.str("key").unwrap_or("");
+            Ok(Value::Bool(server.recipes.as_mut().is_some_and(|r| std::sync::Arc::make_mut(r).remove(key))))
+        }
+        "server.has_recipe" => Ok(Value::Bool(server.recipes.as_ref().is_some_and(|r| r.has(args.str("key").unwrap_or(""))))),
+        "server.clear_recipes" => {
+            if let Some(r) = server.recipes.as_mut() {
+                std::sync::Arc::make_mut(r).clear();
+            }
+            Ok(Value::Null)
+        }
+        "server.reset_recipes" => {
+            if let Some(r) = server.recipes.as_mut() {
+                std::sync::Arc::make_mut(r).reset();
+            }
+            Ok(Value::Null)
+        }
+        // Every recipe there is, as `server.add_recipe` takes them.
+        "server.recipes" => Ok(Value::List(match &server.recipes {
+            Some(r) => r.crafting_recipes().map(crafting_recipe_value).chain(r.cooking_recipes().map(cooking_recipe_value)).collect(),
+            None => Vec::new(),
+        })),
+        // What a crafting grid (`grid`: 4 or 9 items, row by row) makes: the recipe's key and
+        // the result, or null.
+        "server.craft" => {
+            let grid: Vec<Slot> = args.list("grid").unwrap_or(&[]).iter().map(slot_from).collect::<Result<_>>()?;
+            let size = if grid.len() >= 9 { 3 } else { 2 };
+            if grid.len() != size * size {
+                bail!("a crafting grid of {} items", grid.len());
+            }
+            Ok(match server.recipes.as_ref().and_then(|r| r.craft(&grid, size)) {
+                Some((key, result)) => bmap! { "key" => key.to_owned(), "result" => item_value(&Slot(Some(result))) },
+                None => Value::Null,
+            })
+        }
         "server.broadcast" => {
             let message = component_from(args.get("message")).ok_or_else(|| anyhow!("missing message"))?;
             server.broadcast(&play::SystemChat { content: message, overlay: false });
@@ -1276,5 +1385,123 @@ mod tests {
         assert_eq!(paper_protocol::codec::Reader::new(bytes).component().unwrap().to_plain(), "Durendal");
         assert!(stack.added.iter().any(|(t, _)| *t == component("minecraft:food")), "other components stay");
         assert!(stack.added.windows(2).all(|w| w[0].0 < w[1].0), "components stay in type order");
+    }
+}
+
+// --- recipes -----------------------------------------------------------------------------------
+
+/// A recipe from a plugin, crafted or cooked.
+enum AnyRecipe {
+    Crafting(crate::server::recipes::CraftingRecipe),
+    Cooking(crate::server::recipes::CookingRecipe),
+}
+
+fn ingredient_from(v: &Value) -> Result<crate::server::recipes::Ingredient> {
+    let ids: Vec<i32> = v.list("items").unwrap_or(&[]).iter().filter_map(Value::as_str).filter_map(items::id).map(|i| i as i32).collect();
+    let mut exact = Vec::new();
+    for item in v.list("exact").unwrap_or(&[]) {
+        if let Some(stack) = slot_from(item)?.0 {
+            exact.push(stack);
+        }
+    }
+    if ids.is_empty() && exact.is_empty() {
+        bail!("an ingredient that takes no item");
+    }
+    Ok(crate::server::recipes::Ingredient(ids, exact))
+}
+
+fn ingredient_value(ingredient: &crate::server::recipes::Ingredient) -> Value {
+    let mut out = bmap! { "items" => Value::List(ingredient.0.iter().filter_map(|id| items::get(*id as u32)).map(|i| Value::Str(i.name.to_owned())).collect()) };
+    if !ingredient.1.is_empty() {
+        out.set("exact", Value::List(ingredient.1.iter().map(|s| item_value(&Slot(Some(s.clone())))).collect()));
+    }
+    out
+}
+
+fn recipe_from(v: &Value) -> Result<AnyRecipe> {
+    use crate::server::recipes::{CookingRecipe, CraftingRecipe};
+    let id = v.str("key").ok_or_else(|| anyhow!("a recipe without a key"))?.to_owned();
+    let result = slot_from(v.get("result"))?.0.ok_or_else(|| anyhow!("a recipe without a result"))?;
+    Ok(match v.str("type").unwrap_or("") {
+        "shaped" => {
+            let rows: Vec<Vec<char>> = v.list("rows").unwrap_or(&[]).iter().filter_map(Value::as_str).map(|r| r.chars().collect()).collect();
+            let mut keys = std::collections::HashMap::new();
+            if let Value::Map(map) = v.get("keys") {
+                for (key, ingredient) in map {
+                    if let Some(c) = key.chars().next() {
+                        keys.insert(c, ingredient_from(ingredient)?);
+                    }
+                }
+            }
+            let (height, width) = (rows.len(), rows.iter().map(Vec::len).max().unwrap_or(0));
+            if !(1..=3).contains(&height) || !(1..=3).contains(&width) {
+                bail!("a shape of {width} by {height}");
+            }
+            let cells = rows.iter().flat_map(|row| (0..width).map(|x| row.get(x).and_then(|c| keys.get(c).cloned()))).collect();
+            AnyRecipe::Crafting(CraftingRecipe::Shaped { id, width, height, cells, result })
+        }
+        "shapeless" => {
+            let ingredients = v.list("ingredients").unwrap_or(&[]).iter().map(ingredient_from).collect::<Result<Vec<_>>>()?;
+            if !(1..=9).contains(&ingredients.len()) {
+                bail!("a shapeless recipe of {} ingredients", ingredients.len());
+            }
+            AnyRecipe::Crafting(CraftingRecipe::Shapeless { id, ingredients, result })
+        }
+        "transmute" => AnyRecipe::Crafting(CraftingRecipe::Transmute { id, input: ingredient_from(v.get("input"))?, material: ingredient_from(v.get("material"))?, result }),
+        kind @ ("smelting" | "blasting" | "smoking" | "campfire_cooking") => AnyRecipe::Cooking(CookingRecipe {
+            id,
+            kind: format!("minecraft:{kind}"),
+            ingredient: ingredient_from(v.get("input"))?,
+            result,
+            experience: v.get("experience").as_f64().unwrap_or(0.0) as f32,
+            cooking_time: v.i32("cooking_time").unwrap_or(200),
+        }),
+        other => bail!("recipes of type {other:?}"),
+    })
+}
+
+/// A crafting recipe as `server.add_recipe` takes it (a letter per ingredient of a shape).
+fn crafting_recipe_value(recipe: &crate::server::recipes::CraftingRecipe) -> Value {
+    use crate::server::recipes::CraftingRecipe;
+    match recipe {
+        CraftingRecipe::Shaped { id, width, height, cells, result } => {
+            let mut distinct: Vec<&crate::server::recipes::Ingredient> = Vec::new();
+            let mut rows = Vec::new();
+            for y in 0..*height {
+                let mut row = String::new();
+                for cell in &cells[y * width..(y + 1) * width] {
+                    match cell {
+                        None => row.push(' '),
+                        Some(ingredient) => {
+                            let i = distinct.iter().position(|d| *d == ingredient).unwrap_or_else(|| {
+                                distinct.push(ingredient);
+                                distinct.len() - 1
+                            });
+                            row.push((b'A' + i as u8) as char);
+                        }
+                    }
+                }
+                rows.push(Value::Str(row));
+            }
+            let keys = Value::Map(distinct.iter().enumerate().map(|(i, ingredient)| (((b'A' + i as u8) as char).to_string(), ingredient_value(ingredient))).collect());
+            bmap! { "key" => id.clone(), "type" => "shaped", "rows" => Value::List(rows), "keys" => keys, "result" => item_value(&Slot(Some(result.clone()))) }
+        }
+        CraftingRecipe::Shapeless { id, ingredients, result } => {
+            bmap! { "key" => id.clone(), "type" => "shapeless", "ingredients" => Value::List(ingredients.iter().map(ingredient_value).collect()), "result" => item_value(&Slot(Some(result.clone()))) }
+        }
+        CraftingRecipe::Transmute { id, input, material, result } => {
+            bmap! { "key" => id.clone(), "type" => "transmute", "input" => ingredient_value(input), "material" => ingredient_value(material), "result" => item_value(&Slot(Some(result.clone()))) }
+        }
+    }
+}
+
+fn cooking_recipe_value(recipe: &crate::server::recipes::CookingRecipe) -> Value {
+    bmap! {
+        "key" => recipe.id.clone(),
+        "type" => recipe.kind.strip_prefix("minecraft:").unwrap_or(&recipe.kind).to_owned(),
+        "input" => ingredient_value(&recipe.ingredient),
+        "result" => item_value(&Slot(Some(recipe.result.clone()))),
+        "experience" => recipe.experience as f64,
+        "cooking_time" => recipe.cooking_time,
     }
 }

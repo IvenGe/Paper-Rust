@@ -19,6 +19,7 @@ io.papermc.paper.InternalAPIBridge                  AbstractInternalAPIBridge
 io.papermc.paper.ServerBuildInfo                    AbstractServerBuildInfo
 com.destroystokyo.paper.profile.PlayerProfile       AbstractPlayerProfile
 io.papermc.paper.command.brigadier.argument.VanillaArgumentProvider  AbstractVanillaArgumentProvider
+io.papermc.paper.datacomponent.item.ItemComponentTypesBridge  AbstractItemComponentTypesBridge abstract
 
 # Registry entries. "value" classes carry a key, an ordinal and a translation key.
 org.bukkit.inventory.ItemType$Typed                 AbstractItemType     abstract value

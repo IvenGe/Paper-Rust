@@ -382,14 +382,14 @@ pub fn on_inventory_close(server: &mut Server, id: i32, reason: &str) {
 }
 
 /// InventoryClickEvent, InventoryDragEvent for drags, or CraftItemEvent when the click takes
-/// a crafting result (`craft_result`): returns false if cancelled. Listeners may change the
+/// a crafting result (`craft_result`, with the key of its recipe): returns false if cancelled. Listeners may change the
 /// window's slots; the click then works on what they left.
 pub fn on_inventory_click(
     server: &mut Server,
     id: i32,
     click: &paper_protocol::packets::play::ContainerClick,
     kind: Option<&crate::server::containers::MenuKind>,
-    craft_result: Option<paper_protocol::types::Slot>,
+    craft_result: Option<(paper_protocol::types::Slot, Option<String>)>,
 ) -> bool {
     let drag = click.mode == 5;
     // A drag is one event when it ends (stage 2), as in Bukkit.
@@ -414,8 +414,11 @@ pub fn on_inventory_click(
         "cursor" => cursor,
         "held_slot" => held_slot,
     };
-    if let Some(result) = &craft_result {
+    if let Some((result, recipe)) = &craft_result {
         args.set("craft", super::api::item_value(result));
+        if let Some(recipe) = recipe {
+            args.set("recipe", recipe.clone());
+        }
     }
     if drag {
         // The slots dragged over and how the items are spread (0 evenly, 1 one each, 2 full

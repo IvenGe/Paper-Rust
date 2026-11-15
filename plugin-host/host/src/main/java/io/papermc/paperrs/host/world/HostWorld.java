@@ -41,6 +41,8 @@ public final class HostWorld extends AbstractWorld {
     private final int height;
     private final long seed;
     private final int seaLevel;
+    /** What the world's dimension type says (the server's {@code dimension_type} map). */
+    private final Map<String, Object> dimensionType;
 
     public HostWorld(final CraftServer server, final Map<String, Object> info) {
         this.server = server;
@@ -56,6 +58,55 @@ public final class HostWorld extends AbstractWorld {
         this.height = Values.i32(info, "height", 384);
         this.seed = Values.i64(info, "seed", 0);
         this.seaLevel = Values.i32(info, "sea_level", 63);
+        this.dimensionType = info.get("dimension_type") instanceof Map<?, ?> m ? Values.map(m) : Map.of();
+    }
+
+    // --- the dimension type ---------------------------------------------------------------------
+
+    @Override
+    public double getCoordinateScale() {
+        return Values.f64(this.dimensionType, "coordinate_scale", 1);
+    }
+
+    @Override
+    public boolean hasSkyLight() {
+        return Values.bool(this.dimensionType, "has_skylight", true);
+    }
+
+    @Override
+    public boolean hasCeiling() {
+        return Values.bool(this.dimensionType, "has_ceiling", false);
+    }
+
+    /** Water evaporates and lava is fast, as in the Nether. */
+    @Override
+    public boolean isUltraWarm() {
+        return Values.bool(this.dimensionType, "ultrawarm", false);
+    }
+
+    @Override
+    public boolean isFixedTime() {
+        return Values.bool(this.dimensionType, "fixed_time", false);
+    }
+
+    @Override
+    public boolean isPiglinSafe() {
+        return Values.bool(this.dimensionType, "piglin_safe", false);
+    }
+
+    @Override
+    public boolean isRespawnAnchorWorks() {
+        return Values.bool(this.dimensionType, "respawn_anchor_works", false);
+    }
+
+    @Override
+    public boolean hasRaids() {
+        return Values.bool(this.dimensionType, "raids", true);
+    }
+
+    @Override
+    public boolean isBedWorks() {
+        return Values.bool(this.dimensionType, "bed_works", true);
     }
 
     public CraftServer server() {
@@ -363,6 +414,15 @@ public final class HostWorld extends AbstractWorld {
     @Override
     public Difficulty getDifficulty() {
         return this.server.difficulty();
+    }
+
+    /** All worlds share the server's difficulty: this sets it for every world. */
+    @Override
+    public void setDifficulty(final Difficulty difficulty) {
+        if (difficulty == null) {
+            throw new IllegalArgumentException("Difficulty cannot be null");
+        }
+        this.server.setDifficulty(difficulty);
     }
 
     // --- weather (CraftWorld: the events first, then the server's weather) -----------------
@@ -796,6 +856,227 @@ public final class HostWorld extends AbstractWorld {
     @Override
     public void setPVP(final boolean pvp) {
         this.setGameRule(org.bukkit.GameRules.PVP, pvp);
+    }
+
+    // --- sounds ---------------------------------------------------------------------------------
+
+    private void sound(final double x, final double y, final double z, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final @Nullable Long seed) {
+        final Map<String, Object> args = Values.of("world", this.name, "sound", sound, "category", category.ordinal(), "x", x, "y", y, "z", z, "volume", (double) volume, "pitch", (double) pitch);
+        if (seed != null) {
+            args.put("seed", seed);
+        }
+        this.server.call("world.play_sound", args);
+    }
+
+    private static String soundKey(final org.bukkit.Sound sound) {
+        return ((net.kyori.adventure.key.Keyed) sound).key().asString();
+    }
+
+    @Override
+    public void playSound(final Location location, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        this.sound(location.getX(), location.getY(), location.getZ(), sound, category, volume, pitch, null);
+    }
+
+    @Override
+    public void playSound(final Location location, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        this.sound(location.getX(), location.getY(), location.getZ(), sound, category, volume, pitch, seed);
+    }
+
+    @Override
+    public void playSound(final Location location, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        this.sound(location.getX(), location.getY(), location.getZ(), soundKey(sound), category, volume, pitch, null);
+    }
+
+    @Override
+    public void playSound(final Location location, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        this.sound(location.getX(), location.getY(), location.getZ(), soundKey(sound), category, volume, pitch, seed);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        final Location at = entity.getLocation();
+        this.sound(at.getX(), at.getY(), at.getZ(), sound, category, volume, pitch, null);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final String sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        final Location at = entity.getLocation();
+        this.sound(at.getX(), at.getY(), at.getZ(), sound, category, volume, pitch, seed);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch) {
+        final Location at = entity.getLocation();
+        this.sound(at.getX(), at.getY(), at.getZ(), soundKey(sound), category, volume, pitch, null);
+    }
+
+    @Override
+    public void playSound(final Entity entity, final org.bukkit.Sound sound, final org.bukkit.SoundCategory category, final float volume, final float pitch, final long seed) {
+        final Location at = entity.getLocation();
+        this.sound(at.getX(), at.getY(), at.getZ(), soundKey(sound), category, volume, pitch, seed);
+    }
+
+    // --- settings and counts ---------------------------------------------------------------------
+
+    private final Map<org.bukkit.entity.SpawnCategory, Integer> spawnLimits = new java.util.EnumMap<>(org.bukkit.entity.SpawnCategory.class);
+    private final Map<org.bukkit.entity.SpawnCategory, Integer> ticksPerSpawns = new java.util.EnumMap<>(org.bukkit.entity.SpawnCategory.class);
+    private boolean allowAnimals = true;
+    private boolean voidDamage = true;
+    private float voidDamageAmount = 4;
+    private double voidDamageOffset = -64;
+
+    @Override
+    public boolean canGenerateStructures() {
+        return this.server.getGenerateStructures();
+    }
+
+    @Override
+    public boolean isHardcore() {
+        return this.server.isHardcore();
+    }
+
+    @Override
+    public int getViewDistance() {
+        return this.server.getViewDistance();
+    }
+
+    @Override
+    public int getSimulationDistance() {
+        return this.server.getSimulationDistance();
+    }
+
+    @Override
+    public int getSendViewDistance() {
+        return this.server.getViewDistance();
+    }
+
+    private Map<String, Object> counts() {
+        return Values.map(this.server.call("world.counts", Values.of("world", this.name)));
+    }
+
+    @Override
+    public int getEntityCount() {
+        return Values.i32(this.counts(), "entities", 0);
+    }
+
+    @Override
+    public int getPlayerCount() {
+        return Values.i32(this.counts(), "players", 0);
+    }
+
+    @Override
+    public int getTileEntityCount() {
+        return Values.i32(this.counts(), "block_entities", 0);
+    }
+
+    @Override
+    public long getGameTime() {
+        return this.getFullTime();
+    }
+
+    /** {@code isBrightOutside}: the sky is not yet dark (the time of day without weather). */
+    @Override
+    public boolean isDayTime() {
+        final long time = this.getTime() % 24000;
+        return !this.hasCeiling() && !this.isFixedTime() && (time < 12542 || time > 23460);
+    }
+
+    @Override
+    public io.papermc.paper.world.MoonPhase getMoonPhase() {
+        return io.papermc.paper.world.MoonPhase.getPhase(this.getFullTime() / 24000L);
+    }
+
+    @Override
+    public org.bukkit.block.BlockState getBlockState(final int x, final int y, final int z) {
+        return this.getBlockAt(x, y, z).getState();
+    }
+
+    /** Vanilla's generation: no populators or biome provider of a plugin. */
+    @Override
+    public List<org.bukkit.generator.BlockPopulator> getPopulators() {
+        return new ArrayList<>();
+    }
+
+    @Override
+    public org.bukkit.generator.@Nullable BiomeProvider getBiomeProvider() {
+        return null;
+    }
+
+    @Override
+    public boolean getAllowAnimals() {
+        return this.allowAnimals;
+    }
+
+    /** Monsters follow the {@code spawn_monsters} game rule. */
+    @Override
+    public boolean getAllowMonsters() {
+        return this.getGameRuleValue(org.bukkit.GameRules.SPAWN_MONSTERS);
+    }
+
+    /**
+     * Monsters through the {@code spawn_monsters} game rule; whether animals spawn is kept by
+     * the host only (the server's spawning has no such switch yet).
+     */
+    @Override
+    public void setSpawnFlags(final boolean allowMonsters, final boolean allowAnimals) {
+        this.allowAnimals = allowAnimals;
+        if (this.getAllowMonsters() != allowMonsters) {
+            this.setGameRule(org.bukkit.GameRules.SPAWN_MONSTERS, allowMonsters);
+        }
+    }
+
+    /** The server's limits unless a plugin set this world's (kept by the host, not yet used by the server's spawning). */
+    @Override
+    public int getSpawnLimit(final org.bukkit.entity.SpawnCategory category) {
+        final Integer own = this.spawnLimits.get(category);
+        return own != null && own >= 0 ? own : this.server.getSpawnLimit(category);
+    }
+
+    @Override
+    public void setSpawnLimit(final org.bukkit.entity.SpawnCategory category, final int limit) {
+        this.spawnLimits.put(category, limit);
+    }
+
+    @Override
+    public long getTicksPerSpawns(final org.bukkit.entity.SpawnCategory category) {
+        final Integer own = this.ticksPerSpawns.get(category);
+        return own != null && own >= 0 ? own : this.server.getTicksPerSpawns(category);
+    }
+
+    @Override
+    public void setTicksPerSpawns(final org.bukkit.entity.SpawnCategory category, final int ticks) {
+        this.ticksPerSpawns.put(category, ticks);
+    }
+
+    /** Paper's per-world void damage settings, kept by the host (the server hurts below the world as vanilla does). */
+    @Override
+    public boolean isVoidDamageEnabled() {
+        return this.voidDamage;
+    }
+
+    @Override
+    public void setVoidDamageEnabled(final boolean enabled) {
+        this.voidDamage = enabled;
+    }
+
+    @Override
+    public float getVoidDamageAmount() {
+        return this.voidDamageAmount;
+    }
+
+    @Override
+    public void setVoidDamageAmount(final float amount) {
+        this.voidDamageAmount = amount;
+    }
+
+    @Override
+    public double getVoidDamageMinBuildHeightOffset() {
+        return this.voidDamageOffset;
+    }
+
+    @Override
+    public void setVoidDamageMinBuildHeightOffset(final double offset) {
+        this.voidDamageOffset = offset;
     }
 
     // --- saving, plugin data, metadata and plugin messages ----------------------------------

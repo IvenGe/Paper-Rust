@@ -506,6 +506,8 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let at = server.handle.run(|s| s.player_by_name("Alice").unwrap().loc).unwrap();
     let block = |dx: f64, dz: f64| BlockPos::new((at.x + dx).floor() as i32, at.y.floor() as i32, (at.z + dz).floor() as i32);
     alice.command("apitest worldapi");
+    let pling = paper_data::registries::id("minecraft:sound_event", "minecraft:block.note_block.pling").unwrap() as i32;
+    alice.find(TIMEOUT, |s: &play::Sound| matches!(s.sound, play::SoundRef::Id(id) if id == pling) && s.pitch == 2.0).expect("the world's sound");
     expect_line(&mut alice, "worldapi: ok");
     let rules = server.handle.run(|s| (s.worlds[0].rules.bool("keep_inventory"), s.worlds[0].rules.int("max_entity_cramming"), s.worlds[0].rules.int("random_tick_speed"))).unwrap();
     assert_eq!(rules, (true, 14, 5));
@@ -531,6 +533,38 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert!(chest_data.compound("PublicBukkitValues").is_some_and(|v| format!("{v:?}").contains("owned")), "{chest_data:?}");
     let patterns = server.handle.run(move |s| s.block_entity_data(0, banner).and_then(|d| d.get("patterns").cloned())).unwrap();
     assert!(format!("{patterns:?}").contains("minecraft:stripe_top"), "{patterns:?}");
+    // Plugins' recipes are crafted by the server: the heart only around the star named "Core"
+    // the plugin gave Alice, vanilla's stick recipe is gone, rotten flesh smelts into leather.
+    alice.command("apitest recipes");
+    expect_line(&mut alice, "recipes: ok");
+    let (heart, plain_star, stick, leather) = server
+        .handle
+        .run(move |s| {
+            use paper_protocol::types::Slot;
+            let item = |name: &str| paper_data::items::id(name).unwrap() as i32;
+            let core = s.players[&id].inventory[36].clone();
+            let diamond = Slot::of(item("minecraft:diamond"), 1);
+            let grid = |center: &Slot| vec![diamond.clone(), diamond.clone(), diamond.clone(), diamond.clone(), center.clone(), diamond.clone(), diamond.clone(), diamond.clone(), diamond.clone()];
+            let recipes = s.recipes.as_ref().unwrap();
+            let heart = recipes.craft(&grid(&core), 3).map(|(key, result)| (key.to_owned(), result.item));
+            let plain_star = recipes.craft(&grid(&Slot::of(item("minecraft:nether_star"), 1)), 3).map(|(key, _)| key.to_owned());
+            let planks = Slot::of(item("minecraft:oak_planks"), 1);
+            let stick = recipes.craft(&[planks.clone(), Slot::EMPTY, planks, Slot::EMPTY], 2).map(|(key, _)| key.to_owned());
+            let leather = recipes.cook("minecraft:smelting", &Slot::of(item("minecraft:rotten_flesh"), 1)).map(|r| r.result.item);
+            (heart, plain_star, stick, leather)
+        })
+        .unwrap();
+    assert_eq!(heart, Some(("bukkittestplugin:heart".to_owned(), paper_data::items::id("minecraft:red_dye").unwrap() as i32)));
+    assert_eq!(plain_star, None, "a star without the name");
+    assert_eq!(stick, None, "the stick recipe was removed");
+    assert_eq!(leather, paper_data::items::id("minecraft:leather").map(|i| i as i32));
+    // Data component values built with Paper's builders reach the item: the sword the plugin
+    // gave Alice has its model data.
+    alice.command("apitest components");
+    expect_line(&mut alice, "components: ok");
+    let model_data = paper_data::registries::id("minecraft:data_component_type", "minecraft:custom_model_data").unwrap() as i32;
+    let sword = server.handle.run(move |s| s.players[&id].inventory[37].clone()).unwrap();
+    assert!(sword.0.as_ref().is_some_and(|s| s.added.iter().any(|(ty, bytes)| *ty == model_data && bytes.windows(5).any(|w| w == b"blade"))), "{sword:?}");
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

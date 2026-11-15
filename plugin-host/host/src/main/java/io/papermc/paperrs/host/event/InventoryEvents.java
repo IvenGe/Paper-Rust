@@ -91,8 +91,12 @@ final class InventoryEvents {
         final InventoryClickEvent event;
         if (args.get("craft") instanceof Map<?, ?>) {
             final HostItemStack result = HostItemStack.fromValue(args.get("craft"));
-            // The recipe as Paper-RS knows it: its result (ingredients are not tracked here).
-            final ShapelessRecipe recipe = new ShapelessRecipe(NamespacedKey.minecraft(result.getType().getKey().getKey()), result);
+            // The recipe the result is crafted by (a plugin's own object for its recipes).
+            final NamespacedKey key = args.get("recipe") instanceof String id ? NamespacedKey.fromString(id) : null;
+            org.bukkit.inventory.Recipe recipe = key == null ? null : this.server.recipe(key);
+            if (recipe == null) {
+                recipe = new ShapelessRecipe(NamespacedKey.minecraft(result.getType().getKey().getKey()), result);
+            }
             event = new CraftItemEvent(recipe, view, slotType, slot, click, action, hotbar);
         } else {
             event = new InventoryClickEvent(view, slotType, slot, click, action, hotbar);

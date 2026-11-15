@@ -278,7 +278,7 @@ fn gen_synced() {
     for (name, d) in dims.as_object().expect("dimension_types.json must be an object") {
         writeln!(
             s,
-            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {}, coordinate_scale: {:?}, water_evaporates: {}, infiniburn: {:?} }},",
+            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {}, coordinate_scale: {:?}, water_evaporates: {}, infiniburn: {:?}, has_fixed_time: {}, piglins_zombify: {}, respawn_anchor_works: {}, can_start_raid: {}, bed_works: {} }},",
             d["min_y"].as_i64().expect("min_y"),
             d["height"].as_i64().expect("height"),
             d["logical_height"].as_i64().unwrap_or_else(|| d["height"].as_i64().unwrap()),
@@ -288,6 +288,14 @@ fn gen_synced() {
             d["coordinate_scale"].as_f64().unwrap_or(1.0),
             d["attributes"]["minecraft:gameplay/water_evaporates"].as_bool().unwrap_or(false),
             d["infiniburn"].as_str().unwrap_or("#minecraft:infiniburn_overworld").trim_start_matches('#'),
+            d["has_fixed_time"].as_bool().unwrap_or(false),
+            d["attributes"]["minecraft:gameplay/piglins_zombify"].as_bool().unwrap_or(true),
+            d["attributes"]["minecraft:gameplay/respawn_anchor_works"].as_bool().unwrap_or(false),
+            d["attributes"]["minecraft:gameplay/can_start_raid"].as_bool().unwrap_or(true),
+            {
+                let bed = &d["attributes"]["minecraft:gameplay/bed_rule"];
+                !bed["destroy_on_use"].as_bool().unwrap_or(false) && bed["can_sleep"].as_str() != Some("never")
+            },
         )
         .unwrap();
     }

@@ -792,7 +792,9 @@ impl Server {
             }
         }
         let crafting = layout.crafting.as_ref().is_some_and(|(result, _, _)| click.slot >= 0 && click.slot as usize == *result) && !slots[0].is_empty() && click.mode != 5;
-        if !crate::plugins::events::on_inventory_click(self, id, &click, kind.as_ref(), crafting.then(|| slots[0].clone())) {
+        // The recipe the result is crafted by, for CraftItemEvent#getRecipe.
+        let recipe = layout.crafting.as_ref().filter(|_| crafting).and_then(|(_, grid, size)| self.recipes.as_ref()?.craft(&slots[grid.clone()], *size).map(|(id, _)| id.to_owned()));
+        if !crate::plugins::events::on_inventory_click(self, id, &click, kind.as_ref(), crafting.then(|| (slots[0].clone(), recipe))) {
             self.send_menu_contents(id);
             return;
         }

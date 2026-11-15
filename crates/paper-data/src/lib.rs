@@ -59,6 +59,16 @@ pub struct DimensionTypeInfo {
     pub water_evaporates: bool,
     /// Block tag of blocks fire burns on forever (`minecraft:infiniburn_overworld`, ...).
     pub infiniburn: &'static str,
+    /// The time of day stands still (the Nether, the End).
+    pub has_fixed_time: bool,
+    /// The `minecraft:gameplay/piglins_zombify` attribute (true unless set).
+    pub piglins_zombify: bool,
+    /// The `minecraft:gameplay/respawn_anchor_works` attribute.
+    pub respawn_anchor_works: bool,
+    /// The `minecraft:gameplay/can_start_raid` attribute (true unless set).
+    pub can_start_raid: bool,
+    /// Beds are slept in rather than destroyed (the `minecraft:gameplay/bed_rule` attribute).
+    pub bed_works: bool,
 }
 
 fn name_index(names: &'static [&'static str]) -> HashMap<&'static str, u32> {

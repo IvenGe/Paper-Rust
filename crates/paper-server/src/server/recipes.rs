@@ -3,17 +3,19 @@
 //! Supported: `crafting_shaped` (with mirroring), `crafting_shapeless`, `crafting_transmute`
 //! (the input's components carry over), and the cooking types `smelting`, `blasting`,
 //! `smoking` and `campfire_cooking`. Special recipes (dyeing armour, map copying, ...) are
-//! not implemented.
+//! not implemented. Plugins add recipes of the same kinds, whose ingredients may be exact
+//! items, and remove recipes, theirs or vanilla's.
 
 use crate::vanilla::VanillaData;
 use paper_data::items;
 use paper_protocol::types::{ItemStack, Slot};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-/// Item ids an ingredient accepts.
+/// What a recipe accepts in a slot: items of some types, or exactly one of some items (the
+/// second list, for plugins' `ExactChoice`: the same item with the same components).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Ingredient(pub Vec<i32>);
+pub struct Ingredient(pub Vec<i32>, pub Vec<ItemStack>);
 
 impl Ingredient {
     fn parse(v: &Value) -> Option<Ingredient> {
@@ -51,12 +53,29 @@ impl Ingredient {
             }
             _ => {}
         }
-        (!ids.is_empty()).then_some(Ingredient(ids))
+        (!ids.is_empty()).then_some(Ingredient(ids, Vec::new()))
     }
 
     pub fn matches(&self, slot: &Slot) -> bool {
-        slot.0.as_ref().is_some_and(|s| self.0.contains(&s.item))
+        let Some(stack) = slot.0.as_ref() else { return false };
+        if self.1.is_empty() {
+            self.0.contains(&stack.item)
+        } else {
+            self.1.iter().any(|exact| same_item_same_components(exact, stack))
+        }
     }
+}
+
+/// `ItemStack.isSameItemSameComponents`: the same item with the same components, whatever the
+/// count.
+pub fn same_item_same_components(a: &ItemStack, b: &ItemStack) -> bool {
+    let components = |s: &ItemStack| {
+        let (mut added, mut removed) = (s.added.clone(), s.removed.clone());
+        added.sort();
+        removed.sort_unstable();
+        (added, removed)
+    };
+    a.item == b.item && components(a) == components(b)
 }
 
 #[derive(Clone, Debug)]
@@ -77,13 +96,26 @@ pub struct CookingRecipe {
     pub cooking_time: i32,
 }
 
+impl CraftingRecipe {
+    pub fn id(&self) -> &str {
+        match self {
+            CraftingRecipe::Shaped { id, .. } | CraftingRecipe::Shapeless { id, .. } | CraftingRecipe::Transmute { id, .. } => id,
+        }
+    }
+}
+
 /// All recipes.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Recipes {
     crafting: Vec<CraftingRecipe>,
     cooking: Vec<CookingRecipe>,
     /// Burn time in ticks per fuel item: (normal furnace, smoker and blast furnace).
     fuel: HashMap<i32, (i32, i32)>,
+    /// Recipes plugins added (`Server#addRecipe`), tried before vanilla's.
+    plugin_crafting: Vec<CraftingRecipe>,
+    plugin_cooking: Vec<CookingRecipe>,
+    /// Vanilla recipes plugins removed.
+    removed: HashSet<String>,
 }
 
 /// Evaluates a `context_int_provider` (constants, arithmetic, the fast-cooking condition).
@@ -211,22 +243,77 @@ impl Recipes {
         self.cooking.len()
     }
 
-    /// The result of a crafting grid (`size` x `size`, row-major), if any recipe matches.
-    pub fn craft(&self, grid: &[Slot], size: usize) -> Option<(usize, ItemStack)> {
+    /// The recipe a crafting grid (`size` x `size`, row-major) makes, and its result: a
+    /// plugin's recipe first, then vanilla's.
+    pub fn craft(&self, grid: &[Slot], size: usize) -> Option<(&str, ItemStack)> {
         if grid.iter().all(Slot::is_empty) {
             return None;
         }
-        for (index, recipe) in self.crafting.iter().enumerate() {
-            if let Some(result) = matches(recipe, grid, size) {
-                return Some((index, result));
-            }
-        }
-        None
+        self.crafting_recipes().find_map(|recipe| matches(recipe, grid, size).map(|result| (recipe.id(), result)))
     }
 
     /// Smelting (or `kind`) result for an input.
     pub fn cook(&self, kind: &str, input: &Slot) -> Option<&CookingRecipe> {
-        self.cooking.iter().find(|r| r.kind == kind && r.ingredient.matches(input))
+        self.cooking_recipes().find(|r| r.kind == kind && r.ingredient.matches(input))
+    }
+
+    /// The crafting recipes there are: plugins', then vanilla's that were not removed.
+    pub fn crafting_recipes(&self) -> impl Iterator<Item = &CraftingRecipe> {
+        self.plugin_crafting.iter().chain(self.crafting.iter().filter(|r| !self.removed.contains(r.id())))
+    }
+
+    /// The cooking recipes there are: plugins', then vanilla's that were not removed.
+    pub fn cooking_recipes(&self) -> impl Iterator<Item = &CookingRecipe> {
+        self.plugin_cooking.iter().chain(self.cooking.iter().filter(|r| !self.removed.contains(&r.id)))
+    }
+
+    /// Whether there is a recipe of that id (`Server#hasRecipe`).
+    pub fn has(&self, id: &str) -> bool {
+        self.crafting_recipes().any(|r| r.id() == id) || self.cooking_recipes().any(|r| r.id == id)
+    }
+
+    /// Adds a plugin's crafting recipe; false if there is one of that id already.
+    pub fn add_crafting(&mut self, recipe: CraftingRecipe) -> bool {
+        if self.has(recipe.id()) {
+            return false;
+        }
+        self.plugin_crafting.push(recipe);
+        true
+    }
+
+    /// Adds a plugin's cooking recipe; false if there is one of that id already.
+    pub fn add_cooking(&mut self, recipe: CookingRecipe) -> bool {
+        if self.has(&recipe.id) {
+            return false;
+        }
+        self.plugin_cooking.push(recipe);
+        true
+    }
+
+    /// Removes a recipe, a plugin's or vanilla's (`Server#removeRecipe`). False if there was none.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.plugin_crafting.len() + self.plugin_cooking.len();
+        self.plugin_crafting.retain(|r| r.id() != id);
+        self.plugin_cooking.retain(|r| r.id != id);
+        if self.plugin_crafting.len() + self.plugin_cooking.len() != before {
+            return true;
+        }
+        let vanilla = self.crafting.iter().any(|r| r.id() == id) || self.cooking.iter().any(|r| r.id == id);
+        vanilla && self.removed.insert(id.to_owned())
+    }
+
+    /// `Server#clearRecipes`: no recipes at all, vanilla's included.
+    pub fn clear(&mut self) {
+        self.plugin_crafting.clear();
+        self.plugin_cooking.clear();
+        self.removed.extend(self.crafting.iter().map(|r| r.id().to_owned()).chain(self.cooking.iter().map(|r| r.id.clone())));
+    }
+
+    /// `Server#resetRecipes`: vanilla's recipes only, as loaded.
+    pub fn reset(&mut self) {
+        self.plugin_crafting.clear();
+        self.plugin_cooking.clear();
+        self.removed.clear();
     }
 
     pub fn can_cook(&self, kind: &str, input: &Slot) -> bool {

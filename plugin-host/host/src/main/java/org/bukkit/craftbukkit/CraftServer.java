@@ -255,8 +255,13 @@ public final class CraftServer extends AbstractServer {
         return this.entityMetadata;
     }
 
+    /** The server's difficulty, which all its worlds share. */
     public Difficulty difficulty() {
-        return Difficulty.valueOf(Values.str(this.welcome, "difficulty", "normal").toUpperCase(Locale.ROOT));
+        return Difficulty.valueOf(String.valueOf(this.call("server.difficulty", Values.of())).toUpperCase(Locale.ROOT));
+    }
+
+    public void setDifficulty(final Difficulty difficulty) {
+        this.call("server.set_difficulty", Values.of("difficulty", difficulty.name().toLowerCase(Locale.ROOT)));
     }
 
     public void setCurrentTick(final int tick) {
@@ -1338,5 +1343,191 @@ public final class CraftServer extends AbstractServer {
             consumer.accept(data);
         }
         return data;
+    }
+
+    // --- recipes -------------------------------------------------------------------------------
+
+    /** Plugins' recipes, their own objects (getRecipe answers those, as on Paper). */
+    private final Map<org.bukkit.NamespacedKey, org.bukkit.inventory.Recipe> pluginRecipes = new java.util.LinkedHashMap<>();
+    /** Every recipe as a Bukkit recipe, read from the server when first asked; null after a change. */
+    private @Nullable Map<org.bukkit.NamespacedKey, org.bukkit.inventory.Recipe> recipeCache;
+
+    /** Every recipe by key: the server's, with plugins' own objects for theirs. */
+    private Map<org.bukkit.NamespacedKey, org.bukkit.inventory.Recipe> recipes() {
+        if (this.recipeCache == null) {
+            final Map<org.bukkit.NamespacedKey, org.bukkit.inventory.Recipe> all = new java.util.LinkedHashMap<>();
+            for (final Object value : Values.list(this.call("server.recipes", Values.of()))) {
+                final Map<String, Object> map = Values.map(value);
+                final org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(Values.str(map, "key"));
+                if (key == null) {
+                    continue;
+                }
+                final org.bukkit.inventory.Recipe own = this.pluginRecipes.get(key);
+                final org.bukkit.inventory.Recipe recipe = own != null ? own : io.papermc.paperrs.host.item.Recipes.fromValue(map);
+                if (recipe != null) {
+                    all.put(key, recipe);
+                }
+            }
+            this.recipeCache = all;
+        }
+        return this.recipeCache;
+    }
+
+    /** The recipe of a key, for events (a crafting result names its recipe). */
+    public @Nullable org.bukkit.inventory.Recipe recipe(final org.bukkit.NamespacedKey key) {
+        return this.recipes().get(key);
+    }
+
+    /**
+     * Shaped, shapeless, transmute and cooking recipes go to the server, which crafts and cooks
+     * them; others (stonecutting, smithing) and ingredients only a predicate can test are not
+     * added. A recipe of a key there is already throws, as on Paper.
+     */
+    @Override
+    public boolean addRecipe(final org.bukkit.inventory.Recipe recipe) {
+        if (recipe == null) {
+            throw new IllegalArgumentException("recipe cannot be null");
+        }
+        final Map<String, Object> value = io.papermc.paperrs.host.item.Recipes.toValue(recipe);
+        if (value == null) {
+            this.logger.warning("Paper-RS cannot craft a recipe like " + recipe.getClass().getSimpleName() + " " + (recipe instanceof org.bukkit.Keyed k ? k.getKey() : "") + " yet; it was not added");
+            return false;
+        }
+        final org.bukkit.NamespacedKey key = ((org.bukkit.Keyed) recipe).getKey();
+        if (!Boolean.TRUE.equals(this.call("server.add_recipe", value))) {
+            throw new IllegalStateException("Duplicate recipe ignored with ID " + key);
+        }
+        this.pluginRecipes.put(key, recipe);
+        this.recipeCache = null;
+        return true;
+    }
+
+    @Override
+    public boolean addRecipes(final Iterable<org.bukkit.inventory.Recipe> recipes) {
+        if (recipes == null) {
+            throw new IllegalArgumentException("recipes cannot be null");
+        }
+        boolean added = false;
+        for (final org.bukkit.inventory.Recipe recipe : recipes) {
+            added |= this.addRecipe(recipe);
+        }
+        return added;
+    }
+
+    @Override
+    public boolean removeRecipe(final org.bukkit.NamespacedKey key) {
+        if (key == null) {
+            throw new IllegalArgumentException("recipeKey cannot be null");
+        }
+        final boolean removed = Boolean.TRUE.equals(this.call("server.remove_recipe", Values.of("key", key.asString())));
+        this.pluginRecipes.remove(key);
+        this.recipeCache = null;
+        return removed;
+    }
+
+    @Override
+    public boolean removeRecipes(final Iterable<org.bukkit.NamespacedKey> keys) {
+        if (keys == null) {
+            throw new IllegalArgumentException("recipeKeys cannot be null");
+        }
+        boolean removed = false;
+        for (final org.bukkit.NamespacedKey key : keys) {
+            removed |= this.removeRecipe(key);
+        }
+        return removed;
+    }
+
+    @Override
+    public boolean hasRecipe(final org.bukkit.NamespacedKey key) {
+        if (key == null) {
+            throw new IllegalArgumentException("recipeKey cannot be null");
+        }
+        return Boolean.TRUE.equals(this.call("server.has_recipe", Values.of("key", key.asString())));
+    }
+
+    @Override
+    public @Nullable org.bukkit.inventory.Recipe getRecipe(final org.bukkit.NamespacedKey key) {
+        if (key == null) {
+            throw new IllegalArgumentException("NamespacedKey recipeKey cannot be null");
+        }
+        return this.recipes().get(key);
+    }
+
+    /** Every recipe; {@code remove()} removes the current one from the server, as on Paper. */
+    @Override
+    public java.util.Iterator<org.bukkit.inventory.Recipe> recipeIterator() {
+        final java.util.Iterator<org.bukkit.inventory.Recipe> all = new ArrayList<>(this.recipes().values()).iterator();
+        return new java.util.Iterator<>() {
+            private org.bukkit.inventory.@Nullable Recipe current;
+
+            @Override
+            public boolean hasNext() {
+                return all.hasNext();
+            }
+
+            @Override
+            public org.bukkit.inventory.Recipe next() {
+                return this.current = all.next();
+            }
+
+            @Override
+            public void remove() {
+                if (this.current == null) {
+                    throw new IllegalStateException();
+                }
+                CraftServer.this.removeRecipe(((org.bukkit.Keyed) this.current).getKey());
+                this.current = null;
+            }
+        };
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public List<org.bukkit.inventory.Recipe> getRecipesFor(final org.bukkit.inventory.ItemStack result) {
+        if (result == null) {
+            throw new IllegalArgumentException("ItemStack cannot be null");
+        }
+        final List<org.bukkit.inventory.Recipe> results = new ArrayList<>();
+        for (final org.bukkit.inventory.Recipe recipe : this.recipes().values()) {
+            final org.bukkit.inventory.ItemStack stack = recipe.getResult();
+            if (stack.getType() == result.getType() && (result.getDurability() == -1 || result.getDurability() == stack.getDurability())) {
+                results.add(recipe);
+            }
+        }
+        return results;
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable Recipe getCraftingRecipe(final org.bukkit.inventory.ItemStack[] matrix, final World world) {
+        if (matrix == null || matrix.length != 4 && matrix.length != 9) {
+            throw new IllegalArgumentException("craftingMatrix must be an array of length 4 or 9");
+        }
+        final List<Object> grid = new ArrayList<>();
+        for (final org.bukkit.inventory.ItemStack item : matrix) {
+            grid.add(io.papermc.paperrs.host.item.HostItemStack.toValue(item));
+        }
+        final Object made = this.call("server.craft", Values.of("grid", grid));
+        return made instanceof Map<?, ?> m ? this.recipe(org.bukkit.NamespacedKey.fromString(Values.str(Values.map(m), "key"))) : null;
+    }
+
+    /** No recipes at all, vanilla's included, as on Paper. */
+    @Override
+    public void clearRecipes() {
+        this.call("server.clear_recipes", Values.of());
+        this.pluginRecipes.clear();
+        this.recipeCache = null;
+    }
+
+    /** Vanilla's recipes only, as at start-up. */
+    @Override
+    public void resetRecipes() {
+        this.call("server.reset_recipes", Values.of());
+        this.pluginRecipes.clear();
+        this.recipeCache = null;
+    }
+
+    /** Players are not sent the recipe book yet: nothing to update. */
+    @Override
+    public void updateRecipes() {
     }
 }

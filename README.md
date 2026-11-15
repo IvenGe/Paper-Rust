@@ -328,6 +328,17 @@ What works:
     tool), `getDrops`, collision, how pistons move them, legacy data values; block entities as
     block states written back by `update()`: custom names (`Nameable`), plugin data
     (`TileState`), banner patterns, a spawner's mob and timings;
+  * recipes: plugins add shaped, shapeless, transmute and cooking recipes (`addRecipe`), with
+    item types or exact items as ingredients (`ExactChoice`: the same item with the same
+    components), which the server crafts and smelts before vanilla's; recipes are listed
+    (`recipeIterator`, `getRecipe`, `getRecipesFor`, vanilla's too), removed, cleared and
+    reset; `CraftItemEvent#getRecipe` is the recipe crafted (a plugin's own object). Not yet:
+    stonecutting and smithing recipes, `PrepareItemCraftEvent`, the recipe book;
+  * Paper's data component builders for custom model data and lore
+    (`CustomModelData.customModelData()`, `ItemLore.lore()`, with `ItemStack#setData`); a world's
+    dimension (`getCoordinateScale`, `hasCeiling`, `isUltraWarm`, `isBedWorks`, ...), the
+    difficulty (shared by all worlds), sounds at a place (`World#playSound`), spawn limits and
+    flags, entity counts;
   * Folia's entity scheduler (`Entity.getScheduler`) and region checks, `matchPlayer`, player
     profiles, server-wide plugin messages and the server's settings;
   * WorldEdit: it only works through an adapter for the server version, and the ones it ships
@@ -346,11 +357,11 @@ What works:
     console filters and appenders; it all ends up in the server's log), the SQLite and MySQL
     JDBC drivers, Commons Lang 2, json-simple; and the field permission plugins swap their own
     permissions into (`CraftHumanEntity.perm`, for LuckPerms). In a test with 32 popular
-    plugins loaded together, 24 enabled (EssentialsX, LuckPerms, Vault, WorldEdit, WorldGuard,
+    plugins loaded together, 25 enabled (EssentialsX, LuckPerms, Vault, WorldEdit, WorldGuard,
     Multiverse, GriefPrevention, BlueMap, DiscordSRV, TAB, PlaceholderAPI, Plan, DeluxeMenus,
-    Chunky, ...); the others use Minecraft's internal classes (dynmap, squaremap, InvSee++,
-    DecentHolograms, Simple Voice Chat, LagFixer), refuse the version (CoreProtect 24.1), or
-    need crafting recipes from plugins (LifeStealZ);
+    LifeStealZ, Chunky, ...); the others use Minecraft's internal classes (dynmap, squaremap,
+    InvSee++, DecentHolograms, Simple Voice Chat, LagFixer) or refuse the version
+    (CoreProtect 24.1);
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload));
   * Paper's class rewriting as plugins load (Commodore): fields and enum constants renamed
     since a plugin's api-version, enums that became registries, and `Material.values()`

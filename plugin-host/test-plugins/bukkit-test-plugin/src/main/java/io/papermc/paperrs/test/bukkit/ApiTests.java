@@ -131,6 +131,23 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "worldstate" -> this.worldState((Player) sender);
                 case "signs" -> this.signs((Player) sender);
                 case "worldapi" -> this.worldApi((Player) sender);
+                case "recipes" -> this.recipes((Player) sender);
+                case "components" -> {
+                    // Paper's data component API: values built with its builders.
+                    final List<String> failures = new ArrayList<>();
+                    final ItemStack sword = new ItemStack(Material.DIAMOND_SWORD);
+                    sword.setData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA,
+                        io.papermc.paper.datacomponent.item.CustomModelData.customModelData().addFloat(7f).addString("blade").addColor(org.bukkit.Color.RED).build());
+                    sword.setData(io.papermc.paper.datacomponent.DataComponentTypes.LORE, io.papermc.paper.datacomponent.item.ItemLore.lore().addLine(Component.text("Sharp")).build());
+                    final io.papermc.paper.datacomponent.item.CustomModelData data = sword.getData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA);
+                    check(failures, data != null && data.floats().equals(List.of(7f)) && data.strings().equals(List.of("blade")) && data.colors().equals(List.of(org.bukkit.Color.RED)), "custom model data " + data);
+                    final io.papermc.paper.datacomponent.item.ItemLore lore = sword.getData(io.papermc.paper.datacomponent.DataComponentTypes.LORE);
+                    check(failures, lore != null && lore.lines().size() == 1 && Component.text("Sharp").equals(lore.lines().getFirst()), "lore " + lore);
+                    @SuppressWarnings("deprecation") final int legacyModel = sword.getItemMeta().getCustomModelData();
+                    check(failures, legacyModel == 7, "the meta's model " + legacyModel);
+                    ((Player) sender).getInventory().setItem(1, sword);
+                    report(sender, "components", failures);
+                }
                 case "merchant" -> this.merchant((Player) sender);
                 case "career" -> this.career((Player) sender);
                 case "riding" -> this.riding((Player) sender);
@@ -368,8 +385,55 @@ final class ApiTests implements Listener, CommandExecutor {
         final org.bukkit.block.CreatureSpawner spawnerAgain = (org.bukkit.block.CreatureSpawner) spawnerBlock.getState();
         check(failures, spawnerAgain.getSpawnedType() == org.bukkit.entity.EntityType.ZOMBIE && spawnerAgain.getDelay() == 100, "spawner " + spawnerAgain.getSpawnedType());
         check(failures, world.getWorldFolder().getName().equals(world.getName()), "world folder " + world.getWorldFolder());
+        check(failures, world.getCoordinateScale() == 1 && world.hasSkyLight() && !world.hasCeiling() && !world.isUltraWarm() && !world.isFixedTime()
+            && world.isBedWorks() && !world.isRespawnAnchorWorks() && !world.isPiglinSafe() && world.hasRaids(), "the overworld's dimension type");
+        // A sound for everyone nearby; the world's counts and settings.
+        world.playSound(player.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, org.bukkit.SoundCategory.RECORDS, 1f, 2f);
+        check(failures, world.getPlayerCount() == 1 && world.getEntityCount() >= 1 && world.getTileEntityCount() >= 3 && world.getViewDistance() > 0, "counts and distances");
+        world.setSpawnLimit(org.bukkit.entity.SpawnCategory.MONSTER, 20);
+        check(failures, world.getSpawnLimit(org.bukkit.entity.SpawnCategory.MONSTER) == 20 && world.getSpawnLimit(org.bukkit.entity.SpawnCategory.ANIMAL) == 10, "spawn limits");
+        check(failures, world.getAllowMonsters() && world.getBlockState(chestBlock.getX(), chestBlock.getY(), chestBlock.getZ()) instanceof Chest, "spawn flags, block states");
         world.save();
         report(player, "worldapi", failures);
+    }
+
+    /**
+     * Plugins' recipes: added (a shaped one with an exact item, a shapeless one, a furnace one),
+     * found, worked out from a grid; vanilla's listed and removed. The server crafting them is
+     * checked by java_plugins.rs.
+     */
+    private void recipes(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        // A heart from eight diamonds around a nether star named "Core", that star exactly.
+        final ItemStack core = new ItemStack(Material.NETHER_STAR);
+        core.editMeta(meta -> meta.displayName(Component.text("Core")));
+        final ItemStack heart = new ItemStack(Material.RED_DYE);
+        heart.editMeta(meta -> meta.displayName(Component.text("Heart")));
+        final NamespacedKey heartKey = new NamespacedKey(this.plugin, "heart");
+        final org.bukkit.inventory.ShapedRecipe shaped = new org.bukkit.inventory.ShapedRecipe(heartKey, heart);
+        shaped.shape("DDD", "DCD", "DDD");
+        shaped.setIngredient('D', Material.DIAMOND);
+        shaped.setIngredient('C', new org.bukkit.inventory.RecipeChoice.ExactChoice(core));
+        check(failures, Bukkit.addRecipe(shaped) && Bukkit.getRecipe(heartKey) == shaped && Bukkit.hasRecipe(heartKey), "shaped recipe");
+        try {
+            Bukkit.addRecipe(shaped);
+            failures.add("added twice");
+        } catch (final IllegalStateException expected) {
+            // as on Paper: a duplicate recipe is refused
+        }
+        final org.bukkit.inventory.ShapelessRecipe shapeless = new org.bukkit.inventory.ShapelessRecipe(new NamespacedKey(this.plugin, "gravel"), new ItemStack(Material.GRAVEL, 2));
+        shapeless.addIngredient(Material.COBBLESTONE);
+        shapeless.addIngredient(Material.FLINT);
+        check(failures, Bukkit.addRecipe(shapeless), "shapeless recipe");
+        check(failures, Bukkit.addRecipe(new org.bukkit.inventory.FurnaceRecipe(new NamespacedKey(this.plugin, "leather"), new ItemStack(Material.LEATHER), Material.ROTTEN_FLESH, 0.5f, 100)), "furnace recipe");
+        check(failures, Bukkit.getCraftingRecipe(new ItemStack[] {new ItemStack(Material.COBBLESTONE), new ItemStack(Material.FLINT), null, null}, player.getWorld()) == shapeless, "the grid's recipe");
+        // Vanilla's recipes are listed too, and can be removed.
+        check(failures, Bukkit.getRecipe(NamespacedKey.minecraft("stick")) instanceof org.bukkit.inventory.ShapedRecipe, "vanilla's stick recipe");
+        check(failures, Bukkit.getRecipesFor(new ItemStack(Material.GRAVEL)).contains(shapeless), "recipes for gravel");
+        check(failures, Bukkit.removeRecipe(NamespacedKey.minecraft("stick")) && !Bukkit.hasRecipe(NamespacedKey.minecraft("stick")), "stick recipe removed");
+        // The star for crafting the heart, in the first hotbar slot.
+        player.getInventory().setItem(0, core);
+        report(player, "recipes", failures);
     }
 
     /** The world border and the weather of a world. */
