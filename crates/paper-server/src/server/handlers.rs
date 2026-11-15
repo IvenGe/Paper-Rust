@@ -269,7 +269,7 @@ impl Server {
                     player.brand = Reader::new(&p.data.0).string(256).ok();
                 }
             }
-            Serverbound::Interact(p) => self.handle_interact(id, p.entity_id.0, p.hand.0),
+            Serverbound::Interact(p) => self.handle_interact(id, p.entity_id.0, p.hand.0, (p.target.0, p.target.1, p.target.2)),
             Serverbound::SelectTrade(p) => self.handle_select_trade(id, p.item.0),
             Serverbound::ContainerSlotStateChanged(p) => self.handle_slot_state_changed(id, p.slot_id.0, p.window_id.0, p.new_state),
             Serverbound::ChatAck(_)

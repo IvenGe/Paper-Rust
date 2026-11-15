@@ -70,12 +70,22 @@ pub fn on_place(level: &mut Level, state: u32, pos: BlockPos, old: u32) {
     }
     if in_portal_dimension(level) {
         if let Some(shape) = PortalShape::find_empty(level.world, pos, Axis::X) {
-            create_portal(level, &shape);
+            if level.world.updates.vetting.portals {
+                // Plugins decide first (`PortalCreateEvent`); stopped, the fire stays and
+                // ticks as Paper's does.
+                let by = level.actor;
+                level.world.updates.asks.push(super::Ask::Portal { pos, shape, by });
+                let delay = tick_delay(level);
+                level.schedule_tick(pos, state::block_id(state), delay);
+            } else {
+                create_portal(level, &shape);
+            }
             return;
         }
     }
+    // Its fuel gone, it goes out (`BlockFadeEvent` in Paper).
     if !can_survive(level, state, pos) {
-        level.remove_block(pos, false);
+        go_out(level, pos);
         return;
     }
     let delay = tick_delay(level);

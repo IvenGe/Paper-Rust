@@ -163,6 +163,21 @@ impl PortalShape {
         out
     }
 
+    /// The frame's blocks Paper lists in `PortalCreateEvent` with the portal: the bottom row,
+    /// both sides and the top row (the corners are no part of a frame).
+    pub fn frame(&self) -> Vec<BlockPos> {
+        let right = self.axis.right();
+        let mut out = Vec::with_capacity((2 * self.width + 2 * self.height) as usize);
+        out.extend((0..self.width).map(|i| step(self.bottom_left.offset(0, -1, 0), right, i)));
+        for y in 0..self.height {
+            let row = self.bottom_left.offset(0, y, 0);
+            out.push(step(row, right, -1));
+            out.push(step(row, right, self.width));
+        }
+        out.extend((0..self.width).map(|i| step(self.bottom_left.offset(0, self.height, 0), right, i)));
+        out
+    }
+
     /// Where an arriving entity stands: the middle of the bottom row.
     pub fn arrival(&self) -> (f64, f64, f64) {
         let right = self.axis.right();

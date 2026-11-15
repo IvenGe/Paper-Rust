@@ -155,7 +155,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.resource_pack_status` | `uuid`, `id` (the pack), `status` (0 loaded ... 7 discarded) | nothing |
 | `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand` | `cancelled`; the server places the block after the event, unless a listener has set that block itself |
 | `event.interact` | `uuid`, `world`, `action` (`LEFT_CLICK_BLOCK`, `RIGHT_CLICK_BLOCK`, `LEFT_CLICK_AIR`, `RIGHT_CLICK_AIR`, `PHYSICAL`), `hand` (0 main, 1 off), and for a block `x`, `y`, `z`, `face` (0 down to 5 east, -1 none) and `cursor` `[x, y, z]` on it | `use_block`, `use_item` (`DEFAULT`, `ALLOW`, `DENY`; `PlayerInteractEvent`): a denied block is not used (no door, chest, lever, plate or trampled farmland), a denied item not used on it or in the air; a cancelled left click breaks nothing |
-| `event.interact_entity` | `uuid`, `entity`, `hand` | `cancelled` (`PlayerInteractEntityEvent`: no riding, trading, taming, ...) |
+| `event.interact_entity` | `uuid`, `entity` (a mob, any entity or a player), `hand`, `at` `[x, y, z]` (where it was clicked, relative to its position) | `cancelled` (`PlayerInteractAtEntityEvent`, which `PlayerInteractEntityEvent` listeners hear too: no riding, trading, taming, ...) |
 | `event.entity_explode` / `event.block_explode` | `world`, `x`, `y`, `z` (the centre), `blocks` `[[x, y, z]]`, `result` (`DESTROY`, `DESTROY_WITH_DECAY`), and `entity` for the first | `cancelled`, `blocks` (`EntityExplodeEvent`, `BlockExplodeEvent`): only the blocks left are broken |
 | `event.toggle_sneak` / `event.toggle_sprint` / `event.toggle_flight` | `uuid`, `sneaking` / `sprinting` / `flying` | `cancelled` (`PlayerToggleSneakEvent`, ...: the server keeps the old state; a player kept from flying is told so) |
 | `event.item_held` | `uuid`, `previous`, `new` (hotbar slots) | `cancelled` (`PlayerItemHeldEvent`: the player is sent back to the old slot) |
@@ -177,6 +177,11 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.projectile_launch` | `entity` (the projectile, in the world but not yet seen) | `cancelled` (`ProjectileLaunchEvent`: it is removed again) |
 | `event.projectile_hit` | `entity`, `world`, and `hit_entity` or `hit_block` `[x, y, z]` | `cancelled` (`ProjectileHitEvent`: it flies on) |
 | `event.dispense` | `world`, `x`, `y`, `z` (the dispenser or dropper), `item`, `velocity` `[x, y, z]` | `cancelled`, `item` (`BlockDispenseEvent`; another item goes out instead) |
+| `event.portal_create` | `world`, `blocks` `[{x, y, z, state}]` (a lit frame as it is and its portal; a new portal and frame; the End platform's changes), `reason` (`FIRE`, `NETHER_PAIR`, `END_PLATFORM`), `entity` (who lit it or travels) | `cancelled` (`PortalCreateEvent`: the fire stays; the trip ends; the player arrives without a platform) |
+| `event.water_splash` | `entity` (the thrown potion), `world`, `hit_entity` or `hit_block` `[x, y, z]` and `hit_face`, `damage`, `extinguish`, `rehydrate` (entity lists; empty for other potions) | `cancelled`, `damage`, `extinguish`, `rehydrate` as entity ids (`WaterBottleSplashEvent`, heard by `PotionSplashEvent` listeners, for every thrown potion; stopped, no fires are put out either) |
+| `event.potion_splash` | the same hit, `affected` `[{entity, intensity}]` | `cancelled`, `affected` `[{id, intensity}]` (`PotionSplashEvent` for splash potions) |
+| `event.lingering_splash` | the same hit, `cloud` (the cloud left behind) | `cancelled` (`LingeringPotionSplashEvent`: the cloud goes again) |
+| `event.cloud_apply` | `entity` (the cloud), `world`, `affected` (entities) | `cancelled`, `affected` as entity ids (`AreaEffectCloudApplyEvent`) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
 | `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |
@@ -197,13 +202,14 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 Some events are only fired when a plugin listens to them (the host reports which in
 `events`): command preprocess, server command, block break and place, interactions and
 explosions, move, game mode change, chat, the inventory, item, damage, death, respawn
-and spawn events, pistons and fire, login, changing worlds, and chunks loading and
-unloading. Join, quit,
+and spawn events, pistons and fire, login, changing worlds, chunks loading and
+unloading, portals being made, and potions splashing. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 
-Piston moves, fire burning or spreading, lava setting fires, fluids flowing, trees growing,
-and blocks growing, fading, forming, spreading and decaying happen inside the block engine,
+Piston moves, fire burning or spreading, lava setting fires, fire lighting a portal, fluids
+flowing, trees growing, and blocks growing, fading, forming, spreading and decaying happen
+inside the block engine,
 which has no access to the plugin connection. While plugins listen for their events, the engine
 leaves them as asks (`block_updates::Ask`) instead of carrying them out. The server fires
 the events and has the engine carry out the answers once the tick's block ticks and block

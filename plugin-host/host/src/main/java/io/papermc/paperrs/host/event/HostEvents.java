@@ -121,6 +121,11 @@ public final class HostEvents {
         GATED.put("BlockDamageEvent", org.bukkit.event.block.BlockDamageEvent.class);
         GATED.put("StructureGrowEvent", org.bukkit.event.world.StructureGrowEvent.class);
         GATED.put("BlockFertilizeEvent", org.bukkit.event.block.BlockFertilizeEvent.class);
+        GATED.put("PortalCreateEvent", org.bukkit.event.world.PortalCreateEvent.class);
+        // WaterBottleSplashEvent shares PotionSplashEvent's listeners.
+        GATED.put("PotionSplashEvent", org.bukkit.event.entity.PotionSplashEvent.class);
+        GATED.put("LingeringPotionSplashEvent", org.bukkit.event.entity.LingeringPotionSplashEvent.class);
+        GATED.put("AreaEffectCloudApplyEvent", org.bukkit.event.entity.AreaEffectCloudApplyEvent.class);
         GATED.put("ProjectileLaunchEvent", org.bukkit.event.entity.ProjectileLaunchEvent.class);
         GATED.put("ProjectileHitEvent", org.bukkit.event.entity.ProjectileHitEvent.class);
         GATED.put("BlockDispenseEvent", org.bukkit.event.block.BlockDispenseEvent.class);
@@ -312,6 +317,38 @@ public final class HostEvents {
         return out;
     }
 
+    /** The living entities a list of entity references names. */
+    private List<org.bukkit.entity.LivingEntity> living(final Object list) {
+        final List<org.bukkit.entity.LivingEntity> out = new ArrayList<>();
+        for (final Object ref : Values.list(list)) {
+            if (ref instanceof Map<?, ?> m && io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(m)) instanceof org.bukkit.entity.LivingEntity living) {
+                out.add(living);
+            }
+        }
+        return out;
+    }
+
+    private static List<Object> entityIds(final java.util.Collection<? extends org.bukkit.entity.Entity> entities) {
+        final List<Object> out = new ArrayList<>();
+        for (final org.bukkit.entity.Entity entity : entities) {
+            out.add((long) entity.getEntityId());
+        }
+        return out;
+    }
+
+    /** What a projectile hit: {@code hit_entity}, or {@code hit_block} on side {@code hit_face}. */
+    private @Nullable org.bukkit.entity.Entity hitEntity(final Map<String, Object> args) {
+        return args.get("hit_entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+    }
+
+    private @Nullable Block hitBlock(final Map<String, Object> args) {
+        return args.get("hit_block") == null ? null : this.at(this.server.getWorld(Values.str(args, "world")), args.get("hit_block"));
+    }
+
+    private @Nullable org.bukkit.block.BlockFace hitFace(final Map<String, Object> args) {
+        return args.get("hit_face") instanceof String face ? org.bukkit.block.BlockFace.valueOf(face) : null;
+    }
+
     /** The block at an {@code [x, y, z]} list. */
     private Block at(final World world, final Object xyz) {
         final List<Object> at = Values.list(xyz);
@@ -362,12 +399,18 @@ public final class HostEvents {
             }
             case "event.interact" -> this.interact(args);
             case "event.interact_entity" -> {
+                // Paper fires PlayerInteractAtEntityEvent for every right-click on an entity;
+                // PlayerInteractEntityEvent listeners hear it too.
                 final Object target = args.get("entity");
                 final org.bukkit.entity.Entity entity = target instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
                 if (entity == null) {
                     yield Values.of();
                 }
-                final org.bukkit.event.player.PlayerInteractEntityEvent event = new org.bukkit.event.player.PlayerInteractEntityEvent(this.player(args), entity,
+                final List<Object> at = Values.list(args.get("at"));
+                final org.bukkit.util.Vector position = at.size() == 3
+                    ? new org.bukkit.util.Vector(((Number) at.get(0)).doubleValue(), ((Number) at.get(1)).doubleValue(), ((Number) at.get(2)).doubleValue())
+                    : new org.bukkit.util.Vector();
+                final org.bukkit.event.player.PlayerInteractAtEntityEvent event = new org.bukkit.event.player.PlayerInteractAtEntityEvent(this.player(args), entity, position,
                     Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled());
@@ -480,6 +523,66 @@ public final class HostEvents {
                 event.setCancelled(Values.bool(args, "cancelled", false));
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled(), "blocks", blockStatesValue(event.getBlocks()));
+            }
+            case "event.portal_create" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final org.bukkit.entity.Entity entity = args.get("entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                final org.bukkit.event.world.PortalCreateEvent event = new org.bukkit.event.world.PortalCreateEvent(this.blockStates(world, args.get("blocks")), world, entity,
+                    org.bukkit.event.world.PortalCreateEvent.CreateReason.valueOf(Values.str(args, "reason", "FIRE")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.water_splash" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.ThrownPotion potion)) {
+                    yield Values.of();
+                }
+                final Map<org.bukkit.entity.LivingEntity, Double> damage = new java.util.HashMap<>();
+                for (final org.bukkit.entity.LivingEntity living : this.living(args.get("damage"))) {
+                    damage.put(living, 1.0);
+                }
+                final io.papermc.paper.event.entity.WaterBottleSplashEvent event = new io.papermc.paper.event.entity.WaterBottleSplashEvent(potion,
+                    this.hitEntity(args), this.hitBlock(args), this.hitFace(args), damage,
+                    new java.util.HashSet<>(this.living(args.get("rehydrate"))), new java.util.HashSet<>(this.living(args.get("extinguish"))));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "damage", entityIds(event.getToDamage()),
+                    "extinguish", entityIds(event.getToExtinguish()), "rehydrate", entityIds(event.getToRehydrate()));
+            }
+            case "event.potion_splash" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.ThrownPotion potion)) {
+                    yield Values.of();
+                }
+                final Map<org.bukkit.entity.LivingEntity, Double> affected = new java.util.HashMap<>();
+                for (final Object a : Values.list(args.get("affected"))) {
+                    final Map<String, Object> entry = Values.map(a);
+                    if (io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(entry.get("entity"))) instanceof org.bukkit.entity.LivingEntity living) {
+                        affected.put(living, Values.f64(entry, "intensity", 0));
+                    }
+                }
+                final org.bukkit.event.entity.PotionSplashEvent event = new org.bukkit.event.entity.PotionSplashEvent(potion, this.hitEntity(args), this.hitBlock(args), this.hitFace(args), affected);
+                event.callEvent();
+                final List<Object> out = new ArrayList<>();
+                for (final org.bukkit.entity.LivingEntity living : event.getAffectedEntities()) {
+                    out.add(Values.of("id", (long) living.getEntityId(), "intensity", event.getIntensity(living)));
+                }
+                yield Values.of("cancelled", event.isCancelled(), "affected", out);
+            }
+            case "event.lingering_splash" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.ThrownPotion potion)
+                    || !(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("cloud"))) instanceof org.bukkit.entity.AreaEffectCloud cloud)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.LingeringPotionSplashEvent event = new org.bukkit.event.entity.LingeringPotionSplashEvent(potion,
+                    this.hitEntity(args), this.hitBlock(args), this.hitFace(args), cloud);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.cloud_apply" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.AreaEffectCloud cloud)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.AreaEffectCloudApplyEvent event = new org.bukkit.event.entity.AreaEffectCloudApplyEvent(cloud, this.living(args.get("affected")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "affected", entityIds(event.getAffectedEntities()));
             }
             case "event.projectile_launch" -> {
                 final org.bukkit.event.entity.ProjectileLaunchEvent event = new org.bukkit.event.entity.ProjectileLaunchEvent(

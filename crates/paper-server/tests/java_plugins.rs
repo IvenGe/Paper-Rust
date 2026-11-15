@@ -249,6 +249,18 @@ fn line_starting(client: &mut Client, prefix: &str) -> String {
     panic!("no line starting with {prefix:?} among {seen:?}");
 }
 
+/// A splash or lingering potion (`kind`) of `potion`.
+fn potion_item(kind: &str, potion: &str) -> paper_protocol::types::Slot {
+    let id = paper_data::registries::id("minecraft:potion", potion).unwrap() as i32;
+    let mut stack = paper_protocol::types::ItemStack::new(paper_data::items::id(kind).unwrap() as i32, 1);
+    let mut data = vec![1u8];
+    paper_protocol::codec::Encode::encode(&VarInt(id), &mut data);
+    data.extend_from_slice(&[0, 0, 0]);
+    let ty = paper_data::registries::id("minecraft:data_component_type", "minecraft:potion_contents").unwrap() as i32;
+    stack.added.push((ty, data));
+    paper_protocol::types::Slot(Some(stack))
+}
+
 /// Sets blocks in the overworld, with block updates or just storing them.
 fn put(server: &paper_server::RunningServer, blocks: &[(BlockPos, &'static str)], update: bool) {
     let blocks = blocks.to_vec();
@@ -747,7 +759,7 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(92), yaw: 0.0, pitch: -90.0 });
     alice.send(&play::Interact { entity_id: VarInt(cow), hand: VarInt(0), target: paper_protocol::types::LpVec3(0.0, 0.5, 0.0), sneaking: false });
     alice.command("apitest interactions");
-    expect_line(&mut alice, "interactions: RIGHT_CLICK_BLOCK CHEST UP HAND SNOWBALL, LEFT_CLICK_BLOCK POPPY UP HAND SNOWBALL, LEFT_CLICK_AIR - SELF HAND SNOWBALL, RIGHT_CLICK_AIR - SELF HAND SNOWBALL, ENTITY COW HAND");
+    expect_line(&mut alice, "interactions: RIGHT_CLICK_BLOCK CHEST UP HAND SNOWBALL, LEFT_CLICK_BLOCK POPPY UP HAND SNOWBALL, LEFT_CLICK_AIR - SELF HAND SNOWBALL, RIGHT_CLICK_AIR - SELF HAND SNOWBALL, ENTITY COW HAND AT 0.0,0.5,0.0");
     let (shut, poppy_left, snowballs) = server
         .handle
         .run(move |s| {
@@ -1179,6 +1191,145 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             s.resync_inventory(alice_id);
         })
         .unwrap();
+
+    // Fire Alice lights in an obsidian frame: the portal stopped (the fire stays), then let
+    // be.
+    let base = feet.offset(-2, 0, 6);
+    let frame: Vec<BlockPos> = (0..4).flat_map(|x| (0..5).map(move |y| base.offset(x, y, 0))).filter(|p| p.x == base.x || p.x == base.x + 3 || p.y == base.y || p.y == base.y + 4).collect();
+    let inside: Vec<BlockPos> = (1..3).flat_map(|x| (1..4).map(move |y| base.offset(x, y, 0))).collect();
+    for (mode, lit) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let mut blocks: Vec<(BlockPos, &'static str)> = frame.iter().map(|p| (*p, "minecraft:obsidian")).collect();
+        blocks.extend(inside.iter().map(|p| (*p, "minecraft:air")));
+        put(&server, &blocks, false);
+        let fire_at = inside[0];
+        server
+            .handle
+            .run(move |s| {
+                let fire = paper_data::blocks::default_state("minecraft:fire").unwrap();
+                s.set_block_by(0, fire_at, fire, paper_server::world::block_updates::flags::ALL, Some(alice_id));
+            })
+            .unwrap();
+        alice.drain(QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("PORTAL FIRE player 6"), "{mode}: {seen}");
+        assert_eq!(inside.iter().all(|p| name_at(*p) == "minecraft:nether_portal"), lit, "{mode}: portal");
+        if !lit {
+            assert_eq!(name_at(fire_at), "minecraft:fire", "the fire stays");
+        }
+        let gone: Vec<_> = frame.iter().chain(inside.iter()).map(|p| (*p, "minecraft:air")).collect();
+        put(&server, &gone, false);
+    }
+
+    // A splash potion of swiftness Alice throws onto a cow (WaterBottleSplashEvent comes
+    // first, for every potion): stopped, then let reach it.
+    let speed = paper_data::effects::by_name("minecraft:speed").unwrap().id;
+    for (mode, reaches) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let at = feet.offset(0, 0, 14);
+        let cow = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5);
+                // (Alone: mobs spawn on their own here too.)
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.mob().is_some() && e.pos.distance_squared(at) < 100.0) {
+                    e.removed = true;
+                }
+                let cow = s.spawn_mob(0, "minecraft:cow", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+                s.worlds[0].entities.get_mut(&cow).unwrap().mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+                s.spawn_thrown(0, "minecraft:splash_potion", paper_server::world::entity::Vec3::new(at.x, at.y + 2.5, at.z), paper_server::world::entity::Vec3::new(0.0, -1.0, 0.0), 0.5, 0.0, 0.05, potion_item("minecraft:splash_potion", "minecraft:swiftness"), Some(alice_id));
+                cow
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            if seen.contains("SPLASH Potion") || std::time::Instant::now() > deadline {
+                break;
+            }
+            alice.drain(Duration::from_millis(100));
+        }
+        assert!(seen.contains("SPLASH PotionSplashEvent [COW] [speed] player") && seen.contains("SPLASH WaterBottleSplashEvent [] [speed] player"), "{mode}: {seen}");
+        let fast = server.handle.run(move |s| s.worlds[0].entities[&cow].mob().unwrap().living.effects.iter().any(|(e, _, _)| *e == speed)).unwrap();
+        assert_eq!(fast, reaches, "{mode}: swiftness");
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&cow).unwrap().removed = true).unwrap();
+    }
+
+    // A lingering potion of regeneration beside a cow: the cloud stopped, then let stay and
+    // give the cow its effect (AreaEffectCloudApplyEvent).
+    let regeneration = paper_data::effects::by_name("minecraft:regeneration").unwrap().id;
+    for (mode, stays) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let at = feet.offset(0, 0, 20);
+        let cow = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5);
+                // (Alone: mobs spawn on their own here too.)
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.mob().is_some() && e.pos.distance_squared(at) < 100.0) {
+                    e.removed = true;
+                }
+                let cow = s.spawn_mob(0, "minecraft:cow", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+                s.worlds[0].entities.get_mut(&cow).unwrap().mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+                s.spawn_thrown(0, "minecraft:lingering_potion", paper_server::world::entity::Vec3::new(at.x + 1.5, at.y + 2.5, at.z), paper_server::world::entity::Vec3::new(0.0, -1.0, 0.0), 0.5, 0.0, 0.05, potion_item("minecraft:lingering_potion", "minecraft:regeneration"), Some(alice_id));
+                cow
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            let done = if stays { seen.contains("CLOUD") } else { seen.contains("LINGER") };
+            if done || std::time::Instant::now() > deadline {
+                break;
+            }
+            alice.drain(Duration::from_millis(100));
+        }
+        assert!(seen.contains("LINGER REGENERATION 3.0"), "{mode}: {seen}");
+        let clouds = server.handle.run(|s| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:area_effect_cloud" && !e.removed).count()).unwrap();
+        assert_eq!(clouds, usize::from(stays), "{mode}: clouds");
+        if stays {
+            assert!(seen.contains("CLOUD [COW] player"), "{mode}: {seen}");
+            let healing = server.handle.run(move |s| s.worlds[0].entities[&cow].mob().unwrap().living.effects.iter().any(|(e, _, _)| *e == regeneration)).unwrap();
+            assert!(healing, "the cow gets regeneration");
+        }
+        server
+            .handle
+            .run(move |s| {
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.id == cow || e.info.name == "minecraft:area_effect_cloud") {
+                    e.removed = true;
+                }
+            })
+            .unwrap();
+    }
+
+    // A trip through a nether portal whose new portal at the other end plugins stop: the trip
+    // ends there.
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    server.handle.run(move |s| s.worlds[0].set_block(feet.x, feet.y, feet.z, paper_data::blocks::default_state("minecraft:nether_portal").unwrap())).unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        if seen.contains("PORTAL NETHER_PAIR") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "no portal built: {seen}");
+        alice.drain(Duration::from_millis(200));
+    }
+    let stayed = server.handle.run(move |s| {
+        s.worlds[0].set_block(feet.x, feet.y, feet.z, paper_data::blocks::AIR);
+        s.players[&alice_id].world == 0
+    });
+    assert!(stayed.unwrap(), "the trip ended");
+    assert!(seen.contains("PORTAL NETHER_PAIR player 6"), "{seen}");
+
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");

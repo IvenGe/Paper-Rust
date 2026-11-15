@@ -169,6 +169,9 @@ pub enum Ask {
     /// A tree or huge mushroom is to grow from a sapling on its own (`StructureGrowEvent`):
     /// the block changes it makes.
     Structure { capture: Capture },
+    /// Fire placed at `pos` (by the player `by`) is to light the empty frame `shape`
+    /// (`PortalCreateEvent`, reason `FIRE`); the fire stays if plugins stop it.
+    Portal { pos: BlockPos, shape: crate::world::portal::PortalShape, by: Option<i32> },
 }
 
 /// Block changes held back instead of made (Paper's captured block states), for plugins to see
@@ -218,6 +221,8 @@ pub struct Vetting {
     pub flow: bool,
     /// Trees and huge mushrooms growing.
     pub structures: bool,
+    /// Fire lighting a Nether portal.
+    pub portals: bool,
 }
 
 impl Vetting {
@@ -1153,6 +1158,12 @@ pub fn answer(world: &mut World, ask: &Ask, allowed: bool, ticking: &dyn Fn(&Wor
         Ask::Structure { capture } if allowed => {
             let blocks: Vec<(BlockPos, u32)> = capture.blocks.iter().map(|(p, s, _)| (*p, *s)).collect();
             capture.apply(world, &blocks);
+        }
+        // Unless the frame was broken or filled meanwhile.
+        Ask::Portal { pos, shape, .. } if allowed => {
+            if let Some(shape) = crate::world::portal::PortalShape::find_empty(world, *pos, shape.axis).filter(|s| s.bottom_left == shape.bottom_left && s.axis == shape.axis) {
+                fire::create_portal(&mut Level::new(world), &shape);
+            }
         }
         // Unless the block changed meanwhile.
         Ask::Change { pos, old, new, flags, drops, then, .. } if allowed && world.block_at(pos.x, pos.y, pos.z) == Some(*old) => {

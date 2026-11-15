@@ -47,6 +47,8 @@ public final class HostData {
     /** Potion -> its effects (effect, duration, amplifier). */
     private final Map<String, List<PotionEffectInfo>> potions = new HashMap<>();
     private final Set<String> instantEffects = new java.util.HashSet<>();
+    /** Effect -> its category ({@code BENEFICIAL}, {@code HARMFUL}, {@code NEUTRAL}). */
+    private final Map<String, String> effectCategories = new java.util.HashMap<>();
 
     /** An effect a potion gives: {@code minecraft:mob_effect} name, duration in ticks, amplifier. */
     public record PotionEffectInfo(String effect, int duration, int amplifier) {
@@ -113,6 +115,9 @@ public final class HostData {
         for (Map.Entry<String, JsonElement> effect : read("paper-rs-data/effects.json").getAsJsonObject().getAsJsonObject("effects").entrySet()) {
             if (effect.getValue().getAsJsonObject().get("instantaneous").getAsBoolean()) {
                 this.instantEffects.add(effect.getKey());
+            }
+            if (effect.getValue().getAsJsonObject().get("category") instanceof JsonElement category && !category.isJsonNull()) {
+                this.effectCategories.put(effect.getKey(), category.getAsString());
             }
         }
 
@@ -210,6 +215,11 @@ public final class HostData {
 
     public boolean isInstantEffect(String effect) {
         return this.instantEffects.contains(effect);
+    }
+
+    /** An effect's category ({@code BENEFICIAL}, {@code HARMFUL}, {@code NEUTRAL}), or null if unknown. */
+    public String effectCategory(String effect) {
+        return this.effectCategories.get(effect);
     }
 
     /** Tags of a registry ({@code minecraft:block}); empty if it has none. */

@@ -1132,6 +1132,11 @@ final class ApiTests implements Listener, CommandExecutor {
         check(failures, zombie.addPotionEffect(new org.bukkit.potion.PotionEffect(org.bukkit.potion.PotionEffectType.SLOWNESS, 200, 2)), "mob add");
         check(failures, zombie.hasPotionEffect(org.bukkit.potion.PotionEffectType.SLOWNESS), "mob has");
         zombie.remove();
+        // What the effect types themselves say (as protection plugins ask on a splash).
+        check(failures, org.bukkit.potion.PotionEffectType.SPEED.getCategory() == org.bukkit.potion.PotionEffectTypeCategory.BENEFICIAL
+            && org.bukkit.potion.PotionEffectType.POISON.getCategory() == org.bukkit.potion.PotionEffectTypeCategory.HARMFUL, "category");
+        check(failures, org.bukkit.potion.PotionEffectType.INSTANT_DAMAGE.isInstant() && !org.bukkit.potion.PotionEffectType.SPEED.isInstant(), "instant");
+        check(failures, org.bukkit.potion.PotionEffectType.JUMP_BOOST.getName().equals("JUMP") && org.bukkit.potion.PotionEffectType.SPEED.getId() == 1, "legacy name and id");
         report(player, "effects", failures);
     }
 
@@ -1402,7 +1407,12 @@ final class ApiTests implements Listener, CommandExecutor {
     @EventHandler
     public void onInteractEntity(final org.bukkit.event.player.PlayerInteractEntityEvent event) {
         if (this.guard) {
-            this.interactions.add("ENTITY " + event.getRightClicked().getType() + " " + event.getHand());
+            // Paper fires the "at" kind, with where the entity was clicked.
+            // (Sent with little precision, so rounded.)
+            final String at = event instanceof org.bukkit.event.player.PlayerInteractAtEntityEvent atEvent
+                ? " AT " + Math.round(atEvent.getClickedPosition().getX() * 10) / 10.0 + "," + Math.round(atEvent.getClickedPosition().getY() * 10) / 10.0
+                    + "," + Math.round(atEvent.getClickedPosition().getZ() * 10) / 10.0 : "";
+            this.interactions.add("ENTITY " + event.getRightClicked().getType() + " " + event.getHand() + at);
             event.setCancelled(true);
         }
     }
@@ -1510,6 +1520,30 @@ final class ApiTests implements Listener, CommandExecutor {
     @EventHandler
     public void onFertilize(final org.bukkit.event.block.BlockFertilizeEvent event) {
         this.blockEvent(event, "FERTILIZE " + event.getBlock().getType() + " " + (event.getPlayer() == null ? "-" : "player"));
+    }
+
+    @EventHandler
+    public void onPortalCreate(final org.bukkit.event.world.PortalCreateEvent event) {
+        final org.bukkit.entity.Entity entity = event.getEntity();
+        this.blockEvent(event, "PORTAL " + event.getReason() + " " + (entity == null ? "-" : entity instanceof Player ? "player" : entity.getType().name())
+            + " " + event.getBlocks().stream().filter(b -> b.getType() == Material.NETHER_PORTAL).count());
+    }
+
+    @EventHandler
+    public void onPotionSplash(final org.bukkit.event.entity.PotionSplashEvent event) {
+        this.blockEvent(event, "SPLASH " + event.getClass().getSimpleName() + " " + event.getAffectedEntities().stream().map(e -> e.getType().name()).sorted().toList()
+            + " " + event.getPotion().getEffects().stream().map(e -> e.getType().getKey().getKey()).toList() + " " + (event.getPotion().getShooter() instanceof Player ? "player" : "-"));
+    }
+
+    @EventHandler
+    public void onLingeringSplash(final org.bukkit.event.entity.LingeringPotionSplashEvent event) {
+        this.blockEvent(event, "LINGER " + event.getAreaEffectCloud().getBasePotionType() + " " + event.getAreaEffectCloud().getRadius());
+    }
+
+    @EventHandler
+    public void onCloudApply(final org.bukkit.event.entity.AreaEffectCloudApplyEvent event) {
+        this.blockEvent(event, "CLOUD " + event.getAffectedEntities().stream().map(e -> e.getType().name()).sorted().toList()
+            + " " + (event.getEntity().getSource() instanceof Player ? "player" : "-"));
     }
 
     @EventHandler

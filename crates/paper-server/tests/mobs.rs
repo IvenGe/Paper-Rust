@@ -263,12 +263,14 @@ fn horses_buck_until_tamed_and_then_take_saddles() {
     alice.send(&interact(horse));
     wait_until("the horse to eat", TIMEOUT, || mob(&server, horse, |m| m.temper == 3));
 
-    // Without a good temper it throws its rider off and gets angrier.
+    // Without a good temper it throws its rider off and gets angrier. (At no temper at all:
+    // at 3 it gives in 3% of the time instead, as in vanilla.)
+    server.handle.run(move |s| s.worlds[0].entities.get_mut(&horse).unwrap().mob_mut().unwrap().temper = 0).unwrap();
     hold(&server, id, Slot::EMPTY);
     alice.send(&interact(horse));
     wait_until("Alice to get on", TIMEOUT, || vehicle(&server, id) == Some(horse));
     wait_reading(&mut alice, "the horse to buck", Duration::from_secs(30), || vehicle(&server, id).is_none());
-    assert_eq!(mob(&server, horse, |m| (m.tamed, m.temper)), (false, 8));
+    assert_eq!(mob(&server, horse, |m| (m.tamed, m.temper)), (false, 5));
 
     // At the most temper it gives in: tamed by Alice, who stays on.
     server.handle.run(move |s| s.worlds[0].entities.get_mut(&horse).unwrap().mob_mut().unwrap().temper = 100).unwrap();

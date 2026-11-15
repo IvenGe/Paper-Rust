@@ -152,7 +152,19 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             }));
             out.set("left_shooter", *left_owner);
         }
-        EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
+        EntityKind::Cloud { potion, owner, radius, duration, wait, growth, on_use, .. } => {
+            out.set("potion", potion.clone());
+            out.set("source", owner.map(|o| match server.players.get(&o) {
+                Some(p) => bmap! { "player" => p.uuid().to_string() },
+                None => bmap! { "entity" => o as i64 },
+            }));
+            out.set("radius", *radius as f64);
+            out.set("duration", *duration);
+            out.set("wait_time", *wait);
+            out.set("radius_per_tick", *growth as f64);
+            out.set("radius_on_use", *on_use as f64);
+        }
+        EntityKind::EyeOfEnder { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
     out
 }
@@ -498,6 +510,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             // `Projectile.setShooter` (an empty map for none).
             let shooter = target_id(server, args.get("shooter"));
+            // `AreaEffectCloud.setSource` (an empty map for none).
+            let source = target_id(server, args.get("source"));
             // Players by uuid, for `Animals.setBreedCause`.
             let server_players: Vec<(i32, String)> = if args.get("love_cause").is_null() { Vec::new() } else { server.players.values().map(|p| (p.entity_id, p.uuid().to_string())).collect() };
             let e = server.worlds[world].entities.get_mut(&id).unwrap();
@@ -782,6 +796,30 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     if let Some(f) = args.i32("fuse") {
                         *fuse = f.max(0);
                         e.metadata_dirty = true;
+                    }
+                }
+                EntityKind::Cloud { owner, radius, duration, wait, growth, on_use, .. } => {
+                    // `AreaEffectCloud.setSource`, `setRadius`, `setDuration`, `setWaitTime`,
+                    // `setRadiusPerTick`, `setRadiusOnUse`.
+                    if !args.get("source").is_null() {
+                        *owner = source;
+                    }
+                    if let Some(r) = args.f64("radius") {
+                        *radius = r.max(0.0) as f32;
+                        e.metadata_dirty = true;
+                    }
+                    if let Some(d) = args.i32("duration") {
+                        *duration = d;
+                    }
+                    if let Some(w) = args.i32("wait_time") {
+                        *wait = w.max(0);
+                        e.metadata_dirty = true;
+                    }
+                    if let Some(g) = args.f64("radius_per_tick") {
+                        *growth = g as f32;
+                    }
+                    if let Some(u) = args.f64("radius_on_use") {
+                        *on_use = u as f32;
                     }
                 }
                 _ => {}

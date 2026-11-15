@@ -69,8 +69,6 @@ impl Server {
         self.set_block_with_flags(world, pos, state, flags::ALL)
     }
 
-    /// [`Server::set_block_and_update`] with vanilla's update flags (`world::block_updates::flags`),
-    /// e.g. `flags::CLIENTS | flags::KNOWN_SHAPE` to change a block without any updates.
     /// Bone meal on the block at `pos` (by `player`, or a dispenser): with plugins listening,
     /// its changes are held back and shown to them first (`StructureGrowEvent` for a tree or
     /// huge mushroom, then `BlockFertilizeEvent`). Returns whether the bone meal was used
@@ -104,9 +102,19 @@ impl Server {
         self.publish_block_updates(world);
     }
 
+    /// [`Server::set_block_and_update`] with vanilla's update flags (`world::block_updates::flags`),
+    /// e.g. `flags::CLIENTS | flags::KNOWN_SHAPE` to change a block without any updates.
     pub fn set_block_with_flags(&mut self, world: usize, pos: BlockPos, state: u32, flags: u32) -> bool {
+        self.set_block_by(world, pos, state, flags, None)
+    }
+
+    /// [`Server::set_block_with_flags`] for a block a player places (`by`), which the block may
+    /// react to: fire lighting a Nether portal names the player in `PortalCreateEvent`.
+    pub fn set_block_by(&mut self, world: usize, pos: BlockPos, state: u32, flags: u32, by: Option<i32>) -> bool {
         let Some(w) = self.worlds.get_mut(world) else { return false };
-        let changed = Level::new(w).set_block(pos, state, flags);
+        let mut level = Level::new(w);
+        level.actor = by;
+        let changed = level.set_block(pos, state, flags);
         self.publish_block_updates(world);
         changed
     }
@@ -163,6 +171,7 @@ impl Server {
             moisture: listens("MoistureChangeEvent"),
             flow: listens("BlockFromToEvent"),
             structures: listens("StructureGrowEvent"),
+            portals: listens("PortalCreateEvent"),
         };
         for index in 0..self.worlds.len() {
             self.worlds[index].updates.vetting = vetting;
@@ -222,6 +231,14 @@ impl Server {
                         }
                         None => false,
                     },
+                    Ask::Portal { shape, by, .. } => {
+                        // The frame as it is, and the portal it is to hold.
+                        let w = &self.worlds[world];
+                        let portal = paper_data::blocks::default_state("minecraft:nether_portal").and_then(|s| paper_data::blocks::with_property(s, "axis", shape.axis.name())).unwrap_or(paper_data::blocks::AIR);
+                        let mut listed: Vec<(BlockPos, u32)> = shape.frame().into_iter().map(|p| (p, w.block_at(p.x, p.y, p.z).unwrap_or(paper_data::blocks::AIR))).collect();
+                        listed.extend(shape.inside().into_iter().map(|p| (p, portal)));
+                        events::on_portal_create(self, world, &listed, *by, "FIRE")
+                    }
                     Ask::Change { .. } | Ask::Flow { .. } => unreachable!("answered above"),
                 };
                 block_updates::answer(&mut self.worlds[world], &ask, allowed, &ticking);

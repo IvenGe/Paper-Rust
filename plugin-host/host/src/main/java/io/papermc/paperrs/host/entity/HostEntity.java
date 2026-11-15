@@ -752,10 +752,13 @@ public final class HostEntity implements HostProxies.Backed {
         }
     }
 
-    /** A tamed animal's owner, or a projectile's shooter (Projectile#getOwnerUniqueId). */
+    /** A tamed animal's owner, a projectile's shooter or a cloud's source (Projectile#getOwnerUniqueId). */
     public @Nullable UUID getOwnerUniqueId() {
         if (this.state().get("owner") instanceof String uuid && !uuid.isEmpty()) {
             return UUID.fromString(uuid);
+        }
+        if (this.state().containsKey("source")) {
+            return this.getSource() instanceof Entity entity ? entity.getUniqueId() : null;
         }
         return this.state().containsKey("shooter") && this.getShooter() instanceof Entity entity ? entity.getUniqueId() : null;
     }
@@ -936,6 +939,100 @@ public final class HostEntity implements HostProxies.Backed {
 
     public void setItem(final @Nullable ItemStack item) {
         this.set("item", HostItemStack.toValue(item));
+    }
+
+    // thrown potions (ThrownPotion): what they carry is their item's
+
+    public java.util.Collection<org.bukkit.potion.PotionEffect> getEffects() {
+        final List<org.bukkit.potion.PotionEffect> out = new ArrayList<>();
+        if (this.getItem().getItemMeta() instanceof org.bukkit.inventory.meta.PotionMeta meta) {
+            if (meta.getBasePotionType() != null) {
+                out.addAll(meta.getBasePotionType().getPotionEffects());
+            }
+            out.addAll(meta.getCustomEffects());
+        }
+        return java.util.Collections.unmodifiableList(out);
+    }
+
+    public org.bukkit.inventory.meta.PotionMeta getPotionMeta() {
+        return (org.bukkit.inventory.meta.PotionMeta) this.getItem().getItemMeta();
+    }
+
+    public void setPotionMeta(final org.bukkit.inventory.meta.PotionMeta meta) {
+        final ItemStack item = this.getItem();
+        item.setItemMeta(meta);
+        this.setItem(item);
+    }
+
+    // lingering potions' clouds (AreaEffectCloud)
+
+    public @Nullable ProjectileSource getSource() {
+        final Object source = this.state().get("source");
+        return source instanceof Map<?, ?> s && Entities.of(this.server, Values.map(s)) instanceof ProjectileSource projectileSource ? projectileSource : null;
+    }
+
+    /** Only players and mobs here; other sources clear it. */
+    public void setSource(final @Nullable ProjectileSource source) {
+        this.set("source", source instanceof Entity entity ? Entities.ref(entity) : Map.of());
+    }
+
+    public float getRadius() {
+        return (float) Values.f64(this.state(), "radius", 3.0);
+    }
+
+    public void setRadius(final float radius) {
+        this.set("radius", (double) radius);
+    }
+
+    public int getDuration() {
+        return Values.i32(this.state(), "duration", 600);
+    }
+
+    public void setDuration(final int duration) {
+        this.set("duration", duration);
+    }
+
+    public int getWaitTime() {
+        return Values.i32(this.state(), "wait_time", 10);
+    }
+
+    public void setWaitTime(final int waitTime) {
+        this.set("wait_time", waitTime);
+    }
+
+    public float getRadiusPerTick() {
+        return (float) Values.f64(this.state(), "radius_per_tick", 0);
+    }
+
+    public void setRadiusPerTick(final float radiusPerTick) {
+        this.set("radius_per_tick", (double) radiusPerTick);
+    }
+
+    public float getRadiusOnUse() {
+        return (float) Values.f64(this.state(), "radius_on_use", 0);
+    }
+
+    public void setRadiusOnUse(final float radiusOnUse) {
+        this.set("radius_on_use", (double) radiusOnUse);
+    }
+
+    public org.bukkit.potion.@Nullable PotionType getBasePotionType() {
+        final org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(Values.str(this.state(), "potion", ""));
+        for (final org.bukkit.potion.PotionType type : org.bukkit.potion.PotionType.values()) {
+            if (type.getKey().equals(key)) {
+                return type;
+            }
+        }
+        return null;
+    }
+
+    /** Clouds here carry only their potion's effects. */
+    public boolean hasCustomEffects() {
+        return false;
+    }
+
+    public List<org.bukkit.potion.PotionEffect> getCustomEffects() {
+        return List.of();
     }
 
     // fireballs (CraftFireball): they speed up the way they fly, by 0.1 a tick

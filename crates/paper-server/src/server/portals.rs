@@ -8,7 +8,7 @@ use super::player::{ChunkView, Location, HOTBAR_START, OFFHAND_SLOT};
 use super::survival::{self, category, Fluid};
 use super::Server;
 use crate::config::GameMode;
-use crate::world::block_updates::fire;
+use crate::world::block_updates::{fire, flags};
 use crate::world::chunk::ChunkPos;
 use crate::world::entity::{Aabb, Vec3};
 use crate::world::portal::{self, Axis, PortalShape};
@@ -270,14 +270,14 @@ impl Server {
         let yaw = self.players.get(&id).map_or(0.0, |p| p.loc.yaw);
         match travel.kind {
             TravelKind::End => {
-                self.make_end_platform(travel.to, BlockPos::new(100, 49, 0));
+                self.make_end_platform(travel.to, BlockPos::new(100, 49, 0), Some(id));
                 Some(Location { x: 100.5, y: 49.0, z: 0.5, yaw: 90.0, pitch: 0.0 })
             }
             TravelKind::Nether(axis) => {
                 let radius = if self.worlds[travel.to].dimension == "minecraft:the_nether" { 16 } else { 128 };
                 let shape = match self.find_nether_portal(travel.to, travel.approx, radius) {
                     Some(found) => PortalShape::find_any(&self.worlds[travel.to], found, Axis::of_state(self.worlds[travel.to].block_at(found.x, found.y, found.z).unwrap_or(0))),
-                    None => self.create_nether_portal(travel.to, travel.approx, axis)?,
+                    None => self.create_nether_portal(travel.to, travel.approx, axis, Some(id))?,
                 };
                 let (x, y, z) = shape.arrival();
                 Some(Location { x, y, z, yaw, pitch: 0.0 })
@@ -323,8 +323,10 @@ impl Server {
         best.map(|(_, _, p)| p)
     }
 
-    /// Builds a 4x5 obsidian frame with a lit portal near `near` (`PortalForcer.createPortal`).
-    fn create_nether_portal(&mut self, world: usize, near: BlockPos, axis: Axis) -> Option<PortalShape> {
+    /// Builds a 4x5 obsidian frame with a lit portal near `near` (`PortalForcer.createPortal`)
+    /// for the traveller `by`, unless plugins stop it (`PortalCreateEvent`, reason
+    /// `NETHER_PAIR`), which ends the trip.
+    fn create_nether_portal(&mut self, world: usize, near: BlockPos, axis: Axis, by: Option<i32>) -> Option<PortalShape> {
         let w = &self.worlds[world];
         let dir = match axis {
             Axis::X => (1, 0),
@@ -416,33 +418,51 @@ impl Server {
                 }
             }
         }
+        let portal_state = blocks::with_property(blocks::default_state("minecraft:nether_portal")?, "axis", axis.name())?;
+        let portal: Vec<BlockPos> = (0..2).flat_map(|i| (0..3).map(move |j| origin.offset(i * dir.0, j, i * dir.1))).collect();
+        // Plugins see every place once, with the state it ends up with.
+        let mut listed: Vec<(BlockPos, u32)> = Vec::new();
+        for (pos, state) in blocks_to_set.iter().copied().chain(portal.iter().map(|p| (*p, portal_state))) {
+            match listed.iter_mut().find(|(p, _)| *p == pos) {
+                Some(entry) => entry.1 = state,
+                None => listed.push((pos, state)),
+            }
+        }
+        if !crate::plugins::events::on_portal_create(self, world, &listed, by, "NETHER_PAIR") {
+            return None;
+        }
         for (pos, state) in blocks_to_set {
             self.set_block_and_update(world, pos, state);
         }
-        let portal_state = blocks::with_property(blocks::default_state("minecraft:nether_portal")?, "axis", axis.name())?;
-        for i in 0..2 {
-            for j in 0..3 {
-                let pos = origin.offset(i * dir.0, j, i * dir.1);
-                self.set_block_with_flags(world, pos, portal_state, crate::world::block_updates::flags::CLIENTS | crate::world::block_updates::flags::KNOWN_SHAPE);
-            }
+        for pos in portal {
+            self.set_block_with_flags(world, pos, portal_state, flags::CLIENTS | flags::KNOWN_SHAPE);
         }
         let shape = PortalShape::find_any(&self.worlds[world], origin, axis);
         shape.is_valid().then_some(shape)
     }
 
-    /// The obsidian platform players arrive on in the End (`EndPlatformFeature`).
-    fn make_end_platform(&mut self, world: usize, at: BlockPos) {
+    /// The obsidian platform players arrive on in the End (`EndPlatformFeature`), for the
+    /// traveller `by`; plugins may stop it (`PortalCreateEvent`, reason `END_PLATFORM`, fired
+    /// even when the platform is whole), and the player arrives all the same.
+    fn make_end_platform(&mut self, world: usize, at: BlockPos, by: Option<i32>) {
         let Some(obsidian) = blocks::default_state("minecraft:obsidian") else { return };
-        for dx in -2..=2 {
-            for dz in -2..=2 {
+        let mut changes = Vec::new();
+        for dz in -2..=2 {
+            for dx in -2..=2 {
                 for dy in -1..3 {
                     let pos = at.offset(dx, dy, dz);
                     let state = if dy == -1 { obsidian } else { blocks::AIR };
                     if self.worlds[world].block_at(pos.x, pos.y, pos.z) != Some(state) {
-                        self.set_block_and_update(world, pos, state);
+                        changes.push((pos, state));
                     }
                 }
             }
+        }
+        if !crate::plugins::events::on_portal_create(self, world, &changes, by, "END_PLATFORM") {
+            return;
+        }
+        for (pos, state) in changes {
+            self.set_block_and_update(world, pos, state);
         }
     }
 
@@ -615,7 +635,7 @@ impl Server {
             };
             if empty && (supported || portal_frame) {
                 if crate::plugins::events::on_block_ignite(self, world, target, cause, crate::plugins::events::Igniter::Entity(id)) {
-                    self.set_block_and_update(world, target, fire_state);
+                    self.set_block_by(world, target, fire_state, flags::ALL, Some(id));
                     used = true;
                 } else {
                     ignite_cancelled = true;

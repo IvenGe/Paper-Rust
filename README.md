@@ -261,7 +261,9 @@ What works:
   `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`,
   `PlayerStatisticIncrementEvent`, `SignChangeEvent`, `PlayerInteractEvent` (clicks on
   blocks and in the air, stepping on pressure plates and trampling farmland; a denied
-  block or item is not used, as in CraftBukkit), `PlayerInteractEntityEvent`,
+  block or item is not used, as in CraftBukkit), `PlayerInteractAtEntityEvent` (which
+  `PlayerInteractEntityEvent` listeners hear too: as in Paper, it is fired for every
+  right-click on an entity or player),
   `EntityExplodeEvent` and `BlockExplodeEvent` (only the blocks plugins leave are
   broken), `PlayerToggleSneakEvent`, `PlayerToggleSprintEvent`, `PlayerToggleFlightEvent`,
   `PlayerItemHeldEvent`, `PlayerSwapHandItemsEvent`, `PlayerItemConsumeEvent`,
@@ -300,8 +302,12 @@ What works:
   lets the projectile fly on, as in Paper), `BlockDispenseEvent` (plugins may stop a
   dispenser or dropper, or send another item), `StructureGrowEvent` (trees and huge
   mushrooms growing on their own or from bone meal, with all the blocks they change, which
-  plugins may edit) and `BlockFertilizeEvent` (bone meal from players and dispensers; a
-  stopped one keeps the bone meal, as in Paper). Players,
+  plugins may edit), `BlockFertilizeEvent` (bone meal from players and dispensers; a
+  stopped one keeps the bone meal, as in Paper), `PortalCreateEvent` (fire lighting a frame,
+  which stays lit if stopped; the portal a trip builds at the other end, whose trip ends there
+  if stopped; the End platform), `PotionSplashEvent` with Paper's `WaterBottleSplashEvent`
+  (fired for every thrown potion; water puts out fires where it breaks, too),
+  `LingeringPotionSplashEvent` and `AreaEffectCloudApplyEvent`. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -339,7 +345,8 @@ What works:
   * scoreboards: the main scoreboard and new ones, objectives, display slots, scores
     (`health`, `food`, `air`, `armor`, `level` and `xp` follow the players), teams and
     `Player.setScoreboard`;
-  * potion effects of players and mobs (`addPotionEffect`, `getActivePotionEffects`, ...);
+  * potion effects of players and mobs (`addPotionEffect`, `getActivePotionEffects`, ...),
+    and what effect types are (their category, whether instant, Bukkit's old names);
   * attributes of players and mobs (`getAttribute`, base values, modifiers,
     `registerAttribute`, `getMaxHealth`/`setMaxHealth`);
   * resource packs (Bukkit's `setResourcePack`/`addResourcePack` and Adventure's

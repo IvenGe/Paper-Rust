@@ -160,12 +160,11 @@ impl Server {
             } else if fireball {
                 self.fireball_hits(world, id, at, vel, Some(victim));
             } else {
-                self.thrown_hits(world, id, at, Some(victim));
+                self.thrown_hits(world, id, at, Some(victim), None);
             }
             return;
         }
         if let Some((_, block)) = block_hit {
-            let _ = block;
             if dragon_fireball {
                 self.dragon_fireball_hits(world, id, end, owner);
             } else if large_fireball {
@@ -173,7 +172,7 @@ impl Server {
             } else if fireball {
                 self.fireball_hits(world, id, end, vel, None);
             } else {
-                self.thrown_hits(world, id, end, None);
+                self.thrown_hits(world, id, end, None, Some((block, entry_face(from, vel, block))));
             }
             return;
         }
@@ -259,8 +258,9 @@ impl Server {
         }
     }
 
-    /// Where a thrown item lands (`onHit`): what it does to what it hit and around it.
-    fn thrown_hits(&mut self, world: usize, id: i32, at: Vec3, victim: Option<i32>) {
+    /// Where a thrown item lands (`onHit`): what it does to what it hit (`victim`, or the side
+    /// `block` of a block) and around it.
+    fn thrown_hits(&mut self, world: usize, id: i32, at: Vec3, victim: Option<i32>, block: Option<(BlockPos, usize)>) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let EntityKind::Thrown { item, owner, .. } = e.kind.clone() else { return };
         let name = e.info.name.clone();
@@ -297,14 +297,7 @@ impl Server {
                 let amount = 3 + rng.gen_range(0..5) + rng.gen_range(0..5);
                 self.award_experience(world, at, amount);
             }
-            "minecraft:splash_potion" => self.splash(world, at, &item, owner, victim),
-            "minecraft:lingering_potion" => {
-                let potion = item.0.as_ref().and_then(super::effects::potion_of);
-                self.broadcast_level_event(world, 2002, BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32), SPLASH_COLOR, false);
-                if let Some(potion) = potion.filter(|p| !effects::potion(p).is_empty()) {
-                    self.spawn_cloud(world, at, potion, owner);
-                }
-            }
+            "minecraft:splash_potion" | "minecraft:lingering_potion" => self.splash(world, id, at, &item, owner, victim, block, name == "minecraft:lingering_potion"),
             _ => {}
         }
     }
@@ -339,51 +332,135 @@ impl Server {
         self.play_sound(world, at, "minecraft:entity.player.teleport", category::PLAYERS, 1.0, 1.0, None);
     }
 
-    /// A splash potion's effects on everything living within four blocks, weaker further
-    /// away (`ThrownSplashPotion.applySplash`); water puts out fires and hurts endermen.
-    fn splash(&mut self, world: usize, at: Vec3, item: &Slot, owner: Option<i32>, direct: Option<i32>) {
+    /// A thrown potion breaks (`AbstractThrownPotion.splash`), its owner `owner`, hitting
+    /// `direct` or the side `block` of a block. Water puts out fires and burning mobs, and
+    /// hurts water-sensitive ones (`WaterBottleSplashEvent`, which Paper fires for every
+    /// potion); a splash potion's effects reach everything living within four blocks, weaker
+    /// further away (`ThrownSplashPotion`, `PotionSplashEvent`); a `lingering` one leaves a
+    /// cloud (`ThrownLingeringPotion`, `LingeringPotionSplashEvent`). The splash shows unless
+    /// plugins stopped all of it.
+    #[allow(clippy::too_many_arguments)]
+    fn splash(&mut self, world: usize, id: i32, at: Vec3, item: &Slot, owner: Option<i32>, direct: Option<i32>, block: Option<(BlockPos, usize)>, lingering: bool) {
+        use crate::plugins::events;
         let potion = item.0.as_ref().and_then(super::effects::potion_of);
         let list: Vec<(String, i32, i32)> = potion.as_deref().map(|p| effects::potion(p).to_vec()).unwrap_or_default();
         let instant = list.iter().any(|(e, _, _)| effects::by_name(e).is_some_and(|i| i.instantaneous));
-        let pos = BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32);
-        self.broadcast_level_event(world, if instant { 2007 } else { 2002 }, pos, SPLASH_COLOR, false);
+        let water = potion.as_deref() == Some("minecraft:water");
         let area = Aabb::of_entity(at, 0.25, 0.25).inflate(4.0, 2.0, 4.0);
         let mut targets: Vec<(i32, f64)> = self.players.values().filter(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator).map(|p| (p.entity_id, Vec3::new(p.loc.x, p.loc.y, p.loc.z))).filter(|(_, p)| area.intersects(&Aabb::of_entity(*p, 0.6, 1.8))).map(|(id, p)| (id, p.distance_squared(at))).collect();
         let w = &self.worlds[world];
         targets.extend(w.entities_in(&area).into_iter().filter_map(|i| w.entities.get(&i)).filter(|e| e.mob().is_some_and(|m| !m.living.is_dead())).map(|e| (e.id, e.pos.distance_squared(at))));
-        if potion.as_deref() == Some("minecraft:water") || list.is_empty() {
-            // Water: fires go out, water-sensitive mobs get hurt.
-            for (target, d2) in targets {
-                if d2 >= 16.0 {
+        // What water would do (`affectEntitiesAround`), for plugins to see first.
+        let mut wet = events::WaterSplash::default();
+        if water {
+            for (target, d2) in &targets {
+                let name = self.worlds[world].entities.get(target).map(|e| e.info.name.as_str());
+                if name == Some("minecraft:axolotl") {
+                    wet.rehydrate.push(*target);
+                }
+                if *d2 >= 16.0 {
                     continue;
                 }
-                let sensitive = self.worlds[world].entities.get(&target).is_some_and(|e| matches!(e.info.name.as_str(), "minecraft:enderman" | "minecraft:blaze" | "minecraft:snow_golem" | "minecraft:strider"));
-                if sensitive {
-                    let mut damage = Damage::new("minecraft:indirect_magic");
-                    damage.attacker = owner;
-                    self.hurt_entity(world, target, damage, 1.0);
+                if name.is_some_and(|n| matches!(n, "minecraft:enderman" | "minecraft:blaze" | "minecraft:snow_golem" | "minecraft:strider")) {
+                    wet.damage.push(*target);
                 }
+                if self.is_burning(world, *target) {
+                    wet.extinguish.push(*target);
+                }
+            }
+        }
+        let hit_block = block;
+        let mut shown = false;
+        if let Some(wet) = events::on_water_splash(self, world, id, direct, hit_block, wet) {
+            shown = true;
+            if let Some((b, face)) = block.filter(|_| water) {
+                self.douse_fires(world, id, b, face);
+            }
+            for target in wet.damage {
+                let mut damage = Damage::new("minecraft:indirect_magic");
+                damage.attacker = owner;
+                self.hurt_entity(world, target, damage, 1.0);
+            }
+            for target in wet.extinguish {
                 self.extinguish(world, target);
             }
-            return;
+            // Axolotls do not dry out here, so there is nothing to rehydrate.
         }
-        for (target, d2) in targets {
-            if d2 >= 16.0 {
-                continue;
-            }
-            let scale = if Some(target) == direct { 1.0 } else { 1.0 - d2.sqrt() / 4.0 };
-            for (effect, duration, amplifier) in &list {
-                let Some(info) = effects::by_name(effect) else { continue };
-                if info.instantaneous {
-                    self.apply_instant_scaled(world, target, effect, *amplifier, scale, owner);
-                } else {
-                    let duration = (scale * *duration as f64 + 0.5) as i32;
-                    if duration > 20 {
-                        if let Some(e) = ActiveEffect::new(effect, duration, *amplifier) {
-                            self.add_effect(world, target, e);
+        if lingering {
+            match potion.filter(|_| !list.is_empty()) {
+                Some(potion) => {
+                    let cloud = self.spawn_cloud(world, at, potion, owner);
+                    if let Some(cloud) = cloud {
+                        if events::on_lingering_splash(self, world, id, direct, hit_block, cloud) {
+                            shown = true;
+                        } else if let Some(e) = self.worlds[world].entities.get_mut(&cloud) {
+                            e.removed = true;
                         }
                     }
                 }
+                // No effects: no cloud (Paper discards an empty one).
+                None => shown = true,
+            }
+        } else {
+            let affected: Vec<(i32, f64)> = targets.iter().filter(|(_, d2)| *d2 < 16.0).map(|(target, d2)| (*target, if Some(*target) == direct { 1.0 } else { 1.0 - d2.sqrt() / 4.0 })).collect();
+            if let Some(affected) = events::on_potion_splash(self, world, id, direct, hit_block, affected) {
+                shown = true;
+                for (target, scale) in affected {
+                    for (effect, duration, amplifier) in &list {
+                        let Some(info) = effects::by_name(effect) else { continue };
+                        if info.instantaneous {
+                            self.apply_instant_scaled(world, target, effect, *amplifier, scale, owner);
+                        } else {
+                            let duration = (scale * *duration as f64 + 0.5) as i32;
+                            if duration > 20 {
+                                if let Some(e) = ActiveEffect::new(effect, duration, *amplifier) {
+                                    self.add_effect(world, target, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if shown {
+            let pos = BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32);
+            self.broadcast_level_event(world, if instant { 2007 } else { 2002 }, pos, SPLASH_COLOR, false);
+        }
+    }
+
+    /// Whether a player or mob is on fire.
+    fn is_burning(&self, world: usize, target: i32) -> bool {
+        match self.players.get(&target) {
+            Some(p) => p.fire_ticks > 0,
+            None => self.worlds[world].entities.get(&target).and_then(|e| e.mob()).is_some_and(|m| m.living.fire_ticks > 0 && !m.living.is_dead()),
+        }
+    }
+
+    /// Water from the thrown potion `potion` breaking on the side `face` of `block` puts out
+    /// fire, lit candles and campfires there and around (`AbstractThrownPotion.onHitBlock`),
+    /// each as plugins let it (`EntityChangeBlockEvent`).
+    fn douse_fires(&mut self, world: usize, potion: i32, block: BlockPos, face: usize) {
+        let (dx, dy, dz) = [(0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1), (-1, 0, 0), (1, 0, 0)][face.min(5)];
+        let place = block.offset(dx, dy, dz);
+        for pos in [place, block, place.offset(0, 0, -1), place.offset(0, 0, 1), place.offset(-1, 0, 0), place.offset(1, 0, 0)] {
+            let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { continue };
+            let name = blocks::block_of_state(state).name;
+            if matches!(name, "minecraft:fire" | "minecraft:soul_fire") {
+                if crate::plugins::events::on_entity_change_block(self, world, potion, pos, blocks::AIR, false) {
+                    self.destroy_block(world, pos, false);
+                }
+            } else if blocks::property(state, "lit") == Some("true") && (name.ends_with("candle") || name.ends_with("candle_cake") || name.ends_with("campfire")) {
+                let Some(out) = blocks::with_property(state, "lit", "false") else { continue };
+                if !crate::plugins::events::on_entity_change_block(self, world, potion, pos, out, false) {
+                    continue;
+                }
+                let center = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
+                if name.ends_with("campfire") {
+                    self.broadcast_level_event(world, 1009, pos, 0, false);
+                } else {
+                    self.play_sound(world, center, "minecraft:block.candle.extinguish", category::BLOCKS, 1.0, 1.0, None);
+                }
+                self.set_block_and_update(world, pos, out);
             }
         }
     }
@@ -420,11 +497,11 @@ impl Server {
 
     /// A lingering potion's cloud: three blocks wide, shrinking over half a minute and with
     /// each use (`AreaEffectCloud`).
-    fn spawn_cloud(&mut self, world: usize, at: Vec3, potion: String, owner: Option<i32>) {
-        let Some(info) = entity_types::by_name("minecraft:area_effect_cloud") else { return };
+    fn spawn_cloud(&mut self, world: usize, at: Vec3, potion: String, owner: Option<i32>) -> Option<i32> {
+        let info = entity_types::by_name("minecraft:area_effect_cloud")?;
         let kind = EntityKind::Cloud { potion, owner, radius: 3.0, duration: 600, wait: 10, uses: Default::default(), growth: -3.0 / 600.0, on_use: -0.5, breath: false };
         let e = Entity::new(self.next_entity_id(), info, at, kind);
-        self.spawn_entity(world, e);
+        Some(self.spawn_entity(world, e))
     }
 
     /// A cloud's tick: after a short wait it gives a quarter of the potion's effects to
@@ -472,6 +549,11 @@ impl Server {
         if targets.is_empty() {
             return;
         }
+        // Plugins may leave some out, or all (`AreaEffectCloudApplyEvent`).
+        let targets = crate::plugins::events::on_cloud_apply(self, world, id, targets);
+        if targets.is_empty() {
+            return;
+        }
         let list = effects::potion(&potion).to_vec();
         for target in &targets {
             for (effect, duration, amplifier) in &list {
@@ -495,8 +577,6 @@ impl Server {
         }
     }
 
-    /// A spawn egg used on a block (`SpawnEggItem.useOn`): on a spawner it sets what spawns;
-    /// elsewhere the mob appears on the clicked face. Returns whether it was used.
     /// A spawn egg used while looking at water or lava (`SpawnEggItem.use`): the mob appears
     /// in it.
     pub(super) fn use_spawn_egg_on_fluid(&mut self, player: i32, hand: i32, yaw: f32, pitch: f32) -> bool {
@@ -530,6 +610,8 @@ impl Server {
         true
     }
 
+    /// A spawn egg used on a block (`SpawnEggItem.useOn`): on a spawner it sets what spawns;
+    /// elsewhere the mob appears on the clicked face. Returns whether it was used.
     pub(super) fn use_spawn_egg(&mut self, player: i32, use_on: &paper_protocol::packets::play::UseItemOn) -> bool {
         let Some(p) = self.players.get(&player) else { return false };
         let hand = use_on.hand.0;
@@ -595,4 +677,21 @@ impl Server {
         let packet = paper_protocol::packets::play::BlockEntityData { pos, block_entity_type: paper_protocol::codec::VarInt(ty as i32), data: paper_protocol::codec::Nbt(Some(Tag::Compound(data))) };
         self.broadcast_to_chunk_viewers(world, chunk, &packet);
     }
+}
+
+/// The side of the block at `block` a ray from `from` along `dir` enters by (0 down, 1 up,
+/// 2 north, 3 south, 4 west, 5 east), taking the block as a full cube.
+fn entry_face(from: Vec3, dir: Vec3, block: BlockPos) -> usize {
+    let axes = [(from.x, dir.x, block.x as f64, 4, 5), (from.y, dir.y, block.y as f64, 0, 1), (from.z, dir.z, block.z as f64, 2, 3)];
+    let mut best = (f64::NEG_INFINITY, 1);
+    for (o, d, low, negative, positive) in axes {
+        if d.abs() < 1.0e-9 {
+            continue;
+        }
+        let (t, face) = if d > 0.0 { ((low - o) / d, negative) } else { ((low + 1.0 - o) / d, positive) };
+        if t > best.0 {
+            best = (t, face);
+        }
+    }
+    best.1
 }

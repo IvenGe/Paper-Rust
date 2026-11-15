@@ -27,7 +27,7 @@ org.bukkit.block.BlockType$Typed                    AbstractBlockType    abstrac
 org.bukkit.Sound                                    HostSound            final value
 org.bukkit.attribute.Attribute                      HostAttribute        final value
 org.bukkit.enchantments.Enchantment                 AbstractEnchantment  abstract value
-org.bukkit.potion.PotionEffectType                  HostPotionEffectType final value
+org.bukkit.potion.PotionEffectType                  AbstractPotionEffectType abstract value
 org.bukkit.block.Biome                              HostBiome            final value
 org.bukkit.Art                                      HostArt              final value
 org.bukkit.damage.DamageType                        HostDamageType       final value

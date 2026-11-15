@@ -6,12 +6,12 @@ import io.papermc.paperrs.host.Unsupported;
 
 /** Every abstract member of {@code PotionEffectType}, unsupported until overridden. */
 @SuppressWarnings({"deprecation", "removal", "unchecked", "rawtypes", "unused"})
-public final class HostPotionEffectType extends org.bukkit.potion.PotionEffectType {
+public abstract class AbstractPotionEffectType extends org.bukkit.potion.PotionEffectType {
     protected final org.bukkit.NamespacedKey key;
     protected final int ordinal;
     protected final String translationKey;
 
-    public HostPotionEffectType(org.bukkit.NamespacedKey key, int ordinal, String translationKey) {
+    protected AbstractPotionEffectType(org.bukkit.NamespacedKey key, int ordinal, String translationKey) {
         super();
         this.key = key;
         this.ordinal = ordinal;
@@ -95,6 +95,6 @@ public final class HostPotionEffectType extends org.bukkit.potion.PotionEffectTy
 
     @Override
     public String toString() {
-        return "HostPotionEffectType{" + this.key + "}";
+        return "AbstractPotionEffectType{" + this.key + "}";
     }
 }

@@ -126,9 +126,11 @@ pub fn on_interact(server: &mut Server, id: i32, click: Click, block: Option<(Bl
     }
 }
 
-/// A player right-clicked an entity (`PlayerInteractEntityEvent`). Returns whether the
-/// interaction goes ahead.
-pub fn on_interact_entity(server: &mut Server, id: i32, target: i32, hand: i32) -> bool {
+/// A player right-clicked an entity at `at` (relative to the entity's position):
+/// `PlayerInteractAtEntityEvent`, which `PlayerInteractEntityEvent` listeners hear too, as in
+/// Paper, which fires it for every right-click on an entity. Returns whether the interaction
+/// goes ahead.
+pub fn on_interact_entity(server: &mut Server, id: i32, target: i32, hand: i32, at: (f64, f64, f64)) -> bool {
     if !listens(server, "PlayerInteractEntityEvent") {
         return true;
     }
@@ -137,6 +139,7 @@ pub fn on_interact_entity(server: &mut Server, id: i32, target: i32, hand: i32) 
         "uuid" => player.uuid().to_string(),
         "entity" => super::entity::shallow_ref(server, target),
         "hand" => hand,
+        "at" => Value::List(vec![at.0.into(), at.1.into(), at.2.into()]),
     };
     match fire(server, "PlayerInteractEntityEvent", "event.interact_entity", args) {
         Some(result) => result.bool("cancelled") != Some(true),
@@ -1627,5 +1630,123 @@ pub fn on_tame(server: &mut Server, world: usize, animal: i32, player: i32) -> b
     match fire(server, "EntityTameEvent", "event.tame", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
+    }
+}
+
+/// `PortalCreateEvent`: a Nether portal (or the End platform) is to be made in `world` from
+/// `blocks` (where and the state each place gets; a lit frame lists its frame as it is), by
+/// `entity` (the player who lit it, or who travels) for `reason` (`FIRE`, `NETHER_PAIR`,
+/// `END_PLATFORM`). Returns whether plugins let it.
+pub fn on_portal_create(server: &mut Server, world: usize, blocks: &[(BlockPos, u32)], entity: Option<i32>, reason: &str) -> bool {
+    if !listens(server, "PortalCreateEvent") {
+        return true;
+    }
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "blocks" => blocks_value(blocks), "reason" => reason };
+    if let Some(e) = entity.filter(|e| server.players.contains_key(e) || server.worlds.iter().any(|w| w.entities.contains_key(e))) {
+        args.set("entity", super::entity::shallow_ref(server, e));
+    }
+    match fire(server, "PortalCreateEvent", "event.portal_create", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// What a water bottle's splash does: hurts the water-sensitive `damage`, puts out
+/// `extinguish` and rehydrates `rehydrate` (entity ids).
+#[derive(Clone, Debug, Default)]
+pub struct WaterSplash {
+    pub damage: Vec<i32>,
+    pub extinguish: Vec<i32>,
+    pub rehydrate: Vec<i32>,
+}
+
+/// The thrown potion `potion` and what it hit (an entity, or a block and its side: 0 down,
+/// 1 up, 2 north, 3 south, 4 west, 5 east), for the splash events.
+fn splash_args(server: &Server, world: usize, potion: i32, hit_entity: Option<i32>, hit_block: Option<(BlockPos, usize)>) -> Value {
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, potion) };
+    if let Some(e) = hit_entity.filter(|e| server.players.contains_key(e) || server.worlds[world].entities.contains_key(e)) {
+        args.set("hit_entity", actor_value(server, world, e));
+    }
+    if let Some((b, face)) = hit_block {
+        args.set("hit_block", pos_value(b));
+        args.set("hit_face", ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"][face.min(5)]);
+    }
+    args
+}
+
+fn ids_from(value: &Value) -> Vec<i32> {
+    value.as_list().map(|l| l.iter().filter_map(|v| v.as_i64().map(|i| i as i32)).collect()).unwrap_or_default()
+}
+
+/// `WaterBottleSplashEvent`, which `PotionSplashEvent` listeners hear too: the thrown potion
+/// `potion` broke on `hit_entity` or `hit_block`, and as a water bottle does `splash`
+/// (nothing for other potions; Paper fires it for every one). What it does as plugins leave
+/// it, or `None` if they cancelled it (no fires put out either).
+pub fn on_water_splash(server: &mut Server, world: usize, potion: i32, hit_entity: Option<i32>, hit_block: Option<(BlockPos, usize)>, splash: WaterSplash) -> Option<WaterSplash> {
+    if !listens(server, "PotionSplashEvent") || !server.worlds[world].entities.contains_key(&potion) {
+        return Some(splash);
+    }
+    let mut args = splash_args(server, world, potion, hit_entity, hit_block);
+    let refs = |ids: &[i32]| Value::List(ids.iter().map(|i| actor_value(server, world, *i)).filter(|v| !v.is_null()).collect());
+    let (damage, extinguish, rehydrate) = (refs(&splash.damage), refs(&splash.extinguish), refs(&splash.rehydrate));
+    args.set("damage", damage);
+    args.set("extinguish", extinguish);
+    args.set("rehydrate", rehydrate);
+    match fire(server, "PotionSplashEvent", "event.water_splash", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => {
+            let pick = |key: &str, ours: Vec<i32>| if result.get(key).is_null() { ours } else { ids_from(result.get(key)) };
+            Some(WaterSplash { damage: pick("damage", splash.damage), extinguish: pick("extinguish", splash.extinguish), rehydrate: pick("rehydrate", splash.rehydrate) })
+        }
+        None => Some(splash),
+    }
+}
+
+/// `PotionSplashEvent`: the splash potion `potion` broke on `hit_entity` or `hit_block`, its
+/// effects reaching `affected` (entity, intensity from 0 to 1). Who it reaches and how
+/// strongly as plugins leave it, or `None` if they cancelled it.
+pub fn on_potion_splash(server: &mut Server, world: usize, potion: i32, hit_entity: Option<i32>, hit_block: Option<(BlockPos, usize)>, affected: Vec<(i32, f64)>) -> Option<Vec<(i32, f64)>> {
+    if !listens(server, "PotionSplashEvent") || !server.worlds[world].entities.contains_key(&potion) {
+        return Some(affected);
+    }
+    let mut args = splash_args(server, world, potion, hit_entity, hit_block);
+    let list: Vec<Value> = affected.iter().filter_map(|(id, intensity)| {
+        let entity = actor_value(server, world, *id);
+        (!entity.is_null()).then(|| bmap! { "entity" => entity, "intensity" => *intensity })
+    }).collect();
+    args.set("affected", Value::List(list));
+    match fire(server, "PotionSplashEvent", "event.potion_splash", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.get("affected").as_list().map(|l| l.iter().filter_map(|a| Some((a.i32("id")?, a.f64("intensity")?))).collect()).unwrap_or(affected)),
+        None => Some(affected),
+    }
+}
+
+/// `LingeringPotionSplashEvent`: the lingering potion `potion` broke on `hit_entity` or
+/// `hit_block`, leaving the cloud `cloud`. Returns whether plugins let the cloud stay.
+pub fn on_lingering_splash(server: &mut Server, world: usize, potion: i32, hit_entity: Option<i32>, hit_block: Option<(BlockPos, usize)>, cloud: i32) -> bool {
+    if !listens(server, "LingeringPotionSplashEvent") || !server.worlds[world].entities.contains_key(&potion) {
+        return true;
+    }
+    let mut args = splash_args(server, world, potion, hit_entity, hit_block);
+    args.set("cloud", actor_value(server, world, cloud));
+    match fire(server, "LingeringPotionSplashEvent", "event.lingering_splash", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `AreaEffectCloudApplyEvent`: the cloud `cloud` is to give its effects to `affected`. Who
+/// gets them as plugins leave it (none if cancelled).
+pub fn on_cloud_apply(server: &mut Server, world: usize, cloud: i32, affected: Vec<i32>) -> Vec<i32> {
+    if !listens(server, "AreaEffectCloudApplyEvent") || !server.worlds[world].entities.contains_key(&cloud) {
+        return affected;
+    }
+    let list: Vec<Value> = affected.iter().map(|id| actor_value(server, world, *id)).filter(|v| !v.is_null()).collect();
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, cloud), "affected" => Value::List(list) };
+    match fire(server, "AreaEffectCloudApplyEvent", "event.cloud_apply", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => Vec::new(),
+        Some(result) if !result.get("affected").is_null() => ids_from(result.get("affected")),
+        _ => affected,
     }
 }

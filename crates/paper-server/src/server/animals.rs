@@ -228,8 +228,9 @@ impl Server {
         Some(id)
     }
 
-    /// Right-click on an entity (`Mob.mobInteract` for what this server knows).
-    pub(super) fn handle_interact(&mut self, id: i32, target: i32, hand: i32) {
+    /// Right-click on an entity, `clicked` where on it relative to its position
+    /// (`Mob.mobInteract` for what this server knows).
+    pub(super) fn handle_interact(&mut self, id: i32, target: i32, hand: i32, clicked: (f64, f64, f64)) {
         let Some(p) = self.players.get(&id) else { return };
         if p.dead || p.game_mode == GameMode::Spectator {
             return;
@@ -237,12 +238,19 @@ impl Server {
         let (world, at) = (p.world, Vec3::new(p.loc.x, p.loc.y, p.loc.z));
         let slot = self.hand_slot(id, hand);
         let held = self.players[&id].inventory[slot].0.clone();
+        // Another player: nothing happens here, but plugins hear of it.
+        if let Some(other) = self.players.get(&target).filter(|o| o.world == world && !o.dead && target != id) {
+            if Vec3::new(other.loc.x, other.loc.y, other.loc.z).distance_squared(at) <= 64.0 && !crate::plugins::events::on_interact_entity(self, id, target, hand, clicked) {
+                self.resync_inventory(id);
+            }
+            return;
+        }
         let Some(e) = self.worlds[world].entities.get(&target) else { return };
         if e.pos.distance_squared(at) > 64.0 {
             return;
         }
-        // Plugins may stop it (`PlayerInteractEntityEvent`): no riding, trading, taming, ...
-        if !crate::plugins::events::on_interact_entity(self, id, target, hand) {
+        // Plugins may stop it (`PlayerInteractAtEntityEvent`): no riding, trading, taming, ...
+        if !crate::plugins::events::on_interact_entity(self, id, target, hand, clicked) {
             self.resync_inventory(id);
             return;
         }

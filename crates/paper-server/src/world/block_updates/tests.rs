@@ -879,6 +879,34 @@ fn fire_waits_for_plugins() {
 }
 
 #[test]
+fn fire_waits_for_plugins_to_light_a_portal() {
+    let mut w = world();
+    w.updates.vetting.portals = true;
+    // An obsidian frame along x, two wide and three high inside.
+    let frame: Vec<BlockPos> = (0..4).flat_map(|x| (0..5).map(move |y| p(x, Y + y, 0))).filter(|q| q.x == 0 || q.x == 3 || q.y == Y || q.y == Y + 4).collect();
+    for q in &frame {
+        set(&mut w, *q, s("obsidian"));
+    }
+    let inside: Vec<BlockPos> = (1..3).flat_map(|x| (1..4).map(move |y| p(x, Y + y, 0))).collect();
+    let mut level = Level::new(&mut w);
+    level.actor = Some(7);
+    level.set_block(p(1, Y + 1, 0), s("fire"), flags::ALL);
+    let asked = std::mem::take(&mut w.updates.asks);
+    let sorted = |mut v: Vec<BlockPos>| {
+        v.sort_by_key(|q| (q.x, q.y, q.z));
+        v
+    };
+    assert!(matches!(asked.as_slice(), [Ask::Portal { pos, shape, by: Some(7) }] if *pos == p(1, Y + 1, 0) && sorted(shape.inside()) == sorted(inside.clone())), "{asked:?}");
+    let Ask::Portal { shape, .. } = &asked[0] else { unreachable!() };
+    assert_eq!(shape.frame().len(), 10, "the frame without its corners");
+    answer(&mut w, &asked[0], false, &|_, _| true);
+    assert_eq!(name(&w, p(1, Y + 1, 0)), "fire", "denied, the fire stays");
+    assert!(inside[1..].iter().all(|q| name(&w, *q) == "air"));
+    answer(&mut w, &asked[0], true, &|_, _| true);
+    assert!(inside.iter().all(|q| name(&w, *q) == "nether_portal"), "allowed, the portal is lit");
+}
+
+#[test]
 fn fluids_wait_for_plugins_to_flow() {
     let mut w = world();
     w.updates.vetting.flow = true;
