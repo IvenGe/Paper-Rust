@@ -451,6 +451,8 @@ pub enum EntityKind {
     /// `growth` is added to the radius every tick and `on_use` each time it affects
     /// something; `breath` marks the dragon's.
     Cloud { potion: String, owner: Option<i32>, radius: f32, duration: i32, wait: i32, uses: Vec<(i32, u64)>, growth: f32, on_use: f32, breath: bool },
+    /// An item frame, glow item frame or painting (see `hanging`).
+    Hanging(Box<super::hanging::Hanging>),
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }
@@ -575,6 +577,9 @@ impl Entity {
     }
 
     pub fn bounding_box(&self) -> Aabb {
+        if let EntityKind::Hanging(h) = &self.kind {
+            return h.bounding_box(&self.info.name);
+        }
         let scale = if let EntityKind::Mob(m) = &self.kind { if m.baby { 0.5 } else { 1.0 } } else { 1.0 };
         Aabb::of_entity(self.pos, self.info.width as f64 * scale, self.info.height as f64 * scale)
     }
@@ -646,7 +651,7 @@ pub fn friction_below(world: &World, pos: Vec3) -> f64 {
 /// (`CraftEventFactory.doEntityAddEventCalling`).
 pub fn announced_plainly(e: &Entity) -> bool {
     match e.kind {
-        EntityKind::FallingBlock { .. } | EntityKind::ExperienceOrb { .. } | EntityKind::Tnt { .. } | EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } => true,
+        EntityKind::FallingBlock { .. } | EntityKind::ExperienceOrb { .. } | EntityKind::Tnt { .. } | EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Hanging(_) => true,
         EntityKind::Other => e.info.name != "minecraft:lightning_bolt",
         _ => false,
     }

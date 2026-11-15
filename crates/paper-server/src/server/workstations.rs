@@ -82,6 +82,14 @@ pub fn custom_name_of(stack: &ItemStack) -> Option<Component> {
     custom_name(stack)
 }
 
+/// A stack named `name` (its `custom_name` component), as an entity dropping itself names it.
+pub fn with_custom_name(mut stack: ItemStack, name: Component) -> ItemStack {
+    let mut data = Vec::new();
+    paper_nbt::write_network(&mut data, &name.to_nbt());
+    set_component(&mut stack, "minecraft:custom_name", data);
+    stack
+}
+
 fn custom_name(stack: &ItemStack) -> Option<Component> {
     let ty = component("minecraft:custom_name")?;
     let (_, data) = stack.added.iter().find(|(t, _)| *t == ty)?;

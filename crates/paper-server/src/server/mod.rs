@@ -49,6 +49,7 @@ fn falling_drops_nothing(state: u32) -> bool {
     matches!(paper_data::blocks::block_of_state(state).name, "minecraft:suspicious_sand" | "minecraft:suspicious_gravel")
 }
 pub mod golems;
+pub mod hanging;
 pub mod score_commands;
 pub mod stats;
 pub mod dragon;

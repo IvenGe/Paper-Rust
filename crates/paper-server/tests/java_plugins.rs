@@ -2211,6 +2211,60 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
 
+    // An item frame Alice hangs on a wall (HangingPlaceEvent): refused, then let be. Then an
+    // item goes in and is knocked out (Paper's PlayerItemFrameChangeEvent), and the frame
+    // breaks (HangingBreakByEntityEvent). Then frames and paintings through the API.
+    let (wall, front) = (feet.offset(2, 0, -2), feet.offset(1, 0, -2));
+    put(&server, &[(wall, "minecraft:stone")], false);
+    let frame_item = Slot::of(paper_data::items::id("minecraft:item_frame").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            s.teleport(alice_id, home);
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = frame_item;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    let frame_at = |server: &paper_server::RunningServer| {
+        server.handle.run(move |s| s.worlds[0].entities.values().find(|e| !e.removed && matches!(&e.kind, EntityKind::Hanging(h) if h.block == front)).map(|e| e.id)).unwrap()
+    };
+    for (mode, placed) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        pause(&mut alice, Duration::from_millis(100));
+        alice.send(&play::UseItemOn { hand: VarInt(0), pos: wall, face: VarInt(4), cursor_x: 0.0, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(191) });
+        seen = poll(&mut alice, "HANGPLACE ITEM_FRAME");
+        assert!(seen.contains("HANGPLACE ITEM_FRAME WEST ITEM_FRAME"), "{mode}: {seen}");
+        pause(&mut alice, Duration::from_millis(100));
+        assert_eq!(frame_at(&server).is_some(), placed, "{mode}: {seen}");
+    }
+    let frame = frame_at(&server).unwrap();
+    let emerald = Slot::of(paper_data::items::id("minecraft:emerald").unwrap() as i32, 1);
+    server.handle.run(move |s| s.set_inventory_slot(alice_id, 36 + held, emerald)).unwrap();
+    alice.send(&play::Interact { entity_id: VarInt(frame), hand: VarInt(0), target: paper_protocol::types::LpVec3(0.0, 0.0, 0.0), sneaking: false });
+    seen = poll(&mut alice, "FRAME PLACE EMERALD");
+    assert!(seen.contains("FRAME PLACE EMERALD"), "{seen}");
+    alice.send(&play::Attack { entity_id: VarInt(frame) });
+    seen = poll(&mut alice, "FRAME REMOVE EMERALD");
+    assert!(seen.contains("FRAME REMOVE EMERALD"), "{seen}");
+    pause(&mut alice, Duration::from_millis(600));
+    alice.send(&play::Attack { entity_id: VarInt(frame) });
+    seen = poll(&mut alice, "HANGBREAK ITEM_FRAME ENTITY by PLAYER");
+    assert!(seen.contains("HANGBREAK ITEM_FRAME ENTITY by PLAYER"), "{seen}");
+    assert!(frame_at(&server).is_none(), "{seen}");
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    put(&server, &[(wall, "minecraft:air")], false);
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    alice.command("apitest hanging");
+    expect_line(&mut alice, "hanging: ok");
+
     // A plugin's block populator and ChunkPopulateEvent: chunks newly made far away get both.
     alice.command("apitest populator");
     expect_line(&mut alice, "populator: added");

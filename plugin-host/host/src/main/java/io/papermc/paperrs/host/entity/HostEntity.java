@@ -282,6 +282,10 @@ public final class HostEntity implements HostProxies.Backed {
     }
 
     public BlockFace getFacing() {
+        // A frame or painting faces the way it hangs.
+        if (this.state().get("facing") instanceof String facing) {
+            return BlockFace.valueOf(facing);
+        }
         final int yaw = Math.floorMod((int) Math.floor(this.getYaw() + 45), 360);
         return yaw < 90 ? BlockFace.SOUTH : yaw < 180 ? BlockFace.WEST : yaw < 270 ? BlockFace.NORTH : BlockFace.EAST;
     }
@@ -929,6 +933,86 @@ public final class HostEntity implements HostProxies.Backed {
     public <T extends org.bukkit.entity.Projectile> T launchProjectile(final Class<? extends T> projectile, final @Nullable Vector velocity,
                                                                      final java.util.function.@Nullable Consumer<? super T> function) {
         return Entities.launch(this.server, this.self(), projectile, velocity, function);
+    }
+
+    // item frames and paintings (Hanging, ItemFrame, Painting)
+
+    /** The side of the block it hangs on ({@code Attachable}): opposite the way it faces. */
+    public BlockFace getAttachedFace() {
+        return this.getFacing().getOppositeFace();
+    }
+
+    public void setFacingDirection(final BlockFace face) {
+        this.setFacingDirection(face, false);
+    }
+
+    /**
+     * CraftHanging's {@code setFacingDirection}: only where it can then still hang, unless forced;
+     * paintings only on walls.
+     */
+    public boolean setFacingDirection(final BlockFace face, final boolean force) {
+        com.google.common.base.Preconditions.checkArgument(face != null && face.isCartesian(), "%s is not a valid facing direction", face);
+        if (this.self instanceof org.bukkit.entity.Painting) {
+            com.google.common.base.Preconditions.checkArgument(face != BlockFace.UP && face != BlockFace.DOWN, "%s is not a valid facing direction", face);
+        }
+        this.set("facing", face.name(), "force", force);
+        return this.getFacing() == face;
+    }
+
+    /** {@code ItemFrame.setItem(item, playSound)}: it holds one of the item. */
+    public void setItem(final @Nullable ItemStack item, final boolean playSound) {
+        this.set("item", HostItemStack.toValue(item), "sound", playSound);
+    }
+
+    public org.bukkit.Rotation getRotation() {
+        return org.bukkit.Rotation.values()[Math.floorMod(Values.i32(this.state(), "rotation", 0), 8)];
+    }
+
+    public void setRotation(final org.bukkit.Rotation rotation) {
+        com.google.common.base.Preconditions.checkArgument(rotation != null, "Rotation cannot be null");
+        this.set("rotation", rotation.ordinal());
+    }
+
+    public boolean isVisible() {
+        return !this.isInvisible();
+    }
+
+    public void setVisible(final boolean visible) {
+        this.setInvisible(!visible);
+    }
+
+    public boolean isFixed() {
+        return Values.bool(this.state(), "fixed", false);
+    }
+
+    public void setFixed(final boolean fixed) {
+        this.set("fixed", fixed);
+    }
+
+    public float getItemDropChance() {
+        return (float) Values.f64(this.state(), "drop_chance", 1.0);
+    }
+
+    public void setItemDropChance(final float chance) {
+        com.google.common.base.Preconditions.checkArgument(chance >= 0.0F && chance <= 1.0F, "Chance (%s) outside range [0, 1]", chance);
+        this.set("drop_chance", (double) chance);
+    }
+
+    public org.bukkit.Art getArt() {
+        final org.bukkit.Art art = org.bukkit.Registry.ART.get(org.bukkit.NamespacedKey.fromString(Values.str(this.state(), "art", "minecraft:kebab")));
+        return art != null ? art : org.bukkit.Art.KEBAB;
+    }
+
+    public boolean setArt(final org.bukkit.Art art) {
+        return this.setArt(art, false);
+    }
+
+    /** CraftPainting's {@code setArt}: only if it then fits where it hangs, unless forced. */
+    public boolean setArt(final org.bukkit.Art art, final boolean force) {
+        com.google.common.base.Preconditions.checkArgument(art != null, "Art cannot be null");
+        final String key = art.getKey().toString();
+        this.set("art", key, "force", force);
+        return key.equals(Values.str(this.state(), "art", ""));
     }
 
     // thrown items (ThrowableProjectile)

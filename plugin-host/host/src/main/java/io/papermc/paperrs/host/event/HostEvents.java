@@ -192,6 +192,10 @@ public final class HostEvents {
         GATED.put("WorldBorderBoundsChangeEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent.class);
         GATED.put("WorldBorderCenterChangeEvent", io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent.class);
         GATED.put("WorldBorderBoundsChangeFinishEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent.class);
+        GATED.put("HangingPlaceEvent", org.bukkit.event.hanging.HangingPlaceEvent.class);
+        GATED.put("HangingBreakEvent", org.bukkit.event.hanging.HangingBreakEvent.class);
+        GATED.put("EntityBreakEvent", io.papermc.paper.event.entity.EntityBreakEvent.class);
+        GATED.put("PlayerItemFrameChangeEvent", io.papermc.paper.event.player.PlayerItemFrameChangeEvent.class);
     }
 
     private final CraftServer server;
@@ -607,6 +611,43 @@ public final class HostEvents {
             return Values.of("cancelled", true);
         }
         return Values.of("cancelled", false);
+    }
+
+    /**
+     * Bukkit's {@code HangingBreakEvent} ({@code HangingBreakByEntityEvent} when an entity dealt the
+     * blow), then Paper's {@code EntityBreakEvent} ({@code EntityBreakByEntityEvent}) starting from
+     * what the first left, as {@code BlockAttachedEntity} fires them.
+     */
+    private Object hangingBreak(final Map<String, Object> args) {
+        final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("target")));
+        if (entity == null) {
+            return Values.of();
+        }
+        final String cause = Values.str(args, "cause", "DEFAULT");
+        final org.bukkit.entity.Entity remover = args.get("remover") instanceof Map<?, ?> r ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(r)) : null;
+        org.bukkit.damage.DamageSource source = null;
+        if (remover != null) {
+            org.bukkit.damage.DamageType type = org.bukkit.Registry.DAMAGE_TYPE.get(org.bukkit.NamespacedKey.fromString(Values.str(args, "damage_type", "minecraft:generic")));
+            if (type == null) {
+                type = org.bukkit.damage.DamageType.GENERIC;
+            }
+            final org.bukkit.entity.Entity causing = args.get("attacker") instanceof Map<?, ?> a ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(a)) : remover;
+            source = new io.papermc.paperrs.host.entity.HostDamageSource(type, causing, remover, null);
+        }
+        boolean cancelled = false;
+        if (entity instanceof org.bukkit.entity.Hanging hanging) {
+            final org.bukkit.event.hanging.HangingBreakEvent.RemoveCause removeCause = org.bukkit.event.hanging.HangingBreakEvent.RemoveCause.valueOf(cause);
+            final org.bukkit.event.hanging.HangingBreakEvent event = remover != null
+                ? new org.bukkit.event.hanging.HangingBreakByEntityEvent(hanging, remover, source, removeCause)
+                : new org.bukkit.event.hanging.HangingBreakEvent(hanging, removeCause);
+            cancelled = !event.callEvent();
+        }
+        final io.papermc.paper.event.entity.EntityBreakEvent.RemoveCause paperCause = io.papermc.paper.event.entity.EntityBreakEvent.RemoveCause.valueOf(cause);
+        final io.papermc.paper.event.entity.EntityBreakEvent event = remover != null
+            ? new io.papermc.paper.event.entity.EntityBreakByEntityEvent(entity, remover, source, paperCause)
+            : new io.papermc.paper.event.entity.EntityBreakEvent(entity, paperCause);
+        event.setCancelled(cancelled);
+        return Values.of("cancelled", !event.callEvent());
     }
 
     private Block block(final Map<String, Object> args) {
@@ -1059,6 +1100,27 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.knockback" -> this.knockback(args);
+            case "event.hanging_place" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Hanging hanging)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.hanging.HangingPlaceEvent event = new org.bukkit.event.hanging.HangingPlaceEvent(hanging, this.player(args), this.block(args),
+                    org.bukkit.block.BlockFace.valueOf(Values.str(args, "face", "NORTH")), Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND,
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.hanging_break" -> this.hangingBreak(args);
+            case "event.item_frame_change" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.ItemFrame frame)) {
+                    yield Values.of();
+                }
+                final io.papermc.paper.event.player.PlayerItemFrameChangeEvent event = new io.papermc.paper.event.player.PlayerItemFrameChangeEvent(this.player(args), frame,
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")),
+                    io.papermc.paper.event.player.PlayerItemFrameChangeEvent.ItemFrameChangeAction.valueOf(Values.str(args, "action", "PLACE")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "item", io.papermc.paperrs.host.item.HostItemStack.toValue(event.getItemStack()));
+            }
             case "event.border_resize" -> {
                 // `/worldborder set` and `add` (the API fires it in HostWorldBorder).
                 final World world = this.server.getWorld(Values.str(args, "world"));

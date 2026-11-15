@@ -259,6 +259,10 @@ impl Server {
             self.board_boat(id, world, target);
             return;
         }
+        if crate::world::hanging::is_frame(&e.info.name) {
+            self.use_item_frame(id, world, target, hand);
+            return;
+        }
         let Some(mob) = e.mob().filter(|m| !m.living.is_dead()) else { return };
         let (name, baby, sheared, age, in_love) = (e.info.name.clone(), mob.baby, mob.sheared, mob.age, mob.in_love);
         let merchant = mob.merchant.is_some();

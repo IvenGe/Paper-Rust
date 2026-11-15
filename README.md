@@ -144,6 +144,11 @@ What works:
 * **Signs**: the editor opens when a sign is placed and when it is clicked (on the side the
   player faces); the text is kept and shown to everyone, dyes colour it, glow ink sacs make
   it glow (ink sacs undo that), and honeycomb waxes the sign against editing.
+* **Item frames and paintings**: item frames and glow item frames hang on any side of a
+  block, paintings on walls, taking a random one of the largest variants that fit. Frames
+  take an item, turn it an eighth at each click and give it back when hit; a hit, an arrow or
+  an explosion breaks them, and so does losing the block behind (checked every 100 ticks, as
+  on Paper), dropping them (not for creative players). They are saved in vanilla's format.
 * **Riding and pets**: boats and rafts are put on water (by players and dispensers),
   boarded (two to a boat, one beside a chest), steered, float, and break into their item;
   chest boats' chests open with a sneaking click or the rider's inventory key, spill when
@@ -344,7 +349,10 @@ What works:
   pushed), and `EntityBlockFormEvent` for snow golems' snow (a snow golem's melting is a
   `FIRE_TICK` cause, not Paper's `MELTING`). Paper's world border events
   (`WorldBorderBoundsChangeEvent`, `WorldBorderCenterChangeEvent` and
-  `WorldBorderBoundsChangeFinishEvent`) come from `/worldborder` and plugins' changes alike. Players,
+  `WorldBorderBoundsChangeFinishEvent`) come from `/worldborder` and plugins' changes alike, as
+  do `HangingPlaceEvent`, `HangingBreakEvent` (`...ByEntityEvent` for hits and explosions),
+  Paper's `EntityBreakEvent` after it, and Paper's `PlayerItemFrameChangeEvent` for item
+  frames. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -419,6 +427,9 @@ What works:
     methods, what a player looks at (`getTargetBlock`, `getLineOfSight`), client options, and
     packets for one client (`sendExperienceChange`, `sendBlockDamage`, `sendEquipmentChange`,
     `sendHurtAnimation`, the demo and credits screens, `transfer`);
+  * item frames and paintings (`ItemFrame`: item, rotation, fixed, visible, drop chance;
+    `Painting#setArt`, which like `Hanging#setFacingDirection` only takes where it then
+    fits unless forced; `Art`'s sizes; spawned against a neighbouring block as on Paper);
   * signs as block states (`Sign`, `SignSide`: both sides' lines, colour and glow, waxing),
     and `SignChangeEvent` for what players write;
   * world borders (`World.getWorldBorder`: size, moving to a size over time, center, damage,

@@ -6,12 +6,12 @@ import io.papermc.paperrs.host.Unsupported;
 
 /** Every abstract member of {@code Art}, unsupported until overridden. */
 @SuppressWarnings({"deprecation", "removal", "unchecked", "rawtypes", "unused"})
-public final class HostArt implements org.bukkit.Art {
+public abstract class AbstractArt implements org.bukkit.Art {
     protected final org.bukkit.NamespacedKey key;
     protected final int ordinal;
     protected final String translationKey;
 
-    public HostArt(org.bukkit.NamespacedKey key, int ordinal, String translationKey) {
+    protected AbstractArt(org.bukkit.NamespacedKey key, int ordinal, String translationKey) {
         this.key = key;
         this.ordinal = ordinal;
         this.translationKey = translationKey;
@@ -79,6 +79,6 @@ public final class HostArt implements org.bukkit.Art {
 
     @Override
     public String toString() {
-        return "HostArt{" + this.key + "}";
+        return "AbstractArt{" + this.key + "}";
     }
 }

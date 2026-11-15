@@ -29,7 +29,7 @@ org.bukkit.attribute.Attribute                      HostAttribute        final v
 org.bukkit.enchantments.Enchantment                 AbstractEnchantment  abstract value
 org.bukkit.potion.PotionEffectType                  AbstractPotionEffectType abstract value
 org.bukkit.block.Biome                              HostBiome            final value
-org.bukkit.Art                                      HostArt              final value
+org.bukkit.Art                                      AbstractArt          abstract value
 org.bukkit.damage.DamageType                        HostDamageType       final value
 org.bukkit.inventory.MenuType$Typed                 HostMenuType         final value
 org.bukkit.Fluid                                    HostFluid            final value

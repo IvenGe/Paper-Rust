@@ -318,7 +318,8 @@ impl Server {
             return;
         }
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
-        if e.info.name == super::dragon::DRAGON {
+        // The dragon is pushed by nothing; frames and paintings hang where they are.
+        if e.info.name == super::dragon::DRAGON || matches!(e.kind, EntityKind::Hanging(_)) {
             return;
         }
         let resistance = match &e.kind {
@@ -357,6 +358,9 @@ impl Server {
         }
         if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Boat { .. })) {
             return self.hurt_boat(world, id, &damage, amount);
+        }
+        if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Hanging(_))) {
+            return self.hurt_hanging(world, id, &damage, amount);
         }
         let tick = self.tick;
         let Some(e) = self.worlds[world].entities.get(&id) else { return false };
@@ -981,7 +985,7 @@ impl Server {
                 if !creative_flying {
                     player_knockback.push((id, push));
                 }
-            } else if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+            } else if let Some(e) = self.worlds[world].entities.get_mut(&id).filter(|e| !matches!(e.kind, EntityKind::Hanging(_))) {
                 e.vel = e.vel.add(push);
                 e.force_sync = true;
             }

@@ -535,6 +535,34 @@ final class ApiTests implements Listener, CommandExecutor {
                     this.borderEvents.clear();
                     report(sender, "borderevents", failures);
                 }
+                case "hanging" -> {
+                    // Item frames and paintings through the API: spawned against a block, given an
+                    // item, turned, and a painting given art that must fit unless forced.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final Block wall = player.getLocation().getBlock().getRelative(org.bukkit.block.BlockFace.EAST, 3);
+                    wall.setType(Material.STONE);
+                    final Location at = wall.getRelative(org.bukkit.block.BlockFace.WEST).getLocation();
+                    final org.bukkit.entity.ItemFrame frame = player.getWorld().spawn(at, org.bukkit.entity.ItemFrame.class);
+                    check(failures, frame.getFacing() == org.bukkit.block.BlockFace.WEST && frame.getAttachedFace() == org.bukkit.block.BlockFace.EAST, "frame facing " + frame.getFacing());
+                    check(failures, !frame.setFacingDirection(org.bukkit.block.BlockFace.NORTH, false), "nothing to hang on to the south");
+                    frame.setItem(new ItemStack(Material.EMERALD, 5), false);
+                    check(failures, frame.getItem().getType() == Material.EMERALD && frame.getItem().getAmount() == 1, "frame item " + frame.getItem());
+                    frame.setRotation(org.bukkit.Rotation.CLOCKWISE);
+                    frame.setFixed(true);
+                    frame.setVisible(false);
+                    frame.setItemDropChance(0.25F);
+                    check(failures, frame.getRotation() == org.bukkit.Rotation.CLOCKWISE && frame.isFixed() && !frame.isVisible() && frame.getItemDropChance() == 0.25F, "frame settings");
+                    frame.remove();
+                    final org.bukkit.entity.Painting painting = player.getWorld().spawn(at, org.bukkit.entity.Painting.class);
+                    final org.bukkit.Art art = painting.getArt();
+                    check(failures, painting.getFacing() == org.bukkit.block.BlockFace.WEST && art.getBlockWidth() == 1 && art.getBlockHeight() == 1, "a painting one block big: " + art.getKey() + " facing " + painting.getFacing());
+                    check(failures, !painting.setArt(org.bukkit.Art.POINTER) && painting.getArt() == art, "the pointer does not fit");
+                    check(failures, painting.setArt(org.bukkit.Art.POINTER, true) && painting.getArt() == org.bukkit.Art.POINTER && org.bukkit.Art.POINTER.getBlockWidth() == 4, "forced " + painting.getArt().getKey());
+                    painting.remove();
+                    wall.setType(Material.AIR);
+                    report(sender, "hanging", failures);
+                }
                 case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
                     try {
@@ -1566,6 +1594,22 @@ final class ApiTests implements Listener, CommandExecutor {
     private final List<String> borderEvents = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** The border {@code apitest borders} gave Alice. */
     private org.bukkit.WorldBorder virtualBorder;
+
+    @EventHandler
+    public void onHangingPlace(final org.bukkit.event.hanging.HangingPlaceEvent event) {
+        this.blockEvent(event, "HANGPLACE " + event.getEntity().getType() + " " + event.getBlockFace() + " " + event.getItemStack().getType());
+    }
+
+    @EventHandler
+    public void onHangingBreak(final org.bukkit.event.hanging.HangingBreakEvent event) {
+        final String by = event instanceof org.bukkit.event.hanging.HangingBreakByEntityEvent b ? " by " + b.getRemover().getType() : "";
+        this.blockEvent(event, "HANGBREAK " + event.getEntity().getType() + " " + event.getCause() + by);
+    }
+
+    @EventHandler
+    public void onItemFrameChange(final io.papermc.paper.event.player.PlayerItemFrameChangeEvent event) {
+        this.blockEvent(event, "FRAME " + event.getAction() + " " + event.getItemStack().getType());
+    }
 
     @EventHandler
     public void onBorderCenter(final io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent event) {

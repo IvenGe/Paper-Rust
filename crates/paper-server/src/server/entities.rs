@@ -92,7 +92,7 @@ impl Server {
     /// particular spawn event (`doEntityAddEventCalling`: primed TNT, falling blocks,
     /// experience orbs, clouds, eyes of ender, ...): whether it stays. A refused one is gone
     /// before anyone sees it.
-    pub(super) fn keep_spawned(&mut self, world: usize, id: i32) -> bool {
+    pub(crate) fn keep_spawned(&mut self, world: usize, id: i32) -> bool {
         if crate::plugins::events::on_entity_spawn(self, world, id) {
             return true;
         }
@@ -376,6 +376,11 @@ impl Server {
             EntityKind::Cloud { .. } => {
                 self.worlds[world].entities.insert(id, e);
                 self.tick_cloud(world, id);
+                return;
+            }
+            EntityKind::Hanging(_) => {
+                self.worlds[world].entities.insert(id, e);
+                self.tick_hanging(world, id);
                 return;
             }
             EntityKind::FallingBlock { state, time, fall } => {
@@ -798,15 +803,22 @@ impl Server {
         let data = match &e.kind {
             EntityKind::FallingBlock { state, .. } => *state as i32,
             EntityKind::Arrow { owner, .. } | EntityKind::Thrown { owner, .. } => owner.unwrap_or(0),
+            EntityKind::Hanging(h) => h.facing as i32,
             _ => 0,
+        };
+        // A hanging entity is sent at its block (`getAddEntityPacket`); the client works out
+        // its board from that and the way it faces.
+        let at = match &e.kind {
+            EntityKind::Hanging(h) => Vec3::new(h.block.x as f64, h.block.y as f64, h.block.z as f64),
+            _ => e.pos,
         };
         let mut out = vec![Bytes::from(encode_packet(&play::AddEntity {
             entity_id: VarInt(id),
             uuid: e.uuid,
             entity_type: VarInt(e.info.id),
-            x: e.pos.x,
-            y: e.pos.y,
-            z: e.pos.z,
+            x: at.x,
+            y: at.y,
+            z: at.z,
             velocity: LpVec3(e.vel.x, e.vel.y, e.vel.z),
             pitch: Angle(e.pitch),
             yaw: Angle(e.yaw),
@@ -957,6 +969,24 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         EntityKind::Item { stack, .. } => {
             if let Some(i) = info.data_index("DATA_ITEM") {
                 m = m.item_stack(i, stack);
+            }
+        }
+        // The way it faces, a frame's item and turn, a painting's variant (an entry of
+        // `painting_variant`, sent as its id + 1 as it could be given inline).
+        EntityKind::Hanging(h) => {
+            if let Some(i) = info.data_index("DATA_DIRECTION") {
+                m = m.direction(i, h.facing as i32);
+            }
+            if let Some(i) = info.data_index("DATA_ITEM").filter(|_| !spawning || !h.item.is_empty()) {
+                m = m.item_stack(i, &h.item);
+            }
+            if let Some(i) = info.data_index("DATA_ROTATION").filter(|_| !spawning || h.rotation != 0) {
+                m = m.varint(i, h.rotation as i32);
+            }
+            if let Some(&(i, serializer)) = info.data.get("DATA_PAINTING_VARIANT_ID") {
+                if let Some(variant) = paper_data::synced::id("minecraft:painting_variant", &h.variant) {
+                    m = m.varint_as(i, serializer as i32, variant + 1);
+                }
             }
         }
         EntityKind::Mob(mob) => {

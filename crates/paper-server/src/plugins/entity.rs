@@ -167,6 +167,20 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("radius_per_tick", *growth as f64);
             out.set("radius_on_use", *on_use as f64);
         }
+        // `Hanging`: the way it faces and its block; a frame's item, turn and settings; a
+        // painting's variant (`Art`).
+        EntityKind::Hanging(h) => {
+            out.set("facing", ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"][h.facing as usize % 6]);
+            out.set("hanging_block", Value::List(vec![h.block.x.into(), h.block.y.into(), h.block.z.into()]));
+            if crate::world::hanging::is_frame(&e.info.name) {
+                out.set("item", item_value(&h.item));
+                out.set("rotation", h.rotation as i32);
+                out.set("fixed", h.fixed);
+                out.set("drop_chance", h.drop_chance as f64);
+            } else {
+                out.set("art", h.variant.clone());
+            }
+        }
         EntityKind::Other if e.info.name == "minecraft:lightning_bolt" => out.set("effect", e.flags.visual_only),
         EntityKind::EyeOfEnder { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
@@ -242,6 +256,16 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 "minecraft:item" => bail!("Cannot spawn an item entity without an item; use World#dropItem"),
                 "minecraft:player" => bail!("Cannot spawn a player"),
                 "minecraft:arrow" => server.spawn_arrow_towards(world, pos, Vec3::new(0.0, 0.0, 1.0), 0.0, 0.0, None, 2.0, false, true),
+                name if crate::world::hanging::is_hanging(name) => {
+                    // Turned the way it hangs, whatever the location's yaw; plugins hear of it
+                    // as of any new entity (`EntitySpawnEvent`).
+                    let id = server.spawn_hanging(world, name, pos).ok_or_else(|| anyhow!("cannot spawn {ty}"))?;
+                    if !server.keep_spawned(world, id) {
+                        bail!("the entity was not spawned");
+                    }
+                    let e = &server.worlds[world].entities[&id];
+                    return Ok(entity_value(server, world, e));
+                }
                 _ => {
                     let reason = match args.str("reason") {
                         Some("COMMAND") => SpawnReason::Command,
@@ -518,6 +542,35 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let source = target_id(server, args.get("source"));
             // Players by uuid, for `Animals.setBreedCause`.
             let server_players: Vec<(i32, String)> = if args.get("love_cause").is_null() { Vec::new() } else { server.players.values().map(|p| (p.entity_id, p.uuid().to_string())).collect() };
+            // `Painting.setArt` and `Hanging.setFacingDirection`: only where it can then still
+            // hang, unless forced (the host reads whether it took from the state).
+            if let Some(EntityKind::Hanging(h)) = server.worlds[world].entities.get(&id).map(|e| &e.kind) {
+                let mut changed = (**h).clone();
+                if let Some(art) = args.str("art") {
+                    changed.variant = art.to_owned();
+                }
+                if let Some(face) = args.str("facing") {
+                    if let Some(f) = ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"].iter().position(|n| *n == face) {
+                        changed.facing = f as u8;
+                    }
+                }
+                let name = server.worlds[world].entities[&id].info.name.clone();
+                if (changed.variant != h.variant || changed.facing != h.facing) && (args.bool("force") == Some(true) || changed.survives(&server.worlds[world], &name, id)) {
+                    let bb = changed.bounding_box(&name);
+                    let e = server.worlds[world].entities.get_mut(&id).unwrap();
+                    e.pos = Vec3::new((bb.min.x + bb.max.x) / 2.0, (bb.min.y + bb.max.y) / 2.0, (bb.min.z + bb.max.z) / 2.0);
+                    (e.yaw, e.pitch) = crate::world::hanging::facing_rotation(changed.facing);
+                    e.head_yaw = e.yaw;
+                    e.kind = EntityKind::Hanging(Box::new(changed));
+                    e.metadata_dirty = true;
+                    server.worlds[world].reindex_entity(id);
+                }
+            }
+            let frame_item = (!args.get("item").is_null() && server.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Hanging(_)))).then(|| slot_from(args.get("item"))).transpose()?;
+            if let Some(item) = frame_item {
+                // `ItemFrame.setItem(item, playSound)`.
+                server.set_frame_item(world, id, item, args.bool("sound") != Some(false));
+            }
             let e = server.worlds[world].entities.get_mut(&id).unwrap();
             if args.bool("clear_custom_name") == Some(true) {
                 e.custom_name = None;
@@ -801,6 +854,19 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     if let Some(v) = args.i32("experience") {
                         *value = v.max(0);
                         e.metadata_dirty = true;
+                    }
+                }
+                EntityKind::Hanging(h) => {
+                    // `ItemFrame.setRotation`, `setFixed`, `setItemDropChance`.
+                    if let Some(r) = args.i32("rotation") {
+                        h.rotation = r.rem_euclid(8) as u8;
+                        e.metadata_dirty = true;
+                    }
+                    if let Some(fixed) = args.bool("fixed") {
+                        h.fixed = fixed;
+                    }
+                    if let Some(chance) = args.f64("drop_chance") {
+                        h.drop_chance = chance as f32;
                     }
                 }
                 EntityKind::Tnt { fuse } => {

@@ -2542,3 +2542,75 @@ pub fn on_border_arrived(server: &mut Server, world: usize, from: f64, to: f64, 
     let args = bmap! { "world" => server.worlds[world].name.clone(), "from" => from, "to" => to, "ticks" => ticks };
     fire(server, "WorldBorderBoundsChangeFinishEvent", "event.border_arrived", args);
 }
+
+/// `HangingPlaceEvent`: the player hung `entity` (an item frame or painting) on side `face`
+/// (0 down to 5 east) of `block`, with `item` from `hand`. Returns whether plugins let it stay.
+#[allow(clippy::too_many_arguments)]
+pub fn on_hanging_place(server: &mut Server, world: usize, entity: i32, player: i32, block: BlockPos, face: usize, hand: i32, item: &paper_protocol::types::ItemStack) -> bool {
+    if !listens(server, "HangingPlaceEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return true;
+    }
+    let Some(p) = server.players.get(&player) else { return true };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "world" => server.worlds[world].name.clone(),
+        "entity" => actor_value(server, world, entity),
+        "x" => block.x, "y" => block.y, "z" => block.z,
+        "face" => ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"][face.min(5)],
+        "hand" => hand,
+        "item" => super::api::item_value(&paper_protocol::types::Slot(Some(item.clone()))),
+    };
+    match fire(server, "HangingPlaceEvent", "event.hanging_place", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `HangingBreakEvent` (or `HangingBreakByEntityEvent` when `damage` names an entity that
+/// dealt it), then Paper's `EntityBreakEvent`: `entity` is about to break for `cause`
+/// (`ENTITY`, `EXPLOSION`, `OBSTRUCTION`, `PHYSICS` or `DEFAULT`). Returns whether plugins
+/// let it.
+pub fn on_hanging_break(server: &mut Server, world: usize, entity: i32, cause: &str, damage: Option<&crate::server::survival::Damage>) -> bool {
+    if !listens(server, "HangingBreakEvent") && !listens(server, "EntityBreakEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return true;
+    }
+    let mut args = match damage {
+        Some(d) => damage_args(server, entity, d, 0.0),
+        None => bmap! { "target" => entity_ref(server, entity) },
+    };
+    args.set("cause", cause);
+    if let Some(d) = damage {
+        args.set("damage_type", d.kind);
+    }
+    if let Some(remover) = damage.and_then(|d| d.direct).filter(|r| server.players.contains_key(r) || server.worlds[world].entities.contains_key(r)) {
+        args.set("remover", entity_ref(server, remover));
+    }
+    match fire(server, "", "event.hanging_break", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// Paper's `PlayerItemFrameChangeEvent`: the player is about to put `item` in the frame
+/// `frame`, turn it, or knock it out (`action` `PLACE`, `ROTATE` or `REMOVE`). `None` if
+/// plugins stopped it, else the item as they left it.
+pub fn on_item_frame_change(server: &mut Server, world: usize, frame: i32, player: i32, item: &paper_protocol::types::Slot, action: &str) -> Option<paper_protocol::types::Slot> {
+    if !listens(server, "PlayerItemFrameChangeEvent") || !server.worlds[world].entities.contains_key(&frame) {
+        return Some(item.clone());
+    }
+    let Some(p) = server.players.get(&player) else { return Some(item.clone()) };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "entity" => actor_value(server, world, frame),
+        "item" => super::api::item_value(item),
+        "action" => action,
+    };
+    match fire(server, "PlayerItemFrameChangeEvent", "event.item_frame_change", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => match result.get("item") {
+            Value::Null => Some(item.clone()),
+            value => Some(super::api::slot_from(value).unwrap_or_else(|_| item.clone())),
+        },
+        None => Some(item.clone()),
+    }
+}

@@ -20,6 +20,7 @@ pub mod dragon_fight;
 pub mod entity;
 pub mod entity_nbt;
 pub mod generator;
+pub mod hanging;
 pub mod light;
 pub mod merchant;
 pub mod portal;
