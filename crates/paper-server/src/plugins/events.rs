@@ -1040,6 +1040,47 @@ pub fn on_piston(server: &mut Server, world: usize, pos: BlockPos, extending: bo
     }
 }
 
+/// Block changes of the block engine (`Ask::Change`), fired in one call: `BlockGrowEvent`,
+/// `BlockFadeEvent`, `BlockFormEvent`, `BlockSpreadEvent`, `LeavesDecayEvent`,
+/// `MoistureChangeEvent`. For each, the state to change to (plugins may change it), or `None`
+/// if cancelled.
+pub fn on_block_changes(server: &mut Server, world: usize, changes: &[crate::world::block_updates::Ask]) -> Vec<Option<u32>> {
+    use crate::world::block_updates::{Ask, Change};
+    let mut list = Vec::with_capacity(changes.len());
+    for ask in changes {
+        let Ask::Change { change, pos, new, .. } = ask else { continue };
+        let mut entry = bmap! {
+            "event" => match change {
+                Change::Grow => "grow",
+                Change::Fade => "fade",
+                Change::Form => "form",
+                Change::Spread { .. } => "spread",
+                Change::Decay => "decay",
+                Change::Moisture => "moisture",
+            },
+            "x" => pos.x, "y" => pos.y, "z" => pos.z,
+            "state" => paper_data::blocks::state_to_string(*new),
+        };
+        if let Change::Spread { from } = change {
+            entry.set("from", pos_value(*from));
+        }
+        list.push(entry);
+    }
+    let defaults: Vec<Option<u32>> = changes.iter().map(|a| match a {
+        Ask::Change { new, .. } => Some(*new),
+        _ => None,
+    }).collect();
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "changes" => Value::List(list) };
+    match fire(server, "", "event.block_changes", args).as_ref().and_then(|r| r.list("results")) {
+        Some(results) if results.len() == defaults.len() => results
+            .iter()
+            .zip(&defaults)
+            .map(|(r, default)| if r.bool("cancelled") == Some(true) { None } else { r.str("state").and_then(paper_data::blocks::parse_state).or(*default) })
+            .collect(),
+        _ => defaults,
+    }
+}
+
 /// `BlockBurnEvent`: fire at `by` is to burn the block at `pos` away. Returns whether plugins
 /// let it.
 pub fn on_block_burn(server: &mut Server, world: usize, pos: BlockPos, by: BlockPos) -> bool {

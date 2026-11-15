@@ -5,7 +5,7 @@
 
 use super::fluid::{fluid_state, Fluid};
 use super::state::{block_id, block_name, get_bool, get_dir, get_int, in_tag, is_air, set_bool, set_int, with};
-use super::{flags, Dir, Kind, Level, PosExt};
+use super::{flags, Change, Dir, Kind, Level, PosExt, Then};
 use crate::world::chunk::ChunkPos;
 use paper_data::{blocks, physics};
 use paper_protocol::codec::BlockPos;
@@ -190,7 +190,7 @@ pub fn leaves_placement(level: &Level, state: u32, pos: BlockPos) -> u32 {
 
 fn turn_to_dirt(level: &mut Level, pos: BlockPos) {
     if let Some(dirt) = blocks::default_state("minecraft:dirt") {
-        level.set_block(pos, dirt, flags::ALL);
+        level.change_block(Change::Fade, pos, dirt, flags::ALL, false, None);
     }
 }
 
@@ -238,11 +238,11 @@ fn grow_to(level: &mut Level, state: u32, pos: BlockPos, age: i32) {
     // A torchflower crop fully grown is a torchflower.
     if block_name(state) == "minecraft:torchflower_crop" && age >= 2 {
         if let Some(flower) = blocks::default_state("minecraft:torchflower") {
-            level.set_block(pos, flower, flags::CLIENTS);
+            level.change_block(Change::Grow, pos, flower, flags::CLIENTS, false, None);
         }
         return;
     }
-    level.set_block(pos, set_int(state, "age", age.min(max_age(state))), flags::CLIENTS);
+    level.change_block(Change::Grow, pos, set_int(state, "age", age.min(max_age(state))), flags::CLIENTS, false, None);
 }
 
 /// A random tick (`randomTick`) of any block. Returns quickly for blocks that do nothing.
@@ -273,7 +273,7 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
             }
             let age = get_int(state, "age");
             if age < 7 {
-                level.set_block(pos, set_int(state, "age", age + 1), flags::CLIENTS);
+                level.change_block(Change::Grow, pos, set_int(state, "age", age + 1), flags::CLIENTS, false, None);
                 return;
             }
             grow_fruit(level, state, pos);
@@ -283,12 +283,12 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
             let above = pos.above();
             if !near_water(level, pos) && !level.world.rain_at(above.x, above.y, above.z) {
                 if moisture > 0 {
-                    level.set_block(pos, set_int(state, "moisture", moisture - 1), flags::CLIENTS);
+                    level.change_block(Change::Moisture, pos, set_int(state, "moisture", moisture - 1), flags::CLIENTS, false, None);
                 } else if !in_tag!(level.state(pos.above()), "maintains_farmland") {
                     turn_to_dirt(level, pos);
                 }
             } else if moisture < 7 {
-                level.set_block(pos, set_int(state, "moisture", 7), flags::CLIENTS);
+                level.change_block(Change::Moisture, pos, set_int(state, "moisture", 7), flags::CLIENTS, false, None);
             }
         }
         Kind::SnowyDirt => spread_grass(level, state, pos),
@@ -303,8 +303,8 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
             if height < 3 {
                 let age = get_int(state, "age");
                 if age == 15 {
-                    level.set_block_and_update(pos.above(), blocks::default_state("minecraft:sugar_cane").unwrap_or(state));
-                    level.set_block(pos, set_int(state, "age", 0), flags::INVISIBLE);
+                    let cane = blocks::default_state("minecraft:sugar_cane").unwrap_or(state);
+                    level.change_block(Change::Grow, pos.above(), cane, flags::ALL, false, Some(Then::Block(pos, set_int(state, "age", 0), flags::INVISIBLE)));
                 } else {
                     level.set_block(pos, set_int(state, "age", age + 1), flags::INVISIBLE);
                 }
@@ -314,19 +314,19 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
         Kind::SweetBerryBush => {
             let age = get_int(state, "age");
             if age < 3 && random_int(level, 5) == 0 && raw_brightness(level, pos.above()) >= 9 {
-                level.set_block(pos, set_int(state, "age", age + 1), flags::CLIENTS);
+                level.change_block(Change::Grow, pos, set_int(state, "age", age + 1), flags::CLIENTS, false, None);
             }
         }
         Kind::NetherWart => {
             let age = get_int(state, "age");
             if age < 3 && random_int(level, 10) == 0 {
-                level.set_block(pos, set_int(state, "age", age + 1), flags::CLIENTS);
+                level.change_block(Change::Grow, pos, set_int(state, "age", age + 1), flags::CLIENTS, false, None);
             }
         }
         Kind::Cocoa => {
             let age = get_int(state, "age");
             if random_int(level, 5) == 0 && age < 2 {
-                level.set_block(pos, set_int(state, "age", age + 1), flags::CLIENTS);
+                level.change_block(Change::Grow, pos, set_int(state, "age", age + 1), flags::CLIENTS, false, None);
             }
         }
         Kind::Vegetation if block_name(state).ends_with("_sapling") => {
@@ -346,20 +346,18 @@ pub fn random_tick(level: &mut Level, state: u32, pos: BlockPos) {
         }
         Kind::Leaves => {
             if !get_bool(state, "persistent") && get_int(state, "distance") == 7 {
-                level.drop_resources(state, pos);
-                level.remove_block(pos, false);
+                level.change_block(Change::Decay, pos, fluid_state(state).legacy_block(), flags::ALL, true, None);
             }
         }
         Kind::Ice => {
             if block_light(level, pos) > 11 - blocks::opacity(state) as i32 {
                 let melted = if level.world.dimension == "minecraft:the_nether" { blocks::AIR } else { blocks::default_state("minecraft:water").unwrap_or(blocks::AIR) };
-                level.set_block_and_update(pos, melted);
+                level.change_block(Change::Fade, pos, melted, flags::ALL, false, None);
             }
         }
         Kind::SnowLayer => {
             if block_light(level, pos) > 11 {
-                level.drop_resources(state, pos);
-                level.remove_block(pos, false);
+                level.change_block(Change::Fade, pos, blocks::AIR, flags::ALL, true, None);
             }
         }
         Kind::Lava => lava_ignites(level, pos),
@@ -392,8 +390,7 @@ fn grow_fruit(level: &mut Level, state: u32, pos: BlockPos) {
     let pumpkin = block_name(state) == "minecraft:pumpkin_stem";
     let (fruit, attached) = if pumpkin { ("minecraft:pumpkin", "minecraft:attached_pumpkin_stem") } else { ("minecraft:melon", "minecraft:attached_melon_stem") };
     let (Some(fruit), Some(attached)) = (blocks::default_state(fruit), blocks::default_state(attached)) else { return };
-    level.set_block_and_update(at, fruit);
-    level.set_block_and_update(pos, with(attached, "facing", dir.name()));
+    level.change_block(Change::Grow, at, fruit, flags::ALL, false, Some(Then::Block(pos, with(attached, "facing", dir.name()), flags::ALL)));
 }
 
 /// `CactusBlock.randomTick` (with 1.21.5's cactus flowers).
@@ -414,12 +411,12 @@ fn grow_cactus(level: &mut Level, state: u32, pos: BlockPos) {
         let chance = if height >= 3 { 0.25 } else { 0.1 };
         if (level.random_float() as f64) <= chance {
             if let Some(flower) = blocks::default_state("minecraft:cactus_flower") {
-                level.set_block_and_update(above, flower);
+                level.change_block(Change::Grow, above, flower, flags::ALL, false, None);
             }
         }
     } else if age == 15 && height < 3 {
-        level.set_block_and_update(above, blocks::default_state("minecraft:cactus").unwrap_or(state));
-        level.set_block(pos, set_int(state, "age", 0), flags::INVISIBLE);
+        let cactus = blocks::default_state("minecraft:cactus").unwrap_or(state);
+        level.change_block(Change::Grow, above, cactus, flags::ALL, false, Some(Then::Block(pos, set_int(state, "age", 0), flags::INVISIBLE)));
         return;
     }
     if age < 15 {
@@ -448,7 +445,7 @@ fn spread_grass(level: &mut Level, state: u32, pos: BlockPos) {
     }
     if !can_be_grass(level, pos) {
         if let Some(dirt) = blocks::default_state("minecraft:dirt") {
-            level.set_block_and_update(pos, dirt);
+            level.change_block(Change::Fade, pos, dirt, flags::ALL, false, None);
         }
         return;
     }
@@ -460,7 +457,7 @@ fn spread_grass(level: &mut Level, state: u32, pos: BlockPos) {
         let at = pos.offset(random_int(level, 3) as i32 - 1, random_int(level, 5) as i32 - 3, random_int(level, 3) as i32 - 1);
         if block_name(level.state(at)) == "minecraft:dirt" && can_be_grass(level, at) && fluid_state(level.state(at.above())).fluid != Fluid::Water {
             let snowy = in_tag!(level.state(at.above()), "snow");
-            level.set_block_and_update(at, set_bool(spread, "snowy", snowy));
+            level.change_block(Change::Spread { from: pos }, at, set_bool(spread, "snowy", snowy), flags::ALL, false, None);
         }
     }
 }
@@ -510,7 +507,7 @@ fn lava_ignites(level: &mut Level, pos: BlockPos) {
 
 /// Lava at `lava` sets fire to `at`, or asks plugins listening first (see `Ask`).
 fn light(level: &mut Level, at: BlockPos, lava: BlockPos, fire: u32) {
-    if level.world.updates.vet_fire {
+    if level.world.updates.vetting.fire {
         level.world.updates.asks.push(super::Ask::Ignite { pos: at, from: lava, state: fire });
     } else {
         level.set_block_and_update(at, fire);

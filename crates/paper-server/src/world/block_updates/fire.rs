@@ -106,7 +106,7 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
         return;
     }
     if !can_survive(level, state, pos) {
-        level.remove_block(pos, false);
+        go_out(level, pos);
         return;
     }
     let below = level.state(at(pos, Dir::Down));
@@ -117,7 +117,7 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
         level.world.rain_at(p.x, p.y, p.z)
     });
     if !infiniburn && near_rain && level.random_float() < 0.2 + age as f32 * 0.03 {
-        level.remove_block(pos, false);
+        go_out(level, pos);
         return;
     }
     let grown = (age + (level.random() % 3) as i32 / 2).min(15);
@@ -129,12 +129,12 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
     if !infiniburn {
         if !next_to_fuel(level, pos) {
             if !paper_data::physics::is_face_sturdy(below, Dir::Up.index()) || grown > 3 {
-                level.remove_block(pos, false);
+                go_out(level, pos);
             }
             return;
         }
         if grown == 15 && level.random() % 4 == 0 && !burnable(below) {
-            level.remove_block(pos, false);
+            go_out(level, pos);
             return;
         }
     }
@@ -146,7 +146,7 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
         if !burnable(neighbour) || level.random() % 12 != 0 {
             continue;
         }
-        if level.world.updates.vet_fire {
+        if level.world.updates.vetting.fire {
             level.world.updates.asks.push(super::Ask::Burn { pos: p, by: pos, age: grown });
         } else {
             burn_away(level, p, grown);
@@ -158,13 +158,18 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
         let p = pos.offset((r % 3) as i32 - 1, ((r >> 8) % 6) as i32 - 1, ((r >> 16) % 3) as i32 - 1);
         if p != pos && blocks::is_air(level.state(p)) && next_to_fuel(level, p) {
             let fire = fire_state_for(level.world, p);
-            if level.world.updates.vet_fire {
+            if level.world.updates.vetting.fire {
                 level.world.updates.asks.push(super::Ask::Spread { pos: p, from: pos, state: fire });
             } else {
                 level.set_block(p, fire, flags::ALL);
             }
         }
     }
+}
+
+/// The fire at `pos` goes out (`FireBlock.fireExtinguished`: a `BlockFadeEvent`).
+fn go_out(level: &mut Level, pos: BlockPos) {
+    level.change_block(super::Change::Fade, pos, blocks::AIR, flags::ALL, false, None);
 }
 
 /// A block burns away beside fire aged `age`: TNT is set off, and the block catches fire

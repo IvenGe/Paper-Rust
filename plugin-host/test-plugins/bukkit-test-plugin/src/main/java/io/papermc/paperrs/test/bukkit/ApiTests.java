@@ -1459,6 +1459,26 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     @EventHandler
+    public void onGrow(final org.bukkit.event.block.BlockGrowEvent event) {
+        this.blockEvent(event, "GROW " + event.getBlock().getType() + " -> " + event.getNewState().getType());
+    }
+
+    @EventHandler
+    public void onFade(final org.bukkit.event.block.BlockFadeEvent event) {
+        this.blockEvent(event, "FADE " + event.getBlock().getType() + " -> " + event.getNewState().getType());
+    }
+
+    @EventHandler
+    public void onForm(final org.bukkit.event.block.BlockFormEvent event) {
+        this.blockEvent(event, "FORM " + event.getBlock().getType() + " -> " + event.getNewState().getType());
+    }
+
+    @EventHandler
+    public void onDecay(final org.bukkit.event.block.LeavesDecayEvent event) {
+        this.blockEvent(event, "DECAY " + event.getBlock().getType());
+    }
+
+    @EventHandler
     public void onSpread(final org.bukkit.event.block.BlockSpreadEvent event) {
         this.blockEvent(event, "SPREAD " + event.getSource().getType() + " -> " + event.getNewState().getType());
     }

@@ -12,7 +12,7 @@ use crate::config::GameMode;
 use crate::world::block_updates::state::kind;
 use crate::world::block_updates::support::{self, PlaceContext};
 use crate::plugins::events;
-use crate::world::block_updates::{self, flags, Ask, Dir, Effect, Kind, Level, UseContext};
+use crate::world::block_updates::{self, flags, Ask, Dir, Effect, Kind, Level, UseContext, Vetting};
 use bytes::Bytes;
 use paper_nbt::Compound;
 use paper_protocol::codec::{BlockPos, VarInt};
@@ -71,6 +71,13 @@ impl Server {
 
     /// [`Server::set_block_and_update`] with vanilla's update flags (`world::block_updates::flags`),
     /// e.g. `flags::CLIENTS | flags::KNOWN_SHAPE` to change a block without any updates.
+    /// A block change Paper fires an event for (ice and snow forming): made at once, or asked
+    /// about while plugins listen (see [`Level::change_block`]).
+    pub fn change_block(&mut self, world: usize, change: block_updates::Change, pos: BlockPos, state: u32) {
+        Level::new(&mut self.worlds[world]).change_block(change, pos, state, flags::ALL, false, None);
+        self.publish_block_updates(world);
+    }
+
     pub fn set_block_with_flags(&mut self, world: usize, pos: BlockPos, state: u32, flags: u32) -> bool {
         let Some(w) = self.worlds.get_mut(world) else { return false };
         let changed = Level::new(w).set_block(pos, state, flags);
@@ -118,11 +125,19 @@ impl Server {
     /// events (see [`block_updates::Ask`]); they answer before block entities tick, as Paper
     /// fires the events during block events and block ticks, and after random ticks.
     pub fn tick_block_updates(&mut self) {
-        let vet_pistons = events::listens(self, "BlockPistonExtendEvent") || events::listens(self, "BlockPistonRetractEvent");
-        let vet_fire = ["BlockBurnEvent", "BlockIgniteEvent", "BlockSpreadEvent"].iter().any(|e| events::listens(self, e));
+        let listens = |e: &str| events::listens(self, e);
+        let vetting = Vetting {
+            pistons: listens("BlockPistonExtendEvent") || listens("BlockPistonRetractEvent"),
+            fire: listens("BlockBurnEvent") || listens("BlockIgniteEvent") || listens("BlockSpreadEvent"),
+            grow: listens("BlockGrowEvent"),
+            fade: listens("BlockFadeEvent"),
+            form: listens("BlockFormEvent"),
+            spread: listens("BlockSpreadEvent"),
+            decay: listens("LeavesDecayEvent"),
+            moisture: listens("MoistureChangeEvent"),
+        };
         for index in 0..self.worlds.len() {
-            let updates = &mut self.worlds[index].updates;
-            (updates.vet_pistons, updates.vet_fire) = (vet_pistons, vet_fire);
+            self.worlds[index].updates.vetting = vetting;
             block_updates::tick_blocks(&mut self.worlds[index], &ticking);
             self.answer_block_asks(index);
             block_updates::tick_block_entities(&mut self.worlds[index]);
@@ -137,9 +152,20 @@ impl Server {
     /// last round wait for the next tick.
     fn answer_block_asks(&mut self, world: usize) {
         for _ in 0..MAX_ASK_ROUNDS {
-            let asks = std::mem::take(&mut self.worlds[world].updates.asks);
-            if asks.is_empty() {
+            let (changes, asks): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.worlds[world].updates.asks).into_iter().partition(|a| matches!(a, Ask::Change { .. }));
+            if changes.is_empty() && asks.is_empty() {
                 return;
+            }
+            // Block changes (growing, fading, forming, spreading, decaying) go to plugins in
+            // one call.
+            if !changes.is_empty() {
+                let answers = events::on_block_changes(self, world, &changes);
+                for (mut ask, answer) in changes.into_iter().zip(answers) {
+                    if let (Ask::Change { new, .. }, Some(state)) = (&mut ask, answer) {
+                        *new = state;
+                    }
+                    block_updates::answer(&mut self.worlds[world], &ask, answer.is_some(), &ticking);
+                }
             }
             for mut ask in asks {
                 let allowed = match &mut ask {
@@ -153,6 +179,7 @@ impl Server {
                         None => false,
                     },
                     Ask::Ignite { pos, from, .. } => events::on_block_ignite(self, world, *pos, "LAVA", events::Igniter::Block(*from)),
+                    Ask::Change { .. } => unreachable!("answered above"),
                 };
                 block_updates::answer(&mut self.worlds[world], &ask, allowed, &ticking);
             }

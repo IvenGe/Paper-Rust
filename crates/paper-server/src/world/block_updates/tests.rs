@@ -815,7 +815,7 @@ fn run_asking(w: &mut World, n: usize, allowed: bool) -> Vec<Ask> {
 #[test]
 fn pistons_wait_for_plugins() {
     let mut w = world();
-    w.updates.vet_pistons = true;
+    w.updates.vetting.pistons = true;
     set(&mut w, p(0, Y, 0), s("sticky_piston[facing=east]"));
     set(&mut w, p(1, Y, 0), s("stone"));
     set(&mut w, p(0, Y, -1), s("redstone_block"));
@@ -842,7 +842,7 @@ fn pistons_wait_for_plugins() {
 #[test]
 fn a_denied_retraction_keeps_a_piston_out() {
     let mut w = world();
-    w.updates.vet_pistons = true;
+    w.updates.vetting.pistons = true;
     set(&mut w, p(0, Y, 0), s("piston[facing=east]"));
     set(&mut w, p(0, Y, -1), s("redstone_block"));
     let asked = run_asking(&mut w, 3, true);
@@ -857,7 +857,7 @@ fn a_denied_retraction_keeps_a_piston_out() {
 #[test]
 fn fire_waits_for_plugins() {
     let mut w = world();
-    w.updates.vet_fire = true;
+    w.updates.vetting.fire = true;
     for x in -2..=2 {
         for z in -2..=2 {
             set(&mut w, p(x, Y, z), s("oak_planks"));
@@ -879,9 +879,35 @@ fn fire_waits_for_plugins() {
 }
 
 #[test]
+fn block_changes_wait_for_plugins() {
+    let mut w = world();
+    w.updates.vetting = Vetting { grow: true, form: true, decay: true, ..Vetting::default() };
+    w.rules.set("random_tick_speed", paper_data::game_rules::Value::Int(4096));
+    w.chunks.values_mut().for_each(|c| c.lit = true);
+    // Leaves far from logs, nether wart (which grows in the dark), lava beside water.
+    set(&mut w, p(0, Y, 0), s("oak_leaves[distance=7,persistent=false]"));
+    set(&mut w, p(2, Y - 1, 0), s("soul_sand"));
+    set(&mut w, p(2, Y, 0), s("nether_wart"));
+    set(&mut w, p(4, Y, 0), s("water"));
+    set(&mut w, p(5, Y, 0), s("lava"));
+    let mut asked = std::mem::take(&mut w.updates.asks);
+    for _ in 0..50 {
+        random_ticks(&mut w, &|_, _| true);
+        asked.extend(std::mem::take(&mut w.updates.asks));
+    }
+    let asked_for = |change: Change, at: BlockPos| asked.iter().any(|a| matches!(a, Ask::Change { change: c, pos, .. } if *c == change && *pos == at));
+    assert!(asked_for(Change::Decay, p(0, Y, 0)) && asked_for(Change::Grow, p(2, Y, 0)) && asked_for(Change::Form, p(5, Y, 0)), "{asked:?}");
+    assert_eq!((name(&w, p(0, Y, 0)), get_int(get(&w, p(2, Y, 0)), "age"), name(&w, p(5, Y, 0))), ("oak_leaves", 0, "lava"), "nothing changes before plugins answer");
+    for ask in &asked {
+        answer(&mut w, ask, true, &|_, _| true);
+    }
+    assert_eq!((name(&w, p(0, Y, 0)), get_int(get(&w, p(2, Y, 0)), "age"), name(&w, p(5, Y, 0))), ("air", 1, "obsidian"), "allowed, they happen (once)");
+}
+
+#[test]
 fn lava_waits_for_plugins_to_set_fires() {
     let mut w = world();
-    w.updates.vet_fire = true;
+    w.updates.vetting.fire = true;
     w.rules.set("random_tick_speed", paper_data::game_rules::Value::Int(4096));
     // (Chunks take random ticks once lit.)
     w.chunks.values_mut().for_each(|c| c.lit = true);

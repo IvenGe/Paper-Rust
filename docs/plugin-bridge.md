@@ -169,6 +169,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.piston` | `world`, `x`, `y`, `z` (the piston), `extending`, `direction` (the `BlockFace` the blocks move towards), `blocks` `[[x, y, z]]` (moved, then broken) | `cancelled` (`BlockPistonExtendEvent`, `BlockPistonRetractEvent`) |
 | `event.block_burn` | `world`, `x`, `y`, `z`, `by` `[x, y, z]` (the fire) | `cancelled` (`BlockBurnEvent`) |
 | `event.fire_spread` | `world`, `x`, `y`, `z`, `from` `[x, y, z]` (the fire), `state` (the new fire) | `cancelled`, `state` (`BlockIgniteEvent` with cause `SPREAD`, then `BlockSpreadEvent` unless that was cancelled; a listener may change the new state) |
+| `event.block_changes` | `world`, `changes`: `[{event, x, y, z, state, from}]` with `event` `grow`, `fade`, `form`, `spread` (with `from` `[x, y, z]`), `decay` or `moisture` and `state` the new block | `results`: `[{cancelled, state}]`, one per change (`BlockGrowEvent`, `BlockFadeEvent`, `BlockFormEvent`, `BlockSpreadEvent`, `LeavesDecayEvent`, `MoistureChangeEvent`, fired one after another; `state` as listeners left it) |
 | `event.block_ignite` | `world`, `x`, `y`, `z`, `cause` (`IgniteCause`), and `entity` (a player, a lightning bolt, a fireball's shooter, what exploded) or `from` `[x, y, z]` (lava, a dispenser) | `cancelled` (`BlockIgniteEvent`; flint and steel still wears, a fire charge is still used up) |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
@@ -190,14 +191,16 @@ unloading. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 
-Piston moves, fire burning or spreading, and lava setting fires happen inside the block
-engine, which has no access to the plugin connection. While plugins listen for their events,
-the engine leaves them as asks (`block_updates::Ask`) instead of carrying them out. The
-server fires the events and has the engine carry out the answers once the tick's block ticks
-and block events have run (before block entities tick, as Paper fires these events during
-those steps), and again after random ticks. A piston runs its block event either way and
-stops where Paper stops a cancelled move; moves that an allowed move sets off are asked
-about in a further round.
+Piston moves, fire burning or spreading, lava setting fires, and blocks growing, fading,
+forming, spreading and decaying happen inside the block engine, which has no access to the
+plugin connection. While plugins listen for their events, the engine leaves them as asks
+(`block_updates::Ask`) instead of carrying them out. The server fires the events and has
+the engine carry out the answers once the tick's block ticks and block events have run
+(before block entities tick, as Paper fires these events during those steps), and again
+after random ticks. A piston runs its block event either way and stops where Paper stops a
+cancelled move; moves that an allowed move sets off are asked about in a further round. A
+round's block changes go to the host in one call, and each is carried out only if its
+block has not changed meanwhile.
 
 `plugins` is a list of `{name, version, enabled, kind}` with `kind` `paper` or `bukkit`.
 `commands` lists every label of every plugin command (with and without the plugin's

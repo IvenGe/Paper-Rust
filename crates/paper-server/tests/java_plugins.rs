@@ -272,6 +272,10 @@ fn block_state(server: &paper_server::RunningServer, pos: BlockPos) -> String {
     server.handle.run(move |s| s.worlds[0].block_at(pos.x, pos.y, pos.z).map(paper_data::blocks::state_to_string).unwrap_or_default()).unwrap()
 }
 
+fn random_tick_speed(server: &paper_server::RunningServer, speed: i32) {
+    server.handle.run(move |s| s.worlds[0].rules.set("random_tick_speed", paper_data::game_rules::Value::Int(speed))).unwrap();
+}
+
 /// Runs `n` ticks of the overworld's block updates at once (fire takes its time).
 fn run_block_ticks(server: &paper_server::RunningServer, n: usize) {
     server
@@ -848,6 +852,9 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     expect_line(&mut alice, "watch: false");
 
     // --- pistons and fire plugins stop (the test plugin's "blocks") ---------------------------
+    // (Without random ticks, unless a step needs them: grass spreading would show too.)
+    let normal_speed = server.handle.run(|s| s.worlds[0].rules.int("random_tick_speed")).unwrap();
+    random_tick_speed(&server, 0);
     // A sticky piston facing east with stone in front, powered by a redstone block behind it.
     let piston = feet.offset(10, 3, -10);
     let (front, two, behind) = (piston.offset(1, 0, 0), piston.offset(2, 0, 0), piston.offset(-1, 0, 0));
@@ -959,8 +966,7 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let lava = floor.offset(0, -2, 0);
     let basin: Vec<_> = [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)].into_iter().map(|(x, y, z)| (lava.offset(x, y, z), "minecraft:stone")).chain([(lava, "minecraft:lava")]).collect();
     put(&server, &basin, false);
-    let speed = server.handle.run(|s| s.worlds[0].rules.int("random_tick_speed")).unwrap();
-    server.handle.run(|s| s.worlds[0].rules.set("random_tick_speed", paper_data::game_rules::Value::Int(512))).unwrap();
+    random_tick_speed(&server, 512);
     for _ in 0..20 {
         run_block_ticks(&server, 50);
         alice.command("apitest blockevents");
@@ -969,7 +975,7 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             break;
         }
     }
-    server.handle.run(move |s| s.worlds[0].rules.set("random_tick_speed", paper_data::game_rules::Value::Int(speed))).unwrap();
+    random_tick_speed(&server, 0);
     assert!(seen.contains("IGNITE LAVA LAVA"), "{seen}");
     assert_eq!(server.handle.run(fire_count).unwrap(), (49, 0), "nothing burned or caught fire");
     alice.command("apitest blocks record");
@@ -989,6 +995,38 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     expect_line(&mut alice, "blocks: off");
     let cleared: Vec<_> =
         area(-2..=6, 4).map(|p| (p, "minecraft:air")).chain([piston, front, two, behind, plain, plain.offset(1, 0, 0), lava.offset(0, -1, 0)].map(|p| (p, "minecraft:air"))).collect();
+    put(&server, &cleared, false);
+
+    // Leaves decaying and lava hardening beside water (in stone, so nothing flows): stopped,
+    // then let happen.
+    let leaves = feet.offset(-6, 5, -6);
+    let (water, hot) = (feet.offset(-6, 5, -3), feet.offset(-5, 5, -3));
+    let mut basin: Vec<(BlockPos, &str)> = [water, hot].iter().flat_map(|p| [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)].map(|(x, y, z)| (p.offset(x, y, z), "minecraft:stone"))).collect();
+    basin.extend([(water, "minecraft:water"), (leaves, "minecraft:oak_leaves[distance=7,persistent=false]")]);
+    put(&server, &basin, false);
+    random_tick_speed(&server, 512);
+    let name_at = |p: BlockPos| block_state(&server, p).split('[').next().unwrap_or_default().to_owned();
+    // (Lava kept from hardening is then washed over by the water, as the fluid rules allow.)
+    for (mode, (leaves_left, hardened)) in [("cancel", ("minecraft:oak_leaves", false)), ("record", ("minecraft:air", true))] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(hot, "minecraft:air")], false);
+        put(&server, &[(hot, "minecraft:lava")], true);
+        for _ in 0..20 {
+            run_block_ticks(&server, 50);
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            if seen.contains("DECAY OAK_LEAVES") || mode == "record" && block_state(&server, leaves) == "minecraft:air" {
+                break;
+            }
+        }
+        assert!(seen.contains("FORM LAVA -> OBSIDIAN") && (seen.contains("DECAY OAK_LEAVES") || mode == "record"), "{mode}: {seen}");
+        assert_eq!((name_at(leaves).as_str(), name_at(hot) == "minecraft:obsidian"), (leaves_left, hardened), "{mode}");
+    }
+    random_tick_speed(&server, normal_speed);
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    let cleared: Vec<_> = basin.iter().map(|(p, _)| (*p, "minecraft:air")).chain([(hot, "minecraft:air")]).collect();
     put(&server, &cleared, false);
 
     // PlayerChangedWorldEvent on the way to the nether and back.

@@ -117,6 +117,11 @@ public final class HostEvents {
         GATED.put("BlockBurnEvent", org.bukkit.event.block.BlockBurnEvent.class);
         GATED.put("BlockIgniteEvent", org.bukkit.event.block.BlockIgniteEvent.class);
         GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
+        GATED.put("BlockGrowEvent", org.bukkit.event.block.BlockGrowEvent.class);
+        GATED.put("BlockFadeEvent", org.bukkit.event.block.BlockFadeEvent.class);
+        GATED.put("BlockFormEvent", org.bukkit.event.block.BlockFormEvent.class);
+        GATED.put("LeavesDecayEvent", org.bukkit.event.block.LeavesDecayEvent.class);
+        GATED.put("MoistureChangeEvent", org.bukkit.event.block.MoistureChangeEvent.class);
         GATED.put("PlayerChangedWorldEvent", org.bukkit.event.player.PlayerChangedWorldEvent.class);
         GATED.put("PlayerLoginEvent", org.bukkit.event.player.PlayerLoginEvent.class);
         GATED.put("ChunkLoadEvent", org.bukkit.event.world.ChunkLoadEvent.class);
@@ -407,6 +412,7 @@ public final class HostEvents {
                 // A listener that changes the target to nothing keeps the mob from targeting.
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
             }
+            case "event.block_changes" -> this.blockChanges(args);
             case "event.changed_world" -> {
                 new org.bukkit.event.player.PlayerChangedWorldEvent(this.player(args), this.server.getWorld(Values.str(args, "from"))).callEvent();
                 yield Values.of();
@@ -563,6 +569,34 @@ public final class HostEvents {
         }
         event.callEvent();
         return Values.of("cancelled", event.isCancelled());
+    }
+
+    /**
+     * Block changes of the server's block engine, fired one after another ({@code
+     * BlockGrowEvent}, {@code BlockFadeEvent}, {@code BlockFormEvent}, {@code BlockSpreadEvent},
+     * {@code LeavesDecayEvent}, {@code MoistureChangeEvent}): whether each was cancelled, and
+     * the state the block changes to as listeners leave it.
+     */
+    private Object blockChanges(final Map<String, Object> args) {
+        final World world = this.server.getWorld(Values.str(args, "world"));
+        final List<Object> results = new ArrayList<>();
+        for (final Object c : Values.list(args.get("changes"))) {
+            final Map<String, Object> change = Values.map(c);
+            final Block block = world.getBlockAt(Values.i32(change, "x", 0), Values.i32(change, "y", 0), Values.i32(change, "z", 0));
+            final org.bukkit.block.BlockState state = HostBlockState.of((HostBlock) block, Values.str(change, "state"));
+            final Event event = switch (Values.str(change, "event")) {
+                case "grow" -> new org.bukkit.event.block.BlockGrowEvent(block, state);
+                case "fade" -> new org.bukkit.event.block.BlockFadeEvent(block, state);
+                case "form" -> new org.bukkit.event.block.BlockFormEvent(block, state);
+                case "spread" -> new org.bukkit.event.block.BlockSpreadEvent(block, this.at(world, change.get("from")), state);
+                case "decay" -> new org.bukkit.event.block.LeavesDecayEvent(block);
+                case "moisture" -> new org.bukkit.event.block.MoistureChangeEvent(block, state);
+                default -> throw new IllegalArgumentException("unknown block change " + change.get("event"));
+            };
+            final boolean allowed = event.callEvent();
+            results.add(Values.of("cancelled", !allowed, "state", state.getBlockData().getAsString()));
+        }
+        return Values.of("results", results);
     }
 
     /**

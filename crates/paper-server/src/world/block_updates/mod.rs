@@ -161,6 +161,64 @@ pub enum Ask {
     Spread { pos: BlockPos, from: BlockPos, state: u32 },
     /// Lava at `from` is to set fire to `pos` as `state` (`BlockIgniteEvent`, cause `LAVA`).
     Ignite { pos: BlockPos, from: BlockPos, state: u32 },
+    /// The block at `pos`, `old`, is to become `new` (see [`Level::change_block`]).
+    Change { change: Change, pos: BlockPos, old: u32, new: u32, flags: u32, drops: bool, then: Option<Then> },
+}
+
+/// The plugin events the engine asks about because plugins listen to them (see [`Ask`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Vetting {
+    pub pistons: bool,
+    /// Fire burning and spreading, and lava setting fires.
+    pub fire: bool,
+    pub grow: bool,
+    pub fade: bool,
+    pub form: bool,
+    pub spread: bool,
+    pub decay: bool,
+    pub moisture: bool,
+}
+
+impl Vetting {
+    fn asks(&self, change: Change) -> bool {
+        match change {
+            Change::Grow => self.grow,
+            Change::Fade => self.fade,
+            Change::Form => self.form,
+            Change::Spread { .. } => self.spread,
+            Change::Decay => self.decay,
+            Change::Moisture => self.moisture,
+        }
+    }
+}
+
+/// The Paper event a block change of the engine fires (see [`Level::change_block`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// `BlockGrowEvent`: crops, stems and their fruit, sugar cane, cactus, berries, nether
+    /// wart, cocoa.
+    Grow,
+    /// `BlockFadeEvent`: ice and snow melting, grass, mycelium and farmland turning to dirt,
+    /// fire going out.
+    Fade,
+    /// `BlockFormEvent`: lava meeting water.
+    Form,
+    /// `BlockSpreadEvent` from `from`: grass and mycelium.
+    Spread { from: BlockPos },
+    /// `LeavesDecayEvent`.
+    Decay,
+    /// `MoistureChangeEvent`: farmland drying out or getting wet.
+    Moisture,
+}
+
+/// What follows a block change that happens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Then {
+    /// Another block changes (with these flags): a stem attaches to its fruit, a cane or
+    /// cactus starts its age over.
+    Block(BlockPos, u32, u32),
+    /// A level event (lava hardening fizzes).
+    LevelEvent(i32, BlockPos),
 }
 
 /// The block update state a world keeps between ticks.
@@ -183,10 +241,9 @@ pub struct BlockUpdateState {
     pub(crate) crafting: Vec<(BlockPos, i64)>,
     /// Scheduled ticks are running (vanilla's `isHandlingTick`).
     pub(crate) handling_tick: bool,
-    /// Plugins listen for piston moves, or for fire burning and spreading and lava setting
-    /// fires: those wait in `asks` for their say instead of happening at once.
-    pub vet_pistons: bool,
-    pub vet_fire: bool,
+    /// What plugins listen for: those changes wait in `asks` for their say instead of
+    /// happening at once.
+    pub vetting: Vetting,
     pub asks: Vec<Ask>,
     /// Piston moves plugins answered (allowed, and the blocks they were asked about), run
     /// when their block event comes round again.
@@ -209,8 +266,7 @@ impl BlockUpdateState {
             moving_pistons: Vec::new(),
             crafting: Vec::new(),
             handling_tick: false,
-            vet_pistons: false,
-            vet_fire: false,
+            vetting: Vetting::default(),
             asks: Vec::new(),
             approved_pistons: HashMap::new(),
             piston_denied: false,
@@ -393,6 +449,32 @@ impl<'w> Level<'w> {
             }
         }
         true
+    }
+
+    /// A block change Paper fires an event for (`change`): made at once, or asked about
+    /// first while plugins listen (see [`Ask`]). `drops`: the old block drops its items first
+    /// (leaves decaying, snow melting); `then` follows the change.
+    pub fn change_block(&mut self, change: Change, pos: BlockPos, new: u32, flags: u32, drops: bool, then: Option<Then>) {
+        let old = self.state(pos);
+        if self.world.updates.vetting.asks(change) {
+            self.world.updates.asks.push(Ask::Change { change, pos, old, new, flags, drops, then });
+        } else {
+            self.apply_change(pos, old, new, flags, drops, then);
+        }
+    }
+
+    fn apply_change(&mut self, pos: BlockPos, old: u32, new: u32, flags: u32, drops: bool, then: Option<Then>) {
+        if drops {
+            self.drop_resources(old, pos);
+        }
+        self.set_block(pos, new, flags);
+        match then {
+            Some(Then::Block(p, state, flags)) => {
+                self.set_block(p, state, flags);
+            }
+            Some(Then::LevelEvent(event, p)) => self.level_event(event, p, 0),
+            None => {}
+        }
     }
 
     /// Sends clients the block at `pos` as it is (`sendBlockUpdated` of an unchanged block).
@@ -644,7 +726,7 @@ impl<'w> Level<'w> {
             }
             // Plugins have their say about a piston move first; asked again if what it moves
             // changed since.
-            if self.world.updates.vet_pistons && matches!(kind(state), Kind::Piston { .. }) {
+            if self.world.updates.vetting.pistons && matches!(kind(state), Kind::Piston { .. }) {
                 let answer = self.world.updates.approved_pistons.remove(&event);
                 if let Some((extending, dir, blocks)) = piston::planned_move(self, state, event.pos, event.action) {
                     match answer {
@@ -1019,6 +1101,10 @@ pub fn answer(world: &mut World, ask: &Ask, allowed: bool, ticking: &dyn Fn(&Wor
         }
         Ask::Burn { pos, age, .. } if allowed => fire::burn_away(&mut Level::new(world), *pos, *age),
         Ask::Spread { pos, state, .. } | Ask::Ignite { pos, state, .. } if allowed => fire::set_fire(&mut Level::new(world), *pos, *state),
+        // Unless the block changed meanwhile.
+        Ask::Change { pos, old, new, flags, drops, then, .. } if allowed && world.block_at(pos.x, pos.y, pos.z) == Some(*old) => {
+            Level::new(world).apply_change(*pos, *old, *new, *flags, *drops, *then)
+        }
         _ => {}
     }
     if !world.updates.block_events.is_empty() {

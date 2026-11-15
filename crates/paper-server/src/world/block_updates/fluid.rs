@@ -420,9 +420,10 @@ fn spread_to(level: &mut Level, fluid: Fluid, pos: BlockPos, state: u32, dir: Di
     if fluid == Fluid::Lava && dir == Dir::Down && fluid_state(level.state(pos)).fluid == Fluid::Water {
         // Lava falling onto water.
         if matches!(super::kind(state), Kind::Water | Kind::Lava) {
-            level.set_block(pos, default_state!("stone"), flags::ALL);
+            level.change_block(super::Change::Form, pos, default_state!("stone"), flags::ALL, false, Some(super::Then::LevelEvent(1501, pos)));
+        } else {
+            fizz(level, pos);
         }
-        fizz(level, pos);
         return;
     }
     if is_liquid_container(state) {
@@ -495,13 +496,11 @@ fn should_spread_liquid(level: &mut Level, pos: BlockPos, state: u32) -> bool {
         let nstate = level.state(npos);
         if fluid_state(nstate).fluid == Fluid::Water {
             let block = if fluid_state(level.state(pos)).source { default_state!("obsidian") } else { default_state!("cobblestone") };
-            level.set_block_and_update(pos, block);
-            fizz(level, pos);
+            level.change_block(super::Change::Form, pos, block, flags::ALL, false, Some(super::Then::LevelEvent(1501, pos)));
             return false;
         }
         if over_soul_soil && block_id(nstate) == block!("blue_ice") {
-            level.set_block_and_update(pos, default_state!("basalt"));
-            fizz(level, pos);
+            level.change_block(super::Change::Form, pos, default_state!("basalt"), flags::ALL, false, Some(super::Then::LevelEvent(1501, pos)));
             return false;
         }
     }

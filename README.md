@@ -280,8 +280,13 @@ What works:
   `PlayerLoginEvent` (with the server's own verdict on bans, the whitelist and a full server
   for plugins to change; the player then joins as the same object, as in Paper),
   `PlayerChangedWorldEvent`, `ChunkLoadEvent` and `ChunkUnloadEvent` (a chunk's changes are
-  saved even if a listener asks not to), and `AsyncTabCompleteEvent` (off the main thread)
-  and `TabCompleteEvent` for command completions. Players,
+  saved even if a listener asks not to), `AsyncTabCompleteEvent` (off the main thread)
+  and `TabCompleteEvent` for command completions, `BlockGrowEvent` (crops, stems and their
+  fruit, sugar cane, cactus, sweet berries, nether wart, cocoa), `BlockFadeEvent` (ice and
+  snow melting; grass, mycelium and farmland turning to dirt; fire going out),
+  `BlockFormEvent` (lava hardening beside water, ice and snow forming in cold weather),
+  `BlockSpreadEvent` for grass and mycelium, `LeavesDecayEvent` and `MoistureChangeEvent`
+  (a listener may change the new state where Paper lets it). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -440,9 +445,9 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
-  Events not fired yet include fluids flowing, blocks growing, fading and forming,
-  `TNTPrimeEvent`, `EntityChangeBlockEvent`, projectiles being launched and hitting, and
-  vehicles.
+  Events not fired yet include fluids flowing, trees and huge mushrooms growing
+  (`StructureGrowEvent`), bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`,
+  `EntityChangeBlockEvent`, projectiles being launched and hitting, and vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

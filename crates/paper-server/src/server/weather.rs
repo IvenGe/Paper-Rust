@@ -6,6 +6,7 @@
 use super::commands::CommandSource;
 use super::survival::Damage;
 use super::Server;
+use crate::world::block_updates::Change;
 use crate::config::Difficulty;
 use crate::world::chunk::ChunkPos;
 use crate::world::entity::{Aabb, Vec3};
@@ -211,7 +212,7 @@ impl Server {
             let surrounded = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().all(|(dx, dz)| water_source(self, below.offset(*dx, 0, *dz)));
             if !surrounded {
                 if let Some(ice) = blocks::default_state("minecraft:ice") {
-                    self.set_block_and_update(world, below, ice);
+                    self.change_block(world, Change::Form, below, ice);
                 }
             }
         }
@@ -226,7 +227,7 @@ impl Server {
             let layers: i32 = blocks::property(here, "layers").and_then(|l| l.parse().ok()).unwrap_or(1);
             if layers < max_height.min(8) {
                 if let Some(more) = blocks::with_property(here, "layers", &(layers + 1).to_string()) {
-                    self.set_block_and_update(world, top, more);
+                    self.change_block(world, Change::Form, top, more);
                 }
             }
         } else if blocks::is_air(here) {
@@ -235,7 +236,7 @@ impl Server {
                 level.can_survive(snow, top)
             };
             if fits {
-                self.set_block_and_update(world, top, snow);
+                self.change_block(world, Change::Form, top, snow);
             }
         }
     }
