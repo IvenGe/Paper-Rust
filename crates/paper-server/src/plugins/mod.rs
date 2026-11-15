@@ -36,7 +36,7 @@ use crate::config::{Config, OnHostCrash};
 use crate::server::{MainTask, Server};
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use paper_bridge::{bmap, read_frame, write_frame, Frame, Value, FLAG_SYNC, PROTOCOL_VERSION};
+use paper_bridge::{bmap, read_frame, write_frame, Frame, Value, FLAG_NO_REPLY, FLAG_SYNC, PROTOCOL_VERSION};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -50,8 +50,45 @@ use std::time::{Duration, Instant};
 /// What the main thread receives while it waits inside a sync call.
 enum Inbound {
     Return { id: u64, ok: bool, value: Value },
-    Call { id: u64, method: String, args: Value },
+    /// A sync call of the host; `reply` unless the host does not wait for it.
+    Call { id: u64, method: String, args: Value, reply: bool },
     Closed(String),
+}
+
+/// How long the main thread looks busily for the host's answer before it sleeps.
+const SPIN: Duration = Duration::from_micros(150);
+
+/// What the bridge did since it was last asked ([`HostConnection::take_stats`]): calls the
+/// main thread made to the host and how long it waited for them (serving the host's calls
+/// meanwhile included), and calls of the host it served and how long they took to run.
+#[derive(Clone, Debug, Default)]
+pub struct BridgeStats {
+    pub calls: u64,
+    pub waited: Duration,
+    /// The same by method: (method, calls, waited).
+    pub by_method: Vec<(String, u64, Duration)>,
+    pub served: u64,
+    /// Of those, the ones the host did not wait for.
+    pub served_without_reply: u64,
+    pub serving: Duration,
+    /// Calls served by method: (method, calls, time to run).
+    pub served_by_method: Vec<(String, u64, Duration)>,
+    /// Times the players' states were looked over for changes before a call, how long that
+    /// took, and how many states were sent.
+    pub state_flushes: u64,
+    pub state_flushing: Duration,
+    pub states_sent: u64,
+}
+
+/// Counts a call of `method` that took `took` in a by-method list.
+fn count_call(list: &mut Vec<(String, u64, Duration)>, method: &str, took: Duration) {
+    match list.iter_mut().find(|(m, _, _)| m == method) {
+        Some((_, calls, total)) => {
+            *calls += 1;
+            *total += took;
+        }
+        None => list.push((method.to_owned(), 1, took)),
+    }
 }
 
 /// State the server keeps for the plugin API.
@@ -119,6 +156,9 @@ pub struct HostConnection {
     slow_call: Duration,
     child: Mutex<Option<Child>>,
     to_main: Sender<MainTask>,
+    stats: Mutex<BridgeStats>,
+    /// Calls the host does not wait for, being run (see `serve_sync`).
+    unwaited: std::sync::atomic::AtomicU32,
 }
 
 impl HostConnection {
@@ -143,11 +183,35 @@ impl HostConnection {
     /// Calls the host from the main thread and waits, executing the host's nested calls
     /// meanwhile. Must only be called on the thread that owns `server`.
     pub fn call(self: &Arc<Self>, server: &mut Server, method: &str, args: Value) -> Result<Value, CallError> {
+        // While a call the host does not wait for runs, the host's main thread is busy with
+        // plugin code and would answer out of order: such calls must not call back.
+        if self.unwaited.load(Ordering::Relaxed) > 0 {
+            return Err(CallError::Remote(format!("{method} was called back from a plugin call that is not waited for")));
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.main_calls.lock().insert(id);
+        let started = Instant::now();
         let result = self.call_inner(server, id, method, args);
+        let took = started.elapsed();
+        let mut stats = self.stats.lock();
+        stats.calls += 1;
+        stats.waited += took;
+        count_call(&mut stats.by_method, method, took);
+        drop(stats);
         self.main_calls.lock().remove(&id);
         result
+    }
+
+    pub(crate) fn count_state_flush(&self, took: Duration, sent: usize) {
+        let mut stats = self.stats.lock();
+        stats.state_flushes += 1;
+        stats.state_flushing += took;
+        stats.states_sent += sent as u64;
+    }
+
+    /// What the bridge did since this was last asked.
+    pub fn take_stats(&self) -> BridgeStats {
+        std::mem::take(&mut *self.stats.lock())
     }
 
     fn call_inner(self: &Arc<Self>, server: &mut Server, id: u64, method: &str, args: Value) -> Result<Value, CallError> {
@@ -157,22 +221,42 @@ impl HostConnection {
         // Loading and enabling plugins legitimately takes a while.
         let slow_call = if method == "host.load" || method == "host.post_world" { self.slow_call.max(Duration::from_secs(30)) } else { self.slow_call };
         loop {
-            let inbound = crossbeam_channel::select! {
-                recv(self.main_rx) -> item => item.map_err(|_| RecvTimeoutError::Disconnected),
-                recv(self.async_rx) -> call => {
-                    if let Ok((cid, m, args)) = call {
-                        self.serve(server, cid, &m, &args);
-                    }
-                    continue;
+            // An answer (or a nested call) usually comes within a few dozen microseconds:
+            // look for it busily for a moment before sleeping, as waking a sleeping thread
+            // takes about as long again.
+            let spin_until = Instant::now() + SPIN;
+            let spun = loop {
+                if let Ok(item) = self.main_rx.try_recv() {
+                    break Some(Ok(item));
                 }
-                default(Duration::from_millis(250)) => Err(RecvTimeoutError::Timeout),
+                if let Ok((cid, m, args)) = self.async_rx.try_recv() {
+                    self.serve(server, cid, &m, &args);
+                    break None;
+                }
+                if Instant::now() >= spin_until {
+                    break None;
+                }
+                std::hint::spin_loop();
+            };
+            let inbound = match spun {
+                Some(item) => item,
+                None => crossbeam_channel::select! {
+                    recv(self.main_rx) -> item => item.map_err(|_| RecvTimeoutError::Disconnected),
+                    recv(self.async_rx) -> call => {
+                        if let Ok((cid, m, args)) = call {
+                            self.serve(server, cid, &m, &args);
+                        }
+                        continue;
+                    }
+                    default(Duration::from_millis(250)) => Err(RecvTimeoutError::Timeout),
+                },
             };
             match inbound {
                 Ok(Inbound::Return { id: rid, ok, value }) if rid == id => {
                     return if ok { Ok(value) } else { Err(CallError::Remote(value.as_str().unwrap_or("error").to_owned())) };
                 }
                 Ok(Inbound::Return { id: rid, .. }) => log::warn!("Plugin host answered call {rid} out of order; ignoring it"),
-                Ok(Inbound::Call { id: cid, method: m, args }) => self.serve(server, cid, &m, &args),
+                Ok(Inbound::Call { id: cid, method: m, args, reply }) => self.serve_sync(server, cid, &m, &args, reply),
                 Ok(Inbound::Closed(reason)) => {
                     log::debug!("Plugin host closed during {method}: {reason}");
                     return Err(CallError::Disconnected);
@@ -200,11 +284,38 @@ impl HostConnection {
 
     /// Runs one of the host's calls into the API and answers it.
     fn serve(&self, server: &mut Server, id: u64, method: &str, args: &Value) {
-        let (ok, value) = match api::handle(server, method, args) {
+        self.serve_sync(server, id, method, args, true);
+    }
+
+    /// Runs one of the host's calls into the API and answers it if the host waits for it
+    /// (`reply`); a failure of a call it does not wait for is logged.
+    fn serve_sync(&self, server: &mut Server, id: u64, method: &str, args: &Value, reply: bool) {
+        let started = Instant::now();
+        if !reply {
+            self.unwaited.fetch_add(1, Ordering::Relaxed);
+        }
+        let result = api::handle(server, method, args);
+        if !reply {
+            self.unwaited.fetch_sub(1, Ordering::Relaxed);
+        }
+        let took = started.elapsed();
+        let mut stats = self.stats.lock();
+        stats.served += 1;
+        stats.served_without_reply += !reply as u64;
+        stats.serving += took;
+        count_call(&mut stats.served_by_method, method, took);
+        drop(stats);
+        let (ok, value) = match result {
             Ok(v) => (true, v),
+            Err(e) if !reply => {
+                log::warn!("A plugin's {method} failed: {e:#}");
+                return;
+            }
             Err(e) => (false, Value::Str(format!("{e:#}"))),
         };
-        let _ = self.send(&Frame::Return { id, ok, value });
+        if reply {
+            let _ = self.send(&Frame::Return { id, ok, value });
+        }
     }
 
     /// Calls the host without blocking; `then` runs on the main thread with the answer.
@@ -278,7 +389,7 @@ fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inb
                 if flags & FLAG_SYNC != 0 {
                     // Part of a nested call chain: the main thread is (or is about to be)
                     // waiting inside `call`. Wake it in case it is idle.
-                    let _ = main_tx.send(Inbound::Call { id, method, args });
+                    let _ = main_tx.send(Inbound::Call { id, method, args, reply: flags & FLAG_NO_REPLY == 0 });
                     let _ = to_main.send(MainTask::PluginWake);
                 } else {
                     // Served between ticks, or by the main thread while it waits (whichever
@@ -328,13 +439,7 @@ pub fn service_idle(server: &mut Server) {
     conn.serve_async(server);
     while let Ok(item) = conn.main_rx.try_recv() {
         match item {
-            Inbound::Call { id, method, args } => {
-                let (ok, value) = match api::handle(server, &method, &args) {
-                    Ok(v) => (true, v),
-                    Err(e) => (false, Value::Str(format!("{e:#}"))),
-                };
-                let _ = conn.send(&Frame::Return { id, ok, value });
-            }
+            Inbound::Call { id, method, args, reply } => conn.serve_sync(server, id, &method, &args, reply),
             Inbound::Return { id, .. } => log::warn!("Plugin host answered call {id} after it was abandoned"),
             Inbound::Closed(_) => {}
         }
@@ -493,6 +598,8 @@ fn start_with(server: &mut Server, launcher: &Launcher) -> Result<()> {
         slow_call: Duration::from_millis(settings.slow_call_warning_millis.max(1)),
         child: Mutex::new(child),
         to_main: server.shared.to_main.clone(),
+        stats: Mutex::new(BridgeStats::default()),
+        unwaited: std::sync::atomic::AtomicU32::new(0),
     });
     let to_main = server.shared.to_main.clone();
     let reader_conn = conn.clone();
@@ -504,6 +611,7 @@ fn start_with(server: &mut Server, launcher: &Launcher) -> Result<()> {
         if let Some(p) = server.players.get(&id) {
             let state = api::player_state(server, p);
             server.plugin_state_cache.insert(id, state);
+            server.plugin_state_marks.remove(&id);
         }
     }
     let loaded = conn.call(server, "host.load", Value::Null).map_err(|e| anyhow!("loading plugins failed: {e}"))?;
@@ -544,6 +652,7 @@ pub fn reload(server: &mut Server) -> Result<()> {
     server.plugin_commands.clear();
     server.plugin_events.clear();
     server.plugin_state_cache.clear();
+    server.plugin_state_marks.clear();
     server.plugin_list.clear();
     server.plugin_data.inventories.clear();
     server.reset_plugin_scoreboards();
@@ -595,6 +704,7 @@ pub fn host_died(server: &mut Server, reason: &str) {
     server.plugin_commands.clear();
     server.plugin_events.clear();
     server.plugin_state_cache.clear();
+    server.plugin_state_marks.clear();
     for plugin in &mut server.plugin_list {
         plugin.enabled = false;
     }

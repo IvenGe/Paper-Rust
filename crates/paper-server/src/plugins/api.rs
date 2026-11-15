@@ -257,7 +257,6 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "walk_speed" => p.api.walk_speed * 2.0,
         "fly_speed" => p.api.fly_speed * 2.0,
         "sleeping_ignored" => p.api.sleeping_ignored,
-        "player_time" => server.player_time(p.world, p),
         "player_time_offset" => p.api.time.map_or(0, |(offset, _)| offset),
         "player_time_relative" => p.api.time.is_none_or(|(_, relative)| relative),
         "player_weather" => p.api.weather.map(|rain| if rain { "DOWNFALL" } else { "CLEAR" }),
@@ -284,7 +283,9 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "sleeping" => p.sleeping.map(|b| Value::List(vec![b.x.into(), b.y.into(), b.z.into()])),
         "sleep_ticks" => p.sleep_ticks,
         "respawn" => p.respawn.filter(|(w, _)| *w < server.worlds.len()).map(|(w, pos)| Value::List(vec![server.worlds[w].name.clone().into(), pos.x.into(), pos.y.into(), pos.z.into()])),
-        "ticks_lived" => server.tick.saturating_sub(p.api.joined_tick) as i64,
+        // Ticks lived and since the last swing are worked out by the host from these and the
+        // current tick: the state does not change every tick.
+        "joined_tick" => p.api.joined_tick as i64,
         "portal_cooldown" => p.portal_cooldown,
         "chat_visibility" => p.settings.chat_mode,
         "chat_colors" => p.settings.chat_colors,
@@ -295,7 +296,7 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "seen_credits" => p.seen_credits,
         "killer" => p.last_attacker.filter(|(_, at)| server.tick.saturating_sub(*at) <= 100).and_then(|(a, _)| server.players.get(&a)).map(|k| k.uuid().to_string()),
         "using_item" => p.using_item.map(|(hand, ticks)| Value::List(vec![(hand as i64).into(), (ticks as i64).into()])),
-        "ticks_since_swing" => server.tick.saturating_sub(p.last_swing) as i64,
+        "last_swing" => p.last_swing as i64,
         "previous_game_mode" => p.previous_game_mode.map(|m| m.name()),
     }
 }

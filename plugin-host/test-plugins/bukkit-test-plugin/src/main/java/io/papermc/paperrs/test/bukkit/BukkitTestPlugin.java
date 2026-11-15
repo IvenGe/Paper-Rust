@@ -38,6 +38,9 @@ public final class BukkitTestPlugin extends JavaPlugin implements Listener {
         final ApiTests api = new ApiTests(this);
         this.getServer().getPluginManager().registerEvents(api, this);
         this.getCommand("apitest").setExecutor(api);
+        if (Boolean.getBoolean("paperrs.bench")) {
+            new Bench(this).start();
+        }
         // After /reload the players are already online when plugins are enabled.
         for (org.bukkit.entity.Player player : this.getServer().getOnlinePlayers()) {
             player.sendMessage("BukkitTestPlugin enabled with " + this.getServer().getOnlinePlayers().size() + " player(s) online");

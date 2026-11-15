@@ -40,6 +40,9 @@ public final class Codec {
     /** CALL flag: the caller holds the main-thread baton; see {@link Bridge}. */
     public static final int FLAG_SYNC = 1;
 
+    /** CALL flag: the caller does not wait, so no RETURN is sent; see {@link Bridge#send}. */
+    public static final int FLAG_NO_REPLY = 2;
+
     public static final int MAX_FRAME_LEN = 64 * 1024 * 1024;
 
     private Codec() {

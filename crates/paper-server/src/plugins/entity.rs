@@ -283,14 +283,23 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 None => w.entities.keys().copied().collect(),
             };
             ids.sort_unstable();
-            let list = ids
+            let found: Vec<&crate::world::entity::Entity> = ids
                 .iter()
                 .filter_map(|id| w.entities.get(id))
                 .filter(|e| !e.removed)
                 .filter(|e| types.as_ref().is_none_or(|t| t.contains(&e.info.name.as_str())))
                 .filter(|e| area.as_ref().is_none_or(|a| e.bounding_box().intersects(a)))
-                .map(|e| entity_value(server, world, e))
                 .collect();
+            // Each state takes a while to work out (where the entity is, what it carries):
+            // many are worked out in parallel.
+            let list = if found.len() >= 16 {
+                server.tick_pool.install(|| {
+                    use rayon::prelude::*;
+                    found.par_iter().map(|e| entity_value(server, world, e)).collect()
+                })
+            } else {
+                found.iter().map(|e| entity_value(server, world, e)).collect()
+            };
             Ok(Value::List(list))
         }
         "world.spawn_entity" => {

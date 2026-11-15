@@ -11,6 +11,8 @@ use paper_server::config::Config;
 use paper_server::RunningServer;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 /// Starts a server on an ephemeral port with the test configuration, after `tweak`.
@@ -342,3 +344,52 @@ pub fn decode<P: Packet + Decode>(frame: &[u8]) -> P {
 
 #[allow(dead_code)]
 fn _unused(_: VarInt) {}
+
+// --- Java plugins ---------------------------------------------------------------------------
+
+pub fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+}
+
+/// A Java 25+ executable, if one can be found (`PAPER_RS_TEST_JAVA`, `JAVA_HOME`,
+/// `/opt/jdk25` or the `java` on the path).
+pub fn find_java() -> Option<String> {
+    let mut candidates = Vec::new();
+    if let Ok(java) = std::env::var("PAPER_RS_TEST_JAVA") {
+        candidates.push(java);
+    }
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        candidates.push(format!("{home}/bin/java"));
+    }
+    candidates.push("/opt/jdk25/bin/java".into());
+    candidates.push("java".into());
+    candidates.into_iter().find(|java| {
+        let Ok(out) = Command::new(java).arg("-version").output() else { return false };
+        let text = String::from_utf8_lossy(&out.stderr);
+        // `openjdk version "25.0.1" ...`
+        text.split('"').nth(1).and_then(|v| v.split('.').next()).and_then(|major| major.parse::<u32>().ok()).is_some_and(|major| major >= 25)
+    })
+}
+
+/// What the tests with Java plugins need: Java, the built plugin host and the test plugins.
+pub struct Setup {
+    pub java: String,
+    pub host_dir: PathBuf,
+    pub plugins: Vec<PathBuf>,
+}
+
+/// The plugin host setup, or `None` (and why, on stderr) when Java or the jars are missing.
+pub fn setup() -> Option<Setup> {
+    let root = repo_root().join("plugin-host");
+    let host_dir = root.join("host/target");
+    let plugins = vec![root.join("test-plugins/bukkit-test-plugin/target/bukkit-test-plugin.jar"), root.join("test-plugins/paper-test-plugin/target/paper-test-plugin.jar")];
+    let Some(java) = find_java() else {
+        eprintln!("skipping: no Java 25 found (set PAPER_RS_TEST_JAVA)");
+        return None;
+    };
+    if !host_dir.join("paper-rs-plugin-host.jar").is_file() || plugins.iter().any(|p| !p.is_file()) {
+        eprintln!("skipping: build the plugin host and test plugins first (mvn package in plugin-host/)");
+        return None;
+    }
+    Some(Setup { java, host_dir, plugins })
+}

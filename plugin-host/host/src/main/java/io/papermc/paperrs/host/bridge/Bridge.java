@@ -86,6 +86,8 @@ public final class Bridge {
     private final DataInputStream in;
     private final OutputStream out;
     private final Object writeLock = new Object();
+    /** Frames of {@link #send} are in the buffer, not written out yet. */
+    private boolean held;
     private final AtomicLong nextId = new AtomicLong(1);
     private final LinkedBlockingQueue<Item> mainQueue = new LinkedBlockingQueue<>();
     /** Ids of calls the main thread is waiting for, innermost last. */
@@ -138,7 +140,11 @@ public final class Bridge {
         while (true) {
             Item item;
             try {
-                item = this.mainQueue.take();
+                this.flushHeld();
+                item = this.spinFor();
+                if (item == null) {
+                    item = this.mainQueue.take();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -202,6 +208,64 @@ public final class Bridge {
         }
     }
 
+    /**
+     * Calls a method of the Rust server from the main thread without waiting, for calls whose
+     * result plugins never see (a message, a title, a sound). The server runs it in order with
+     * every other sync call and answers nothing; it only logs a failure.
+     */
+    public void send(String method, Map<String, Object> args) {
+        if (this.closed) {
+            throw new DisconnectedException("plugin bridge closed: " + this.closeReason);
+        }
+        long id = this.nextId.getAndIncrement();
+        try {
+            // Written out with the next frame that is waited for, or before the main thread
+            // waits (see flushHeld), so a burst of these costs one write.
+            byte[] bytes = Codec.encode(Codec.Frame.call(id, Codec.FLAG_SYNC | Codec.FLAG_NO_REPLY, method, args));
+            synchronized (this.writeLock) {
+                this.out.write(bytes);
+                this.held = true;
+            }
+        } catch (IOException e) {
+            throw new DisconnectedException("plugin bridge write failed: " + e.getMessage());
+        }
+    }
+
+    /** How long the main thread looks busily for work before it sleeps. */
+    private static final long SPIN_NANOS = TimeUnit.MICROSECONDS.toNanos(150);
+
+    /**
+     * The next item for the main thread if one comes within {@link #SPIN_NANOS}, looked for
+     * busily: the server's calls come in bursts (the events of a tick), and waking a sleeping
+     * thread takes about as long as the call itself.
+     */
+    private Item spinFor() {
+        final long until = System.nanoTime() + SPIN_NANOS;
+        do {
+            final Item item = this.mainQueue.poll();
+            if (item != null) {
+                return item;
+            }
+            Thread.onSpinWait();
+        } while (System.nanoTime() < until);
+        return null;
+    }
+
+    /** Writes out what {@link #send} left in the buffer. */
+    private void flushHeld() {
+        synchronized (this.writeLock) {
+            if (!this.held) {
+                return;
+            }
+            this.held = false;
+            try {
+                this.out.flush();
+            } catch (IOException e) {
+                LOGGER.log(Level.FINE, "could not write to the server", e);
+            }
+        }
+    }
+
     /** Like {@link #call} but never blocks; for fire-and-forget operations from any thread. */
     public CompletableFuture<Object> callAsync(String method, Map<String, Object> args) {
         long id = this.nextId.getAndIncrement();
@@ -241,7 +305,11 @@ public final class Bridge {
             while (true) {
                 Item item;
                 try {
-                    item = this.mainQueue.poll(1, TimeUnit.SECONDS);
+                    this.flushHeld();
+                    item = this.spinFor();
+                    if (item == null) {
+                        item = this.mainQueue.poll(1, TimeUnit.SECONDS);
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new DisconnectedException("interrupted while waiting for " + method);
@@ -384,6 +452,7 @@ public final class Bridge {
         synchronized (this.writeLock) {
             this.out.write(bytes);
             this.out.flush();
+            this.held = false;
         }
     }
 

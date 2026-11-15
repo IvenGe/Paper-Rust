@@ -101,7 +101,7 @@ public final class Host implements Bridge.Handler {
             }
         };
         if (this.bridge.isMainThread() && this.server != null && !method.startsWith("host.load") && !method.startsWith("host.post_world")) {
-            this.publishChanges();
+            this.publishChanges(method.equals("host.tick") || method.startsWith("command."));
         }
         return result;
     }
@@ -206,8 +206,16 @@ public final class Host implements Bridge.Handler {
         return Values.of("plugins", plugins, "commands", new ArrayList<Object>(labels), "events", new ArrayList<Object>(events));
     }
 
-    /** Tells the server about plugins, commands or listeners that changed since last time. */
-    private void publishChanges() {
+    /**
+     * Tells the server about plugins, commands or listeners that changed since last time.
+     * Listeners are looked at after every call (the server must know of a new one before it
+     * fires its event again); plugins and commands, which seldom change and take longer to
+     * collect, once a tick and after commands ({@code full}), or when listeners changed.
+     */
+    private void publishChanges(final boolean full) {
+        if (!Objects.requireNonNull(this.events).listenersChanged() && !full) {
+            return;
+        }
         final Map<String, Object> state = this.currentState();
         if (!state.equals(this.lastState)) {
             this.lastState = state;

@@ -233,13 +233,15 @@ public final class CraftServer extends AbstractServer {
     }
 
     /**
-     * Sends a command to the Rust server. On the main thread it runs at once, in order with
-     * everything else; elsewhere it is queued without waiting.
+     * Sends a command to the Rust server without waiting for it. From the main thread it runs
+     * in order with everything else the main thread asks; elsewhere it is queued. Only for
+     * commands during which the server tells plugins nothing (no events): plugin code goes on
+     * meanwhile, so the host could not answer the server's calls in order.
      */
     public void send(final String method, final Map<String, Object> args) {
         this.epoch++;
         if (this.bridge().isMainThread()) {
-            this.bridge().call(method, args);
+            this.bridge().send(method, args);
         } else {
             this.bridge().callAsync(method, args).exceptionally(e -> {
                 this.logger.log(Level.WARNING, "Could not send " + method + " to the server", e);

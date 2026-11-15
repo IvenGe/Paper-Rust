@@ -224,6 +224,37 @@ public final class HostEvents {
         }
     }
 
+    /** The listener arrays of the handler lists when last looked at (see {@link #listenersChanged}). */
+    private org.bukkit.plugin.RegisteredListener[][] lastListeners = new org.bukkit.plugin.RegisteredListener[0][];
+    private boolean lastPopulated;
+
+    /**
+     * Whether listeners were registered or unregistered (or block populators added) since
+     * this was last asked. Cheap enough to ask after every call: a handler list keeps the
+     * same array of listeners until they change.
+     */
+    public boolean listenersChanged() {
+        boolean changed = this.lastListeners.length != this.handlerLists.size();
+        if (changed) {
+            this.lastListeners = new org.bukkit.plugin.RegisteredListener[this.handlerLists.size()][];
+        }
+        int i = 0;
+        for (final HandlerList list : this.handlerLists.values()) {
+            final org.bukkit.plugin.RegisteredListener[] all = list.getRegisteredListeners();
+            if (this.lastListeners[i] != all) {
+                this.lastListeners[i] = all;
+                changed = true;
+            }
+            i++;
+        }
+        final boolean populated = this.server.getWorlds().stream().anyMatch(w -> !w.getPopulators().isEmpty());
+        if (populated != this.lastPopulated) {
+            this.lastPopulated = populated;
+            changed = true;
+        }
+        return changed;
+    }
+
     /** The gated events that currently have listeners. */
     public Set<String> listened() {
         final Set<String> out = new LinkedHashSet<>();

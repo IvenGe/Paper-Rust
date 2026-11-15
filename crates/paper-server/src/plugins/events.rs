@@ -14,10 +14,25 @@ use std::collections::HashSet;
 
 /// Sends the host the state of every player that changed since it last saw it, so plugin
 /// code always reads current positions, game modes and so on without asking the server.
+///
+/// Before each call into the host, a player's whole state is worked out again only if what
+/// changes in play (see [`state_mark`]) changed, or the player sent a packet since; once a
+/// tick, every player's is (`all`).
 pub fn flush_states(server: &mut Server) {
+    flush_states_of(server, false);
+}
+
+fn flush_states_of(server: &mut Server, all: bool) {
     let Some(conn) = server.plugins.clone() else { return };
+    let started = std::time::Instant::now();
     let mut changed = Vec::new();
     for id in server.player_order.clone() {
+        let Some(player) = server.players.get(&id) else { continue };
+        let mark = state_mark(player);
+        if !all && server.plugin_state_marks.get(&id) == Some(&mark) {
+            continue;
+        }
+        server.plugin_state_marks.insert(id, mark);
         let Some(player) = server.players.get(&id) else { continue };
         let state = super::api::player_state(server, player);
         if server.plugin_state_cache.get(&id) != Some(&state) {
@@ -25,9 +40,25 @@ pub fn flush_states(server: &mut Server) {
             changed.push(state);
         }
     }
+    let sent = changed.len();
     if !changed.is_empty() {
         conn.notify("players.state", bmap! { "players" => Value::List(changed) });
     }
+    conn.count_state_flush(started.elapsed(), sent);
+}
+
+/// A fingerprint of what of a player's state changes in play: where they are, health and
+/// food, game mode, what they are doing. Cheap to work out, unlike the whole state.
+fn state_mark(p: &crate::server::player::Player) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
+    (p.world, p.loc.x.to_bits(), p.loc.y.to_bits(), p.loc.z.to_bits(), p.loc.yaw.to_bits(), p.loc.pitch.to_bits(), p.on_ground).hash(&mut h);
+    (p.game_mode.id(), p.op_level, p.health.to_bits(), p.food, p.saturation.to_bits(), p.exhaustion.to_bits(), p.keep_alive.latency).hash(&mut h);
+    (p.sneaking, p.sprinting, p.gliding, p.flying, p.allow_flight, p.held_slot, p.dead).hash(&mut h);
+    (p.fire_ticks, p.air, p.xp_level, p.xp_progress.to_bits(), p.xp_total, p.invulnerable_time, p.last_hurt.to_bits()).hash(&mut h);
+    (p.fall_distance.to_bits(), p.absorption.to_bits(), p.sleep_ticks, p.portal_cooldown, p.vehicle, p.using_item, p.sleeping).hash(&mut h);
+    (p.open_menu.as_ref().map(|m| m.window_id), p.last_attacker, p.resource_pack_status).hash(&mut h);
+    h.finish()
 }
 
 /// Calls the host synchronously if it is connected and the event has listeners.
@@ -137,7 +168,7 @@ pub fn on_interact_entity(server: &mut Server, id: i32, target: i32, hand: i32, 
     let Some(player) = server.players.get(&id) else { return true };
     let args = bmap! {
         "uuid" => player.uuid().to_string(),
-        "entity" => super::entity::shallow_ref(server, target),
+        "entity" => entity_ref(server, target),
         "hand" => hand,
         "at" => Value::List(vec![at.0.into(), at.1.into(), at.2.into()]),
     };
@@ -162,7 +193,7 @@ pub fn on_explode(server: &mut Server, world: usize, source: Option<i32>, center
         "result" => if decay { "DESTROY_WITH_DECAY" } else { "DESTROY" },
     };
     if let Some(s) = source {
-        args.set("entity", super::entity::shallow_ref(server, s));
+        args.set("entity", entity_ref(server, s));
     }
     let method = if source.is_some() { "event.entity_explode" } else { "event.block_explode" };
     match fire(server, event, method, args) {
@@ -292,7 +323,7 @@ pub fn on_entity_target(server: &mut Server, world: usize, mob: i32, target: i32
     if !server.worlds[world].entities.contains_key(&mob) {
         return true;
     }
-    let args = bmap! { "entity" => super::entity::shallow_ref(server, mob), "target" => super::entity::shallow_ref(server, target), "reason" => reason };
+    let args = bmap! { "entity" => entity_ref(server, mob), "target" => entity_ref(server, target), "reason" => reason };
     match fire(server, "", "event.entity_target", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
@@ -366,7 +397,7 @@ pub fn tick(server: &mut Server) {
         super::inventory::collect_released(server);
     }
     let Some(conn) = server.plugins.clone() else { return };
-    flush_states(server);
+    flush_states_of(server, true);
     let tick = server.tick as i64;
     if let Err(e) = conn.call(server, "host.tick", bmap! { "tick" => tick }) {
         if !conn.is_closed() {
@@ -386,6 +417,7 @@ pub fn on_join(server: &mut Server, id: i32, default: Component) -> Option<Compo
     let state = super::api::player_state(server, player);
     let inventory = Value::List(player.inventory.iter().map(super::api::item_value).collect());
     server.plugin_state_cache.insert(id, state.clone());
+    server.plugin_state_marks.remove(&id);
     let args = bmap! { "player" => state, "inventory" => inventory, "message" => component_value(&default) };
     match fire(server, "", "event.join", args) {
         Some(result) => component_from(result.get("message")),
@@ -404,6 +436,8 @@ pub fn on_quit(server: &mut Server, uuid: uuid::Uuid, reason: &str, default: Com
         super::bossbar::player_left(server, id);
     }
     server.plugin_state_cache.retain(|_, v| v.str("uuid") != Some(uuid.to_string().as_str()));
+    let cache = &server.plugin_state_cache;
+    server.plugin_state_marks.retain(|id, _| cache.contains_key(id));
     let args = bmap! { "uuid" => uuid.to_string(), "reason" => reason, "message" => component_value(&default) };
     match fire(server, "", "event.quit", args) {
         Some(result) => component_from(result.get("message")),
@@ -1023,7 +1057,7 @@ pub fn on_block_ignite(server: &mut Server, world: usize, pos: BlockPos, cause: 
     }
     let mut args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "cause" => cause };
     match by {
-        Igniter::Entity(id) if server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id) => args.set("entity", super::entity::shallow_ref(server, id)),
+        Igniter::Entity(id) if server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id) => args.set("entity", entity_ref(server, id)),
         Igniter::Block(b) => args.set("from", pos_value(b)),
         _ => {}
     }
@@ -1137,7 +1171,7 @@ pub fn on_regain_health(server: &mut Server, world: usize, id: i32, amount: f32,
     if !listens(server, "EntityRegainHealthEvent") || !(server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id)) {
         return Some(amount);
     }
-    let args = bmap! { "entity" => super::entity::shallow_ref(server, id), "amount" => amount as f64, "reason" => reason };
+    let args = bmap! { "entity" => entity_ref(server, id), "amount" => amount as f64, "reason" => reason };
     match fire(server, "EntityRegainHealthEvent", "event.regain_health", args) {
         Some(result) if result.bool("cancelled") == Some(true) => None,
         Some(result) => Some(result.f64("amount").map_or(amount, |a| a as f32)),
@@ -1162,9 +1196,9 @@ pub fn on_combust(server: &mut Server, world: usize, id: i32, ticks: i32, by: Co
     if !listens(server, "EntityCombustEvent") || !(server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id)) {
         return Some(ticks);
     }
-    let mut args = bmap! { "entity" => super::entity::shallow_ref(server, id), "world" => server.worlds[world].name.clone(), "seconds" => ticks as f64 / 20.0 };
+    let mut args = bmap! { "entity" => entity_ref(server, id), "world" => server.worlds[world].name.clone(), "seconds" => ticks as f64 / 20.0 };
     match by {
-        Combuster::Entity(e) if server.players.contains_key(&e) || server.worlds[world].entities.contains_key(&e) => args.set("by_entity", super::entity::shallow_ref(server, e)),
+        Combuster::Entity(e) if server.players.contains_key(&e) || server.worlds[world].entities.contains_key(&e) => args.set("by_entity", entity_ref(server, e)),
         Combuster::Block(b) => args.set("by_block", pos_value(b)),
         _ => {}
     }
@@ -1181,7 +1215,7 @@ pub fn on_projectile_launch(server: &mut Server, world: usize, id: i32) -> bool 
     if !listens(server, "ProjectileLaunchEvent") || !server.worlds[world].entities.contains_key(&id) {
         return true;
     }
-    let args = bmap! { "entity" => super::entity::shallow_ref(server, id) };
+    let args = bmap! { "entity" => entity_ref(server, id) };
     match fire(server, "ProjectileLaunchEvent", "event.projectile_launch", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
@@ -1194,9 +1228,9 @@ pub fn on_projectile_hit(server: &mut Server, world: usize, id: i32, entity: Opt
     if !listens(server, "ProjectileHitEvent") || !server.worlds[world].entities.contains_key(&id) {
         return true;
     }
-    let mut args = bmap! { "entity" => super::entity::shallow_ref(server, id), "world" => server.worlds[world].name.clone() };
+    let mut args = bmap! { "entity" => entity_ref(server, id), "world" => server.worlds[world].name.clone() };
     if let Some(e) = entity.filter(|e| server.players.contains_key(e) || server.worlds[world].entities.contains_key(e)) {
-        args.set("hit_entity", super::entity::shallow_ref(server, e));
+        args.set("hit_entity", entity_ref(server, e));
     }
     if let Some(b) = block {
         args.set("hit_block", pos_value(b));
@@ -1290,7 +1324,7 @@ pub fn on_entity_change_block(server: &mut Server, world: usize, entity: i32, po
         return !cancelled;
     }
     let args = bmap! {
-        "entity" => super::entity::shallow_ref(server, entity),
+        "entity" => entity_ref(server, entity),
         "world" => server.worlds[world].name.clone(),
         "x" => pos.x, "y" => pos.y, "z" => pos.z,
         "to" => paper_data::blocks::state_to_string(to),
@@ -1656,7 +1690,7 @@ pub fn on_portal_create(server: &mut Server, world: usize, blocks: &[(BlockPos, 
     }
     let mut args = bmap! { "world" => server.worlds[world].name.clone(), "blocks" => blocks_value(blocks), "reason" => reason };
     if let Some(e) = entity.filter(|e| server.players.contains_key(e) || server.worlds.iter().any(|w| w.entities.contains_key(e))) {
-        args.set("entity", super::entity::shallow_ref(server, e));
+        args.set("entity", entity_ref(server, e));
     }
     match fire(server, "PortalCreateEvent", "event.portal_create", args) {
         Some(result) => result.bool("cancelled") != Some(true),

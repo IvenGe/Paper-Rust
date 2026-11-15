@@ -64,7 +64,27 @@ main thread.
 
 The host keeps a copy of each player's state (position, game mode, health, permissions
 level, ...). Before every sync call and every tick the server sends the states that changed
-(`players.state`), so plugin reads do not need a round trip.
+(`players.state`), so plugin reads do not need a round trip. Working a whole state out takes
+a while, so before a call the server only does it for players whose fingerprint of what
+changes in play (position, health, food, game mode, ...) changed, or who sent a packet
+since; once a tick it does it for every player. Values that change every tick are not in
+the state: the host works out ticks lived, the attack cooldown and the player's time from
+the tick it was given (`joined_tick`, `last_swing`, the world's time).
+
+Calls whose result plugins never see (`player.send_message`, titles, sounds, boss bars,
+fake blocks, ...: what `CraftServer.send` sends) are sent from the host's main thread with
+`SYNC` and `NO_REPLY`. The server runs them on its main thread in order with every other sync
+call and answers nothing (a failure is logged), so plugin code goes on at once and a burst
+of them costs one write. While the server runs such a call it cannot call the host back,
+whose main thread is busy with plugin code and would answer out of order: it refuses to (an
+event then sees no listeners), and calls that fire events (`player.kick`) are waited for.
+
+Both main threads look busily for an answer (or the other side's next call) for 150
+microseconds before they sleep: waking a sleeping thread takes about as long as a round trip,
+and the server's calls come in bursts. After each call the host checks whether listeners
+changed (cheaply: a handler list keeps its array of listeners until they change) and tells
+the server (`host.update`); plugins and commands, which seldom change, it looks over once a
+tick and after commands.
 
 ## Wire format
 
@@ -76,7 +96,7 @@ CALL    (3, either way)     := uvarint call_id | u8 flags | string method | valu
 RETURN  (4, either way)     := uvarint call_id | u8 status (0 ok, 1 error) | value
 NOTIFY  (5, either way)     := string method | value args
 
-flags   := bit 0: SYNC
+flags   := bit 0: SYNC, bit 1: NO_REPLY (no RETURN is sent)
 
 value   := 0                          null
          | 1 | 2                      false | true

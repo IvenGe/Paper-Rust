@@ -318,7 +318,8 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     @Override
     public void kick(final @Nullable Component message, final PlayerKickEvent.Cause cause) {
-        this.server.send("player.kick", this.args("reason", Components.toJson(message == null ? Component.translatable("multiplayer.disconnect.kicked") : message), "cause", cause.name()));
+        // The server tells plugins of the kick (PlayerKickEvent, PlayerQuitEvent): it is waited for.
+        this.server.call("player.kick", this.args("reason", Components.toJson(message == null ? Component.translatable("multiplayer.disconnect.kicked") : message), "cause", cause.name()));
     }
 
     @Override
@@ -1544,7 +1545,11 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     @Override
     public long getPlayerTime() {
-        return Values.i64(this.state, "player_time", 0);
+        // The world's time with the player's offset (the state does not carry the time, which
+        // changes every tick).
+        final long world = this.getWorld().getFullTime();
+        final long offset = this.getPlayerTimeOffset();
+        return this.isPlayerTimeRelative() ? world + offset : world - Math.floorMod(world, 24000L) + offset;
     }
 
     @Override
@@ -1695,7 +1700,8 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     @Override
     public int getTicksLived() {
-        return Math.max(1, Values.i32(this.state, "ticks_lived", 1));
+        final int now = this.server.getCurrentTick();
+        return Math.max(1, now - (int) Values.i64(this.state, "joined_tick", now));
     }
 
     @Override
@@ -2172,7 +2178,8 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     @Override
     public float getCooledAttackStrength(final float adjustTicks) {
-        final float ticks = Values.i32(this.state, "ticks_since_swing", 100) + adjustTicks;
+        final int now = this.server.getCurrentTick();
+        final float ticks = (this.state.containsKey("last_swing") ? now - Values.i64(this.state, "last_swing", now) : 100) + adjustTicks;
         return Math.max(0f, Math.min(1f, ticks / this.getCooldownPeriod()));
     }
 

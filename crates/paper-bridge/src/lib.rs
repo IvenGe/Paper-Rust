@@ -42,6 +42,11 @@ pub const MAX_FRAME_LEN: usize = 64 * 1024 * 1024;
 /// own main thread, re-entrantly if that thread is itself waiting on a call.
 pub const FLAG_SYNC: u8 = 1;
 
+/// CALL flag: the caller does not wait for the call, so no RETURN is sent (a failure is only
+/// logged). Used with [`FLAG_SYNC`] for calls whose result plugins never see (sending a
+/// message, a title, a sound): they still run in order with every other sync call.
+pub const FLAG_NO_REPLY: u8 = 2;
+
 /// A dynamically typed bridge value.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {

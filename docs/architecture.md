@@ -115,7 +115,12 @@ cargo test --release -p paper-server --test load -- --ignored --nocapture
 ```
 
 `BENCH_PLAYERS`, `BENCH_MOBS`, `BENCH_SECONDS`, `BENCH_VIEW` and `BENCH_WORLD` (`flat` or
-`vanilla`) set the load. On a 4-core machine, with 20 players, about 900 mobs and view
+`vanilla`) set the load. `BENCH_PLUGINS=1` runs the test plugins in the plugin host as well,
+with load like common plugins put on a server (listeners for moves, spawns and damage, a line
+on every player's screen each tick, the entities around each player every second), and prints
+what the bridge did: calls into the host per tick and how long each took by method, the
+host's calls into the server, a bare round trip, and the time spent keeping the host's copy
+of the players' states current (`plugins::BridgeStats`). On a 4-core machine, with 20 players, about 900 mobs and view
 distance 8 in a flat world, a tick took 6.8 ms on average (17.2 ms before the changes
 above), and the slowest tick took 12.6 ms (36.7 ms before).
 

@@ -271,6 +271,9 @@ pub struct Server {
     pub plugin_list: Vec<crate::plugins::PluginInfo>,
     /// The last player state sent to the plugin host, per entity id.
     pub plugin_state_cache: HashMap<i32, paper_bridge::Value>,
+    /// The fingerprint of each player's state when it was last sent (see
+    /// `plugins::events::flush_states`); dropped when the player sends a packet.
+    pub(crate) plugin_state_marks: FastMap<i32, u64>,
     // Paper-RS plugin API state (custom inventories, the launcher kept for `/reload`, ...),
     // scoreboards and the name cache; see `plugins::PluginData`, `scoreboard` and `usercache`.
     pub plugin_data: crate::plugins::PluginData,
@@ -495,6 +498,7 @@ impl Server {
             last_interact: HashMap::new(),
             plugin_list: Vec::new(),
             plugin_state_cache: HashMap::new(),
+            plugin_state_marks: FastMap::default(),
             // Plugin API state, scoreboards and the name cache (see the struct fields).
             plugin_data: Default::default(),
             scoreboards: scoreboard::Scoreboards::new(),
@@ -737,7 +741,12 @@ impl Server {
     fn handle_task(&mut self, task: MainTask) {
         match task {
             MainTask::Join(request) => self.handle_join(*request),
-            MainTask::Packet { entity_id, packet } => self.handle_packet(entity_id, packet),
+            MainTask::Packet { entity_id, packet } => {
+                // What the packet changes is sent to the plugin host whole before it next
+                // runs plugin code.
+                self.plugin_state_marks.remove(&entity_id);
+                self.handle_packet(entity_id, packet)
+            }
             MainTask::Disconnected { entity_id, reason } => self.handle_disconnect(entity_id, &reason),
             MainTask::World { world, event } => {
                 let terrain = match &event {

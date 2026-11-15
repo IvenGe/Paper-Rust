@@ -12,55 +12,9 @@ mod common;
 use common::*;
 use paper_protocol::codec::{BlockPos, VarInt};
 use paper_protocol::packets::play::{self, NodeKind};
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 const QUIET: Duration = Duration::from_millis(300);
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
-}
-
-/// A Java 25+ executable, if one can be found.
-fn find_java() -> Option<String> {
-    let mut candidates = Vec::new();
-    if let Ok(java) = std::env::var("PAPER_RS_TEST_JAVA") {
-        candidates.push(java);
-    }
-    if let Ok(home) = std::env::var("JAVA_HOME") {
-        candidates.push(format!("{home}/bin/java"));
-    }
-    candidates.push("/opt/jdk25/bin/java".into());
-    candidates.push("java".into());
-    candidates.into_iter().find(|java| {
-        let Ok(out) = Command::new(java).arg("-version").output() else { return false };
-        let text = String::from_utf8_lossy(&out.stderr);
-        // `openjdk version "25.0.1" ...`
-        text.split('"').nth(1).and_then(|v| v.split('.').next()).and_then(|major| major.parse::<u32>().ok()).is_some_and(|major| major >= 25)
-    })
-}
-
-struct Setup {
-    java: String,
-    host_dir: PathBuf,
-    plugins: Vec<PathBuf>,
-}
-
-fn setup() -> Option<Setup> {
-    let root = repo_root().join("plugin-host");
-    let host_dir = root.join("host/target");
-    let plugins = vec![root.join("test-plugins/bukkit-test-plugin/target/bukkit-test-plugin.jar"), root.join("test-plugins/paper-test-plugin/target/paper-test-plugin.jar")];
-    let Some(java) = find_java() else {
-        eprintln!("skipping: no Java 25 found (set PAPER_RS_TEST_JAVA)");
-        return None;
-    };
-    if !host_dir.join("paper-rs-plugin-host.jar").is_file() || plugins.iter().any(|p| !p.is_file()) {
-        eprintln!("skipping: build the plugin host and test plugins first (mvn package in plugin-host/)");
-        return None;
-    }
-    Some(Setup { java, host_dir, plugins })
-}
 
 fn literals(commands: &play::Commands) -> Vec<String> {
     commands.nodes[commands.root_index as usize]
