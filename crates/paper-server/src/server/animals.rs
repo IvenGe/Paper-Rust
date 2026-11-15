@@ -429,6 +429,8 @@ impl Server {
         let name = e.info.name.clone();
         let pos = e.pos;
         let age_locked = e.flags.age_locked;
+        // Without AI (or unaware) it has no goals, such as eating grass.
+        let thinks = !e.flags.no_ai && !e.flags.unaware;
         let Some(m) = e.mob_mut() else { return };
         if m.living.is_dead() {
             return;
@@ -470,7 +472,7 @@ impl Server {
             self.play_sound(world, pos, "minecraft:entity.chicken.egg", super::survival::category::NEUTRAL, 1.0, pitch, None);
         }
         // Sheep eat grass now and then (`EatBlockGoal`), growing their wool back.
-        if name == "minecraft:sheep" && rand::thread_rng().gen_range(0..if baby { 50 } else { 1000 }) == 0 && (sheared || baby) {
+        if name == "minecraft:sheep" && thinks && rand::thread_rng().gen_range(0..if baby { 50 } else { 1000 }) == 0 && (sheared || baby) {
             let (x, y, z) = (pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
             let w = &self.worlds[world];
             let here = w.block_at(x, y, z).map(|s| blocks::block_of_state(s).name);

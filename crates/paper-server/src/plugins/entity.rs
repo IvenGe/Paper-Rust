@@ -94,6 +94,9 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("love_ticks", m.in_love);
             out.set("love_cause", m.love_cause.and_then(|p| server.players.get(&p)).map(|p| p.uuid().to_string()));
             out.set("sheared", m.sheared);
+            if e.info.name == "minecraft:creeper" {
+                out.set("powered", m.powered);
+            }
             out.set("variant", m.variant);
             if let Some(registry) = crate::server::variants::registry_of(&e.info.name) {
                 out.set("variant_key", crate::server::variants::key_of(registry, m.variant));
@@ -164,6 +167,7 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("radius_per_tick", *growth as f64);
             out.set("radius_on_use", *on_use as f64);
         }
+        EntityKind::Other if e.info.name == "minecraft:lightning_bolt" => out.set("effect", e.flags.visual_only),
         EntityKind::EyeOfEnder { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
     out
@@ -672,6 +676,13 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     if e.info.name == "minecraft:sheep" {
                         if let Some(sheared) = args.bool("sheared") {
                             m.sheared = sheared;
+                            e.metadata_dirty = true;
+                        }
+                    }
+                    // `Creeper.setPowered`.
+                    if e.info.name == "minecraft:creeper" {
+                        if let Some(powered) = args.bool("powered") {
+                            m.powered = powered;
                             e.metadata_dirty = true;
                         }
                     }

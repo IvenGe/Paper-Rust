@@ -169,6 +169,9 @@ pub enum Ask {
     /// A tree or huge mushroom is to grow from a sapling on its own (`StructureGrowEvent`):
     /// the block changes it makes.
     Structure { capture: Capture },
+    /// The TNT at `pos` is to be set off (`TNTPrimeEvent`): by the fire at `from`, or by
+    /// redstone; `igniter` is who set things going, if anyone.
+    Tnt { pos: BlockPos, from: Option<BlockPos>, igniter: Option<i32> },
     /// Fire placed at `pos` (by the player `by`) is to light the empty frame `shape`
     /// (`PortalCreateEvent`, reason `FIRE`); the fire stays if plugins stop it.
     Portal { pos: BlockPos, shape: crate::world::portal::PortalShape, by: Option<i32> },
@@ -223,6 +226,8 @@ pub struct Vetting {
     pub structures: bool,
     /// Fire lighting a Nether portal.
     pub portals: bool,
+    /// TNT set off by redstone or fire.
+    pub tnt: bool,
 }
 
 impl Vetting {
@@ -950,10 +955,15 @@ impl<'w> Level<'w> {
         }
     }
 
-    /// `TntBlock.onPlace` / `neighborChanged`: powered TNT is primed and removed.
+    /// `TntBlock.onPlace` / `neighborChanged`: powered TNT is primed and removed (when plugins
+    /// let it: `TNTPrimeEvent`, cause `REDSTONE`).
     fn prime_if_powered(&mut self, pos: BlockPos) {
         if self.settings().tnt_explodes && self.has_neighbor_signal(pos) {
             let igniter = self.actor;
+            if self.world.updates.vetting.tnt {
+                self.world.updates.asks.push(Ask::Tnt { pos, from: None, igniter });
+                return;
+            }
             self.world.updates.effects.push(Effect::PrimeTnt { pos, igniter });
             self.remove_block(pos, false);
         }
@@ -1152,7 +1162,15 @@ pub fn answer(world: &mut World, ask: &Ask, allowed: bool, ticking: &dyn Fn(&Wor
             Level::new(world).run_block_events(ticking);
             world.updates.approved_pistons.remove(&event);
         }
-        Ask::Burn { pos, age, .. } if allowed => fire::burn_away(&mut Level::new(world), *pos, *age),
+        Ask::Burn { pos, by, age } if allowed => fire::burn_away(&mut Level::new(world), *pos, *by, *age),
+        // Unless it is gone, or (set off by redstone) no longer powered, meanwhile.
+        Ask::Tnt { pos, from, igniter } if allowed && world.block_at(pos.x, pos.y, pos.z).is_some_and(|s| kind(s) == Kind::Tnt) => {
+            let mut level = Level::new(world);
+            if from.is_some() || level.has_neighbor_signal(*pos) {
+                level.world.updates.effects.push(Effect::PrimeTnt { pos: *pos, igniter: *igniter });
+                level.remove_block(*pos, false);
+            }
+        }
         Ask::Spread { pos, state, .. } | Ask::Ignite { pos, state, .. } if allowed => fire::set_fire(&mut Level::new(world), *pos, *state),
         Ask::Flow { from, dir, fluid, new, sides_after } if allowed => fluid::flow(&mut Level::new(world), *fluid, *from, *dir, *new, *sides_after),
         Ask::Structure { capture } if allowed => {

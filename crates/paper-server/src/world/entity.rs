@@ -380,6 +380,8 @@ pub struct Mob {
     /// Sheep wool colour, etc.
     pub variant: i32,
     pub sheared: bool,
+    /// A charged creeper (struck by lightning): it explodes twice as hard.
+    pub powered: bool,
     /// Ticks since a player was near (for despawning).
     pub no_player_ticks: i32,
     /// `AgeableMob` age: negative while a baby (ticks until grown), positive while it
@@ -483,6 +485,8 @@ pub struct EntityFlags {
     /// Mobs: why it was spawned, as Bukkit's `CreatureSpawnEvent.SpawnReason` (Paper's
     /// `Paper.SpawnReason`).
     pub spawn_reason: Option<String>,
+    /// A lightning bolt that only flashes and thunders (`LightningBolt.setVisualOnly`).
+    pub visual_only: bool,
 }
 
 /// An entity in a world.

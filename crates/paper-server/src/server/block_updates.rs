@@ -172,6 +172,7 @@ impl Server {
             flow: listens("BlockFromToEvent"),
             structures: listens("StructureGrowEvent"),
             portals: listens("PortalCreateEvent"),
+            tnt: listens("TNTPrimeEvent"),
         };
         for index in 0..self.worlds.len() {
             self.worlds[index].updates.vetting = vetting;
@@ -239,6 +240,10 @@ impl Server {
                         listed.extend(shape.inside().into_iter().map(|p| (p, portal)));
                         events::on_portal_create(self, world, &listed, *by, "FIRE")
                     }
+                    Ask::Tnt { pos, from, .. } => match from {
+                        Some(fire) => events::on_tnt_prime(self, world, *pos, "FIRE", events::Primer::Block(*fire)),
+                        None => events::on_tnt_prime(self, world, *pos, "REDSTONE", events::Primer::Nothing),
+                    },
                     Ask::Change { .. } | Ask::Flow { .. } => unreachable!("answered above"),
                 };
                 block_updates::answer(&mut self.worlds[world], &ask, allowed, &ticking);

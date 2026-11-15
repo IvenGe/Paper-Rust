@@ -650,6 +650,11 @@ impl Server {
             }
             "minecraft:flint_and_steel" => {
                 if blocks::block_of_state(in_front).name == "minecraft:tnt" && w.rules.bool("tnt_explodes") {
+                    // Plugins may leave it be (`TNTPrimeEvent`, cause `DISPENSER`): it fails.
+                    if !crate::plugins::events::on_tnt_prime(self, world, front, "DISPENSER", crate::plugins::events::Primer::Block(pos)) {
+                        self.broadcast_level_event(world, 1001, pos, 0, false);
+                        return Some(stack);
+                    }
                     self.set_block_and_update(world, front, blocks::AIR);
                     self.prime_tnt(world, front, 80, None);
                 } else if blocks::is_air(in_front) {

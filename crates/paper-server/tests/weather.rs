@@ -62,7 +62,7 @@ fn lightning_burns_and_hurts() {
         .run(|s| s.spawn_mob(0, "minecraft:zombie", paper_server::world::entity::Vec3::new(12.5, -60.0, 8.5), paper_server::server::mobs::SpawnReason::Command))
         .unwrap()
         .expect("a zombie");
-    server.handle.run(|s| s.strike_lightning(0, paper_protocol::codec::BlockPos::new(12, -60, 8))).unwrap();
+    server.handle.run(|s| s.strike_lightning(0, paper_protocol::codec::BlockPos::new(12, -60, 8), "COMMAND")).unwrap();
     let bolt_type = paper_data::entity_types::by_name("minecraft:lightning_bolt").unwrap().id;
     alice.find(TIMEOUT, |a: &play::AddEntity| a.entity_type.0 == bolt_type).expect("the bolt is seen");
     let (health, burning) = server

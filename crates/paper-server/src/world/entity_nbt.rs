@@ -191,6 +191,9 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 c.insert("Color", Tag::Byte(mob.variant as i8));
                 c.insert("Sheared", Tag::Byte(mob.sheared as i8));
             }
+            if e.info.name == "minecraft:creeper" && mob.powered {
+                c.insert("powered", Tag::Byte(1));
+            }
             // Variants: an entry of a variant registry by key, or a number (horses and
             // llamas keep theirs with the rest of their data below).
             if let Some(key) = crate::server::variants::registry_of(&e.info.name).and_then(|r| crate::server::variants::key_of(r, mob.variant)) {
@@ -339,6 +342,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 baby,
                 variant: saved_variant(&info.name, c),
                 sheared: c.bool("Sheared").unwrap_or(false),
+                powered: c.bool("powered").unwrap_or(false),
                 no_player_ticks: 0,
                 age,
                 in_love: c.i32("InLove").unwrap_or(0),
@@ -403,6 +407,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
         can_pick_up_loot: flag("CanPickUpLoot"),
         age_locked: flag("AgeLocked"),
         spawn_reason: c.string("Paper.SpawnReason").map(str::to_owned),
+        visual_only: false,
     };
     Some(e)
 }
@@ -423,6 +428,7 @@ mod tests {
             baby: true,
             variant: 0,
             sheared: false,
+            powered: false,
             no_player_ticks: 0,
             age: 0,
             in_love: 0,

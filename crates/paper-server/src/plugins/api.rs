@@ -740,9 +740,9 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let (x, y, z) = (args.f64("x").unwrap_or(0.0), args.f64("y").unwrap_or(0.0), args.f64("z").unwrap_or(0.0));
             let pos = paper_protocol::codec::BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
             let bolt = if args.bool("effect").unwrap_or(false) {
-                server.lightning_effect(world, crate::world::entity::Vec3::new(x, y, z))
+                server.lightning_effect(world, crate::world::entity::Vec3::new(x, y, z), "CUSTOM")
             } else {
-                server.strike_lightning(world, pos)
+                server.strike_lightning(world, pos, "CUSTOM")
             };
             Ok(bolt.and_then(|id| server.worlds[world].entities.get(&id)).map_or(Value::Null, |e| crate::plugins::entity::entity_value(server, world, e)))
         }

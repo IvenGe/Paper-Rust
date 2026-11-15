@@ -86,6 +86,8 @@ pub enum SpawnReason {
     Built,
     /// Hatched from a thrown egg.
     Hatched,
+    /// Turned into another mob by lightning.
+    Lightning,
 }
 
 impl SpawnReason {
@@ -103,6 +105,7 @@ impl SpawnReason {
             SpawnReason::Built if entity == "minecraft:snow_golem" => "BUILD_SNOWMAN",
             SpawnReason::Built => "BUILD_IRONGOLEM",
             SpawnReason::Hatched => "EGG",
+            SpawnReason::Lightning => "LIGHTNING",
         }
     }
 }
@@ -418,6 +421,7 @@ impl Server {
             baby: false,
             variant: 0,
             sheared: false,
+            powered: false,
             no_player_ticks: 0,
             age: 0,
             in_love: 0,
@@ -571,22 +575,21 @@ impl Server {
             living.fire_ticks = 0;
             e.metadata_dirty = true;
         }
-        let living = &mut mob.living;
+        // Catching fire waits for plugins (`EntityCombustEvent`, `EntityCombustByBlockEvent`
+        // for lava), once the mob is let go of.
+        let mut ignite: Vec<(i32, crate::plugins::events::Combuster)> = Vec::new();
         if sunburn {
             if mob.equipment[5].is_empty() {
-                if living.fire_ticks < 160 {
-                    living.fire_ticks = 160;
-                    e.metadata_dirty = true;
-                }
+                ignite.push((160, crate::plugins::events::Combuster::Nothing));
             } else if survival::hurt_item(&mut mob.equipment[5], 1, true) {
                 e.equipment_dirty = true;
             }
         }
-        let living = &mut mob.living;
         if in_lava && !info.fire_immune {
-            living.fire_ticks = living.fire_ticks.max(300);
+            ignite.push((300, crate::plugins::events::Combuster::Block(paper_protocol::codec::BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32))));
             hurts.push((Damage::new("minecraft:lava"), 4.0));
         }
+        let living = &mut mob.living;
         if living.fire_ticks > 0 {
             if info.fire_immune {
                 living.fire_ticks = (living.fire_ticks - 4).max(0);
@@ -612,6 +615,9 @@ impl Server {
         }
         if suffocating && tick_parity {
             hurts.push((Damage::new("minecraft:in_wall"), 1.0));
+        }
+        for (ticks, by) in ignite {
+            self.set_on_fire(world, id, ticks, by);
         }
         for (damage, amount) in hurts {
             self.hurt_entity(world, id, damage, amount);
@@ -1054,15 +1060,29 @@ impl Server {
         self.play_sound(world, pos, "minecraft:entity.skeleton.shoot", category::HOSTILE, 1.0, pitch, None);
     }
 
+    /// A creeper's fuse runs out (`Creeper.explodeCreeper`): it blows up, twice as hard when
+    /// charged, unless plugins stop it, which calms it down (`ExplosionPrimeEvent`).
     fn creeper_explode(&mut self, world: usize, id: i32) {
-        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let center = e.pos;
+        let radius = if e.mob().is_some_and(|m| m.powered) { 6.0 } else { 3.0 };
+        let Some((radius, fire)) = crate::plugins::events::on_explosion_prime(self, world, id, radius, false) else {
+            if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+                if let Some(m) = e.mob_mut() {
+                    m.brain.swell = 0;
+                    m.brain.swelling = false;
+                }
+                e.metadata_dirty = true;
+            }
+            return;
+        };
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         e.removed = true;
         if let Some(m) = e.mob_mut() {
             m.living.health = 0.0;
         }
         let griefing = self.worlds[world].rules.bool("mob_griefing");
-        self.explode(world, center, 3.0, griefing, Some(id));
+        self.explode_with(world, center, radius, griefing, fire, Some(id));
     }
 
     /// Walking physics (`LivingEntity.travel` with the mob's move control).

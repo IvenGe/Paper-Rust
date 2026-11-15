@@ -140,6 +140,13 @@ public final class HostEvents {
         GATED.put("ExpBottleEvent", org.bukkit.event.entity.ExpBottleEvent.class);
         GATED.put("ItemDespawnEvent", org.bukkit.event.entity.ItemDespawnEvent.class);
         GATED.put("ItemMergeEvent", org.bukkit.event.entity.ItemMergeEvent.class);
+        GATED.put("TNTPrimeEvent", org.bukkit.event.block.TNTPrimeEvent.class);
+        GATED.put("ExplosionPrimeEvent", org.bukkit.event.entity.ExplosionPrimeEvent.class);
+        GATED.put("LightningStrikeEvent", org.bukkit.event.weather.LightningStrikeEvent.class);
+        GATED.put("CreeperPowerEvent", org.bukkit.event.entity.CreeperPowerEvent.class);
+        GATED.put("PigZapEvent", org.bukkit.event.entity.PigZapEvent.class);
+        GATED.put("EntityZapEvent", com.destroystokyo.paper.event.entity.EntityZapEvent.class);
+        GATED.put("EntityTransformEvent", org.bukkit.event.entity.EntityTransformEvent.class);
         GATED.put("ProjectileLaunchEvent", org.bukkit.event.entity.ProjectileLaunchEvent.class);
         GATED.put("ProjectileHitEvent", org.bukkit.event.entity.ProjectileHitEvent.class);
         GATED.put("BlockDispenseEvent", org.bukkit.event.block.BlockDispenseEvent.class);
@@ -750,6 +757,63 @@ public final class HostEvents {
                     yield Values.of();
                 }
                 final org.bukkit.event.entity.ItemMergeEvent event = new org.bukkit.event.entity.ItemMergeEvent(item, target);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.tnt_prime" -> {
+                final org.bukkit.entity.Entity entity = args.get("entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                final Block from = args.get("block") == null ? null : this.at(this.server.getWorld(Values.str(args, "world")), args.get("block"));
+                final org.bukkit.event.block.TNTPrimeEvent event = new org.bukkit.event.block.TNTPrimeEvent(this.block(args),
+                    org.bukkit.event.block.TNTPrimeEvent.PrimeCause.valueOf(Values.str(args, "cause", "EXPLOSION")), entity, from);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.explosion_prime" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.ExplosionPrimeEvent event = new org.bukkit.event.entity.ExplosionPrimeEvent(entity, (float) Values.f64(args, "radius", 0), Values.bool(args, "fire", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "radius", (double) event.getRadius(), "fire", event.getFire());
+            }
+            case "event.lightning" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.LightningStrike bolt)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.weather.LightningStrikeEvent event = new org.bukkit.event.weather.LightningStrikeEvent(this.server.getWorld(Values.str(args, "world")), bolt,
+                    org.bukkit.event.weather.LightningStrikeEvent.Cause.valueOf(Values.str(args, "cause", "UNKNOWN")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.creeper_power" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Creeper creeper)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.CreeperPowerEvent.PowerCause cause = org.bukkit.event.entity.CreeperPowerEvent.PowerCause.valueOf(Values.str(args, "cause", "LIGHTNING"));
+                final org.bukkit.event.entity.CreeperPowerEvent event = args.get("bolt") instanceof Map<?, ?> ref
+                    && io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) instanceof org.bukkit.entity.LightningStrike bolt
+                    ? new org.bukkit.event.entity.CreeperPowerEvent(creeper, bolt, cause) : new org.bukkit.event.entity.CreeperPowerEvent(creeper, cause);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.zap" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                final org.bukkit.entity.Entity into = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("into")));
+                if (entity == null || into == null || !(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("bolt"))) instanceof org.bukkit.entity.LightningStrike bolt)) {
+                    yield Values.of();
+                }
+                if (Values.bool(args, "pig", false) && entity instanceof org.bukkit.entity.Pig pig && into instanceof org.bukkit.entity.PigZombie piglin) {
+                    final org.bukkit.event.entity.PigZapEvent event = new org.bukkit.event.entity.PigZapEvent(pig, bolt, piglin);
+                    event.callEvent();
+                    yield Values.of("cancelled", event.isCancelled());
+                }
+                final com.destroystokyo.paper.event.entity.EntityZapEvent zap = new com.destroystokyo.paper.event.entity.EntityZapEvent(entity, bolt, into);
+                if (!zap.callEvent()) {
+                    yield Values.of("cancelled", true);
+                }
+                final org.bukkit.event.entity.EntityTransformEvent event = new org.bukkit.event.entity.EntityTransformEvent(entity, List.of(into),
+                    org.bukkit.event.entity.EntityTransformEvent.TransformReason.LIGHTNING);
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled());
             }

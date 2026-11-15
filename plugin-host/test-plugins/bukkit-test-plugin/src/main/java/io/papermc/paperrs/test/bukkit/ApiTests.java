@@ -516,6 +516,8 @@ final class ApiTests implements Listener, CommandExecutor {
         check(failures, cow.isBreedItem(Material.WHEAT) && !cow.isBreedItem(Material.STONE), "breed items");
         check(failures, cow.getSpawnCategory() == org.bukkit.entity.SpawnCategory.ANIMAL && cow.getHurtSound() == org.bukkit.Sound.ENTITY_COW_HURT, "category and sound");
         final org.bukkit.entity.Sheep sheep = world.spawn(at.clone().add(0, 0, 3), org.bukkit.entity.Sheep.class);
+        // (No AI: eating grass would grow its wool back before the test looks.)
+        sheep.setAI(false);
         sheep.setColor(org.bukkit.DyeColor.RED);
         check(failures, sheep.getColor() == org.bukkit.DyeColor.RED && sheep.readyToBeSheared(), "a red sheep");
         sheep.shear();
@@ -1553,6 +1555,42 @@ final class ApiTests implements Listener, CommandExecutor {
             + " " + (event.getEntity().getSource() instanceof Player ? "player" : "-"));
     }
 
+    @EventHandler
+    public void onTntPrime(final org.bukkit.event.block.TNTPrimeEvent event) {
+        this.blockEvent(event, "TNT " + event.getCause() + " " + (event.getPrimingEntity() == null ? "-" : event.getPrimingEntity().getType())
+            + " " + (event.getPrimingBlock() == null ? "-" : event.getPrimingBlock().getType()));
+    }
+
+    @EventHandler
+    public void onExplosionPrime(final org.bukkit.event.entity.ExplosionPrimeEvent event) {
+        this.blockEvent(event, "BOOM " + event.getEntityType() + " " + event.getRadius() + " " + event.getFire());
+    }
+
+    @EventHandler
+    public void onLightning(final org.bukkit.event.weather.LightningStrikeEvent event) {
+        this.blockEvent(event, "LIGHTNING " + event.getCause() + " " + event.getLightning().isEffect());
+    }
+
+    @EventHandler
+    public void onCreeperPower(final org.bukkit.event.entity.CreeperPowerEvent event) {
+        this.blockEvent(event, "POWER " + event.getCause() + " " + (event.getLightning() != null));
+    }
+
+    @EventHandler
+    public void onPigZap(final org.bukkit.event.entity.PigZapEvent event) {
+        this.blockEvent(event, "PIGZAP " + event.getTransformedEntity().getType());
+    }
+
+    @EventHandler
+    public void onZap(final com.destroystokyo.paper.event.entity.EntityZapEvent event) {
+        this.blockEvent(event, "ZAP " + event.getEntityType() + " " + event.getReplacementEntity().getType());
+    }
+
+    @EventHandler
+    public void onTransform(final org.bukkit.event.entity.EntityTransformEvent event) {
+        this.blockEvent(event, "TRANSFORM " + event.getEntityType() + " " + event.getTransformedEntity().getType() + " " + event.getTransformReason());
+    }
+
     // (Shears only: other tools wear in other steps.)
     @EventHandler
     public void onItemDamage(final org.bukkit.event.player.PlayerItemDamageEvent event) {
@@ -1672,7 +1710,8 @@ final class ApiTests implements Listener, CommandExecutor {
 
     @EventHandler
     public void onCombust(final org.bukkit.event.entity.EntityCombustEvent event) {
-        if (event.getEntity() instanceof Player) {
+        // (Players, and mobs tagged "burn": others burn in other steps.)
+        if (event.getEntity() instanceof Player || event.getEntity().getScoreboardTags().contains("burn")) {
             final String by = event instanceof org.bukkit.event.entity.EntityCombustByBlockEvent block ? " by " + (block.getCombuster() == null ? "-" : block.getCombuster().getType())
                 : event instanceof org.bukkit.event.entity.EntityCombustByEntityEvent entity ? " by " + entity.getCombuster().getType() : "";
             this.blockEvent(event, "COMBUST " + event.getDuration() + by);

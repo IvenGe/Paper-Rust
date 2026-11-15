@@ -907,6 +907,23 @@ fn fire_waits_for_plugins_to_light_a_portal() {
 }
 
 #[test]
+fn tnt_waits_for_plugins_to_go_off() {
+    let mut w = world();
+    w.updates.vetting.tnt = true;
+    set(&mut w, p(0, Y, 0), s("tnt"));
+    set(&mut w, p(1, Y, 0), s("redstone_block"));
+    let asked = std::mem::take(&mut w.updates.asks);
+    assert!(matches!(asked.as_slice(), [Ask::Tnt { pos, from: None, .. }] if *pos == p(0, Y, 0)), "{asked:?}");
+    assert_eq!(name(&w, p(0, Y, 0)), "tnt", "asked, it waits");
+    answer(&mut w, &asked[0], false, &|_, _| true);
+    assert_eq!(name(&w, p(0, Y, 0)), "tnt", "denied, it stays");
+    w.updates.effects.clear();
+    answer(&mut w, &asked[0], true, &|_, _| true);
+    assert_eq!(name(&w, p(0, Y, 0)), "air", "allowed, it goes off");
+    assert!(w.updates.effects.iter().any(|e| matches!(e, Effect::PrimeTnt { pos, .. } if *pos == p(0, Y, 0))));
+}
+
+#[test]
 fn fluids_wait_for_plugins_to_flow() {
     let mut w = world();
     w.updates.vetting.flow = true;

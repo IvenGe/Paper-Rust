@@ -187,7 +187,7 @@ impl Server {
                 let (x, z) = (cp.x * 16 + rng.gen_range(0..16), cp.z * 16 + rng.gen_range(0..16));
                 if let Some(y) = self.worlds[world].top_y(x, z) {
                     if self.worlds[world].rain_at(x, y, z) {
-                        self.strike_lightning(world, BlockPos::new(x, y, z));
+                        self.strike_lightning(world, BlockPos::new(x, y, z), "WEATHER");
                     }
                 }
             }
@@ -242,16 +242,37 @@ impl Server {
     }
 
     /// A bolt that only flashes and thunders (`LightningBolt.setVisualOnly`): no fire, no
-    /// harm. Returns the bolt.
-    pub fn lightning_effect(&mut self, world: usize, at: Vec3) -> Option<i32> {
-        self.spawn_mob(world, "minecraft:lightning_bolt", at, super::mobs::SpawnReason::Natural)
+    /// harm. Plugins may stop it (`LightningStrikeEvent`, for `cause`). Returns the bolt.
+    pub fn lightning_effect(&mut self, world: usize, at: Vec3, cause: &str) -> Option<i32> {
+        let bolt = self.spawn_mob(world, "minecraft:lightning_bolt", at, super::mobs::SpawnReason::Natural)?;
+        if let Some(e) = self.worlds[world].entities.get_mut(&bolt) {
+            e.flags.visual_only = true;
+        }
+        self.lightning_allowed(world, bolt, cause).then_some(bolt)
     }
 
-    /// A lightning bolt strikes (`LightningBolt`): fire where it lands (on normal and hard),
-    /// five damage and eight seconds of fire to everything close by. Returns the bolt.
-    pub fn strike_lightning(&mut self, world: usize, pos: BlockPos) -> Option<i32> {
+    /// Whether plugins let the bolt `bolt` strike (`LightningStrikeEvent`); stopped, it goes.
+    fn lightning_allowed(&mut self, world: usize, bolt: i32, cause: &str) -> bool {
+        if crate::plugins::events::on_lightning(self, world, bolt, cause) {
+            return true;
+        }
+        if let Some(e) = self.worlds[world].entities.get_mut(&bolt) {
+            e.removed = true;
+        }
+        false
+    }
+
+    /// A lightning bolt strikes (`LightningBolt`) for `cause` (`WEATHER`, `CUSTOM` for plugins,
+    /// ...), unless plugins stop it (`LightningStrikeEvent`): fire where it lands (on normal
+    /// and hard), and what is close by is struck (`thunderHit`): eight seconds of fire and five
+    /// damage, a creeper charged, a pig turned into a zombified piglin and a villager into a
+    /// witch (not on peaceful). Returns the bolt.
+    pub fn strike_lightning(&mut self, world: usize, pos: BlockPos, cause: &str) -> Option<i32> {
         let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5);
         let bolt = self.spawn_mob(world, "minecraft:lightning_bolt", at, super::mobs::SpawnReason::Natural)?;
+        if !self.lightning_allowed(world, bolt, cause) {
+            return None;
+        }
         if matches!(self.difficulty, Difficulty::Normal | Difficulty::Hard) && self.worlds[world].updates.settings.fire_spreads {
             let mut rng = rand::thread_rng();
             let mut targets = vec![pos];
@@ -276,10 +297,58 @@ impl Server {
         let mut victims: Vec<i32> = self.worlds[world].entities_in(&area).into_iter().filter(|e| *e != bolt).collect();
         victims.extend(self.players.values().filter(|p| p.world == world && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&area)).map(|p| p.entity_id));
         for id in victims {
+            let name = self.worlds[world].entities.get(&id).map(|e| e.info.name.clone());
+            let peaceful = self.difficulty == Difficulty::Peaceful;
+            match name.as_deref() {
+                Some("minecraft:pig") if !peaceful && self.zap(world, id, bolt, "minecraft:zombified_piglin").is_some() => continue,
+                Some("minecraft:villager") if !peaceful && self.zap(world, id, bolt, "minecraft:witch").is_some() => continue,
+                _ => {}
+            }
             self.set_on_fire(world, id, 8 * 20, crate::plugins::events::Combuster::Entity(bolt));
             self.hurt_entity(world, id, Damage::new("minecraft:lightning_bolt"), 5.0);
+            // A creeper is charged (`Creeper.thunderHit`), unless plugins stop it
+            // (`CreeperPowerEvent`).
+            let uncharged = self.worlds[world].entities.get(&id).is_some_and(|e| e.info.name == "minecraft:creeper" && e.mob().is_some_and(|m| !m.powered && !m.living.is_dead()));
+            if uncharged && crate::plugins::events::on_creeper_power(self, world, id, Some(bolt), "LIGHTNING") {
+                if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+                    if let Some(m) = e.mob_mut() {
+                        m.powered = true;
+                    }
+                    e.metadata_dirty = true;
+                }
+            }
         }
         Some(bolt)
+    }
+
+    /// Lightning turns the mob `id` into a `into` (`Pig.thunderHit`: a zombified piglin with a
+    /// golden sword; `Villager.thunderHit`: a witch), named as it was and kept, unless plugins
+    /// stop it (`PigZapEvent`, or Paper's `EntityZapEvent` and then `EntityTransformEvent`).
+    /// Returns the new mob.
+    fn zap(&mut self, world: usize, id: i32, bolt: i32, into: &str) -> Option<i32> {
+        let e = self.worlds[world].entities.get(&id)?;
+        let (pos, yaw, pitch, name, name_visible) = (e.pos, e.yaw, e.pitch, e.custom_name.clone(), e.custom_name_visible);
+        let new = self.spawn_mob(world, into, pos, super::mobs::SpawnReason::Lightning)?;
+        if let Some(n) = self.worlds[world].entities.get_mut(&new) {
+            (n.yaw, n.pitch, n.head_yaw, n.custom_name, n.custom_name_visible) = (yaw, pitch, yaw, name, name_visible);
+            if let Some(m) = n.mob_mut() {
+                m.persistent = true;
+                if into == "minecraft:zombified_piglin" {
+                    m.equipment[0] = paper_protocol::types::Slot::of(paper_data::items::id("minecraft:golden_sword").unwrap_or(0) as i32, 1);
+                }
+            }
+            n.equipment_dirty = true;
+        }
+        if !crate::plugins::events::on_zap(self, world, id, bolt, new) {
+            if let Some(n) = self.worlds[world].entities.get_mut(&new) {
+                n.removed = true;
+            }
+            return None;
+        }
+        if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+            e.removed = true;
+        }
+        Some(new)
     }
 
     /// `/weather clear|rain|thunder [duration]`.

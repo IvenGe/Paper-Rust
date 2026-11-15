@@ -159,7 +159,7 @@ pub fn tick(level: &mut Level, state: u32, pos: BlockPos) {
         if level.world.updates.vetting.fire {
             level.world.updates.asks.push(super::Ask::Burn { pos: p, by: pos, age: grown });
         } else {
-            burn_away(level, p, grown);
+            burn_away(level, p, pos, grown);
         }
     }
     // Spreading into the air around flammable blocks.
@@ -182,17 +182,22 @@ fn go_out(level: &mut Level, pos: BlockPos) {
     level.change_block(super::Change::Fade, pos, blocks::AIR, flags::ALL, false, None);
 }
 
-/// A block burns away beside fire aged `age`: TNT is set off, and the block catches fire
-/// itself or is gone (`FireBlock.checkBurnOut`).
-pub fn burn_away(level: &mut Level, p: BlockPos, age: i32) {
+/// A block burns away beside the fire at `fire`, aged `age`: TNT is set off (when plugins let
+/// it: `TNTPrimeEvent`, cause `FIRE`), and the block catches fire itself or is gone
+/// (`FireBlock.checkBurnOut`).
+pub fn burn_away(level: &mut Level, p: BlockPos, fire: BlockPos, age: i32) {
     let neighbour = level.state(p);
     if !burnable(neighbour) {
         return;
     }
     if state::kind(neighbour) == Kind::Tnt && level.settings().tnt_explodes {
         let igniter = level.actor;
-        level.world.updates.effects.push(Effect::PrimeTnt { pos: p, igniter });
-        level.remove_block(p, false);
+        if level.world.updates.vetting.tnt {
+            level.world.updates.asks.push(super::Ask::Tnt { pos: p, from: Some(fire), igniter });
+        } else {
+            level.world.updates.effects.push(Effect::PrimeTnt { pos: p, igniter });
+            level.remove_block(p, false);
+        }
     } else if level.random() % (age as u64 + 10) < 5 {
         let fire = fire_state_for(level.world, p);
         let aged = blocks::with_property(fire, "age", &(age + (level.random() % 5) as i32 / 4).min(15).to_string()).unwrap_or(fire);

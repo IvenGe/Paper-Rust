@@ -1564,6 +1564,151 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
 
+    // TNT a redstone block powers, and TNT Alice lights: left be. Then the redstone sets it
+    // off, and its blast is stopped (ExplosionPrimeEvent).
+    let (tnt, power) = (feet.offset(-2, 0, 4), feet.offset(-3, 0, 4));
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    put(&server, &[(tnt, "minecraft:tnt")], false);
+    put(&server, &[(power, "minecraft:redstone_block")], true);
+    pause(&mut alice, QUIET);
+    let held = server.handle.run(move |s| s.players[&alice_id].held_slot as usize).unwrap();
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::of(paper_data::items::id("minecraft:flint_and_steel").unwrap() as i32, 1);
+            s.resync_inventory(alice_id);
+            s.teleport(alice_id, home);
+        })
+        .unwrap();
+    pause(&mut alice, Duration::from_millis(150));
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: tnt, face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(150) });
+    pause(&mut alice, QUIET);
+    alice.command("apitest blockevents");
+    seen = line_starting(&mut alice, "blockevents: ");
+    assert!(seen.contains("TNT REDSTONE - -") && seen.contains("TNT PLAYER PLAYER -"), "{seen}");
+    assert_eq!(name_at(tnt), "minecraft:tnt", "left be");
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    put(&server, &[(power, "minecraft:air")], true);
+    put(&server, &[(power, "minecraft:redstone_block")], true);
+    pause(&mut alice, QUIET);
+    assert_eq!(name_at(tnt), "minecraft:air", "set off");
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        if seen.contains("BOOM") || std::time::Instant::now() > deadline {
+            break;
+        }
+        pause(&mut alice, Duration::from_millis(250));
+    }
+    assert!(seen.contains("BOOM TNT 4.0 false"), "{seen}");
+    pause(&mut alice, QUIET);
+    assert_eq!(name_at(power), "minecraft:redstone_block", "no blast");
+    put(&server, &[(power, "minecraft:air")], false);
+
+    // A bolt a plugin strikes beside a creeper, a pig and a villager: stopped; then let strike,
+    // which charges the creeper, and turns the pig into a zombified piglin and the villager into a
+    // witch.
+    let spot = feet.offset(16, 0, 0);
+    let near_spot = move |s: &paper_server::server::Server, name: &str| -> Vec<i32> {
+        let at = paper_server::world::entity::Vec3::new(spot.x as f64 + 0.5, spot.y as f64, spot.z as f64 + 0.5);
+        s.worlds[0].entities.values().filter(|e| !e.removed && e.info.name == name && e.pos.distance_squared(at) < 25.0).map(|e| e.id).collect()
+    };
+    for (mode, struck) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let creeper = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(spot.x as f64 + 0.5, spot.y as f64, spot.z as f64 + 0.5);
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.mob().is_some() && e.pos.distance_squared(at) < 64.0) {
+                    e.removed = true;
+                }
+                let mut spawn = |name: &str, dx: f64, dz: f64| {
+                    let id = s.spawn_mob(0, name, paper_server::world::entity::Vec3::new(at.x + dx, at.y, at.z + dz), paper_server::server::mobs::SpawnReason::Command).unwrap();
+                    s.worlds[0].entities.get_mut(&id).unwrap().mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+                    id
+                };
+                let creeper = spawn("minecraft:creeper", 1.0, 0.0);
+                spawn("minecraft:pig", -1.0, 0.0);
+                spawn("minecraft:villager", 0.0, 1.0);
+                s.strike_lightning(0, spot, "CUSTOM");
+                creeper
+            })
+            .unwrap();
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("LIGHTNING CUSTOM false"), "{mode}: {seen}");
+        let (powered, pigs, piglins, villagers, witches) = server
+            .handle
+            .run(move |s| {
+                let powered = s.worlds[0].entities.get(&creeper).and_then(|e| e.mob()).is_some_and(|m| m.powered);
+                (powered, near_spot(s, "minecraft:pig").len(), near_spot(s, "minecraft:zombified_piglin").len(), near_spot(s, "minecraft:villager").len(), near_spot(s, "minecraft:witch").len())
+            })
+            .unwrap();
+        if struck {
+            assert!(seen.contains("POWER LIGHTNING true") && seen.contains("PIGZAP ZOMBIFIED_PIGLIN") && seen.contains("ZAP VILLAGER WITCH") && seen.contains("TRANSFORM VILLAGER WITCH LIGHTNING"), "{mode}: {seen}");
+            assert_eq!((powered, pigs, piglins, villagers, witches), (true, 0, 1, 0, 1), "{mode}");
+        } else {
+            assert_eq!((powered, pigs, piglins, villagers, witches), (false, 1, 0, 1, 0), "{mode}");
+        }
+    }
+    server
+        .handle
+        .run(move |s| {
+            for name in ["minecraft:creeper", "minecraft:pig", "minecraft:zombified_piglin", "minecraft:villager", "minecraft:witch", "minecraft:lightning_bolt"] {
+                for id in near_spot(s, name) {
+                    s.worlds[0].entities.get_mut(&id).unwrap().removed = true;
+                }
+            }
+        })
+        .unwrap();
+
+    // A zombie in the midday sun: kept from catching fire; then let burn (EntityCombustEvent).
+    server.handle.console_command("time set 6000");
+    for (mode, burns) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let zombie = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(spot.x as f64 + 0.5, spot.y as f64, spot.z as f64 + 4.5);
+                let id = s.spawn_mob(0, "minecraft:zombie", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+                let e = s.worlds[0].entities.get_mut(&id).unwrap();
+                e.flags.tags.push("burn".into());
+                let m = e.mob_mut().unwrap();
+                m.brain.idle_ticks = 1_000_000;
+                m.equipment[5] = Slot::EMPTY;
+                id
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            if seen.contains("COMBUST") || std::time::Instant::now() > deadline {
+                break;
+            }
+            pause(&mut alice, Duration::from_millis(200));
+        }
+        assert!(seen.contains("COMBUST 8.0"), "{mode}: {seen}");
+        let fire = server.handle.run(move |s| s.worlds[0].entities.get(&zombie).and_then(|e| e.mob()).map_or(0, |m| m.living.fire_ticks)).unwrap();
+        assert_eq!(fire > 0, burns, "{mode}: {fire}");
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&zombie).unwrap().removed = true).unwrap();
+    }
+
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");

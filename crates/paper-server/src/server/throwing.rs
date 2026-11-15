@@ -229,8 +229,8 @@ impl Server {
     }
 
     /// A ghast's fireball hits (`LargeFireball.onHit`): what it hit takes 6 damage, and it
-    /// explodes with power 1, breaking blocks only with mob griefing (the explosion sets no
-    /// fires here).
+    /// explodes with power 1, breaking blocks and setting fires only with mob griefing; plugins
+    /// may stop the blast or change it (`ExplosionPrimeEvent`).
     fn large_fireball_hits(&mut self, world: usize, id: i32, at: Vec3, victim: Option<i32>) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let EntityKind::Thrown { owner, .. } = e.kind.clone() else { return };
@@ -241,7 +241,9 @@ impl Server {
             self.hurt_entity(world, v, damage, 6.0);
         }
         let griefing = self.worlds[world].rules.bool("mob_griefing");
-        self.explode(world, at, 1.0, griefing, owner);
+        if let Some((radius, fire)) = crate::plugins::events::on_explosion_prime(self, world, id, 1.0, griefing) {
+            self.explode_with(world, at, radius, griefing, fire, Some(id));
+        }
     }
 
     /// A player strikes a ghast's fireball (`ProjectileDeflection.AIM_DEFLECT`): it flies where

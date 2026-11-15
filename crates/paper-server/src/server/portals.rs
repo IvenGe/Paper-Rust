@@ -604,8 +604,8 @@ impl Server {
         let sound_at = Vec3::new(use_on.pos.x as f64 + 0.5, use_on.pos.y as f64 + 0.5, use_on.pos.z as f64 + 0.5);
         let clicked_name = blocks::block_of_state(clicked).name;
         if clicked_name == "minecraft:tnt" {
-            // `TntBlock.useItemOn`.
-            if self.worlds[world].rules.bool("tnt_explodes") {
+            // `TntBlock.useItemOn`; plugins may leave it be (`TNTPrimeEvent`, cause `PLAYER`).
+            if self.worlds[world].rules.bool("tnt_explodes") && crate::plugins::events::on_tnt_prime(self, world, use_on.pos, "PLAYER", crate::plugins::events::Primer::Entity(id)) {
                 self.set_block_and_update(world, use_on.pos, blocks::AIR);
                 self.prime_tnt(world, use_on.pos, 80, Some(id));
                 used = true;

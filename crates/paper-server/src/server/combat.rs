@@ -390,9 +390,13 @@ impl Server {
                     return false;
                 }
                 let pos = e.pos;
-                self.worlds[world].entities.get_mut(&id).unwrap().removed = true;
                 if !damage.is("is_explosion") {
-                    self.explode(world, pos, 6.0, true, None);
+                    // Plugins may keep it whole (`ExplosionPrimeEvent`).
+                    let Some((radius, fire)) = crate::plugins::events::on_explosion_prime(self, world, id, 6.0, false) else { return false };
+                    self.worlds[world].entities.get_mut(&id).unwrap().removed = true;
+                    self.explode_with(world, pos, radius, true, fire, Some(id));
+                } else {
+                    self.worlds[world].entities.get_mut(&id).unwrap().removed = true;
                 }
                 self.crystal_destroyed(world, id, pos, damage.attacker);
                 return true;
@@ -848,6 +852,13 @@ impl Server {
     /// third of the blocks it reached that are empty above a solid block.
     pub fn explode_with(&mut self, world: usize, center: Vec3, radius: f32, destroy_blocks: bool, fire: bool, source: Option<i32>) {
         let mut rng = rand::thread_rng();
+        // Who the blast is blamed on (`getIndirectSourceEntity`): a fireball's shooter, no one
+        // for TNT (who lit it is not kept), else what exploded.
+        let attacker = source.and_then(|s| match self.worlds[world].entities.get(&s).map(|e| &e.kind) {
+            Some(EntityKind::Tnt { .. }) => None,
+            Some(EntityKind::Thrown { owner, .. }) => *owner,
+            _ => Some(s),
+        });
         let mut affected: HashSet<(i32, i32, i32)> = HashSet::new();
         if destroy_blocks || fire {
             let w = &self.worlds[world];
@@ -918,7 +929,7 @@ impl Server {
             let seen = seen_percent(&self.worlds[world], center, &b);
             let impact = (1.0 - dist) * seen;
             let damage = ((impact * impact + impact) / 2.0 * 7.0 * reach + 1.0) as f32;
-            let damage_source = Damage { kind: if source.is_some_and(|s| self.players.contains_key(&s)) { "minecraft:player_explosion" } else { "minecraft:explosion" }, attacker: source, direct: source, position: Some(center) };
+            let damage_source = Damage { kind: if attacker.is_some_and(|s| self.players.contains_key(&s)) { "minecraft:player_explosion" } else { "minecraft:explosion" }, attacker, direct: source, position: Some(center) };
             self.hurt_entity(world, id, damage_source, damage);
             let push = dir.scale(impact);
             if is_player {
@@ -956,9 +967,18 @@ impl Server {
                 }
                 let pos = BlockPos::new(x, y, z);
                 if blocks::block_of_state(state).name == "minecraft:tnt" {
+                    let explodes = self.worlds[world].rules.bool("tnt_explodes");
+                    // Plugins may leave it be (`TNTPrimeEvent`, cause `EXPLOSION`).
+                    let by = match source {
+                        Some(s) => crate::plugins::events::Primer::Entity(s),
+                        None => crate::plugins::events::Primer::Block(BlockPos::new(center.x.floor() as i32, center.y.floor() as i32, center.z.floor() as i32)),
+                    };
+                    if explodes && !crate::plugins::events::on_tnt_prime(self, world, pos, "EXPLOSION", by) {
+                        continue;
+                    }
                     self.set_block_and_update(world, pos, blocks::AIR);
-                    if self.worlds[world].rules.bool("tnt_explodes") {
-                        self.prime_tnt(world, pos, rng.gen_range(10..30), source);
+                    if explodes {
+                        self.prime_tnt(world, pos, rng.gen_range(10..30), attacker);
                     }
                     broken += 1;
                     continue;

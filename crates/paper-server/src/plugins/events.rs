@@ -1980,3 +1980,96 @@ pub fn on_item_merge(server: &mut Server, world: usize, item: i32, target: i32) 
         None => true,
     }
 }
+
+/// What sets TNT off besides its cause: an entity (a player, what exploded), a block (a
+/// dispenser, fire, an explosion of no entity), or nothing (redstone).
+#[derive(Clone, Copy, Debug)]
+pub enum Primer {
+    Entity(i32),
+    Block(BlockPos),
+    Nothing,
+}
+
+/// `TNTPrimeEvent`: the TNT at `pos` is to be set off for `cause` (`PLAYER`, `EXPLOSION`,
+/// `FIRE`, `REDSTONE`, `DISPENSER`) by `by`. Returns whether plugins let it.
+pub fn on_tnt_prime(server: &mut Server, world: usize, pos: BlockPos, cause: &str, by: Primer) -> bool {
+    if !listens(server, "TNTPrimeEvent") {
+        return true;
+    }
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "cause" => cause };
+    match by {
+        Primer::Entity(e) if server.players.contains_key(&e) || server.worlds[world].entities.contains_key(&e) => args.set("entity", actor_value(server, world, e)),
+        Primer::Block(b) => args.set("block", pos_value(b)),
+        _ => {}
+    }
+    match fire(server, "TNTPrimeEvent", "event.tnt_prime", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `ExplosionPrimeEvent`: `entity` (primed TNT, a creeper, a fireball, an end crystal) is to
+/// explode with `radius`, setting fires if `fire`. The radius and fire as plugins leave them,
+/// or `None` if they cancelled it.
+pub fn on_explosion_prime(server: &mut Server, world: usize, entity: i32, radius: f32, incendiary: bool) -> Option<(f32, bool)> {
+    if !listens(server, "ExplosionPrimeEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return Some((radius, incendiary));
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, entity), "radius" => radius as f64, "fire" => incendiary };
+    match fire(server, "ExplosionPrimeEvent", "event.explosion_prime", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some((result.f64("radius").map_or(radius, |r| r as f32).max(0.0), result.bool("fire").unwrap_or(incendiary))),
+        None => Some((radius, incendiary)),
+    }
+}
+
+/// `LightningStrikeEvent`: the bolt `bolt` strikes for `cause` (`WEATHER`, `CUSTOM`, ...).
+/// Returns whether plugins let it.
+pub fn on_lightning(server: &mut Server, world: usize, bolt: i32, cause: &str) -> bool {
+    if !listens(server, "LightningStrikeEvent") || !server.worlds[world].entities.contains_key(&bolt) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, bolt), "cause" => cause };
+    match fire(server, "LightningStrikeEvent", "event.lightning", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `CreeperPowerEvent`: the creeper `creeper` is to be charged (or, set by plugins, lose its
+/// charge) for `cause` (`LIGHTNING`, with the bolt `bolt`). Returns whether plugins let it.
+pub fn on_creeper_power(server: &mut Server, world: usize, creeper: i32, bolt: Option<i32>, cause: &str) -> bool {
+    if !listens(server, "CreeperPowerEvent") || !server.worlds[world].entities.contains_key(&creeper) {
+        return true;
+    }
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, creeper), "cause" => cause };
+    if let Some(b) = bolt.filter(|b| server.worlds[world].entities.contains_key(b)) {
+        args.set("bolt", actor_value(server, world, b));
+    }
+    match fire(server, "CreeperPowerEvent", "event.creeper_power", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// Lightning (`bolt`) is to turn `entity` into the new mob `into`: `PigZapEvent` for a pig,
+/// Paper's `EntityZapEvent` and then `EntityTransformEvent` (reason `LIGHTNING`) for others.
+/// Returns whether plugins let it.
+pub fn on_zap(server: &mut Server, world: usize, entity: i32, bolt: i32, into: i32) -> bool {
+    let pig = server.worlds[world].entities.get(&entity).is_some_and(|e| e.info.name == "minecraft:pig");
+    let heard = if pig { listens(server, "PigZapEvent") } else { listens(server, "EntityZapEvent") || listens(server, "EntityTransformEvent") };
+    if !heard || ![entity, bolt, into].iter().all(|e| server.worlds[world].entities.contains_key(e)) {
+        return true;
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "entity" => actor_value(server, world, entity),
+        "bolt" => actor_value(server, world, bolt),
+        "into" => actor_value(server, world, into),
+        "pig" => pig,
+    };
+    match fire(server, "", "event.zap", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}

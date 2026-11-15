@@ -194,6 +194,11 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.exp_bottle` | the thrown potions' hit fields, `experience` | `experience`, `show` (`ExpBottleEvent`) |
 | `event.item_despawn` | `world`, `entity` | `cancelled` (`ItemDespawnEvent`: it starts its lifetime again) |
 | `event.item_merge` | `world`, `entity`, `target` | `cancelled` (`ItemMergeEvent`) |
+| `event.tnt_prime` | `world`, `x`, `y`, `z`, `cause` (`PrimeCause`), and `entity` (a player, what exploded) or `block` `[x, y, z]` (a dispenser, fire, an explosion of no entity) | `cancelled` (`TNTPrimeEvent`: it stays) |
+| `event.explosion_prime` | `world`, `entity` (primed TNT, a creeper, a fireball, an end crystal), `radius`, `fire` | `cancelled`, `radius`, `fire` (`ExplosionPrimeEvent`; a stopped creeper calms down, a crystal stays whole) |
+| `event.lightning` | `world`, `entity` (the bolt; its state has `effect`), `cause` | `cancelled` (`LightningStrikeEvent`: the bolt goes) |
+| `event.creeper_power` | `world`, `entity`, `cause` (`PowerCause`), `bolt` | `cancelled` (`CreeperPowerEvent`) |
+| `event.zap` | `world`, `entity`, `bolt`, `into` (the new mob, already there), `pig` | `cancelled` (`PigZapEvent`, or Paper's `EntityZapEvent` then `EntityTransformEvent`; the new mob goes) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
 | `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |
@@ -216,14 +221,14 @@ Some events are only fired when a plugin listens to them (the host reports which
 explosions, move, game mode change, chat, the inventory, item, damage, death, respawn
 and spawn events, pistons and fire, login, changing worlds, chunks loading and
 unloading, portals being made, potions splashing, items wearing, shearing, beds, client
-settings, arrows picked up, eggs hatching, bottles o' enchanting, and dropped items going or
-merging. Join, quit,
+settings, arrows picked up, eggs hatching, bottles o' enchanting, dropped items going or
+merging, TNT and explosions, and lightning. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 
-Piston moves, fire burning or spreading, lava setting fires, fire lighting a portal, fluids
-flowing, trees growing, and blocks growing, fading, forming, spreading and decaying happen
-inside the block engine,
+Piston moves, fire burning or spreading, lava setting fires, fire lighting a portal, TNT set
+off by redstone or fire, fluids flowing, trees growing, and blocks growing, fading, forming,
+spreading and decaying happen inside the block engine,
 which has no access to the plugin connection. While plugins listen for their events, the engine
 leaves them as asks (`block_updates::Ask`) instead of carrying them out. The server fires
 the events and has the engine carry out the answers once the tick's block ticks and block

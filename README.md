@@ -313,8 +313,15 @@ What works:
   (with Paper's enter action; plugins may put a player to bed all the same) and
   `PlayerBedLeaveEvent`, `PlayerChangedMainHandEvent`, `PlayerLocaleChangeEvent`,
   `PlayerPickupArrowEvent`, `PlayerEggThrowEvent` and Paper's `ThrownEggHatchEvent`,
-  `ExpBottleEvent`, `ItemDespawnEvent` (a kept item starts its five minutes again) and
-  `ItemMergeEvent`. Players,
+  `ExpBottleEvent`, `ItemDespawnEvent` (a kept item starts its five minutes again),
+  `ItemMergeEvent`, `TNTPrimeEvent` (redstone, fire, explosions, players and dispensers setting
+  TNT off), `ExplosionPrimeEvent` (primed TNT, creepers, ghast fireballs and end crystals,
+  whose blasts plugins may change), `LightningStrikeEvent`, `CreeperPowerEvent` (lightning
+  charges creepers now, which blow up twice as hard, and plugins may set the charge),
+  `PigZapEvent` and Paper's `EntityZapEvent` with `EntityTransformEvent` (lightning turns pigs
+  into zombified piglins and villagers into witches now), and `EntityCombustEvent` for mobs
+  burning in daylight and lava. TNT and fireballs are the entities of their
+  `EntityExplodeEvent`, as in Paper. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -474,8 +481,7 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
-  Events not fired yet include `TNTPrimeEvent`, mobs catching fire in lava, fire or
-  daylight, and vehicles.
+  Events not fired yet include mobs catching fire in fire blocks, and vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

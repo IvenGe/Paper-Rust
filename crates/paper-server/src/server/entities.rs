@@ -435,7 +435,10 @@ impl Server {
                     e.removed = true;
                     let center = Vec3::new(e.pos.x, e.pos.y + 0.0625, e.pos.z);
                     self.worlds[world].entities.insert(id, e);
-                    self.explode(world, center, 4.0, true, None);
+                    // Plugins may stop it, or change its power (`ExplosionPrimeEvent`).
+                    if let Some((radius, fire)) = crate::plugins::events::on_explosion_prime(self, world, id, 4.0, false) {
+                        self.explode_with(world, center, radius, true, fire, Some(id));
+                    }
                     return;
                 }
             }
@@ -941,6 +944,9 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
             }
             if let Some(i) = info.data_index("DATA_SWELL_DIR") {
                 m = m.varint(i, if mob.brain.swelling { 1 } else { -1 });
+            }
+            if let Some(i) = info.data_index("DATA_IS_POWERED").filter(|_| mob.powered || !spawning) {
+                m = m.boolean(i, mob.powered);
             }
             if let Some(i) = info.data_index("DATA_WOOL_ID") {
                 m = m.byte(i, (mob.variant & 15) as i8 | if mob.sheared { 0x10 } else { 0 });

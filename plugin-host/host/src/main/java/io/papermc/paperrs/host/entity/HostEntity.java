@@ -941,6 +941,40 @@ public final class HostEntity implements HostProxies.Backed {
         this.set("item", HostItemStack.toValue(item));
     }
 
+    // creepers (Creeper)
+
+    public boolean isPowered() {
+        return Values.bool(this.state(), "powered", false);
+    }
+
+    /** As in Paper, plugins hear of it first ({@code CreeperPowerEvent}, {@code SET_ON} or {@code SET_OFF}). */
+    public void setPowered(final boolean powered) {
+        if (!(this.self instanceof org.bukkit.entity.Creeper creeper) || powered == this.isPowered()) {
+            return;
+        }
+        final org.bukkit.event.entity.CreeperPowerEvent.PowerCause cause = powered
+            ? org.bukkit.event.entity.CreeperPowerEvent.PowerCause.SET_ON : org.bukkit.event.entity.CreeperPowerEvent.PowerCause.SET_OFF;
+        if (new org.bukkit.event.entity.CreeperPowerEvent(creeper, cause).callEvent()) {
+            this.set("powered", powered);
+        }
+    }
+
+    // lightning (LightningStrike)
+
+    public boolean isEffect() {
+        return Values.bool(this.state(), "effect", false);
+    }
+
+    // explosives (Explosive): what primed TNT is
+
+    public float getYield() {
+        return 4.0f;
+    }
+
+    public boolean isIncendiary() {
+        return false;
+    }
+
     // thrown potions (ThrownPotion): what they carry is their item's
 
     public java.util.Collection<org.bukkit.potion.PotionEffect> getEffects() {
