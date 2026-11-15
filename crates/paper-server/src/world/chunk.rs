@@ -308,6 +308,9 @@ pub struct Chunk {
     /// The `structures` compound the chunk was saved with (structure starts), until the
     /// generator has read it.
     pub saved_structures: Option<paper_nbt::Compound>,
+    /// Plugins' values for the chunk (`Chunk#getPersistentDataContainer`), saved with it under
+    /// `ChunkBukkitValues` as in Paper.
+    pub plugin_data: Option<paper_nbt::Compound>,
 }
 
 /// The block entity type of a block, for blocks that have one: most are named like their
@@ -373,6 +376,7 @@ impl Chunk {
             status: GenStatus::Full,
             proto: None,
             saved_structures: None,
+            plugin_data: None,
         }
     }
 
@@ -525,6 +529,7 @@ impl Chunk {
             block_entities: self.block_entities.clone(),
             motion_blocking: self.motion_blocking.clone(),
             world_surface: self.world_surface.clone(),
+            plugin_data: self.plugin_data.clone(),
         }
     }
 }
@@ -541,6 +546,7 @@ pub struct ChunkSnapshot {
     pub block_entities: BTreeMap<(i32, u8, u8), Compound>,
     pub motion_blocking: Box<[i16; 256]>,
     pub world_surface: Box<[i16; 256]>,
+    pub plugin_data: Option<paper_nbt::Compound>,
 }
 
 /// `ceil(log2(n))`, the number of bits needed to index `n` values.

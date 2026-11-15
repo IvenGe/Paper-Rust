@@ -462,6 +462,7 @@ impl SaveChunk {
             status: self.status,
             proto: self.proto.clone(),
             saved_structures: self.structures.clone(),
+            plugin_data: s.plugin_data.clone(),
         }
     }
 }
@@ -576,6 +577,9 @@ pub fn chunk_to_nbt(save: &SaveChunk) -> Compound {
     if let Some(entities) = proto_entities {
         out.insert("entities", Tag::List(entities));
     }
+    if let Some(data) = save.snapshot.plugin_data.as_ref().filter(|d| !d.is_empty()) {
+        out.insert("ChunkBukkitValues", Tag::Compound(data.clone()));
+    }
     out
 }
 
@@ -592,6 +596,7 @@ pub fn chunk_from_nbt(nbt: &Compound, pos: ChunkPos, min_y: i32, height: i32, ha
     let plains = biome_names().iter().position(|b| *b == "minecraft:plains").unwrap_or(0) as u8;
     let mut chunk = Chunk::empty(pos, min_y, height, plains);
     chunk.saved_structures = nbt.compound("structures").cloned();
+    chunk.plugin_data = nbt.compound("ChunkBukkitValues").filter(|c| !c.is_empty()).cloned();
     let min_section = min_y >> 4;
     let count = chunk.sections.len() as i32;
     let mut unknown = 0usize;
@@ -1322,6 +1327,8 @@ mod tests {
         lamp.set(4, 5, 6, 14);
         chunk.block_light[7] = Arc::new(lamp);
         chunk.lit = true;
+        // Plugins' values for the chunk travel along, as Paper keeps them.
+        chunk.plugin_data = Some(Compound::new().with("myplugin:note", Tag::String("kept".into())));
 
         let save = SaveChunk { snapshot: chunk.snapshot(), lit: true, has_skylight: true, ticks: SavedTicks::default(), status: GenStatus::Full, proto: None, structures: None };
         let nbt = chunk_to_nbt(&save);
@@ -1336,6 +1343,8 @@ mod tests {
             }
         }
         assert_eq!(back.get_block(1, 100, 2), stairs);
+        assert!(nbt.compound("ChunkBukkitValues").is_some());
+        assert_eq!(back.plugin_data.as_ref().and_then(|d| d.string("myplugin:note")), Some("kept"));
         for (a, b) in back.sections.iter().zip(&chunk.sections) {
             assert_eq!(a.biomes, b.biomes);
         }

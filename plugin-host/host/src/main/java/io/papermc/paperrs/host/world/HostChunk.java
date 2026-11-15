@@ -53,7 +53,11 @@ public final class HostChunk implements Chunk {
 
     @Override
     public ChunkSnapshot getChunkSnapshot(final boolean includeMaxBlockY, final boolean includeBiome, final boolean includeBiomeTempRain, final boolean includeBeehives) {
-        throw Unsupported.method("Chunk#getChunkSnapshot");
+        final Object read = this.world.server().call("world.chunk_snapshot", Values.of("world", this.world.getName(), "x", this.x, "z", this.z));
+        if (!(read instanceof java.util.Map<?, ?> m)) {
+            throw new IllegalStateException("chunk " + this.x + ", " + this.z + " of " + this.world.getName() + " could not be loaded");
+        }
+        return new HostChunkSnapshot(this.world, this.x, this.z, Values.map(m), includeMaxBlockY, includeBiome, includeBiomeTempRain);
     }
 
     @Override
@@ -197,8 +201,17 @@ public final class HostChunk implements Chunk {
     }
 
     @Override
+    /**
+     * The chunk's plugin values, saved with it under {@code ChunkBukkitValues} as in Paper (the
+     * chunk is loaded if need be). Read when asked; each change writes them back whole.
+     */
     public PersistentDataContainer getPersistentDataContainer() {
-        throw Unsupported.method("Chunk#getPersistentDataContainer");
+        final Object saved = this.world.server().call("world.chunk_pdc", Values.of("world", this.world.getName(), "x", this.x, "z", this.z));
+        final io.papermc.paperrs.host.item.HostPersistentDataContainer data = saved instanceof byte[] bytes && bytes.length > 0
+            ? new io.papermc.paperrs.host.item.HostPersistentDataContainer(io.papermc.paperrs.host.item.Nbt.readCompound(bytes))
+            : new io.papermc.paperrs.host.item.HostPersistentDataContainer();
+        return data.onChange(() -> this.world.server().call("world.set_chunk_pdc", Values.of("world", this.world.getName(), "x", this.x, "z", this.z,
+            "data", data.isEmpty() ? new byte[0] : io.papermc.paperrs.host.item.Nbt.writeCompound(data.tags()))));
     }
 
     @Override

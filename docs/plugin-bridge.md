@@ -366,6 +366,8 @@ same name, which stay reachable as `minecraft:<name>`.
 | `world.is_chunk_loaded` | `world`, `x`, `z` |
 | `world.game_rule` / `set_game_rule` / `game_rules` | `world`, `rule` (`keep_inventory` or `minecraft:keep_inventory`) / and `value` (a boolean, a number or text) / `world` |
 | `world.pdc` / `world.set_pdc` | `world` / and `data` (network NBT; the world's persistent data container) |
+| `world.chunk_pdc` / `world.set_chunk_pdc` | `world`, `x`, `z` / and `data` (network NBT; the chunk's persistent data container, saved with the chunk under `ChunkBukkitValues`; the chunk is loaded if need be) |
+| `world.chunk_snapshot` | `world`, `x`, `z` (answers `min_y`, `sections` (each `palette` and `indices` as `world.section`, `sky` and `block` light as a level or 2048 nibble bytes, and 64 `biomes` of its 4x4x4 cells), `heights` (the highest motion-blocking block of each column, z then x) and `time`: everything `Chunk#getChunkSnapshot` answers, in one call) |
 | `world.break_naturally` | `world`, `x`, `y`, `z`, `tool` (an item, or none), `effect`, `experience` (answers whether the block dropped anything) |
 | `world.block_drops` | `world`, `x`, `y`, `z`, `tool` (answers the items breaking the block would drop) |
 | `world.tile_data` / `world.set_tile_data` | `world`, `x`, `y`, `z` (answers the block entity's `nbt` and `name`) / and `set` (tags as network NBT), `remove` (tag names), `name_changed`, `name` (JSON) |

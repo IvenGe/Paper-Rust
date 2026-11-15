@@ -418,6 +418,30 @@ fn player_id(server: &Server, args: &Value) -> Result<i32> {
     server.by_uuid.get(&uuid).copied().ok_or_else(|| anyhow!("player {uuid} is not online"))
 }
 
+/// A chunk section's blocks for the host's section cache and chunk snapshots: a palette of
+/// states and, unless uniform, two little-endian bytes of palette index per block (y, z, x).
+fn section_value(section: &crate::world::chunk::Section) -> Value {
+    match &section.blocks {
+        crate::world::chunk::BlockStorage::Uniform(state) => bmap! { "palette" => Value::List(vec![Value::Str(blocks::state_to_string(*state as u32))]) },
+        crate::world::chunk::BlockStorage::Dense(data) => {
+            let mut palette: Vec<u16> = Vec::new();
+            let mut index: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
+            let mut indices = Vec::with_capacity(8192);
+            for state in data.iter() {
+                let i = *index.entry(*state).or_insert_with(|| {
+                    palette.push(*state);
+                    (palette.len() - 1) as u16
+                });
+                indices.extend_from_slice(&i.to_le_bytes());
+            }
+            bmap! {
+                "palette" => Value::List(palette.iter().map(|s| Value::Str(blocks::state_to_string(*s as u32))).collect()),
+                "indices" => Value::Bytes(indices),
+            }
+        }
+    }
+}
+
 fn world_index(server: &Server, args: &Value) -> Result<usize> {
     match args.str("world") {
         Some(name) => server.worlds.iter().position(|w| w.name == name).ok_or_else(|| anyhow!("unknown world {name}")),
@@ -948,25 +972,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 let state = state_value(server, world, x, y, z).str("state").unwrap_or("minecraft:void_air").to_owned();
                 return Ok(bmap! { "palette" => Value::List(vec![Value::Str(state)]) });
             };
-            match &section.blocks {
-                crate::world::chunk::BlockStorage::Uniform(state) => Ok(bmap! { "palette" => Value::List(vec![Value::Str(blocks::state_to_string(*state as u32))]) }),
-                crate::world::chunk::BlockStorage::Dense(data) => {
-                    let mut palette: Vec<u16> = Vec::new();
-                    let mut index: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
-                    let mut indices = Vec::with_capacity(8192);
-                    for state in data.iter() {
-                        let i = *index.entry(*state).or_insert_with(|| {
-                            palette.push(*state);
-                            (palette.len() - 1) as u16
-                        });
-                        indices.extend_from_slice(&i.to_le_bytes());
-                    }
-                    Ok(bmap! {
-                        "palette" => Value::List(palette.iter().map(|s| Value::Str(blocks::state_to_string(*s as u32))).collect()),
-                        "indices" => Value::Bytes(indices),
-                    })
-                }
-            }
+            Ok(section_value(section))
         }
         "world.block_entity" => {
             // A block entity as saved (named NBT, with its id and position), or null.
@@ -1372,6 +1378,68 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 _ => {}
             }
             Ok(Value::List(w.forced.iter().map(|p| Value::List(vec![p.x.into(), p.z.into()])).collect()))
+        }
+        // `Chunk#getPersistentDataContainer`: the chunk's plugin values (loading it if need
+        // be), as network NBT; set again whole after each change.
+        "world.chunk_pdc" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            server.load_chunk_now(world, pos);
+            Ok(match server.worlds[world].chunks.get(&pos).and_then(|c| c.plugin_data.as_ref()) {
+                Some(data) => {
+                    let mut out = Vec::new();
+                    paper_nbt::write_network_compound(&mut out, data);
+                    Value::Bytes(out)
+                }
+                None => Value::Null,
+            })
+        }
+        "world.set_chunk_pdc" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            let data = match args.get("data") {
+                Value::Bytes(b) if !b.is_empty() => match paper_nbt::read_network(&mut b.as_slice(), 2 * 1024 * 1024) {
+                    Ok(Some(paper_nbt::Tag::Compound(c))) => c,
+                    _ => bail!("invalid persistent data"),
+                },
+                _ => paper_nbt::Compound::new(),
+            };
+            server.load_chunk_now(world, pos);
+            let Some(chunk) = server.worlds[world].chunks.get_mut(&pos) else { bail!("chunk {},{} could not be loaded", pos.x, pos.z) };
+            chunk.plugin_data = (!data.is_empty()).then_some(data);
+            chunk.dirty = true;
+            Ok(Value::Null)
+        }
+        // `Chunk#getChunkSnapshot`: everything a snapshot answers, at once: each section's blocks
+        // (as `world.section`), sky and block light (a level, or 2048 nibble bytes), and its
+        // 4x4x4 biomes; the highest block of each column (motion blocking); the world's time.
+        "world.chunk_snapshot" => {
+            let world = world_index(server, args)?;
+            let pos = crate::world::chunk::ChunkPos::new(args.i32("x").unwrap_or(0), args.i32("z").unwrap_or(0));
+            server.load_chunk_now(world, pos);
+            let w = &server.worlds[world];
+            let Some(chunk) = w.chunks.get(&pos) else { return Ok(Value::Null) };
+            let light = |l: Option<&std::sync::Arc<crate::world::chunk::LightSection>>| match l.map(|a| &**a) {
+                Some(crate::world::chunk::LightSection::Uniform(v)) => Value::Int(*v as i64),
+                Some(crate::world::chunk::LightSection::Dense(d)) => Value::Bytes(d.to_vec()),
+                None => Value::Int(0),
+            };
+            let names = paper_data::synced::entries("minecraft:worldgen/biome").unwrap_or(&[]);
+            let sections: Vec<Value> = chunk
+                .sections
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let mut v = section_value(s);
+                    v.set("sky", light(chunk.sky_light.get(i + 1)));
+                    v.set("block", light(chunk.block_light.get(i + 1)));
+                    let biomes = (0..64).map(|j| Value::Str(names.get(s.biome(j & 3, j >> 4, (j >> 2) & 3) as usize).copied().unwrap_or("minecraft:plains").to_owned())).collect();
+                    v.set("biomes", Value::List(biomes));
+                    v
+                })
+                .collect();
+            let heights = (0..256).map(|i| Value::Int(chunk.top_y(i & 15, i >> 4) as i64 - 1)).collect();
+            Ok(bmap! { "min_y" => chunk.min_y, "sections" => Value::List(sections), "heights" => Value::List(heights), "time" => w.age })
         }
         "world.chunk_block_entities" => {
             let world = world_index(server, args)?;

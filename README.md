@@ -405,6 +405,8 @@ What works:
   * worlds made by plugins (`Bukkit.createWorld`): normal or flat; overworld, Nether or End;
     opened again from their folders; unloaded again (`Bukkit.unloadWorld`, with
     `WorldUnloadEvent`); and players teleported from one world to another;
+  * chunks' persistent data containers (saved with the chunks, under `ChunkBukkitValues` as in
+    Paper) and chunk snapshots (`Chunk#getChunkSnapshot`);
   * player state: walking and flying speeds, the time and weather one player sees
     (`setPlayerTime`, `setPlayerWeather`), being invulnerable, glowing, silent, invisible or
     without gravity, custom names, scoreboard tags, air, fire, freezing and fall distance,
@@ -501,8 +503,9 @@ Not yet:
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet.
-  Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
-  and `/worldborder` are not there yet.
+  Borders of one player's own (`Player.setWorldBorder`) and `/worldborder` are not there yet.
+  Chunk snapshots answer the biomes' own temperatures, without vanilla's adjustment for
+  height.
   Events not fired yet include mobs catching fire in fire blocks, `VehicleUpdateEvent`,
   vehicle collisions, and minecarts' own events (minecarts do nothing yet).
   Methods that are not implemented throw an `UnsupportedOperationException` that names

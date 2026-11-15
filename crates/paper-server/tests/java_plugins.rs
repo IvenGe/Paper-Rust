@@ -2295,6 +2295,19 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     server.handle.run(|s| s.unload_unused_chunks()).unwrap();
     alice.command("apitest chunks");
     expect_line(&mut alice, "chunks: true true true");
+    // A value a plugin keeps with a chunk (`Chunk#getPersistentDataContainer`), and a snapshot
+    // of the chunk (`getChunkSnapshot`).
+    alice.command("apitest chunkdata");
+    expect_line(&mut alice, "chunkdata: ok");
+    let kept = server
+        .handle
+        .run(move |s| {
+            let p = &s.players[&alice_id];
+            let pos = paper_server::world::chunk::ChunkPos::of_block(p.loc.x.floor() as i32, p.loc.z.floor() as i32);
+            s.worlds[p.world].chunks.get(&pos).and_then(|c| c.plugin_data.as_ref()).map(|d| format!("{d:?}")).unwrap_or_default()
+        })
+        .unwrap();
+    assert!(kept.contains("kept with the chunk"), "{kept}");
 
     // Crafting tables and anvils without a block, as Essentials' /craft and /anvil open them.
     alice.command("apitest stations");

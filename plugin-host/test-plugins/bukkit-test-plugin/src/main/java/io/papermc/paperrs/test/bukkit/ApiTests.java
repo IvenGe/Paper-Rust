@@ -452,6 +452,39 @@ final class ApiTests implements Listener, CommandExecutor {
                     check(failures, again != null && again != flat && "plugin_flat".equals(again.getName()) && Bukkit.getWorld("plugin_flat") == again, "loaded again");
                     report(sender, "unloadworld", failures);
                 }
+                case "chunkdata" -> {
+                    // A value kept with the chunk Alice stands in (Chunk#getPersistentDataContainer),
+                    // and a snapshot of it agreeing with the world.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final org.bukkit.Chunk chunk = player.getLocation().getChunk();
+                    final NamespacedKey key = new NamespacedKey(this.plugin, "chunk_note");
+                    chunk.getPersistentDataContainer().set(key, PersistentDataType.STRING, "kept with the chunk");
+                    final org.bukkit.Chunk again = player.getWorld().getChunkAt(chunk.getX(), chunk.getZ());
+                    check(failures, "kept with the chunk".equals(again.getPersistentDataContainer().get(key, PersistentDataType.STRING)), "the chunk's value");
+                    check(failures, !player.getWorld().getChunkAt(chunk.getX() + 1, chunk.getZ()).getPersistentDataContainer().has(key), "not in the next chunk");
+                    final org.bukkit.ChunkSnapshot snapshot = chunk.getChunkSnapshot(true, true, true);
+                    final int x = player.getLocation().getBlockX() & 15;
+                    final int z = player.getLocation().getBlockZ() & 15;
+                    final int y = player.getLocation().getBlockY() - 1;
+                    final Block ground = player.getWorld().getBlockAt(player.getLocation().getBlockX(), y, player.getLocation().getBlockZ());
+                    check(failures, snapshot.getBlockType(x, y, z) == ground.getType(), "ground " + snapshot.getBlockType(x, y, z) + " / " + ground.getType());
+                    check(failures, snapshot.getBlockData(x, y, z).equals(ground.getBlockData()), "ground data");
+                    check(failures, snapshot.getHighestBlockYAt(x, z) == player.getWorld().getHighestBlockYAt(ground.getX(), ground.getZ()), "highest " + snapshot.getHighestBlockYAt(x, z));
+                    check(failures, snapshot.getBiome(x, y, z) == ground.getBiome(), "biome " + snapshot.getBiome(x, y, z));
+                    check(failures, snapshot.getRawBiomeTemperature(x, y, z) == 0.8, "temperature " + snapshot.getRawBiomeTemperature(x, y, z));
+                    check(failures, snapshot.getBlockSkyLight(x, player.getWorld().getMaxHeight() - 1, z) == 15, "sky light at the top");
+                    check(failures, snapshot.isSectionEmpty((player.getWorld().getMaxHeight() - player.getWorld().getMinHeight()) / 16 - 1), "empty top section");
+                    check(failures, snapshot.contains(ground.getBlockData()) && snapshot.contains(ground.getBiome()), "contains");
+                    check(failures, snapshot.getX() == chunk.getX() && snapshot.getZ() == chunk.getZ() && snapshot.getWorldName().equals(player.getWorld().getName()), "where");
+                    try {
+                        chunk.getChunkSnapshot(false, false, false).getHighestBlockYAt(x, z);
+                        failures.add("heights without asking");
+                    } catch (IllegalStateException expected) {
+                        // As in CraftChunkSnapshot.
+                    }
+                    report(sender, "chunkdata", failures);
+                }
                 case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
                     try {
