@@ -228,6 +228,9 @@ pub struct Player {
     /// Ticks the server still waits for the client to say it has loaded before taking it as
     /// loaded anyway (`clientLoadedTimeoutTimer`).
     pub load_timeout: i32,
+    /// A border a plugin shows this player instead of their world's (CraftPlayer's
+    /// `clientWorldBorder`, set by `Player#setWorldBorder`); only the client sees it.
+    pub own_border: Option<crate::world::Border>,
     pub op_level: u8,
     pub display_name: Option<Component>,
     pub list_name: Option<Component>,

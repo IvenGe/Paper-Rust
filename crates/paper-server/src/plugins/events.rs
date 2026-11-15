@@ -2476,3 +2476,69 @@ pub fn on_entity_block_form(server: &mut Server, world: usize, entity: i32, pos:
         None => Some(state),
     }
 }
+
+/// A world border's change as plugins left it (`WorldBorderBoundsChangeEvent`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BorderChange {
+    /// Still an `INSTANT_MOVE`, or a move over `ticks`.
+    pub instant: bool,
+    pub from: f64,
+    pub size: f64,
+    pub ticks: i64,
+}
+
+/// `WorldBorderBoundsChangeEvent`: `world`'s border is about to go from `from` to `to`, at
+/// once (`instant`) or over `ticks`. `None` if plugins stopped it.
+pub fn on_border_resize(server: &mut Server, world: usize, instant: bool, from: f64, to: f64, ticks: i64) -> Option<BorderChange> {
+    let unchanged = BorderChange { instant, from, size: to, ticks };
+    if !listens(server, "WorldBorderBoundsChangeEvent") {
+        return Some(unchanged);
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "type" => if instant { "INSTANT_MOVE" } else { "STARTED_MOVE" },
+        "from" => from,
+        "to" => to,
+        "ticks" => ticks,
+    };
+    match fire(server, "WorldBorderBoundsChangeEvent", "event.border_resize", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(BorderChange {
+            instant: result.str("type") != Some("STARTED_MOVE"),
+            from,
+            size: result.f64("to").unwrap_or(to),
+            ticks: result.i64("ticks").unwrap_or(ticks),
+        }),
+        None => Some(unchanged),
+    }
+}
+
+/// `WorldBorderCenterChangeEvent`: `world`'s border is about to move its center from `old`
+/// to `new`. `None` if plugins stopped it, else the center they left.
+pub fn on_border_center(server: &mut Server, world: usize, old: (f64, f64), new: (f64, f64)) -> Option<(f64, f64)> {
+    if !listens(server, "WorldBorderCenterChangeEvent") {
+        return Some(new);
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "old_x" => old.0,
+        "old_z" => old.1,
+        "x" => new.0,
+        "z" => new.1,
+    };
+    match fire(server, "WorldBorderCenterChangeEvent", "event.border_center", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some((result.f64("x").unwrap_or(new.0), result.f64("z").unwrap_or(new.1))),
+        None => Some(new),
+    }
+}
+
+/// `WorldBorderBoundsChangeFinishEvent`: `world`'s border got from `from` to `to`, a move of
+/// `ticks`.
+pub fn on_border_arrived(server: &mut Server, world: usize, from: f64, to: f64, ticks: i64) {
+    if !listens(server, "WorldBorderBoundsChangeFinishEvent") {
+        return;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "from" => from, "to" => to, "ticks" => ticks };
+    fire(server, "WorldBorderBoundsChangeFinishEvent", "event.border_arrived", args);
+}

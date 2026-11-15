@@ -1,16 +1,20 @@
 package io.papermc.paperrs.host.world;
 
 import com.google.common.base.Preconditions;
+import io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent;
+import io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent;
 import io.papermc.paperrs.host.bridge.Values;
 import java.util.Map;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
+import org.bukkit.event.HandlerList;
 
 /**
  * A world's border, kept by the Rust server: reads ask it for the border as it is now (so a
  * border moving to a new size reads its current size), changes go to it and to the world's
- * players. The checks are {@code CraftWorldBorder}'s.
+ * players who see it. The checks are {@code CraftWorldBorder}'s; changes fire Paper's border events
+ * as {@code WorldBorder}'s setters do.
  */
 public final class HostWorldBorder implements WorldBorder {
     /** {@code WorldBorder.MAX_SIZE} and {@code MAX_CENTER_COORDINATE}. */
@@ -38,9 +42,15 @@ public final class HostWorldBorder implements WorldBorder {
         return this.world;
     }
 
+    /**
+     * Paper's {@code WorldBorder.applySettings(Settings.DEFAULT)}: each setting through its
+     * setter, so plugins hear of the center and size as they change.
+     */
     @Override
     public void reset() {
-        this.set("reset", true);
+        this.setCenter(0, 0);
+        this.set("damage_amount", 0.2, "damage_buffer", 5.0, "warning_distance", 5, "warning_time", 15);
+        this.resize(MAX_SIZE);
     }
 
     @Override
@@ -51,14 +61,60 @@ public final class HostWorldBorder implements WorldBorder {
     @Override
     public void setSize(final double newSize) {
         Preconditions.checkArgument(newSize >= 1.0 && newSize <= this.getMaxSize(), "newSize must be between 1.0 and %s", this.getMaxSize());
-        this.set("size", newSize);
+        this.resize(newSize);
     }
 
     @Override
     public void changeSize(final double newSize, final long ticks) {
         Preconditions.checkArgument(ticks >= 0 && ticks <= Integer.MAX_VALUE, "ticks must be between 0-%s", Integer.MAX_VALUE);
         Preconditions.checkArgument(newSize >= 1.0 && newSize <= this.getMaxSize(), "newSize must be between 1.0 and %s", this.getMaxSize());
-        this.set("size", newSize, "ticks", ticks);
+        if (ticks > 0) {
+            this.lerp(this.getSize(), newSize, ticks);
+        } else {
+            this.resize(newSize);
+        }
+    }
+
+    /**
+     * Paper's {@code WorldBorder.setSize}: plugins hear of it ({@code WorldBorderBoundsChangeEvent})
+     * and may stop it, change the size, or make it a move.
+     */
+    private void resize(final double size) {
+        if (!listened(WorldBorderBoundsChangeEvent.getHandlerList())) {
+            this.set("size", size);
+            return;
+        }
+        final WorldBorderBoundsChangeEvent event = new WorldBorderBoundsChangeEvent(this.world, this, WorldBorderBoundsChangeEvent.Type.INSTANT_MOVE, this.getSize(), size, 0);
+        if (!event.callEvent()) {
+            return;
+        }
+        if (event.getType() == WorldBorderBoundsChangeEvent.Type.STARTED_MOVE && event.getDurationTicks() > 0) {
+            this.lerp(event.getOldSize(), event.getNewSize(), event.getDurationTicks());
+            return;
+        }
+        this.set("size", event.getNewSize());
+    }
+
+    /** Paper's {@code WorldBorder.lerpSizeBetween}, with the same event. */
+    private void lerp(final double from, double to, long ticks) {
+        if (listened(WorldBorderBoundsChangeEvent.getHandlerList())) {
+            final WorldBorderBoundsChangeEvent event = new WorldBorderBoundsChangeEvent(this.world, this,
+                from == to ? WorldBorderBoundsChangeEvent.Type.INSTANT_MOVE : WorldBorderBoundsChangeEvent.Type.STARTED_MOVE, from, to, ticks);
+            if (!event.callEvent()) {
+                return;
+            }
+            to = event.getNewSize();
+            ticks = event.getDurationTicks();
+        }
+        if (from == to || ticks <= 0) {
+            this.set("size", to);
+        } else {
+            this.set("from", from, "size", to, "ticks", ticks);
+        }
+    }
+
+    private static boolean listened(final HandlerList handlers) {
+        return handlers.getRegisteredListeners().length > 0;
     }
 
     @Override
@@ -67,11 +123,19 @@ public final class HostWorldBorder implements WorldBorder {
         return new Location(this.world, Values.f64(state, "center_x", 0), 0, Values.f64(state, "center_z", 0));
     }
 
+    /** With Paper's {@code WorldBorderCenterChangeEvent}, which may stop or move it. */
     @Override
     public void setCenter(final double x, final double z) {
         Preconditions.checkArgument(Math.abs(x) <= this.getMaxCenterCoordinate(), "x coordinate cannot be outside +- %s", this.getMaxCenterCoordinate());
         Preconditions.checkArgument(Math.abs(z) <= this.getMaxCenterCoordinate(), "z coordinate cannot be outside +- %s", this.getMaxCenterCoordinate());
-        this.set("center_x", x, "center_z", z);
+        if (!listened(WorldBorderCenterChangeEvent.getHandlerList())) {
+            this.set("center_x", x, "center_z", z);
+            return;
+        }
+        final WorldBorderCenterChangeEvent event = new WorldBorderCenterChangeEvent(this.world, this, this.getCenter(), new Location(this.world, x, 0, z));
+        if (event.callEvent()) {
+            this.set("center_x", event.getNewCenter().getX(), "center_z", event.getNewCenter().getZ());
+        }
     }
 
     @Override

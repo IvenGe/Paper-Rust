@@ -12,6 +12,7 @@
 //!   compression. Jobs are pure functions over snapshots and report back with a task.
 
 pub mod block_updates;
+pub mod borders;
 mod chat;
 pub mod commands;
 mod handlers;
@@ -671,10 +672,8 @@ impl Server {
         }
         // Rain, thunder and what they do (see `weather`).
         self.tick_weather();
-        // World borders moving to a new size (clients move theirs themselves).
-        for world in &mut self.worlds {
-            world.border.tick();
-        }
+        // World borders moving to a new size (see `borders`).
+        self.tick_borders();
         // Scheduled block and fluid ticks and block events (see `block_updates`).
         self.tick_block_updates();
         // Clients run their own clock; resynchronise once a second like vanilla.
@@ -846,21 +845,6 @@ impl Server {
             log::warn!("Chunk {},{} of {} took too long to load for a plugin", pos.x, pos.z, self.worlds[world].name);
         }
         ready
-    }
-
-    /// `ClientboundInitializeBorderPacket` for a world's border.
-    pub fn border_packet(&self, world: usize) -> play::InitializeBorder {
-        let b = &self.worlds[world].border;
-        play::InitializeBorder {
-            center_x: b.center_x,
-            center_z: b.center_z,
-            old_size: b.size,
-            new_size: if b.lerp_left > 0 { b.lerp_target } else { b.size },
-            lerp_time: paper_protocol::codec::VarLong(b.lerp_left.max(0)),
-            absolute_max_size: paper_protocol::codec::VarInt(29_999_984),
-            warning_blocks: paper_protocol::codec::VarInt(b.warning_blocks),
-            warning_time: paper_protocol::codec::VarInt(b.warning_time),
-        }
     }
 
     /// Sends one player the time they see.

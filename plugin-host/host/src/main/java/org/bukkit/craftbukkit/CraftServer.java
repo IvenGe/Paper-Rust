@@ -355,6 +355,12 @@ public final class CraftServer extends AbstractServer {
     private record Login(HostPlayer player, long since) {
     }
 
+    /** A border of no world, for {@code Player#setWorldBorder} (see {@code HostVirtualBorder}). */
+    @Override
+    public org.bukkit.WorldBorder createWorldBorder() {
+        return new io.papermc.paperrs.host.world.HostVirtualBorder(this);
+    }
+
     public @Nullable HostPlayer removePlayer(final UUID uuid) {
         final HostPlayer player = this.players.remove(uuid);
         if (player != null) {

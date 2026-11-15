@@ -72,6 +72,7 @@ impl CommandRegistry {
             Builtin { name: "setblock", aliases: &[], description: "Changes a block", usage: "/setblock <x> <y> <z> <block>", min_op: 2, handler: cmd_setblock, completer: complete_setblock },
             Builtin { name: "time", aliases: &[], description: "Changes or queries the world's time", usage: "/time <set|add|query> <value>", min_op: 2, handler: cmd_time, completer: complete_time },
             Builtin { name: "weather", aliases: &[], description: "Sets the weather", usage: "/weather <clear|rain|thunder> [duration]", min_op: 2, handler: cmd_weather, completer: complete_weather },
+            Builtin { name: "worldborder", aliases: &[], description: "Manages the world border", usage: "/worldborder <add|center|damage|get|set|warning> ...", min_op: 2, handler: cmd_worldborder, completer: complete_worldborder },
             Builtin { name: "scoreboard", aliases: &[], description: "Manages scoreboard objectives and players", usage: "/scoreboard <objectives|players> ...", min_op: 2, handler: cmd_scoreboard, completer: super::score_commands::complete_scoreboard },
             Builtin { name: "team", aliases: &[], description: "Controls teams", usage: "/team <list|add|remove|empty|join|leave|modify> ...", min_op: 2, handler: cmd_team, completer: super::score_commands::complete_team },
             Builtin { name: "trigger", aliases: &[], description: "Sets a trigger to be activated", usage: "/trigger <objective> [add|set <value>]", min_op: 0, handler: cmd_trigger, completer: super::score_commands::complete_trigger },
@@ -320,7 +321,7 @@ impl Server {
 
 /// Parses a coordinate that may be relative (`~`, `~5`). Whole numbers given for a
 /// horizontal axis are centred on the block, as in vanilla.
-fn parse_coordinate(token: &str, base: f64, center: bool) -> Option<f64> {
+pub(super) fn parse_coordinate(token: &str, base: f64, center: bool) -> Option<f64> {
     if let Some(offset) = token.strip_prefix('~') {
         return if offset.is_empty() { Some(base) } else { offset.parse::<f64>().ok().map(|o| base + o) };
     }
@@ -367,6 +368,14 @@ fn cmd_trigger(server: &mut Server, source: &CommandSource, args: &[&str]) {
 
 fn cmd_weather(server: &mut Server, source: &CommandSource, args: &[&str]) {
     server.weather_command(source, args);
+}
+
+fn cmd_worldborder(server: &mut Server, source: &CommandSource, args: &[&str]) {
+    server.worldborder_command(source, args);
+}
+
+fn complete_worldborder(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {
+    super::borders::complete(args)
 }
 
 fn complete_weather(_: &Server, _: &CommandSource, args: &[&str]) -> Vec<String> {

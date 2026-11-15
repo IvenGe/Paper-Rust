@@ -36,6 +36,8 @@ pub fn handles(method: &str) -> bool {
         method,
         "player.set"
             | "player.update_inventory"
+            | "player.set_border"
+            | "player.border"
             | "player.hide_entity"
             | "player.show_entity"
             | "player.cooldown"
@@ -57,6 +59,40 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         "player.set" => {
             set(server, id, args)?;
             Ok(super::api::player_state(server, &server.players[&id]))
+        }
+        "player.set_border" => {
+            // `CraftPlayer.setWorldBorder`: `border` is a virtual border's settings, or null
+            // for the world's. A newly given border is sent whole; later changes to it send
+            // what vanilla's border listeners send (`initial` says which).
+            let p = server.players.get_mut(&id).unwrap();
+            let packets = match args.get("border") {
+                border @ Value::Map(_) => {
+                    let initial = args.bool("initial") == Some(true) || p.own_border.is_none();
+                    let own = p.own_border.get_or_insert_with(crate::world::Border::default);
+                    if initial {
+                        *own = crate::world::Border::default();
+                    }
+                    let changes = super::api::change_border(own, border);
+                    if initial {
+                        crate::server::borders::border_sync(own)
+                    } else {
+                        changes
+                    }
+                }
+                _ => {
+                    p.own_border = None;
+                    crate::server::borders::border_sync(&server.worlds[p.world].border)
+                }
+            };
+            let p = &server.players[&id];
+            for payload in packets {
+                p.conn.send_payload(payload);
+            }
+            Ok(Value::Null)
+        }
+        "player.border" => {
+            // The player's own border as it is now: a moving one moves with the ticks.
+            Ok(server.players[&id].own_border.as_ref().map_or(Value::Null, super::api::border_value))
         }
         "player.update_inventory" => {
             // `containerMenu.sendAllDataToRemote`: the open window, or the inventory.

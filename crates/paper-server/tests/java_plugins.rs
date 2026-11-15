@@ -2309,6 +2309,22 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         .unwrap();
     assert!(kept.contains("kept with the chunk"), "{kept}");
 
+    // A border only Alice sees (`Player#setWorldBorder`), moving with the ticks on her copy;
+    // and Paper's border events, for the API and `/worldborder` alike.
+    alice.command("apitest borders");
+    expect_line(&mut alice, "borders: ok");
+    let (own, world_size) = server.handle.run(move |s| (s.players[&alice_id].own_border.clone(), s.worlds[0].border.lerp_target)).unwrap();
+    let own = own.expect("Alice's own border");
+    assert_eq!((own.center_x, own.center_z, own.lerp_target, own.warning_blocks), (100.0, 200.0, 80.0, 3), "{own:?}");
+    assert_eq!(world_size, 1100.0);
+    pause(&mut alice, Duration::from_millis(1500));
+    server.handle.console_command("worldborder set 1150");
+    pause(&mut alice, Duration::from_millis(200));
+    alice.command("apitest borderevents");
+    expect_line(&mut alice, "borderevents: ok");
+    let (own, world_size) = server.handle.run(move |s| (s.players[&alice_id].own_border.clone(), s.worlds[0].border.size)).unwrap();
+    assert!(own.is_none() && world_size == paper_server::world::MAX_BORDER_SIZE, "{own:?} {world_size}");
+
     // Crafting tables and anvils without a block, as Essentials' /craft and /anvil open them.
     alice.command("apitest stations");
     expect_line(&mut alice, "stations: true WORKBENCH ANVIL");

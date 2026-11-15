@@ -1196,7 +1196,7 @@ impl Server {
         p.conn.send(&play::SetHeldSlot { slot: VarInt(p.held_slot as i32) });
         p.conn.send(&play::EntityEvent { entity_id: id, status: 24 + p.op_level.min(4) as i8 });
         p.conn.send_payload(self.time_payload_for(world, p));
-        p.conn.send(&self.border_packet(world));
+        p.conn.send(&self.border_packet_for(id, world));
         self.send_weather(id);
         if old_world != world {
             p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });

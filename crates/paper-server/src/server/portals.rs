@@ -552,7 +552,7 @@ impl Server {
             (w.dimension.clone(), w.spawn, w.spawn_yaw)
         };
         let time = self.time_payload_for(to, &self.players[&id]);
-        let border = self.border_packet(to);
+        let border = self.border_packet_for(id, to);
         let difficulty = self.difficulty.id();
         let Some(p) = self.players.get_mut(&id) else { return };
         p.world = to;

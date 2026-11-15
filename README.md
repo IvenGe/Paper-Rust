@@ -73,7 +73,8 @@ What works:
   chunk streaming with the client's flow control, block breaking and placing (with
   orientation for stairs, logs, slabs, doors, beds, ...), world time.
 * **World borders**: each world has one, saved in its `level.dat`, sent to players, moving
-  to a new size over time, with damage outside it.
+  to a new size over time, with damage outside it; `/worldborder` with vanilla's messages
+  and limits.
 * **Block updates**: neighbour and shape updates (wire, fence, pane and stair connections,
   blocks that lose their support break, doors and beds break together), scheduled block and
   fluid ticks (saved with the chunk), water and lava (flowing, falling, infinite water,
@@ -341,7 +342,9 @@ What works:
   `BlockMultiPlaceEvent` (doors, beds and tall plants). Then Bukkit's `EntityKnockbackEvent`
   and Paper's after it (hits, sweeps, hurts and explosions; `...ByEntityEvent` when something
   pushed), and `EntityBlockFormEvent` for snow golems' snow (a snow golem's melting is a
-  `FIRE_TICK` cause, not Paper's `MELTING`). Players,
+  `FIRE_TICK` cause, not Paper's `MELTING`). Paper's world border events
+  (`WorldBorderBoundsChangeEvent`, `WorldBorderCenterChangeEvent` and
+  `WorldBorderBoundsChangeFinishEvent`) come from `/worldborder` and plugins' changes alike. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -419,7 +422,10 @@ What works:
   * signs as block states (`Sign`, `SignSide`: both sides' lines, colour and glow, waxing),
     and `SignChangeEvent` for what players write;
   * world borders (`World.getWorldBorder`: size, moving to a size over time, center, damage,
-    warnings) and weather (`setStorm`, `setThundering` and their durations, with
+    warnings), and borders of one player's own (`Server.createWorldBorder`,
+    `Player.setWorldBorder`: only that player's client sees it, moving with the ticks while
+    they have it, as on Paper; Paper-RS keeps showing it after a respawn or a change of
+    world, where Paper shows the world's again) and weather (`setStorm`, `setThundering` and their durations, with
     `WeatherChangeEvent` and `ThunderChangeEvent`);
   * chunks: `getChunkAt` loads or generates the chunk on the spot as on Paper, loaded and
     generated chunks, force-loaded chunks, plugin chunk tickets, a chunk's entities and block
@@ -503,7 +509,6 @@ Not yet:
   (`ItemStack.serialize` uses Paper-RS's own form). Block data knows block properties only:
   its questions about block behaviour (sound groups, `isSupported`, `rotate`/`mirror`,
   ...) are not answered yet.
-  Borders of one player's own (`Player.setWorldBorder`) and `/worldborder` are not there yet.
   Chunk snapshots answer the biomes' own temperatures, without vanilla's adjustment for
   height.
   Events not fired yet include mobs catching fire in fire blocks, `VehicleUpdateEvent`,

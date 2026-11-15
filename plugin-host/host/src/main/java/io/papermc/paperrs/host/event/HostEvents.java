@@ -189,6 +189,9 @@ public final class HostEvents {
         GATED.put("EntitySpawnEvent", org.bukkit.event.entity.EntitySpawnEvent.class);
         GATED.put("EntityKnockbackEvent", io.papermc.paper.event.entity.EntityKnockbackEvent.class);
         GATED.put("BukkitEntityKnockbackEvent", org.bukkit.event.entity.EntityKnockbackEvent.class);
+        GATED.put("WorldBorderBoundsChangeEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent.class);
+        GATED.put("WorldBorderCenterChangeEvent", io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent.class);
+        GATED.put("WorldBorderBoundsChangeFinishEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent.class);
     }
 
     private final CraftServer server;
@@ -1056,6 +1059,29 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.knockback" -> this.knockback(args);
+            case "event.border_resize" -> {
+                // `/worldborder set` and `add` (the API fires it in HostWorldBorder).
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent event = new io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent(
+                    world, world.getWorldBorder(), io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent.Type.valueOf(Values.str(args, "type", "INSTANT_MOVE")),
+                    Values.f64(args, "from", 0), Values.f64(args, "to", 0), Values.i64(args, "ticks", 0));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "type", event.getType().name(), "to", event.getNewSize(), "ticks", event.getDurationTicks());
+            }
+            case "event.border_center" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent event = new io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent(
+                    world, world.getWorldBorder(), new Location(world, Values.f64(args, "old_x", 0), 0, Values.f64(args, "old_z", 0)),
+                    new Location(world, Values.f64(args, "x", 0), 0, Values.f64(args, "z", 0)));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "x", event.getNewCenter().getX(), "z", event.getNewCenter().getZ());
+            }
+            case "event.border_arrived" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                new io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent(world, world.getWorldBorder(), Values.f64(args, "from", 0), Values.f64(args, "to", 0),
+                    Values.i64(args, "ticks", 0)).callEvent();
+                yield Values.of();
+            }
             case "event.entity_block_form" -> {
                 final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
                 if (entity == null) {

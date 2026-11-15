@@ -143,18 +143,63 @@ fn world_info(w: &crate::world::World) -> Value {
         "rain_time" => w.weather.rain_time,
         "thunder_time" => w.weather.thunder_time,
         "clear_time" => w.weather.clear_time,
-        "border" => bmap! {
-            "center_x" => w.border.center_x,
-            "center_z" => w.border.center_z,
-            "size" => w.border.size,
-            "target" => w.border.lerp_target,
-            "lerp_left" => w.border.lerp_left,
-            "damage_buffer" => w.border.damage_safe_zone,
-            "damage_amount" => w.border.damage_per_block,
-            "warning_distance" => w.border.warning_blocks,
-            "warning_time" => w.border.warning_time,
-        },
+        "border" => border_value(&w.border),
     }
+}
+
+/// A border's settings for the host (`WorldBorder`'s getters).
+pub fn border_value(b: &crate::world::Border) -> Value {
+    bmap! {
+        "center_x" => b.center_x,
+        "center_z" => b.center_z,
+        "size" => b.size,
+        "target" => b.lerp_target,
+        "lerp_left" => b.lerp_left,
+        "damage_buffer" => b.damage_safe_zone,
+        "damage_amount" => b.damage_per_block,
+        "warning_distance" => b.warning_blocks,
+        "warning_time" => b.warning_time,
+    }
+}
+
+/// Applies a plugin's changes to a border (`WorldBorder`'s setters): `size` now, or over
+/// `ticks` from `from` (else from where it is). Returns the packets vanilla's border listeners
+/// send for them; damage settings send none.
+pub(super) fn change_border(b: &mut crate::world::Border, args: &Value) -> Vec<bytes::Bytes> {
+    use paper_protocol::packets::encode_packet;
+    let mut packets: Vec<bytes::Bytes> = Vec::new();
+    if let (Some(x), Some(z)) = (args.f64("center_x"), args.f64("center_z")) {
+        b.center_x = x.clamp(-crate::world::MAX_BORDER_CENTER, crate::world::MAX_BORDER_CENTER);
+        b.center_z = z.clamp(-crate::world::MAX_BORDER_CENTER, crate::world::MAX_BORDER_CENTER);
+        packets.push(encode_packet(&play::SetBorderCenter { center_x: b.center_x, center_z: b.center_z }).into());
+    }
+    if let Some(size) = args.f64("size") {
+        let ticks = args.i64("ticks").unwrap_or(0);
+        if let Some(from) = args.f64("from").filter(|_| ticks > 0) {
+            b.size = from.clamp(1.0, crate::world::MAX_BORDER_SIZE);
+        }
+        b.set_size(size, ticks);
+        if ticks > 0 {
+            packets.push(encode_packet(&play::SetBorderLerpSize { old_size: b.size, new_size: b.lerp_target, lerp_time: paper_protocol::codec::VarLong(ticks) }).into());
+        } else {
+            packets.push(encode_packet(&play::SetBorderSize { size: b.size }).into());
+        }
+    }
+    if let Some(v) = args.f64("damage_buffer") {
+        b.damage_safe_zone = v.max(0.0);
+    }
+    if let Some(v) = args.f64("damage_amount") {
+        b.damage_per_block = v.max(0.0);
+    }
+    if let Some(v) = args.i32("warning_distance") {
+        b.warning_blocks = v.max(0);
+        packets.push(encode_packet(&play::SetBorderWarningDistance { warning_blocks: VarInt(b.warning_blocks) }).into());
+    }
+    if let Some(v) = args.i32("warning_time") {
+        b.warning_time = v.max(0);
+        packets.push(encode_packet(&play::SetBorderWarningDelay { warning_time: VarInt(b.warning_time) }).into());
+    }
+    packets
 }
 
 /// The state of a player the host caches. The host refreshes its copy whenever this changes.
@@ -1286,48 +1331,17 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             Ok(world_info(&server.worlds[world]))
         }
         "world.set_border" => {
-            // `WorldBorder`: each change goes to the world's players as vanilla's listeners send it.
+            // `WorldBorder`'s setters (the host has fired Paper's border events): each change
+            // goes to the world's players who see its border, as vanilla's listeners send it.
             let world = world_index(server, args)?;
-            let mut packets: Vec<bytes::Bytes> = Vec::new();
             let b = &mut server.worlds[world].border;
-            if args.bool("reset") == Some(true) {
+            let packets = if args.bool("reset") == Some(true) {
                 *b = crate::world::Border::default();
-            }
-            if let (Some(x), Some(z)) = (args.f64("center_x"), args.f64("center_z")) {
-                b.center_x = x.clamp(-crate::world::MAX_BORDER_CENTER, crate::world::MAX_BORDER_CENTER);
-                b.center_z = z.clamp(-crate::world::MAX_BORDER_CENTER, crate::world::MAX_BORDER_CENTER);
-                packets.push(paper_protocol::packets::encode_packet(&play::SetBorderCenter { center_x: b.center_x, center_z: b.center_z }).into());
-            }
-            if let Some(size) = args.f64("size") {
-                let ticks = args.i64("ticks").unwrap_or(0);
-                let old = b.size;
-                b.set_size(size, ticks);
-                if ticks > 0 {
-                    packets.push(paper_protocol::packets::encode_packet(&play::SetBorderLerpSize { old_size: old, new_size: b.lerp_target, lerp_time: paper_protocol::codec::VarLong(ticks) }).into());
-                } else {
-                    packets.push(paper_protocol::packets::encode_packet(&play::SetBorderSize { size: b.size }).into());
-                }
-            }
-            if let Some(v) = args.f64("damage_buffer") {
-                b.damage_safe_zone = v.max(0.0);
-            }
-            if let Some(v) = args.f64("damage_amount") {
-                b.damage_per_block = v.max(0.0);
-            }
-            if let Some(v) = args.i32("warning_distance") {
-                b.warning_blocks = v.max(0);
-                packets.push(paper_protocol::packets::encode_packet(&play::SetBorderWarningDistance { warning_blocks: VarInt(b.warning_blocks) }).into());
-            }
-            if let Some(v) = args.i32("warning_time") {
-                b.warning_time = v.max(0);
-                packets.push(paper_protocol::packets::encode_packet(&play::SetBorderWarningDelay { warning_time: VarInt(b.warning_time) }).into());
-            }
-            if args.bool("reset") == Some(true) {
-                packets = vec![paper_protocol::packets::encode_packet(&server.border_packet(world)).into()];
-            }
-            for payload in packets {
-                server.broadcast_payload_in_world(world, payload);
-            }
+                vec![paper_protocol::packets::encode_packet(&crate::server::borders::border_init(b)).into()]
+            } else {
+                change_border(b, args)
+            };
+            server.broadcast_border(world, &packets);
             Ok(world_info(&server.worlds[world]))
         }
         // --- chunks (CraftWorld's chunk methods) ---

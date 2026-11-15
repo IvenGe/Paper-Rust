@@ -219,6 +219,9 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.pre_creature_spawn` | `world`, `x`, `y`, `z`, `type`, `reason` (`NATURAL`, `SPAWNER`) | `cancelled`, `abort` (Paper's `PreCreatureSpawnEvent`, before anything is made: not this one, or none this time). Paper asks for every spot natural spawning tries; here only spots where the mob would spawn are asked about, as a round trip to the host for every try slowed the server to a third of its speed |
 | `event.knockback` | `entity`, `attacker` (if any), `cause` (`ENTITY_ATTACK`, `SWEEP_ATTACK`, `DAMAGE`, `EXPLOSION`), `force`, `knockback` `[x, y, z]` (the change to its velocity), `velocity` (a player's counts as still) | `cancelled`, `knockback` (Bukkit's `EntityKnockbackEvent` or `EntityKnockbackByEntityEvent`, then Paper's `EntityKnockbackEvent` or `EntityKnockbackByEntityEvent` from what the first left, cancelled if it was; as in Paper even a mob that resists it completely hears of it, and is slowed down) |
 | `event.entity_block_form` | `world`, `x`, `y`, `z`, `entity` (a snow golem), `state` | `cancelled`, `state` (`EntityBlockFormEvent`, which `BlockFormEvent` listeners hear too) |
+| `event.border_resize` | `world`, `type` (`INSTANT_MOVE` or `STARTED_MOVE`), `from`, `to`, `ticks` (`/worldborder set` or `add`; plugins' own changes fire it in the host) | `cancelled`, `type`, `to`, `ticks` (Paper's `WorldBorderBoundsChangeEvent`; a listener may make an instant change a move) |
+| `event.border_center` | `world`, `old_x`, `old_z`, `x`, `z` (`/worldborder center`) | `cancelled`, `x`, `z` (Paper's `WorldBorderCenterChangeEvent`) |
+| `event.border_arrived` | `world`, `from`, `to`, `ticks` (a world's border finished a move) | nothing (Paper's `WorldBorderBoundsChangeFinishEvent`) |
 | `event.entity_spawn` | `world`, `entity` (in the world but not yet seen) | `cancelled` (plain `EntitySpawnEvent` for entities without a spawn event of their own: primed TNT, falling blocks, experience orbs, clouds, eyes of ender, ...; a refused falling block's block is gone, as in Paper) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
@@ -287,6 +290,8 @@ same name, which stay reachable as `minecraft:<name>`.
 | Method | Arguments |
 | --- | --- |
 | `player.state` | `uuid` |
+| `player.set_border` | `uuid`, `border` (a virtual border's settings as `world.set_border` takes them, or null to show the world's again), `initial` (a border newly given: sent whole, as `CraftPlayer.setWorldBorder` sends it; otherwise only what changed). The server keeps the player's copy and moves it with the ticks; only their client sees it |
+| `player.border` | `uuid` (answers the player's own border as it is now, as `world.info` answers `border`, or null) |
 | `player.send_message` | `uuid`, `message`, `overlay` |
 | `player.send_title` / `player.clear_title` | `uuid`, `title`, `subtitle`, `fade_in`, `stay`, `fade_out` / `reset` |
 | `player.send_tab_list` | `uuid`, `header`, `footer` |
@@ -358,6 +363,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `offline.list` | (answers the same for every known player) |
 | `offline.set_op` / `set_whitelisted` / `ban` / `pardon` | `uuid`, `name`, `op` / `value` / `reason`, `source` / |
 | `world.info` | `world` |
+| `world.set_border` | `world` and any of `center_x` and `center_z`, `size` (now, or over `ticks` from `from` or else from where it is), `damage_buffer`, `damage_amount`, `warning_distance`, `warning_time` (seconds); `reset`. Players who see the world's border get vanilla's packets for each change; one with a border of their own does not |
 | `world.get_block` / `world.set_block` | `world`, `x`, `y`, `z` / `state` (`minecraft:name[property=value,...]`), `physics` (default true) |
 | `world.section` | `world`, `x`, `y`, `z` (answers the 16×16×16 section holding that block: `palette` of states and, unless they are all the same, `indices`, two bytes little-endian per block in `y << 8 \| z << 4 \| x` order). The host reads blocks through it and keeps a section until anything else crosses the bridge, so scanning an area costs a call per section |
 | `world.highest_block_y` | `world`, `x`, `z` |

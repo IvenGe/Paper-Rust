@@ -87,6 +87,10 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     public void markOffline() {
         this.online = false;
+        final io.papermc.paperrs.host.world.HostVirtualBorder border = this.ownBorder;
+        if (border != null) {
+            border.removeViewer(this.uuid);
+        }
     }
 
     /** The player from {@code PlayerLoginEvent} joined with this state. */
@@ -2689,10 +2693,35 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         return this.lineOfSight(transparent, maxDistance, 2);
     }
 
-    /** No border of the player's own (CraftPlayer's {@code clientWorldBorder}) is supported yet. */
+    /** A virtual border this player sees instead of their world's (CraftPlayer's {@code clientWorldBorder}). */
+    private volatile io.papermc.paperrs.host.world.@Nullable HostVirtualBorder ownBorder;
+
     @Override
     public org.bukkit.@Nullable WorldBorder getWorldBorder() {
-        return null;
+        return this.ownBorder;
+    }
+
+    /**
+     * CraftPlayer's {@code setWorldBorder}: a virtual border ({@code Server#createWorldBorder}) is
+     * shown whole and then follows its changes; null or the border of the player's world shows
+     * the world's again. Another world's border is refused.
+     */
+    @Override
+    public void setWorldBorder(final org.bukkit.@Nullable WorldBorder border) {
+        if (border != null && !(border instanceof io.papermc.paperrs.host.world.HostVirtualBorder) && !java.util.Objects.equals(border.getWorld(), this.getWorld())) {
+            throw new UnsupportedOperationException("Cannot set player world border to that of another world");
+        }
+        final io.papermc.paperrs.host.world.HostVirtualBorder old = this.ownBorder;
+        if (old != null) {
+            old.removeViewer(this.uuid);
+        }
+        if (border instanceof io.papermc.paperrs.host.world.HostVirtualBorder virtual) {
+            this.ownBorder = virtual;
+            virtual.addViewer(this.uuid);
+        } else {
+            this.ownBorder = null;
+            this.server.call("player.set_border", this.args("border", null));
+        }
     }
 
     @Override

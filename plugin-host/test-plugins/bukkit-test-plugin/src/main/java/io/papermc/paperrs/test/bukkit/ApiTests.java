@@ -485,6 +485,56 @@ final class ApiTests implements Listener, CommandExecutor {
                     }
                     report(sender, "chunkdata", failures);
                 }
+                case "borders" -> {
+                    // A border only Alice sees (Server#createWorldBorder, Player#setWorldBorder), and
+                    // Paper's events for changes to the world's border.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    this.borderEvents.clear();
+                    player.setWorldBorder(player.getWorld().getWorldBorder());
+                    check(failures, player.getWorldBorder() == null, "her world's border is no border of her own");
+                    final org.bukkit.World other = Bukkit.getWorlds().stream().filter(w -> !w.equals(player.getWorld())).findFirst().orElse(null);
+                    try {
+                        if (other != null) {
+                            player.setWorldBorder(other.getWorldBorder());
+                            failures.add("another world's border");
+                        }
+                    } catch (UnsupportedOperationException expected) {
+                        // As CraftPlayer refuses it.
+                    }
+                    final org.bukkit.WorldBorder own = Bukkit.createWorldBorder();
+                    check(failures, own.getWorld() == null && own.getSize() == own.getMaxSize() && own.getWarningTimeTicks() == 300, "a fresh border " + own.getSize());
+                    own.setCenter(100, 200);
+                    own.setSize(50);
+                    own.setWarningDistance(3);
+                    player.setWorldBorder(own);
+                    check(failures, player.getWorldBorder() == own, "her own border");
+                    own.changeSize(80, 40);
+                    check(failures, own.isInside(new Location(null, 110, 64, 210)) && !own.isInside(player.getLocation()), "inside");
+                    this.virtualBorder = own;
+                    final org.bukkit.WorldBorder world = player.getWorld().getWorldBorder();
+                    world.setCenter(7, 7);
+                    check(failures, world.getCenter().getX() == 0, "centering stopped " + world.getCenter());
+                    world.setSize(1000);
+                    check(failures, world.getSize() == 1200, "resized by a listener " + world.getSize());
+                    world.changeSize(1100, 20);
+                    report(sender, "borders", failures);
+                }
+                case "borderevents" -> {
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final List<String> expected = List.of("CENTER 0.0,0.0->7.0,7.0", "INSTANT_MOVE 5.9999968E7->1000.0 0", "STARTED_MOVE 1200.0->1100.0 20",
+                        "FINISH 1200.0->1100.0 20.0", "INSTANT_MOVE 1100.0->1150.0 0");
+                    check(failures, this.borderEvents.equals(expected), "heard " + this.borderEvents);
+                    final double size = this.virtualBorder.getSize();
+                    check(failures, size > 50 && size <= 80, "her border moved " + size);
+                    player.setWorldBorder(null);
+                    check(failures, player.getWorldBorder() == null, "back to the world's");
+                    player.getWorld().getWorldBorder().reset();
+                    check(failures, player.getWorld().getWorldBorder().getSize() == 5.9999968E7, "reset");
+                    this.borderEvents.clear();
+                    report(sender, "borderevents", failures);
+                }
                 case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
                     try {
@@ -1510,6 +1560,30 @@ final class ApiTests implements Listener, CommandExecutor {
         if (event.isNewChunk()) {
             this.newChunks++;
         }
+    }
+
+    /** Paper's world border events, since {@code apitest borders}. */
+    private final List<String> borderEvents = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** The border {@code apitest borders} gave Alice. */
+    private org.bukkit.WorldBorder virtualBorder;
+
+    @EventHandler
+    public void onBorderCenter(final io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent event) {
+        this.borderEvents.add("CENTER " + event.getOldCenter().getX() + "," + event.getOldCenter().getZ() + "->" + event.getNewCenter().getX() + "," + event.getNewCenter().getZ());
+        event.setCancelled(event.getNewCenter().getX() == 7);
+    }
+
+    @EventHandler
+    public void onBorderBounds(final io.papermc.paper.event.world.border.WorldBorderBoundsChangeEvent event) {
+        this.borderEvents.add(event.getType() + " " + event.getOldSize() + "->" + event.getNewSize() + " " + event.getDurationTicks());
+        if (event.getNewSize() == 1000) {
+            event.setNewSize(1200);
+        }
+    }
+
+    @EventHandler
+    public void onBorderFinish(final io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent event) {
+        this.borderEvents.add("FINISH " + event.getOldSize() + "->" + event.getNewSize() + " " + event.getDuration());
     }
 
     @EventHandler
