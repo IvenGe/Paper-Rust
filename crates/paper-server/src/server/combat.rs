@@ -679,7 +679,12 @@ impl Server {
         e.pitch = (vel.y.atan2(h).to_degrees()) as f32;
         e.yaw = -e.yaw;
         e.pitch = -e.pitch;
-        self.spawn_entity(world, e)
+        let id = self.spawn_entity(world, e);
+        // Plugins may stop it before anyone sees it (`ProjectileLaunchEvent`).
+        if !crate::plugins::events::on_projectile_launch(self, world, id) {
+            self.worlds[world].remove_entity(id);
+        }
+        id
     }
 
     /// Arrow flight, hits and pickup (`AbstractArrow.tick`).
@@ -740,6 +745,9 @@ impl Server {
             }
         }
 
+        // Plugins may let it pass (`ProjectileHitEvent`).
+        let target = target.filter(|(_, victim)| crate::plugins::events::on_projectile_hit(self, world, id, Some(*victim), None));
+        let block_hit = block_hit.filter(|(_, block)| target.is_some() || crate::plugins::events::on_projectile_hit(self, world, id, None, Some(*block)));
         if let Some((_, victim)) = target {
             let speed = vel.length();
             let mut amount = (speed * damage).clamp(0.0, i32::MAX as f64).ceil() as i32;

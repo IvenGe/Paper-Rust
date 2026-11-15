@@ -1161,6 +1161,60 @@ pub fn on_combust(server: &mut Server, world: usize, id: i32, ticks: i32, by: Co
     }
 }
 
+/// `ProjectileLaunchEvent`: a projectile is to fly (it is in the world already, unseen yet).
+/// Returns false if cancelled.
+pub fn on_projectile_launch(server: &mut Server, world: usize, id: i32) -> bool {
+    if !listens(server, "ProjectileLaunchEvent") || !server.worlds[world].entities.contains_key(&id) {
+        return true;
+    }
+    let args = bmap! { "entity" => super::entity::shallow_ref(server, id) };
+    match fire(server, "ProjectileLaunchEvent", "event.projectile_launch", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `ProjectileHitEvent`: a projectile hits an entity or a block. Returns false if cancelled
+/// (it flies on, as in Paper).
+pub fn on_projectile_hit(server: &mut Server, world: usize, id: i32, entity: Option<i32>, block: Option<BlockPos>) -> bool {
+    if !listens(server, "ProjectileHitEvent") || !server.worlds[world].entities.contains_key(&id) {
+        return true;
+    }
+    let mut args = bmap! { "entity" => super::entity::shallow_ref(server, id), "world" => server.worlds[world].name.clone() };
+    if let Some(e) = entity.filter(|e| server.players.contains_key(e) || server.worlds[world].entities.contains_key(e)) {
+        args.set("hit_entity", super::entity::shallow_ref(server, e));
+    }
+    if let Some(b) = block {
+        args.set("hit_block", pos_value(b));
+    }
+    match fire(server, "ProjectileHitEvent", "event.projectile_hit", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `BlockDispenseEvent`: a dispenser or dropper at `pos` is to shoot out (one of) `item`
+/// towards `velocity`. The item to dispense as plugins leave it, or `None` if cancelled.
+pub fn on_dispense(server: &mut Server, world: usize, pos: BlockPos, item: &paper_protocol::types::ItemStack, velocity: (i32, i32, i32)) -> Option<paper_protocol::types::ItemStack> {
+    if !listens(server, "BlockDispenseEvent") {
+        return Some(item.clone());
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "item" => super::api::item_value(&paper_protocol::types::Slot(Some(item.with_count(1)))),
+        "velocity" => Value::List(vec![velocity.0.into(), velocity.1.into(), velocity.2.into()]),
+    };
+    match fire(server, "BlockDispenseEvent", "event.dispense", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => match super::api::slot_from(result.get("item")) {
+            Ok(paper_protocol::types::Slot(Some(new))) => Some(new),
+            _ => Some(item.clone()),
+        },
+        None => Some(item.clone()),
+    }
+}
+
 /// `EntityChangeBlockEvent`: an entity is to change the block at `pos` to `to` (an enderman
 /// taking or placing a block, a block starting to fall or landing, a sheep eating grass, a
 /// player trampling farmland). `cancelled` presets it (a sheep without mob griefing). Returns

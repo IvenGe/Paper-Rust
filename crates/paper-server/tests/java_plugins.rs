@@ -1092,6 +1092,44 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             s.worlds[0].set_block(stone_at.x, stone_at.y, stone_at.z, paper_data::blocks::AIR);
         })
         .unwrap();
+
+    // A snowball thrown down at the ground, and a dispenser shooting out a stick: stopped,
+    // then let happen.
+    let (above, dispenser) = (feet.offset(-3, 4, 3), feet.offset(-5, 0, 3));
+    let stick = Slot::of(paper_data::items::id("minecraft:stick").unwrap() as i32, 1);
+    for (mode, happened) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let snowball = server
+            .handle
+            .run(move |s| {
+                let ball = Slot::of(paper_data::items::id("minecraft:snowball").unwrap() as i32, 1);
+                let at = paper_server::world::entity::Vec3::new(above.x as f64 + 0.5, above.y as f64, above.z as f64 + 0.5);
+                s.spawn_thrown(0, "minecraft:snowball", at, paper_server::world::entity::Vec3::new(0.0, -1.0, 0.0), 1.0, 0.0, 0.03, ball, None)
+            })
+            .unwrap();
+        assert_eq!(snowball.is_some(), happened, "{mode}: thrown");
+        let stick = stick.clone();
+        server
+            .handle
+            .run(move |s| {
+                s.worlds[0].set_block(dispenser.x, dispenser.y, dispenser.z, paper_data::blocks::parse_state("minecraft:dispenser[facing=up]").unwrap());
+                s.set_container_items(0, dispenser, &[stick]);
+                s.set_block_and_update(0, dispenser.offset(1, 0, 0), paper_data::blocks::default_state("minecraft:redstone_block").unwrap());
+            })
+            .unwrap();
+        alice.drain(Duration::from_millis(600));
+        let (gone, kept) = server
+            .handle
+            .run(move |s| (snowball.is_none_or(|b| !s.worlds[0].entities.contains_key(&b)), !s.container_items(0, dispenser)[0].is_empty()))
+            .unwrap();
+        assert_eq!((gone, kept), (true, !happened), "{mode}: the snowball hit, the stick went");
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        let expected: &[&str] = if happened { &["LAUNCH SNOWBALL", "HIT SNOWBALL - GRASS_BLOCK", "DISPENSE STICK"] } else { &["LAUNCH SNOWBALL", "DISPENSE STICK"] };
+        assert!(expected.iter().all(|e| seen.contains(e)), "{mode}: {seen}");
+        put(&server, &[(dispenser, "minecraft:air"), (dispenser.offset(1, 0, 0), "minecraft:air")], false);
+    }
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");

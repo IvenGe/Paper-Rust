@@ -295,7 +295,10 @@ What works:
   kick (`/kick`, bans, timeouts, duplicate logins, plugins), `EntityRegainHealthEvent`
   (natural regeneration, regeneration and instant health) and `EntityCombustEvent` with its
   `ByEntity` and `ByBlock` forms (fire aspect, burning zombies, lightning, small fireballs,
-  and players catching fire in lava or fire). Players,
+  and players catching fire in lava or fire), `ProjectileLaunchEvent` (thrown items, arrows
+  and fireballs; a stopped throw keeps the item in hand), `ProjectileHitEvent` (a stopped hit
+  lets the projectile fly on, as in Paper) and `BlockDispenseEvent` (plugins may stop a
+  dispenser or dropper, or send another item). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -455,8 +458,8 @@ Not yet:
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
   Events not fired yet include trees and huge mushrooms growing (`StructureGrowEvent`),
-  bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`, projectiles being launched and
-  hitting, mobs catching fire in lava, fire or daylight, and vehicles.
+  bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`, mobs catching fire in lava, fire or
+  daylight, and vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

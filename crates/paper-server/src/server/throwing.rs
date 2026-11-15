@@ -53,7 +53,11 @@ impl Server {
         let eye = Vec3::new(loc.x, loc.y + p.eye_height() - 0.1, loc.z);
         let (yaw, pitch) = ((loc.yaw as f64).to_radians(), (loc.pitch as f64).to_radians());
         let dir = Vec3::new(-yaw.sin() * pitch.cos(), -((loc.pitch + pitch_offset) as f64).to_radians().sin(), yaw.cos() * pitch.cos());
-        self.spawn_thrown(world, entity, eye, dir, speed, 1.0, gravity, Slot(Some(stack.with_count(1))), Some(player));
+        if self.spawn_thrown(world, entity, eye, dir, speed, 1.0, gravity, Slot(Some(stack.with_count(1))), Some(player)).is_none() {
+            // Stopped: the item stays in hand, as in Paper.
+            self.resync_inventory(player);
+            return true;
+        }
         let mut rng = rand::thread_rng();
         self.play_sound(world, Vec3::new(loc.x, loc.y, loc.z), sound, category::NEUTRAL, 0.5, 0.4 / (rng.gen::<f32>() * 0.4 + 0.8), None);
         if entity == "minecraft:ender_pearl" {
@@ -80,7 +84,13 @@ impl Server {
         e.vel = vel;
         e.yaw = -(vel.x.atan2(vel.z).to_degrees()) as f32;
         e.pitch = -(vel.y.atan2(vel.horizontal_length()).to_degrees()) as f32;
-        Some(self.spawn_entity(world, e))
+        let id = self.spawn_entity(world, e);
+        // Plugins may stop it before anyone sees it (`ProjectileLaunchEvent`).
+        if !crate::plugins::events::on_projectile_launch(self, world, id) {
+            self.worlds[world].remove_entity(id);
+            return None;
+        }
+        Some(id)
     }
 
     /// A thrown item's flight (`ThrowableProjectile.tick`) and what happens where it lands.
@@ -137,6 +147,10 @@ impl Server {
                 consider(cand, c.bounding_box());
             }
         }
+        // Plugins may let it pass (`ProjectileHitEvent`).
+        let target = target.filter(|(_, victim)| crate::plugins::events::on_projectile_hit(self, world, id, Some(*victim), None));
+        let block_hit = block_hit.filter(|(_, block)| target.is_some() || crate::plugins::events::on_projectile_hit(self, world, id, None, Some(*block)));
+        let w = &self.worlds[world];
         if let Some((t, victim)) = target {
             let at = from.add(vel.scale(t));
             if dragon_fireball {

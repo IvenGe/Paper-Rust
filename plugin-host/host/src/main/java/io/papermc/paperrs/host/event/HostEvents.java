@@ -119,6 +119,9 @@ public final class HostEvents {
         GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
         GATED.put("BlockFromToEvent", org.bukkit.event.block.BlockFromToEvent.class);
         GATED.put("BlockDamageEvent", org.bukkit.event.block.BlockDamageEvent.class);
+        GATED.put("ProjectileLaunchEvent", org.bukkit.event.entity.ProjectileLaunchEvent.class);
+        GATED.put("ProjectileHitEvent", org.bukkit.event.entity.ProjectileHitEvent.class);
+        GATED.put("BlockDispenseEvent", org.bukkit.event.block.BlockDispenseEvent.class);
         GATED.put("PlayerKickEvent", org.bukkit.event.player.PlayerKickEvent.class);
         GATED.put("EntityRegainHealthEvent", org.bukkit.event.entity.EntityRegainHealthEvent.class);
         // (The ByEntity and ByBlock forms share its handler list.)
@@ -420,6 +423,31 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
             }
             case "event.block_changes" -> this.blockChanges(args);
+            case "event.projectile_launch" -> {
+                final org.bukkit.event.entity.ProjectileLaunchEvent event = new org.bukkit.event.entity.ProjectileLaunchEvent(
+                    io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.projectile_hit" -> {
+                final org.bukkit.entity.Entity projectile = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                final org.bukkit.entity.Entity hit = args.get("hit_entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                final Block block = args.get("hit_block") == null ? null : this.at(this.server.getWorld(Values.str(args, "world")), args.get("hit_block"));
+                if (!(projectile instanceof org.bukkit.entity.Projectile thrown)) {
+                    yield Values.of("cancelled", false);
+                }
+                final org.bukkit.event.entity.ProjectileHitEvent event = new org.bukkit.event.entity.ProjectileHitEvent(thrown, hit, block);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.dispense" -> {
+                final List<Object> velocity = Values.list(args.get("velocity"));
+                final org.bukkit.event.block.BlockDispenseEvent event = new org.bukkit.event.block.BlockDispenseEvent(this.block(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")),
+                    new org.bukkit.util.Vector(((Number) velocity.get(0)).doubleValue(), ((Number) velocity.get(1)).doubleValue(), ((Number) velocity.get(2)).doubleValue()));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "item", io.papermc.paperrs.host.item.HostItemStack.toValue(event.getItem()));
+            }
             case "event.block_damage" -> {
                 final HostPlayer player = this.player(args);
                 final org.bukkit.event.block.BlockDamageEvent event = new org.bukkit.event.block.BlockDamageEvent(player, this.block(args),

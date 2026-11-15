@@ -1486,6 +1486,27 @@ final class ApiTests implements Listener, CommandExecutor {
         }
     }
 
+    // Snowballs only: the test world's skeletons shoot arrows.
+    @EventHandler
+    public void onLaunch(final org.bukkit.event.entity.ProjectileLaunchEvent event) {
+        if (event.getEntity() instanceof org.bukkit.entity.Snowball) {
+            this.blockEvent(event, "LAUNCH " + event.getEntityType());
+        }
+    }
+
+    @EventHandler
+    public void onHit(final org.bukkit.event.entity.ProjectileHitEvent event) {
+        if (event.getEntity() instanceof org.bukkit.entity.Snowball) {
+            this.blockEvent(event, "HIT " + event.getEntityType() + " " + (event.getHitEntity() == null ? "-" : event.getHitEntity().getType())
+                + " " + (event.getHitBlock() == null ? "-" : event.getHitBlock().getType()));
+        }
+    }
+
+    @EventHandler
+    public void onDispense(final org.bukkit.event.block.BlockDispenseEvent event) {
+        this.blockEvent(event, "DISPENSE " + event.getItem().getType());
+    }
+
     @EventHandler
     public void onBlockDamage(final org.bukkit.event.block.BlockDamageEvent event) {
         this.blockEvent(event, "DAMAGE " + event.getBlock().getType() + " " + event.getInstaBreak());
@@ -1496,10 +1517,11 @@ final class ApiTests implements Listener, CommandExecutor {
         this.blockEvent(event, "KICK " + event.getCause());
     }
 
-    // Players only: the test world's mobs heal and burn too.
+    // Players only (the test world's mobs heal and burn too), and healing by magic only
+    // (players heal naturally now and then).
     @EventHandler
     public void onRegainHealth(final org.bukkit.event.entity.EntityRegainHealthEvent event) {
-        if (event.getEntity() instanceof Player) {
+        if (event.getEntity() instanceof Player && event.getRegainReason() == org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason.MAGIC) {
             this.blockEvent(event, "REGAIN " + event.getAmount() + " " + event.getRegainReason());
         }
     }

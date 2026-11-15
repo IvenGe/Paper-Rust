@@ -172,6 +172,9 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.block_changes` | `world`, `changes`: `[{event, x, y, z, state, from}]` with `event` `grow`, `fade`, `form`, `spread` (with `from` `[x, y, z]`), `decay` or `moisture` and `state` the new block | `results`: `[{cancelled, state}]`, one per change (`BlockGrowEvent`, `BlockFadeEvent`, `BlockFormEvent`, `BlockSpreadEvent`, `LeavesDecayEvent`, `MoistureChangeEvent`, fired one after another; `state` as listeners left it) |
 | `event.block_flows` | `world`, `flows`: `[{x, y, z, face}]` (the fluid's block and the `BlockFace` it flows towards) | `results`: `[{cancelled}]` (`BlockFromToEvent`, one per flow) |
 | `event.entity_change_block` | `entity`, `world`, `x`, `y`, `z`, `to` (the new block), `cancelled` (preset: a sheep without mob griefing) | `cancelled` (`EntityChangeBlockEvent`) |
+| `event.projectile_launch` | `entity` (the projectile, in the world but not yet seen) | `cancelled` (`ProjectileLaunchEvent`: it is removed again) |
+| `event.projectile_hit` | `entity`, `world`, and `hit_entity` or `hit_block` `[x, y, z]` | `cancelled` (`ProjectileHitEvent`: it flies on) |
+| `event.dispense` | `world`, `x`, `y`, `z` (the dispenser or dropper), `item`, `velocity` `[x, y, z]` | `cancelled`, `item` (`BlockDispenseEvent`; another item goes out instead) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
 | `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |

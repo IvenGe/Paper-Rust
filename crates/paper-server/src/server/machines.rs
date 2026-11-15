@@ -427,7 +427,25 @@ impl Server {
         };
         let stack = items[slot].0.clone().unwrap();
         let front = at(pos, facing);
-        let rest = if name == "minecraft:dropper" {
+        // Plugins see the item go (`BlockDispenseEvent`) and may stop it or send another; a
+        // dropper filling a container in front does not ask.
+        let mut instead = None;
+        if !(name == "minecraft:dropper" && self.loaded_inventory_at(world, front).is_some()) {
+            match crate::plugins::events::on_dispense(self, world, pos, &stack, facing.offset()) {
+                None => return,
+                Some(item) if item.with_count(1) != stack.with_count(1) => instead = Some(item.with_count(1)),
+                Some(_) => {}
+            }
+        }
+        let rest = if let Some(item) = instead {
+            // Another item goes out instead; the slot gives up one.
+            if name == "minecraft:dropper" {
+                self.drop_from(world, pos, facing, item);
+            } else {
+                self.dispense_behaviour(world, pos, facing, item);
+            }
+            Some(stack.with_count(stack.count - 1))
+        } else if name == "minecraft:dropper" {
             match self.loaded_inventory_at(world, front) {
                 Some(dest) => {
                     let left = self.insert_into(world, &dest, stack.with_count(1), Some(facing.opposite()));
