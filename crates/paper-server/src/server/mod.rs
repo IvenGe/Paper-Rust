@@ -41,6 +41,7 @@ pub mod riding;
 pub mod taming;
 pub mod throwing;
 pub mod crafter;
+pub mod crossbows;
 pub mod boats;
 pub mod shields;
 pub mod signs;

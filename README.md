@@ -144,6 +144,12 @@ What works:
 * **Signs**: the editor opens when a sign is placed and when it is clicked (on the side the
   player faces); the text is kept and shown to everyone, dyes colour it, glow ink sacs make
   it glow (ink sacs undo that), and honeycomb waxes the sign against editing.
+* **Crossbows**: held, a crossbow charges for 25 ticks (less with Quick Charge, with
+  vanilla's sounds); released, it loads a rocket or arrow from either hand, else an arrow
+  from the inventory (three with Multishot, one used up) and shows as loaded. The next use
+  fires: arrows always critical, rockets flying straight, Multishot's three spread 10 degrees
+  apart (only the used-up arrow can be picked up); the crossbow wears a point per arrow and
+  three per rocket.
 * **Shields**: a raised shield blocks after a quarter second, taking hits from within 90
   degrees of where the player looks whole (not damage that bypasses shields), with its
   sound and wear from 3 damage up; an axe blow disables it for five seconds. Others see it
@@ -371,7 +377,8 @@ What works:
   Paper's `EntityBreakEvent` after it, Paper's `PlayerItemFrameChangeEvent` for item frames,
   `PlayerFishEvent` in all its states (a plugin may change the catch and its experience),
   `EntityToggleGlideEvent`, Paper's `PlayerElytraBoostEvent` (which may keep the rocket in
-  hand), `FireworkExplodeEvent` (a cancelled one keeps flying, as on Paper) and Paper's
+  hand), `FireworkExplodeEvent` (a cancelled one keeps flying, as on Paper), Paper's
+  `EntityLoadCrossbowEvent` (crossbow shots are `EntityShootBowEvent`s) and Paper's
   `PlayerShieldDisableEvent` (a fully blocked hit fires no damage event, where Paper fires
   one with a blocking modifier). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,

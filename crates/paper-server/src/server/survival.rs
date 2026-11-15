@@ -1292,6 +1292,11 @@ impl Server {
             self.throw_held(id, hand);
             return;
         }
+        // A crossbow fires what it is loaded with, or starts charging.
+        if name == "minecraft:crossbow" {
+            self.use_crossbow(id, hand);
+            return;
+        }
         // A shield is raised.
         if name == "minecraft:shield" {
             self.raise_shield(id, hand);
@@ -1349,8 +1354,10 @@ impl Server {
         p.metadata_dirty = true;
         let slot = if hand == 1 { OFFHAND_SLOT } else { HOTBAR_START + p.held_slot as usize };
         let Some(stack) = p.inventory[slot].0.clone() else { return };
-        if items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:bow") {
-            self.shoot_bow(id, slot, 72000 - remaining);
+        match items::get(stack.item as u32).map(|i| i.name) {
+            Some("minecraft:bow") => self.shoot_bow(id, slot, 72000 - remaining),
+            Some("minecraft:crossbow") => self.release_crossbow(id, slot, 72000 - remaining),
+            _ => {}
         }
     }
 
@@ -1365,8 +1372,11 @@ impl Server {
         };
         let data = item_data::by_id(stack.item as u32);
         let Some(seconds) = data.consume_seconds else {
-            // Bows and other held items just count up.
+            // Bows and other held items just count up; a charging crossbow makes its sounds.
             p.using_item = Some((hand, remaining - 1));
+            if items::get(stack.item as u32).is_some_and(|i| i.name == "minecraft:crossbow") {
+                self.crossbow_charging(id, slot, 72000 - (remaining - 1));
+            }
             return;
         };
         let total = (seconds * 20.0).round() as i32;

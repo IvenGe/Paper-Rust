@@ -195,6 +195,7 @@ public final class HostEvents {
         GATED.put("PlayerFishEvent", org.bukkit.event.player.PlayerFishEvent.class);
         GATED.put("EntityToggleGlideEvent", org.bukkit.event.entity.EntityToggleGlideEvent.class);
         GATED.put("PlayerShieldDisableEvent", io.papermc.paper.event.player.PlayerShieldDisableEvent.class);
+        GATED.put("EntityLoadCrossbowEvent", io.papermc.paper.event.entity.EntityLoadCrossbowEvent.class);
         GATED.put("PlayerElytraBoostEvent", com.destroystokyo.paper.event.player.PlayerElytraBoostEvent.class);
         GATED.put("FireworkExplodeEvent", org.bukkit.event.entity.FireworkExplodeEvent.class);
         GATED.put("HangingPlaceEvent", org.bukkit.event.hanging.HangingPlaceEvent.class);
@@ -1116,6 +1117,12 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.hanging_break" -> this.hangingBreak(args);
+            case "event.load_crossbow" -> {
+                final io.papermc.paper.event.entity.EntityLoadCrossbowEvent event = new io.papermc.paper.event.entity.EntityLoadCrossbowEvent(this.player(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")), Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "consume", event.shouldConsumeItem());
+            }
             case "event.shield_disable" -> {
                 final org.bukkit.entity.Entity damager = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("damager")));
                 if (damager == null) {

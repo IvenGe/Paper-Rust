@@ -2015,6 +2015,15 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     // Players' bows only: the test world's skeletons shoot too.
+    /** A crossbow loads; while recording the plugin keeps the arrow. */
+    @EventHandler
+    public void onLoadCrossbow(final io.papermc.paper.event.entity.EntityLoadCrossbowEvent event) {
+        if (this.blockMode.equals("record")) {
+            event.setConsumeItem(false);
+        }
+        this.blockEvent(event, "CROSSBOW " + event.getCrossbow().getType() + " " + event.getHand());
+    }
+
     @EventHandler
     public void onShootBow(final org.bukkit.event.entity.EntityShootBowEvent event) {
         if (event.getEntity() instanceof Player) {

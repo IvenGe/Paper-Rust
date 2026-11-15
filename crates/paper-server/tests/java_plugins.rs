@@ -2416,6 +2416,44 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
 
+    // A crossbow (Paper's EntityLoadCrossbowEvent, which keeps the arrow here, then
+    // EntityShootBowEvent for the shot).
+    let (crossbow, arrows) = (Slot::of(paper_data::items::id("minecraft:crossbow").unwrap() as i32, 1), Slot::of(paper_data::items::id("minecraft:arrow").unwrap() as i32, 2));
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Survival);
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.inventory[36 + held] = crossbow;
+            p.inventory[45] = arrows;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(197), yaw: 0.0, pitch: 0.0 });
+    pause(&mut alice, Duration::from_millis(1500));
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::RELEASE_USE_ITEM), pos: BlockPos::new(0, 0, 0), face: 0, sequence: VarInt(0) });
+    seen = poll(&mut alice, "CROSSBOW CROSSBOW HAND");
+    assert!(seen.contains("CROSSBOW CROSSBOW HAND"), "{seen}");
+    let kept = server.handle.run(move |s| s.players[&alice_id].inventory[45].0.as_ref().map(|a| a.count)).unwrap();
+    assert_eq!(kept, Some(2), "the plugin kept the arrow");
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(198), yaw: 0.0, pitch: 0.0 });
+    seen = poll(&mut alice, "BOW CROSSBOW ARROW ARROW HAND");
+    assert!(seen.contains("BOW CROSSBOW ARROW ARROW HAND"), "{seen}");
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.inventory[36 + held] = Slot::EMPTY;
+            p.inventory[45] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+
     // A plugin's block populator and ChunkPopulateEvent: chunks newly made far away get both.
     alice.command("apitest populator");
     expect_line(&mut alice, "populator: added");

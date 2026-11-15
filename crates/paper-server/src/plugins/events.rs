@@ -2685,3 +2685,22 @@ pub fn on_shield_disable(server: &mut Server, player: i32, attacker: i32, ticks:
         None => Some(ticks),
     }
 }
+
+/// Paper's `EntityLoadCrossbowEvent`: the player's fully charged crossbow in `hand` is about
+/// to load. `None` if plugins stopped it, else whether the ammunition is used up.
+pub fn on_load_crossbow(server: &mut Server, player: i32, crossbow: &paper_protocol::types::ItemStack, hand: i32) -> Option<bool> {
+    if !listens(server, "EntityLoadCrossbowEvent") {
+        return Some(true);
+    }
+    let Some(p) = server.players.get(&player) else { return Some(true) };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "item" => super::api::item_value(&paper_protocol::types::Slot(Some(crossbow.clone()))),
+        "hand" => hand,
+    };
+    match fire(server, "EntityLoadCrossbowEvent", "event.load_crossbow", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.bool("consume") != Some(false)),
+        None => Some(true),
+    }
+}

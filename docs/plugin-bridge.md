@@ -221,6 +221,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.entity_block_form` | `world`, `x`, `y`, `z`, `entity` (a snow golem), `state` | `cancelled`, `state` (`EntityBlockFormEvent`, which `BlockFormEvent` listeners hear too) |
 | `event.border_resize` | `world`, `type` (`INSTANT_MOVE` or `STARTED_MOVE`), `from`, `to`, `ticks` (`/worldborder set` or `add`; plugins' own changes fire it in the host) | `cancelled`, `type`, `to`, `ticks` (Paper's `WorldBorderBoundsChangeEvent`; a listener may make an instant change a move) |
 | `event.border_center` | `world`, `old_x`, `old_z`, `x`, `z` (`/worldborder center`) | `cancelled`, `x`, `z` (Paper's `WorldBorderCenterChangeEvent`) |
+| `event.load_crossbow` | `uuid`, `item` (the crossbow), `hand` | `cancelled`, `consume` (Paper's `EntityLoadCrossbowEvent`) |
 | `event.shield_disable` | `uuid`, `damager`, `cooldown` (ticks) | `cancelled`, `cooldown` (Paper's `PlayerShieldDisableEvent`) |
 | `event.toggle_glide` | `uuid`, `gliding` | `cancelled` (`EntityToggleGlideEvent`: a refused start leaves the client told it does not glide; a refused stop keeps gliding) |
 | `event.elytra_boost` | `uuid`, `entity` (the rocket, attached to the player), `item`, `hand` | `cancelled`, `consume` (Paper's `PlayerElytraBoostEvent`) |
