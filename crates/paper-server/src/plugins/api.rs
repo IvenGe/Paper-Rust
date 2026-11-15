@@ -1399,6 +1399,11 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let index = server.create_world(name, args.str("environment").unwrap_or("NORMAL"), args.i64("seed"), args.str("type").unwrap_or("NORMAL"), args.bool("structures").unwrap_or(true), args.str("key"))?;
             Ok(world_info(&server.worlds[index]))
         }
+        // `Bukkit.unloadWorld`, once the host has fired `WorldUnloadEvent`.
+        "server.unload_world" => {
+            let world = world_index(server, args)?;
+            Ok(Value::Bool(server.unload_world(world, args.bool("save").unwrap_or(true))))
+        }
         "server.dispatch_command" => {
             let command = args.str("command").ok_or_else(|| anyhow!("missing command"))?.to_owned();
             let source = match args.str("sender") {

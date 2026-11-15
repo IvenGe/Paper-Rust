@@ -74,6 +74,9 @@ final class ApiTests implements Listener, CommandExecutor {
     private final java.util.TreeSet<String> blockEvents = new java.util.TreeSet<>();
     /** PlayerClientLoadedWorldEvent: who, and whether the server stopped waiting. */
     private final java.util.TreeSet<String> clientLoaded = new java.util.TreeSet<>();
+    /** WorldUnloadEvents heard, and whether the listener keeps the world. */
+    private final List<String> unloadedWorlds = new ArrayList<>();
+    private boolean keepWorlds;
     /** ChunkPopulateEvents heard, chunks the test populator had, and the one it marked. */
     private int populates;
     private int populated;
@@ -428,6 +431,26 @@ final class ApiTests implements Listener, CommandExecutor {
                         player.teleport(new org.bukkit.Location(flat, 8.5, -60, 8.5));
                     }
                     report(sender, "worlds", failures);
+                }
+                case "unloadworld" -> {
+                    // plugin_flat: not while Alice is in it, kept once by a listener, then gone;
+                    // the main world never; then loaded again from its folder.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final org.bukkit.World flat = Bukkit.getWorld("plugin_flat");
+                    check(failures, flat != null && player.getWorld() == flat, "Alice in plugin_flat");
+                    check(failures, !Bukkit.unloadWorld(flat, true), "not with a player in it");
+                    player.teleport(Bukkit.getWorlds().getFirst().getSpawnLocation());
+                    this.keepWorlds = true;
+                    check(failures, !Bukkit.unloadWorld("plugin_flat", true), "kept by a listener");
+                    this.keepWorlds = false;
+                    check(failures, Bukkit.unloadWorld(flat, true), "unloaded");
+                    check(failures, Bukkit.getWorld("plugin_flat") == null && !Bukkit.getWorlds().contains(flat), "gone");
+                    check(failures, !Bukkit.unloadWorld(Bukkit.getWorlds().getFirst(), true), "never the main world");
+                    check(failures, this.unloadedWorlds.equals(List.of("plugin_flat", "plugin_flat")), "heard " + this.unloadedWorlds);
+                    final org.bukkit.World again = Bukkit.createWorld(new org.bukkit.WorldCreator("plugin_flat"));
+                    check(failures, again != null && again != flat && "plugin_flat".equals(again.getName()) && Bukkit.getWorld("plugin_flat") == again, "loaded again");
+                    report(sender, "unloadworld", failures);
                 }
                 case "statevents" -> sender.sendMessage("statevents: " + String.join(", ", this.jumps) + " now " + ((Player) sender).getStatistic(org.bukkit.Statistic.JUMP));
                 case "unsupported" -> {
@@ -1876,6 +1899,12 @@ final class ApiTests implements Listener, CommandExecutor {
         if (event.getBlockPlaced().getType() == Material.OAK_DOOR) {
             this.blockEvent(event, "MULTIPLACE " + event.getBlockPlaced().getType() + " " + event.getReplacedBlockStates().stream().map(b -> b.getType().name()).toList());
         }
+    }
+
+    @EventHandler
+    public void onWorldUnload(final org.bukkit.event.world.WorldUnloadEvent event) {
+        this.unloadedWorlds.add(event.getWorld().getName());
+        event.setCancelled(this.keepWorlds);
     }
 
     @EventHandler

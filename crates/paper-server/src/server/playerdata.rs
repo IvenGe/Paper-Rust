@@ -266,7 +266,7 @@ impl Server {
         let world = c
             .string("paper-rs:world")
             .and_then(|name| self.worlds.iter().position(|w| w.name == name))
-            .or_else(|| c.string("Dimension").and_then(|d| self.worlds.iter().position(|w| w.dimension == d)))
+            .or_else(|| c.string("Dimension").and_then(|d| self.worlds.iter().position(|w| w.dimension == d && !w.unloaded)))
             .unwrap_or(0);
         let mut inventory = vec![Slot::EMPTY; INVENTORY_SLOTS];
         for entry in c.list("Inventory").unwrap_or(&[]) {

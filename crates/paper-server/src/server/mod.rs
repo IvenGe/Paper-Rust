@@ -546,7 +546,23 @@ impl Server {
 
     /// The world of a dimension (`minecraft:the_nether`, ...), if it exists.
     pub fn world_of_dimension(&self, dimension: &str) -> Option<usize> {
-        self.worlds.iter().position(|w| w.dimension == dimension)
+        self.worlds.iter().position(|w| w.dimension == dimension && !w.unloaded)
+    }
+
+    /// `Bukkit.unloadWorld`: a world other than the first, with no players in it, leaves the
+    /// server, saved first if `save` (plugins heard `WorldUnloadEvent` already). Loading it
+    /// again opens it anew from its folder. Returns whether it went.
+    pub fn unload_world(&mut self, world: usize, save: bool) -> bool {
+        if world == 0 || self.worlds.get(world).is_none_or(|w| w.unloaded) || self.players.values().any(|p| p.world == world) {
+            return false;
+        }
+        if save {
+            self.save_world(world, true);
+        }
+        let name = self.worlds[world].name.clone();
+        self.worlds[world].unload();
+        log::info!("Unloaded world '{name}'");
+        true
     }
 
     /// Runs the tick loop on the calling thread until the server is stopped.

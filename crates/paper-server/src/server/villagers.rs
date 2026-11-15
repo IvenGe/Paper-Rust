@@ -1164,7 +1164,7 @@ impl Server {
     /// `WanderingTraderSpawner`: once a day a chance (25%, then 50%, then 75%) of a trader
     /// turning up near a player in the overworld.
     fn tick_trader_spawner(&mut self) {
-        let Some(world) = self.worlds.iter().position(|w| w.dimension == "minecraft:overworld") else { return };
+        let Some(world) = self.world_of_dimension("minecraft:overworld") else { return };
         let w = &mut self.worlds[world];
         if !w.rules.bool("spawn_wandering_traders") {
             return;

@@ -160,6 +160,9 @@ pub struct World {
     finalizing: HashSet<ChunkPos>,
     /// Chunks to save as soon as their decoration job gives them back.
     save_on_return: HashSet<ChunkPos>,
+    /// The world left the server (`Bukkit.unloadWorld`): its place in the server's list
+    /// stays, empty, as worlds are known by their index.
+    pub unloaded: bool,
 }
 
 /// The world border (`WorldBorder`): a square around a center, which can move to another
@@ -339,7 +342,36 @@ impl World {
             decorating: HashSet::new(),
             finalizing: HashSet::new(),
             save_on_return: HashSet::new(),
+            unloaded: false,
         }
+    }
+
+    /// Empties the world as it leaves the server: no chunks, entities, pending work or
+    /// storage, and a name no lookup finds (world names cannot hold a colon). Work still in
+    /// flight for it is dropped when it comes back (see `handle_event`).
+    pub fn unload(&mut self) {
+        self.unloaded = true;
+        self.name = format!("unloaded:{}", self.name);
+        self.key = format!("unloaded:{}", self.key);
+        self.chunks.clear();
+        self.entities.clear();
+        self.entity_chunks.clear();
+        self.removed_block_entities.clear();
+        self.updates = block_updates::BlockUpdateState::new(&self.dimension, self.seed);
+        self.forced.clear();
+        self.tickets.clear();
+        self.wanted.clear();
+        self.generating.clear();
+        self.lighting.clear();
+        self.packets.clear();
+        self.encoding.clear();
+        self.proto.clear();
+        self.locked.clear();
+        self.decorating.clear();
+        self.finalizing.clear();
+        self.save_on_return.clear();
+        self.dragon_fight = None;
+        self.storage = None;
     }
 
     pub fn max_y(&self) -> i32 {
@@ -650,6 +682,9 @@ impl World {
 
     /// Applies a worker result. Returns the position of a chunk that became ready.
     pub fn handle_event(&mut self, event: WorldEvent) -> Option<ChunkPos> {
+        if self.unloaded {
+            return None;
+        }
         match event {
             WorldEvent::Terrain(chunk) => {
                 self.generating.remove(&chunk.pos);

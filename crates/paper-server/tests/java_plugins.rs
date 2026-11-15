@@ -1678,6 +1678,8 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
 
     // A zombie in the midday sun: kept from catching fire; then let burn (EntityCombustEvent).
     server.handle.console_command("time set 6000");
+    // (Rain would put it out: the weather cycle may start some at any time.)
+    server.handle.console_command("weather clear");
     for (mode, burns) in [("cancel", false), ("record", true)] {
         alice.command(&format!("apitest blocks {mode}"));
         expect_line(&mut alice, &format!("blocks: {mode}"));
@@ -1704,8 +1706,14 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             pause(&mut alice, Duration::from_millis(200));
         }
         assert!(seen.contains("COMBUST 8.0"), "{mode}: {seen}");
-        let fire = server.handle.run(move |s| s.worlds[0].entities.get(&zombie).and_then(|e| e.mob()).map_or(0, |m| m.living.fire_ticks)).unwrap();
-        assert_eq!(fire > 0, burns, "{mode}: {fire}");
+        let (fire, state) = server
+            .handle
+            .run(move |s| match s.worlds[0].entities.get(&zombie) {
+                Some(e) => (e.mob().map_or(0, |m| m.living.fire_ticks), format!("removed {} at {:?}, health {:?}", e.removed, e.pos, e.mob().map(|m| m.living.health))),
+                None => (0, "gone".to_owned()),
+            })
+            .unwrap();
+        assert_eq!(fire > 0, burns, "{mode}: fire {fire}, {state}, {seen}");
         server.handle.run(move |s| s.worlds[0].entities.get_mut(&zombie).unwrap().removed = true).unwrap();
     }
 
@@ -2521,6 +2529,20 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         assert!(std::time::Instant::now() < deadline, "Alice goes to the new world");
         alice.drain(Duration::from_millis(50));
     }
+    // Unloading it (`Bukkit.unloadWorld`, `WorldUnloadEvent`): its place stays, empty and
+    // nameless; loading it again opens it anew from its folder, flat as it was made.
+    alice.command("apitest unloadworld");
+    expect_line(&mut alice, "unloadworld: ok");
+    let (old, again) = server
+        .handle
+        .run(move |s| {
+            let old = &s.worlds[index];
+            let again = s.worlds.iter().position(|w| w.name == "plugin_flat").map(|i| (i, s.worlds[i].generator.name()));
+            ((old.unloaded, old.name.clone(), old.chunks.len(), old.storage.is_some()), again)
+        })
+        .unwrap();
+    assert_eq!(old, (true, "unloaded:plugin_flat".to_owned(), 0, false));
+    assert!(again.is_some_and(|(i, generator)| i != index && generator == "flat"), "{again:?}");
 
     server.stop();
     assert!(dir.join("plugin_flat").join("level.dat").exists(), "the new world is saved in its folder");

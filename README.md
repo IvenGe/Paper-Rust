@@ -398,7 +398,8 @@ What works:
     `VillagerAcquireTradeEvent`, `VillagerCareerChangeEvent` and
     `VillagerReplenishTradeEvent`;
   * worlds made by plugins (`Bukkit.createWorld`): normal or flat; overworld, Nether or End;
-    opened again from their folders; and players teleported from one world to another;
+    opened again from their folders; unloaded again (`Bukkit.unloadWorld`, with
+    `WorldUnloadEvent`); and players teleported from one world to another;
   * player state: walking and flying speeds, the time and weather one player sees
     (`setPlayerTime`, `setPlayerWeather`), being invulnerable, glowing, silent, invisible or
     without gravity, custom names, scoreboard tags, air, fire, freezing and fall distance,
@@ -487,7 +488,7 @@ Not yet:
   bottles, or worn out as tools.
 * Plugin API: plugins' own chunk generators and biome providers (block populators get the
   classic `populate(World, Random, Chunk)` call only), amplified and large-biome
-  worlds, unloading worlds, registry and tag lifecycle events,
+  worlds, registry and tag lifecycle events,
   dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,
   crossbows, armour trims, block states of items, map views, spawn eggs, ...), inventories of other block types and anvil and enchanting views, villager

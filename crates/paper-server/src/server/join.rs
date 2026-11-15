@@ -172,7 +172,7 @@ impl Server {
         player.conn.send(&play::Login {
             entity_id,
             hardcore: props.hardcore,
-            dimension_names: self.worlds.iter().map(|w| w.dimension.clone()).collect(),
+            dimension_names: self.worlds.iter().filter(|w| !w.unloaded).map(|w| w.dimension.clone()).collect(),
             max_players: VarInt(props.max_players),
             view_distance: VarInt(player.view.radius),
             simulation_distance: VarInt(props.simulation_distance),

@@ -380,6 +380,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `server.craft` | `grid` (4 or 9 items) (answers the recipe's `key` and the `result`, or null) |
 | `server.difficulty` / `set_difficulty` | / `difficulty` |
 | `server.create_world` | `name`, `environment` (`NORMAL`, `NETHER`, `THE_END`), `seed`, `type` (`NORMAL`, `FLAT`), `structures`, `key` (the world's own key, `minecraft:<name>` by default) (answers the world, like `worlds` in the welcome) |
+| `server.unload_world` | `world`, `save` (`Bukkit.unloadWorld`, after the host fired `WorldUnloadEvent`: never the first world, nor one with players in it; answers whether it went. Worlds are known by their index, so its place stays, emptied and renamed `unloaded:<name>`; work still in flight for it is dropped, and loading it again opens it anew from its folder) |
 | `server.dispatch_command` | `sender`, `command` (built-in commands; answers whether one ran) |
 | `server.broadcast` | `message` |
 | `server.status` | (answers `tps`, `mspt`, `tick`, `online`) |

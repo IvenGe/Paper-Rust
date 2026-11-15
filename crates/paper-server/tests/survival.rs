@@ -259,8 +259,14 @@ fn golden_apples_poison_and_milk() {
     let deadline = std::time::Instant::now() + Duration::from_secs(4);
     let mut lowest = 20.0f32;
     while std::time::Instant::now() < deadline {
-        let health = server.handle.run(move |s| s.players[&id].health).unwrap();
-        assert!(health >= 1.0, "poison never kills: {health}");
+        let (health, dead, last) = server
+            .handle
+            .run(move |s| {
+                let p = &s.players[&id];
+                (p.health, p.dead, format!("{:?}", p.last_damage.as_ref().map(|d| (d.kind, d.attacker, d.direct))))
+            })
+            .unwrap();
+        assert!(health >= 1.0, "poison never kills: {health} (dead {dead}, last damage {last})");
         lowest = lowest.min(health);
         std::thread::sleep(Duration::from_millis(100));
     }

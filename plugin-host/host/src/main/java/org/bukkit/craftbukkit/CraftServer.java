@@ -655,6 +655,32 @@ public final class CraftServer extends AbstractServer {
         return world;
     }
 
+    /**
+     * Paper's {@code CraftServer#unloadWorld}: never the main world, and only a world nobody is
+     * in; plugins may keep it ({@code WorldUnloadEvent}). With {@code save}, its chunks and
+     * {@code level.dat} are written first. Loading it again opens it anew from its folder.
+     */
+    @Override
+    public boolean unloadWorld(final @Nullable World world, final boolean save) {
+        if (world == null || this.worlds.indexOf(world) <= 0 || !world.getPlayers().isEmpty()) {
+            return false;
+        }
+        if (!new org.bukkit.event.world.WorldUnloadEvent(world).callEvent()) {
+            return false;
+        }
+        if (!Boolean.TRUE.equals(this.call("server.unload_world", Values.of("world", world.getName(), "save", save)))) {
+            return false;
+        }
+        this.worlds.remove(world);
+        return true;
+    }
+
+    @Override
+    public boolean unloadWorld(final String name, final boolean save) {
+        final World world = this.getWorld(name);
+        return world != null && this.unloadWorld(world, save);
+    }
+
     @Override
     public @Nullable World getWorld(final String name) {
         for (World world : this.worlds) {
