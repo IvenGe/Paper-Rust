@@ -2638,3 +2638,35 @@ pub fn on_fish(server: &mut Server, world: usize, player: i32, caught: Option<i3
         None => Some(exp),
     }
 }
+
+/// Paper's `PlayerElytraBoostEvent`: the gliding player boosts with `rocket`, made from `item`
+/// in `hand`. `None` if plugins stopped it, else whether the item is used up.
+pub fn on_elytra_boost(server: &mut Server, world: usize, player: i32, rocket: i32, item: &paper_protocol::types::ItemStack, hand: i32) -> Option<bool> {
+    if !listens(server, "PlayerElytraBoostEvent") || !server.worlds[world].entities.contains_key(&rocket) {
+        return Some(true);
+    }
+    let Some(p) = server.players.get(&player) else { return Some(true) };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "entity" => actor_value(server, world, rocket),
+        "item" => super::api::item_value(&paper_protocol::types::Slot(Some(item.clone()))),
+        "hand" => hand,
+    };
+    match fire(server, "PlayerElytraBoostEvent", "event.elytra_boost", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.bool("consume") != Some(false)),
+        None => Some(true),
+    }
+}
+
+/// `FireworkExplodeEvent`: whether plugins let the rocket explode (it flies on if not).
+pub fn on_firework_explode(server: &mut Server, world: usize, rocket: i32) -> bool {
+    if !listens(server, "FireworkExplodeEvent") || !server.worlds[world].entities.contains_key(&rocket) {
+        return true;
+    }
+    let args = bmap! { "entity" => actor_value(server, world, rocket) };
+    match fire(server, "FireworkExplodeEvent", "event.firework_explode", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}

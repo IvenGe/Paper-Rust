@@ -81,7 +81,7 @@ pub fn entity_to_nbt(e: &Entity) -> Option<Compound> {
 pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
     // Thrown eyes of ender live for four seconds and are not kept.
     // (Thrown items and potion clouds are short-lived too.)
-    if e.removed || !e.is_alive() || matches!(e.kind, EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Fishing(_)) {
+    if e.removed || !e.is_alive() || matches!(e.kind, EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Fishing(_) | EntityKind::Firework(_)) {
         return None;
     }
     let mut c = Compound::new()
@@ -273,7 +273,7 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 c.insert("Fixed", Tag::Byte(h.fixed as i8));
             }
         }
-        EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Fishing(_) | EntityKind::Other => {}
+        EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Fishing(_) | EntityKind::Firework(_) | EntityKind::Other => {}
     }
     Some(c)
 }

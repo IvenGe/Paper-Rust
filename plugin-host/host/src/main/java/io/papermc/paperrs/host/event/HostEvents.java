@@ -193,6 +193,9 @@ public final class HostEvents {
         GATED.put("WorldBorderCenterChangeEvent", io.papermc.paper.event.world.border.WorldBorderCenterChangeEvent.class);
         GATED.put("WorldBorderBoundsChangeFinishEvent", io.papermc.paper.event.world.border.WorldBorderBoundsChangeFinishEvent.class);
         GATED.put("PlayerFishEvent", org.bukkit.event.player.PlayerFishEvent.class);
+        GATED.put("EntityToggleGlideEvent", org.bukkit.event.entity.EntityToggleGlideEvent.class);
+        GATED.put("PlayerElytraBoostEvent", com.destroystokyo.paper.event.player.PlayerElytraBoostEvent.class);
+        GATED.put("FireworkExplodeEvent", org.bukkit.event.entity.FireworkExplodeEvent.class);
         GATED.put("HangingPlaceEvent", org.bukkit.event.hanging.HangingPlaceEvent.class);
         GATED.put("HangingBreakEvent", org.bukkit.event.hanging.HangingBreakEvent.class);
         GATED.put("EntityBreakEvent", io.papermc.paper.event.entity.EntityBreakEvent.class);
@@ -1112,6 +1115,28 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled());
             }
             case "event.hanging_break" -> this.hangingBreak(args);
+            case "event.toggle_glide" -> {
+                final org.bukkit.event.entity.EntityToggleGlideEvent event = new org.bukkit.event.entity.EntityToggleGlideEvent(this.player(args), Values.bool(args, "gliding", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.elytra_boost" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Firework firework)) {
+                    yield Values.of();
+                }
+                final com.destroystokyo.paper.event.player.PlayerElytraBoostEvent event = new com.destroystokyo.paper.event.player.PlayerElytraBoostEvent(this.player(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")), firework, Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "consume", event.shouldConsume());
+            }
+            case "event.firework_explode" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Firework firework)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.FireworkExplodeEvent event = new org.bukkit.event.entity.FireworkExplodeEvent(firework);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
             case "event.fish" -> {
                 if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("hook"))) instanceof org.bukkit.entity.FishHook hook)) {
                     yield Values.of();

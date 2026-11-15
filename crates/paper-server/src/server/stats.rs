@@ -174,7 +174,7 @@ impl Server {
         if p.vehicle.is_some() || dx * dx + dy * dy + dz * dz < 1.0e-7 {
             return;
         }
-        let (on_ground, sprinting, sneaking, flying) = (p.on_ground, p.sprinting, p.sneaking, p.flying);
+        let (on_ground, sprinting, sneaking, flying, gliding) = (p.on_ground, p.sprinting, p.sneaking, p.flying, p.gliding);
         let swimming = sprinting && eyes_in_water;
         let cm3 = ((dx * dx + dy * dy + dz * dz).sqrt() * 100.0).round() as i32;
         let cm2 = ((dx * dx + dz * dz).sqrt() * 100.0).round() as i32;
@@ -188,6 +188,8 @@ impl Server {
             ("minecraft:climb_one_cm", if dy > 0.0 { (dy * 100.0).round() as i32 } else { 0 })
         } else if on_ground {
             (if sprinting { "minecraft:sprint_one_cm" } else if sneaking { "minecraft:crouch_one_cm" } else { "minecraft:walk_one_cm" }, cm2)
+        } else if gliding {
+            ("minecraft:aviate_one_cm", cm3)
         } else if flying && cm2 > 25 {
             ("minecraft:fly_one_cm", cm2)
         } else if dy < 0.0 {

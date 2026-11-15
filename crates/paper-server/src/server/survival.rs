@@ -21,6 +21,7 @@ pub mod category {
     pub const HOSTILE: i32 = 5;
     pub const NEUTRAL: i32 = 6;
     pub const PLAYERS: i32 = 7;
+    pub const AMBIENT: i32 = 8;
 }
 
 /// What hurt an entity.
@@ -407,6 +408,7 @@ impl Server {
     pub(super) fn tick_players(&mut self) {
         for id in self.player_order.clone() {
             self.tick_client_load(id);
+            self.tick_gliding(id);
             self.tick_player(id);
             self.tick_player_portal(id);
         }
@@ -735,6 +737,11 @@ impl Server {
         } else {
             if dy < 0.0 {
                 p.fall_distance -= dy;
+            }
+            // A glider that is not diving falls no further than a block
+            // (`checkFallDistanceAccumulation`).
+            if p.gliding && dy > -0.5 && p.fall_distance > 1.0 {
+                p.fall_distance = 1.0;
             }
             if on_ground {
                 if p.fall_distance > 0.0 {
@@ -1274,6 +1281,11 @@ impl Server {
         // Snowballs, eggs, ender pearls, bottles o' enchanting and splash potions are thrown.
         if super::throwing::throwable(name).is_some() {
             self.throw_held(id, hand);
+            return;
+        }
+        // A firework rocket boosts a glider.
+        if name == "minecraft:firework_rocket" {
+            self.use_firework(id, hand);
             return;
         }
         // A fishing rod casts a bobber, or reels it in.

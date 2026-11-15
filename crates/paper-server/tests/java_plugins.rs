@@ -2325,6 +2325,48 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
 
+    // Gliding and boosting (EntityToggleGlideEvent, Paper's PlayerElytraBoostEvent, which the
+    // plugin has keep the rocket in hand, and FireworkExplodeEvent); then rockets through the API.
+    let (elytra, rockets) = (Slot::of(paper_data::items::id("minecraft:elytra").unwrap() as i32, 1), Slot::of(paper_data::items::id("minecraft:firework_rocket").unwrap() as i32, 3));
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Survival);
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.inventory[6] = elytra;
+            p.inventory[36 + held] = rockets;
+            p.on_ground = false;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    alice.send(&play::PlayerCommand { entity_id: VarInt(alice_id), action: VarInt(play::player_command::START_ELYTRA_FLYING), jump_boost: VarInt(0) });
+    seen = poll(&mut alice, "GLIDE true");
+    assert!(seen.contains("GLIDE true"), "{seen}");
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(195), yaw: 0.0, pitch: 0.0 });
+    seen = poll(&mut alice, "FIREWORK exploded");
+    assert!(seen.contains("BOOST FIREWORK_ROCKET true") && seen.contains("FIREWORK exploded"), "{seen}");
+    let kept = server.handle.run(move |s| s.players[&alice_id].inventory[36 + held].0.as_ref().map(|i| i.count)).unwrap();
+    assert_eq!(kept, Some(3), "the plugin kept the rocket in hand");
+    server.handle.run(move |s| s.players.get_mut(&alice_id).unwrap().on_ground = true).unwrap();
+    seen = poll(&mut alice, "GLIDE false");
+    assert!(seen.contains("GLIDE false"), "{seen}");
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.inventory[6] = Slot::EMPTY;
+            p.inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    alice.command("apitest fireworks");
+    expect_line(&mut alice, "fireworks: ok");
+
     // A plugin's block populator and ChunkPopulateEvent: chunks newly made far away get both.
     alice.command("apitest populator");
     expect_line(&mut alice, "populator: added");

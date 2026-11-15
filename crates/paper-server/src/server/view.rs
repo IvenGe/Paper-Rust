@@ -48,10 +48,15 @@ fn player_metadata(player: &Player) -> Vec<u8> {
     if player.sprinting {
         bits |= flags::SPRINTING;
     }
+    if player.gliding {
+        bits |= flags::FALL_FLYING;
+    }
     let pose = if player.dead {
         pose::DYING
     } else if player.sleeping.is_some() {
         pose::SLEEPING
+    } else if player.gliding {
+        pose::FALL_FLYING
     } else if player.sneaking {
         pose::SNEAKING
     } else {

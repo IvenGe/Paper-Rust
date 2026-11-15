@@ -709,7 +709,7 @@ impl Server {
 
     /// A projectile that was just added sets off, unless plugins stop it before anyone sees it
     /// (`ProjectileLaunchEvent`). Returns whether it flies.
-    pub(super) fn launch(&mut self, world: usize, id: i32) -> bool {
+    pub(crate) fn launch(&mut self, world: usize, id: i32) -> bool {
         if crate::plugins::events::on_projectile_launch(self, world, id) {
             return true;
         }

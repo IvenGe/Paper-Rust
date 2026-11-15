@@ -73,6 +73,8 @@ impl Server {
             load_timeout: 60,
             own_border: None,
             fishing: None,
+            gliding: false,
+            glide_ticks: 0,
             op_level,
             display_name: None,
             list_name: None,

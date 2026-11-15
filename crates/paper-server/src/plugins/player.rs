@@ -383,6 +383,12 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
         p.sprinting = b;
         p.metadata_dirty = true;
     }
+    // `LivingEntity.setGliding` (no event, as on Paper); the client keeps it only with a glider.
+    if let Some(b) = args.bool("gliding") {
+        p.gliding = b;
+        p.glide_ticks = 0;
+        p.metadata_dirty = true;
+    }
     if let Some(v) = args.i32("xp_level") {
         p.xp_level = v.max(0);
         experience = true;

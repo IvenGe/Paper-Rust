@@ -425,6 +425,21 @@ pub struct EntityChest {
     pub loot_seed: i64,
 }
 
+/// A firework rocket (`FireworkRocketEntity`): the rocket item it shows and explodes with,
+/// ticks flown of its lifetime, the living thing it is attached to (boosting a glider), and
+/// whether it flies straight where it was shot (from a crossbow or dispenser) rather than up.
+#[derive(Clone, Debug)]
+pub struct Firework {
+    pub item: Slot,
+    pub life: i32,
+    pub lifetime: i32,
+    pub attached: Option<i32>,
+    pub shot_at_angle: bool,
+    pub owner: Option<i32>,
+    /// The player who boosted with it (Paper's `spawningEntity`).
+    pub spawning: Option<Uuid>,
+}
+
 /// What a fishing bobber is doing (`FishingHook.FishHookState`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookState {
@@ -524,6 +539,8 @@ pub enum EntityKind {
     Hanging(Box<super::hanging::Hanging>),
     /// A fishing bobber (see `server::fishing`).
     Fishing(Box<FishingHook>),
+    /// A firework rocket (see `server::fireworks`).
+    Firework(Box<Firework>),
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }

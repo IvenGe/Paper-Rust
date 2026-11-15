@@ -48,6 +48,8 @@ pub mod signs;
 fn falling_drops_nothing(state: u32) -> bool {
     matches!(paper_data::blocks::block_of_state(state).name, "minecraft:suspicious_sand" | "minecraft:suspicious_gravel")
 }
+pub mod elytra;
+pub mod fireworks;
 pub mod fishing;
 pub mod golems;
 pub mod hanging;

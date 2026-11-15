@@ -181,6 +181,22 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
                 out.set("art", h.variant.clone());
             }
         }
+        // `Firework`: its item, flight, what it is attached to.
+        EntityKind::Firework(f) => {
+            out.set("item", item_value(&f.item));
+            out.set("life", f.life);
+            out.set("lifetime", f.lifetime);
+            out.set("shot_at_angle", f.shot_at_angle);
+            out.set("attached", f.attached.map(|t| match server.players.get(&t) {
+                Some(p) => bmap! { "player" => p.uuid().to_string() },
+                None => bmap! { "entity" => t as i64 },
+            }));
+            out.set("shooter", f.owner.map(|o| match server.players.get(&o) {
+                Some(p) => bmap! { "player" => p.uuid().to_string() },
+                None => bmap! { "entity" => o as i64 },
+            }));
+            out.set("spawning", f.spawning.map(|u| u.to_string()));
+        }
         // `FishHook`: its player, what it hooked, its state and waits.
         EntityKind::Fishing(h) => {
             out.set("shooter", match server.players.get(&h.owner) {
@@ -285,6 +301,16 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 "minecraft:item" => bail!("Cannot spawn an item entity without an item; use World#dropItem"),
                 "minecraft:player" => bail!("Cannot spawn a player"),
                 "minecraft:arrow" => server.spawn_arrow_towards(world, pos, Vec3::new(0.0, 0.0, 1.0), 0.0, 0.0, None, 2.0, false, true),
+                "minecraft:firework_rocket" => {
+                    // An empty rocket, as `CraftRegionAccessor` makes one, launched as any
+                    // projectile (`ProjectileLaunchEvent`).
+                    let e = server.new_firework(pos, paper_protocol::types::Slot::EMPTY, None).ok_or_else(|| anyhow!("cannot spawn {ty}"))?;
+                    let id = server.spawn_entity(world, e);
+                    if !server.launch(world, id) {
+                        bail!("the entity was not spawned");
+                    }
+                    id
+                }
                 name if crate::world::hanging::is_hanging(name) => {
                     // Turned the way it hangs, whatever the location's yaw; plugins hear of it
                     // as of any new entity (`EntitySpawnEvent`).
@@ -575,6 +601,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let source = target_id(server, args.get("source"));
             // `FishHook.setHookedEntity` (an empty map for none).
             let hooked = target_id(server, args.get("hooked"));
+            // `Firework.setAttachedTo` (an empty map for none).
+            let attached = target_id(server, args.get("attached"));
             // Players by uuid, for `Animals.setBreedCause`.
             let server_players: Vec<(i32, String)> = if args.get("love_cause").is_null() { Vec::new() } else { server.players.values().map(|p| (p.entity_id, p.uuid().to_string())).collect() };
             // `Painting.setArt` and `Hanging.setFacingDirection`: only where it can then still
@@ -888,6 +916,31 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 EntityKind::ExperienceOrb { value } => {
                     if let Some(v) = args.i32("experience") {
                         *value = v.max(0);
+                        e.metadata_dirty = true;
+                    }
+                }
+                EntityKind::Firework(f) => {
+                    // `Firework`'s setters: its item, flight and attachment; `detonate` ends
+                    // its flight now.
+                    if !args.get("item").is_null() {
+                        f.item = slot_from(args.get("item"))?;
+                        e.metadata_dirty = true;
+                    }
+                    if let Some(v) = args.i32("life") {
+                        f.life = v.max(0);
+                    }
+                    if let Some(v) = args.i32("lifetime") {
+                        f.lifetime = v.max(0);
+                    }
+                    if args.bool("detonate") == Some(true) {
+                        f.lifetime = 0;
+                    }
+                    if let Some(v) = args.bool("shot_at_angle") {
+                        f.shot_at_angle = v;
+                        e.metadata_dirty = true;
+                    }
+                    if !args.get("attached").is_null() {
+                        f.attached = attached;
                         e.metadata_dirty = true;
                     }
                 }

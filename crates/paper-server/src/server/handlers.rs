@@ -180,6 +180,7 @@ impl Server {
             }
             Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::LEAVE_BED => self.wake_up(id),
             Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::OPEN_VEHICLE_INVENTORY => self.open_vehicle_inventory(id),
+            Serverbound::PlayerCommand(p) if p.action.0 == play::player_command::START_ELYTRA_FLYING => self.start_gliding(id),
             Serverbound::PlayerCommand(p) => {
                 let sprinting = match p.action.0 {
                     play::player_command::START_SPRINTING => Some(true),
@@ -569,7 +570,7 @@ impl Server {
         // Levers, buttons, doors, repeaters... react to the click instead of a block being placed.
         let used = self.within_reach(id, use_on.pos) && self.use_block(id, &use_on);
         // Hoes, shovels, axes and bone meal work on the block.
-        let used = used || item_allowed && self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_hanging_item(id, &use_on) || self.use_tool_on_block(id, &use_on));
+        let used = used || item_allowed && self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_hanging_item(id, &use_on) || self.use_firework_on(id, &use_on) || self.use_tool_on_block(id, &use_on));
         let placed = used || item_allowed && self.try_place_block(id, &use_on);
         if !item_allowed {
             self.resync_inventory(id);

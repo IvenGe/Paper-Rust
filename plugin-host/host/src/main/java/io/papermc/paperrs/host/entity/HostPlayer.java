@@ -1037,6 +1037,17 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
     }
 
     @Override
+    public boolean isGliding() {
+        return Values.bool(this.state, "gliding", false);
+    }
+
+    /** {@code LivingEntity#setGliding}: no event, as on Paper. */
+    @Override
+    public void setGliding(final boolean gliding) {
+        this.refresh(this.server.call("player.set", this.args("gliding", gliding)));
+    }
+
+    @Override
     public boolean isFlying() {
         return Values.bool(this.state, "flying", false);
     }

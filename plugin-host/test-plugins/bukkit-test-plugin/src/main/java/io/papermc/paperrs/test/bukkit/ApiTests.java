@@ -535,6 +535,28 @@ final class ApiTests implements Listener, CommandExecutor {
                     this.borderEvents.clear();
                     report(sender, "borderevents", failures);
                 }
+                case "fireworks" -> {
+                    // A rocket through the API: its item and meta (which sets its flight), what it
+                    // is attached to, and detonating it (high above, so it hurts nobody).
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final org.bukkit.entity.Firework firework = player.getWorld().spawn(player.getLocation().add(0, 20, 0), org.bukkit.entity.Firework.class);
+                    check(failures, firework.getItem().getType() == Material.FIREWORK_ROCKET && !firework.isDetonated(), "a plain rocket");
+                    final org.bukkit.inventory.meta.FireworkMeta meta = firework.getFireworkMeta();
+                    meta.setPower(2);
+                    meta.addEffect(org.bukkit.FireworkEffect.builder().withColor(org.bukkit.Color.RED).with(org.bukkit.FireworkEffect.Type.BALL).build());
+                    firework.setFireworkMeta(meta);
+                    final int flight = firework.getTicksToDetonate();
+                    check(failures, flight >= 30 && flight <= 41 && firework.getFireworkMeta().getPower() == 2 && firework.getFireworkMeta().getEffectsSize() == 1, "meta, flight " + flight);
+                    check(failures, firework.setAttachedTo(player) && firework.getAttachedTo() == player, "attached");
+                    firework.setAttachedTo(null);
+                    firework.setShotAtAngle(true);
+                    firework.setTicksFlown(5);
+                    check(failures, firework.isShotAtAngle() && firework.getTicksFlown() == 5 && firework.getAttachedTo() == null, "settings");
+                    firework.detonate();
+                    check(failures, firework.isDetonated(), "detonated");
+                    report(sender, "fireworks", failures);
+                }
                 case "hanging" -> {
                     // Item frames and paintings through the API: spawned against a block, given an
                     // item, turned, and a painting given art that must fit unless forced.
@@ -1594,6 +1616,25 @@ final class ApiTests implements Listener, CommandExecutor {
     private final List<String> borderEvents = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** The border {@code apitest borders} gave Alice. */
     private org.bukkit.WorldBorder virtualBorder;
+
+    @EventHandler
+    public void onGlide(final org.bukkit.event.entity.EntityToggleGlideEvent event) {
+        this.blockEvent(event, "GLIDE " + event.isGliding());
+    }
+
+    /** A boost keeps the rocket in hand while recording. */
+    @EventHandler
+    public void onElytraBoost(final com.destroystokyo.paper.event.player.PlayerElytraBoostEvent event) {
+        if (this.blockMode.equals("record")) {
+            event.setShouldConsume(false);
+        }
+        this.blockEvent(event, "BOOST " + event.getItemStack().getType() + " " + (event.getFirework().getAttachedTo() == event.getPlayer()));
+    }
+
+    @EventHandler
+    public void onFireworkExplode(final org.bukkit.event.entity.FireworkExplodeEvent event) {
+        this.heard("FIREWORK exploded");
+    }
 
     /** Fishing: each state; a catch becomes a diamond worth 42 experience. */
     @EventHandler

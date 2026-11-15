@@ -224,6 +224,7 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         "saturation" => p.saturation,
         "sneaking" => p.sneaking,
         "sprinting" => p.sprinting,
+        "gliding" => p.gliding,
         "flying" => p.flying,
         "allow_flight" => p.allow_flight,
         "held_slot" => p.held_slot as i64,

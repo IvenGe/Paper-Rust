@@ -233,6 +233,9 @@ pub struct Player {
     pub own_border: Option<crate::world::Border>,
     /// The fishing bobber this player has out (`Player.fishing`).
     pub fishing: Option<i32>,
+    /// Gliding with an elytra (shared flag 7), and for how many ticks (`fallFlyTicks`).
+    pub gliding: bool,
+    pub glide_ticks: i32,
     pub op_level: u8,
     pub display_name: Option<Component>,
     pub list_name: Option<Component>,

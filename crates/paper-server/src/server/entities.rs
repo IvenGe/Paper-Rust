@@ -388,6 +388,11 @@ impl Server {
                 self.tick_fishing(world, id);
                 return;
             }
+            EntityKind::Firework(_) => {
+                self.worlds[world].entities.insert(id, e);
+                self.tick_firework(world, id);
+                return;
+            }
             EntityKind::FallingBlock { state, time, fall } => {
                 *time += 1;
                 let (state, time, mut fallen) = (*state, *time, *fall);
@@ -811,6 +816,7 @@ impl Server {
             EntityKind::Hanging(h) => h.facing as i32,
             // A bobber names its player, or the client drops it.
             EntityKind::Fishing(h) => h.owner,
+            EntityKind::Firework(f) => f.owner.unwrap_or(0),
             _ => 0,
         };
         // A hanging entity is sent at its block (`getAddEntityPacket`); the client works out
@@ -976,6 +982,18 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
         EntityKind::Item { stack, .. } => {
             if let Some(i) = info.data_index("DATA_ITEM") {
                 m = m.item_stack(i, stack);
+            }
+        }
+        // A rocket's item (for its colours), what it is attached to, and whether it was shot.
+        EntityKind::Firework(f) => {
+            if let Some(i) = info.data_index("DATA_ID_FIREWORKS_ITEM").filter(|_| !spawning || !f.item.is_empty()) {
+                m = m.item_stack(i, &f.item);
+            }
+            if let Some(i) = info.data_index("DATA_ATTACHED_TO_TARGET").filter(|_| !spawning || f.attached.is_some()) {
+                m = m.optional_unsigned_int(i, f.attached.map(|a| a as u32));
+            }
+            if let Some(i) = info.data_index("DATA_SHOT_AT_ANGLE").filter(|_| !spawning || f.shot_at_angle) {
+                m = m.boolean(i, f.shot_at_angle);
             }
         }
         // What a bobber hooked (its id + 1, or 0) and whether a fish bites.

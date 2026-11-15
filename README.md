@@ -144,6 +144,13 @@ What works:
 * **Signs**: the editor opens when a sign is placed and when it is clicked (on the side the
   player faces); the text is kept and shown to everyone, dyes colour it, glow ink sacs make
   it glow (ink sacs undo that), and honeycomb waxes the sign against editing.
+* **Elytra and fireworks**: a player in the air glides when wearing an elytra (anything with
+  the `glider` component that its next wear would not break), shown to others; the elytra
+  wears a point a second, and gliding stops on landing, riding or levitating. A firework
+  rocket used while gliding is attached to the player, whose client boosts them; used on a
+  block it flies up from there. Rockets burst at the end of their flight (early on what
+  they hit), and those with explosions hurt the living things they can see within five
+  blocks.
 * **Fishing**: a fishing rod casts a bobber that hooks what it hits or bobs in water, where
   after vanilla's waits (shorter in rain and with Lure, longer under a roof) a fish is
   lured, swims up with its wake and bites. Reeling in then catches from the
@@ -358,8 +365,9 @@ What works:
   `WorldBorderBoundsChangeFinishEvent`) come from `/worldborder` and plugins' changes alike, as
   do `HangingPlaceEvent`, `HangingBreakEvent` (`...ByEntityEvent` for hits and explosions),
   Paper's `EntityBreakEvent` after it, Paper's `PlayerItemFrameChangeEvent` for item frames,
-  and `PlayerFishEvent` in all its states (a plugin may change the catch and its
-  experience). Players,
+  `PlayerFishEvent` in all its states (a plugin may change the catch and its experience),
+  `EntityToggleGlideEvent`, Paper's `PlayerElytraBoostEvent` (which may keep the rocket in
+  hand) and `FireworkExplodeEvent` (a cancelled one keeps flying, as on Paper). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -434,6 +442,8 @@ What works:
     methods, what a player looks at (`getTargetBlock`, `getLineOfSight`), client options, and
     packets for one client (`sendExperienceChange`, `sendBlockDamage`, `sendEquipmentChange`,
     `sendHurtAnimation`, the demo and credits screens, `transfer`);
+  * firework rockets (`Firework`: item and meta, which sets the flight, ticks flown and to
+    fly, what it is attached to, shot at an angle, detonating) and `isGliding`/`setGliding`;
   * fishing bobbers (`FishHook`: waits, lure times and angles, Lure, rain and sky, open
     water, what it hooked and pulling it, its state);
   * item frames and paintings (`ItemFrame`: item, rotation, fixed, visible, drop chance;
@@ -516,7 +526,7 @@ Not yet:
   data). Withers and copper golems cannot be built. Dispensers do not place shulker boxes, build withers, or launch
   fireworks, wind charges or minecarts.
 * Statistics of what the server does not do yet (raids, note blocks, bells,
-  cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
+  cauldrons, cakes, flower pots, ...) stay at zero, and items count as
   used or broken only when placed, eaten or drunk, thrown, used as spawn eggs, buckets or
   bottles, or worn out as tools.
 * Plugin API: plugins' own chunk generators and biome providers (block populators get the

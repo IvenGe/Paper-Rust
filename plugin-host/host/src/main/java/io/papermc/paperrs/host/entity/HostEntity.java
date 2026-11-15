@@ -935,6 +935,86 @@ public final class HostEntity implements HostProxies.Backed {
         return Entities.launch(this.server, this.self(), projectile, velocity, function);
     }
 
+    // firework rockets (Firework), with CraftFirework's checks
+
+    public org.bukkit.inventory.meta.FireworkMeta getFireworkMeta() {
+        return (org.bukkit.inventory.meta.FireworkMeta) this.getItem().getItemMeta();
+    }
+
+    /** As CraftFirework: the item takes the meta, and the flight starts again from its power. */
+    public void setFireworkMeta(final org.bukkit.inventory.meta.FireworkMeta meta) {
+        final ItemStack item = this.getItem();
+        item.setItemMeta(meta);
+        final java.util.Random random = java.util.concurrent.ThreadLocalRandom.current();
+        this.set("item", HostItemStack.toValue(item), "lifetime", 10 * (1 + meta.getPower()) + random.nextInt(6) + random.nextInt(7));
+    }
+
+    public boolean isDetonated() {
+        return Values.i32(this.state(), "life", 0) > Values.i32(this.state(), "lifetime", 0);
+    }
+
+    public void detonate() {
+        this.set("detonate", true);
+    }
+
+    public boolean setAttachedTo(final @Nullable LivingEntity entity) {
+        if (this.isDetonated()) {
+            return false;
+        }
+        this.set("attached", entity == null ? Values.of() : Entities.ref(entity));
+        return true;
+    }
+
+    public @Nullable LivingEntity getAttachedTo() {
+        return this.state().get("attached") instanceof Map<?, ?> ref && Entities.of(this.server, Values.map(ref)) instanceof LivingEntity living ? living : null;
+    }
+
+    public boolean setLife(final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(ticks >= 0, "ticks must not be negative");
+        if (this.isDetonated()) {
+            return false;
+        }
+        this.set("life", ticks);
+        return true;
+    }
+
+    public boolean setMaxLife(final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(ticks > 0, "ticks must be greater than 0");
+        if (this.isDetonated()) {
+            return false;
+        }
+        this.set("lifetime", ticks);
+        return true;
+    }
+
+    public int getTicksFlown() {
+        return Values.i32(this.state(), "life", 0);
+    }
+
+    public void setTicksFlown(final int ticks) {
+        this.set("life", ticks);
+    }
+
+    public int getTicksToDetonate() {
+        return Values.i32(this.state(), "lifetime", 0);
+    }
+
+    public void setTicksToDetonate(final int ticks) {
+        this.set("lifetime", ticks);
+    }
+
+    public boolean isShotAtAngle() {
+        return Values.bool(this.state(), "shot_at_angle", false);
+    }
+
+    public void setShotAtAngle(final boolean shotAtAngle) {
+        this.set("shot_at_angle", shotAtAngle);
+    }
+
+    public java.util.@Nullable UUID getSpawningEntity() {
+        return this.state().get("spawning") instanceof String uuid ? java.util.UUID.fromString(uuid) : null;
+    }
+
     // fishing bobbers (FishHook), with CraftFishHook's checks
 
     private int hookInt(final String key, final int fallback) {
@@ -1163,7 +1243,12 @@ public final class HostEntity implements HostProxies.Backed {
     // thrown items (ThrowableProjectile)
 
     public ItemStack getItem() {
-        return HostItemStack.fromValue(this.state().get("item"));
+        final ItemStack item = HostItemStack.fromValue(this.state().get("item"));
+        // A rocket without an item shows a plain one (`FireworkRocketEntity.getItem`).
+        if (item.isEmpty() && this.self instanceof org.bukkit.entity.Firework) {
+            return new ItemStack(org.bukkit.Material.FIREWORK_ROCKET);
+        }
+        return item;
     }
 
     public void setItem(final @Nullable ItemStack item) {
