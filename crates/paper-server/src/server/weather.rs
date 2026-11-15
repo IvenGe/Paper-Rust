@@ -276,7 +276,7 @@ impl Server {
         let mut victims: Vec<i32> = self.worlds[world].entities_in(&area).into_iter().filter(|e| *e != bolt).collect();
         victims.extend(self.players.values().filter(|p| p.world == world && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&area)).map(|p| p.entity_id));
         for id in victims {
-            self.set_on_fire(world, id, 8 * 20);
+            self.set_on_fire(world, id, 8 * 20, crate::plugins::events::Combuster::Entity(bolt));
             self.hurt_entity(world, id, Damage::new("minecraft:lightning_bolt"), 5.0);
         }
         Some(bolt)

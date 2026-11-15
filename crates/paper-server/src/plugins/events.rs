@@ -1081,6 +1081,86 @@ pub fn on_block_changes(server: &mut Server, world: usize, changes: &[crate::wor
     }
 }
 
+/// `BlockDamageEvent`: a survival player starts breaking a block, which breaks at once if
+/// `insta`. Whether it breaks at once (plugins may say so), or `None` if cancelled.
+pub fn on_block_damage(server: &mut Server, id: i32, pos: BlockPos, face: u8, insta: bool) -> Option<bool> {
+    if !listens(server, "BlockDamageEvent") {
+        return Some(insta);
+    }
+    let player = server.players.get(&id)?;
+    let args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "world" => server.worlds[player.world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "face" => ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"].get(face as usize).copied().unwrap_or("SELF"),
+        "insta" => insta,
+    };
+    match fire(server, "BlockDamageEvent", "event.block_damage", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.bool("insta").unwrap_or(insta)),
+        None => Some(insta),
+    }
+}
+
+/// `PlayerKickEvent`: a player is to be kicked with `cause` (`PlayerKickEvent.Cause`). The
+/// reason and leave message as plugins leave them, or `None` if cancelled.
+pub fn on_kick(server: &mut Server, id: i32, reason: &Component, leave: &Component, cause: &str) -> Option<(Component, Component)> {
+    if !listens(server, "PlayerKickEvent") {
+        return Some((reason.clone(), leave.clone()));
+    }
+    let player = server.players.get(&id)?;
+    let args = bmap! { "uuid" => player.uuid().to_string(), "reason" => component_value(reason), "leave" => component_value(leave), "cause" => cause };
+    match fire(server, "PlayerKickEvent", "event.kick", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some((component_from(result.get("reason")).unwrap_or_else(|| reason.clone()), component_from(result.get("leave")).unwrap_or_else(|| leave.clone()))),
+        None => Some((reason.clone(), leave.clone())),
+    }
+}
+
+/// `EntityRegainHealthEvent`: the health a player or mob regains (`reason`: `RegainReason`),
+/// or `None` if cancelled.
+pub fn on_regain_health(server: &mut Server, world: usize, id: i32, amount: f32, reason: &str) -> Option<f32> {
+    if !listens(server, "EntityRegainHealthEvent") || !(server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id)) {
+        return Some(amount);
+    }
+    let args = bmap! { "entity" => super::entity::shallow_ref(server, id), "amount" => amount as f64, "reason" => reason };
+    match fire(server, "EntityRegainHealthEvent", "event.regain_health", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.f64("amount").map_or(amount, |a| a as f32)),
+        None => Some(amount),
+    }
+}
+
+/// What sets an entity alight, for `EntityCombustEvent`.
+#[derive(Clone, Copy, Debug)]
+pub enum Combuster {
+    Nothing,
+    /// `EntityCombustByEntityEvent`: an attacker with fire aspect, a burning zombie, a bolt,
+    /// a fireball, ...
+    Entity(i32),
+    /// `EntityCombustByBlockEvent`: lava, fire.
+    Block(BlockPos),
+}
+
+/// `EntityCombustEvent` (or its `ByEntity` / `ByBlock` form): how many ticks the entity
+/// burns, as plugins leave it, or `None` if cancelled.
+pub fn on_combust(server: &mut Server, world: usize, id: i32, ticks: i32, by: Combuster) -> Option<i32> {
+    if !listens(server, "EntityCombustEvent") || !(server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id)) {
+        return Some(ticks);
+    }
+    let mut args = bmap! { "entity" => super::entity::shallow_ref(server, id), "world" => server.worlds[world].name.clone(), "seconds" => ticks as f64 / 20.0 };
+    match by {
+        Combuster::Entity(e) if server.players.contains_key(&e) || server.worlds[world].entities.contains_key(&e) => args.set("by_entity", super::entity::shallow_ref(server, e)),
+        Combuster::Block(b) => args.set("by_block", pos_value(b)),
+        _ => {}
+    }
+    match fire(server, "EntityCombustEvent", "event.combust", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.f64("seconds").map_or(ticks, |s| (s * 20.0) as i32)),
+        None => Some(ticks),
+    }
+}
+
 /// `EntityChangeBlockEvent`: an entity is to change the block at `pos` to `to` (an enderman
 /// taking or placing a block, a block starting to fall or landing, a sheep eating grass, a
 /// player trampling farmland). `cancelled` presets it (a sheep without mob griefing). Returns

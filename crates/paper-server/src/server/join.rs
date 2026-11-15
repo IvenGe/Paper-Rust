@@ -17,7 +17,7 @@ impl Server {
 
         // A second login with the same identity replaces the first, as in vanilla.
         if let Some(existing) = self.by_uuid.get(&profile.uuid).copied() {
-            self.kick(existing, &Component::translatable("multiplayer.disconnect.duplicate_login", vec![]));
+            self.kick(existing, &Component::translatable("multiplayer.disconnect.duplicate_login", vec![]), "DUPLICATE_LOGIN");
         }
 
         // Returning players continue where they left off.
@@ -283,15 +283,26 @@ impl Server {
     }
 
     /// Disconnects a player with a message shown on their screen.
-    pub fn kick(&mut self, entity_id: i32, reason: &Component) {
+    /// Kicks a player, unless plugins stop it (`PlayerKickEvent`, with `cause` as Paper names
+    /// it), which may also change the reason and the leave message others see.
+    pub fn kick(&mut self, entity_id: i32, reason: &Component, cause: &str) {
         let Some(player) = self.players.get(&entity_id) else { return };
-        player.conn.disconnect(reason);
+        let leave = Component::translatable("multiplayer.player.left", vec![Component::text(player.name().to_owned())]).color("yellow");
+        let Some((reason, leave)) = crate::plugins::events::on_kick(self, entity_id, reason, &leave, cause) else { return };
+        let Some(player) = self.players.get(&entity_id) else { return };
+        player.conn.disconnect(&reason);
         let plain = reason.to_plain();
-        self.remove_player(entity_id, &plain);
+        self.remove_player_leaving(entity_id, &plain, Some(leave));
     }
 
     /// Removes a player from the game and tells everyone else. Idempotent.
     pub(super) fn remove_player(&mut self, entity_id: i32, reason: &str) {
+        self.remove_player_leaving(entity_id, reason, None);
+    }
+
+    /// [`Self::remove_player`], with the leave message a kick left (`PlayerQuitEvent` starts
+    /// from it).
+    fn remove_player_leaving(&mut self, entity_id: i32, reason: &str, leave: Option<Component>) {
         let Some(player) = self.players.get_mut(&entity_id) else { return };
         if player.leaving {
             // A quit listener kicked the player that is already leaving.
@@ -302,7 +313,7 @@ impl Server {
         // Vanilla counts the leave before the quit event (`PlayerList.remove`).
         self.award_stat(entity_id, super::stats::CUSTOM, "minecraft:leave_game", 1);
         // PlayerQuitEvent fires while the player is still in the game, as in Paper.
-        let message = Component::translatable("multiplayer.player.left", vec![Component::text(name)]).color("yellow");
+        let message = leave.unwrap_or_else(|| Component::translatable("multiplayer.player.left", vec![Component::text(name)]).color("yellow"));
         let message = crate::plugins::events::on_quit(self, uuid, reason, message);
         if let Some(player) = self.players.get(&entity_id) {
             self.save_player_data(player);

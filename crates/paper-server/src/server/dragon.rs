@@ -880,7 +880,7 @@ impl Server {
         let arrow = damage.direct.is_some_and(|d| self.worlds[world].entities.get(&d).is_some_and(|e| matches!(e.kind, EntityKind::Arrow { .. })));
         if phase.is_sitting() && arrow {
             if let Some(d) = damage.direct {
-                self.set_on_fire(world, d, 20);
+                self.set_on_fire(world, d, 20, crate::plugins::events::Combuster::Nothing);
             }
             amount = 0.0;
         }

@@ -314,7 +314,7 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     @Override
     public void kick(final @Nullable Component message, final PlayerKickEvent.Cause cause) {
-        this.server.send("player.kick", this.args("reason", Components.toJson(message == null ? Component.translatable("multiplayer.disconnect.kicked") : message)));
+        this.server.send("player.kick", this.args("reason", Components.toJson(message == null ? Component.translatable("multiplayer.disconnect.kicked") : message), "cause", cause.name()));
     }
 
     @Override

@@ -192,7 +192,7 @@ impl Server {
         e.pos = at;
         match victim {
             Some(v) => {
-                self.set_on_fire(world, v, 100);
+                self.set_on_fire(world, v, 100, crate::plugins::events::Combuster::Entity(id));
                 let damage = Damage { kind: "minecraft:fireball", attacker: owner, direct: Some(id), position: Some(at) };
                 self.hurt_entity(world, v, damage, 5.0);
             }
@@ -400,7 +400,7 @@ impl Server {
             self.hurt_entity(world, target, damage, amount as f32);
         } else {
             let amount = (scale * (4 << amplifier.clamp(0, 30)) as f64 + 0.5) as i32;
-            self.heal_entity(world, target, amount as f32);
+            self.heal_entity(world, target, amount as f32, "MAGIC");
         }
     }
 

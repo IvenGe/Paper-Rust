@@ -177,7 +177,7 @@ impl Server {
         let heal = (4 << amplifier.clamp(0, 30)) as f32;
         let harm = (6 << amplifier.clamp(0, 30)) as f32;
         match (name, undead) {
-            ("minecraft:instant_health", false) | ("minecraft:instant_damage", true) => self.heal_entity(world, target, heal),
+            ("minecraft:instant_health", false) | ("minecraft:instant_damage", true) => self.heal_entity(world, target, heal, "MAGIC"),
             ("minecraft:instant_health", true) | ("minecraft:instant_damage", false) => {
                 self.hurt_entity(world, target, Damage::new("minecraft:magic"), harm);
             }
@@ -191,8 +191,10 @@ impl Server {
         }
     }
 
-    /// Heals a player or mob.
-    pub fn heal_entity(&mut self, world: usize, target: i32, amount: f32) {
+    /// Heals a player or mob, unless plugins stop it (`EntityRegainHealthEvent`, `reason` a
+    /// `RegainReason`).
+    pub fn heal_entity(&mut self, world: usize, target: i32, amount: f32, reason: &str) {
+        let Some(amount) = crate::plugins::events::on_regain_health(self, world, target, amount, reason) else { return };
         if self.players.contains_key(&target) {
             self.heal_player(target, amount);
             return;
@@ -271,7 +273,7 @@ impl Server {
 
     fn apply_periodic(&mut self, world: usize, target: i32, name: &str, amplifier: i32) {
         match name {
-            "minecraft:regeneration" => self.heal_entity(world, target, 1.0),
+            "minecraft:regeneration" => self.heal_entity(world, target, 1.0, "MAGIC_REGEN"),
             "minecraft:poison" => {
                 // Poison never kills.
                 let health = self.players.get(&target).map(|p| p.health).or_else(|| self.worlds.get(world).and_then(|w| w.entities.get(&target)).and_then(|e| e.mob()).map(|m| m.living.health)).unwrap_or(0.0);

@@ -430,9 +430,13 @@ impl Server {
         if in_lava {
             let p = self.players.get_mut(&id).unwrap();
             p.fall_distance *= 0.5;
-            if !invulnerable {
+            // Catching fire asks plugins (`EntityCombustByBlockEvent`); burning on does not.
+            if !invulnerable && p.fire_ticks > 0 {
                 p.fire_ticks = p.fire_ticks.max(300);
                 p.metadata_dirty = true;
+            } else if !invulnerable {
+                let at = BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+                self.set_on_fire(world, id, 300, crate::plugins::events::Combuster::Block(at));
             }
             if self.hurt_player(id, Damage::new("minecraft:lava"), 4.0) {
                 let pitch = 2.0 + rand::thread_rng().gen::<f32>() * 0.4;
@@ -441,14 +445,16 @@ impl Server {
         }
 
         // Blocks the player is inside of or standing on.
-        for (_, state) in &inside {
+        for (at, state) in &inside {
             let name = blocks::block_of_state(*state).name;
             match name {
                 "minecraft:fire" | "minecraft:soul_fire" => {
-                    if !invulnerable {
+                    if !invulnerable && self.players[&id].fire_ticks > 0 {
                         let p = self.players.get_mut(&id).unwrap();
                         p.fire_ticks = (p.fire_ticks + rand::thread_rng().gen_range(1..3)).max(160);
                         p.metadata_dirty = true;
+                    } else if !invulnerable {
+                        self.set_on_fire(world, id, 160, crate::plugins::events::Combuster::Block(*at));
                     }
                     let amount = if name == "minecraft:soul_fire" { 2.0 } else { 1.0 };
                     self.hurt_player(id, Damage::new("minecraft:in_fire"), amount);
@@ -527,13 +533,15 @@ impl Server {
         let tick = self.tick;
         let p = self.players.get_mut(&id).unwrap();
         if difficulty == Difficulty::Peaceful && regen {
-            if p.health < p.max_health() && tick % 20 == 0 {
-                p.health = (p.health + 1.0).min(p.max_health());
-            }
+            let heal = p.health < p.max_health() && tick % 20 == 0;
             if p.food < 20 && tick % 10 == 0 {
                 p.food += 1;
             }
+            if heal {
+                self.regain_health(id, 1.0, "REGEN");
+            }
         }
+        let Some(p) = self.players.get_mut(&id) else { return };
         if p.exhaustion > 4.0 {
             p.exhaustion -= 4.0;
             if p.saturation > 0.0 {
@@ -554,16 +562,16 @@ impl Server {
             p.food_timer += 1;
             if p.food_timer >= 10 {
                 let amount = p.saturation.min(6.0);
-                p.health = (p.health + amount / 6.0).min(p.max_health());
                 p.exhaustion = (p.exhaustion + amount).min(40.0);
                 p.food_timer = 0;
+                self.regain_health(id, amount / 6.0, "SATIATED");
             }
         } else if regen && p.food >= 18 && hurt {
             p.food_timer += 1;
             if p.food_timer >= 80 {
-                p.health = (p.health + 1.0).min(p.max_health());
                 p.exhaustion = (p.exhaustion + 6.0).min(40.0);
                 p.food_timer = 0;
+                self.regain_health(id, 1.0, "SATIATED");
             }
         } else if p.food <= 0 {
             p.food_timer += 1;
@@ -602,6 +610,14 @@ impl Server {
             };
             p.conn.send(&play::SetHealth { health, food: VarInt(p.food), saturation: p.saturation });
             p.metadata_dirty = true;
+        }
+    }
+
+    /// A player's natural regeneration, unless plugins stop it (`EntityRegainHealthEvent`).
+    fn regain_health(&mut self, id: i32, amount: f32, reason: &str) {
+        let Some(world) = self.players.get(&id).map(|p| p.world) else { return };
+        if let Some(amount) = crate::plugins::events::on_regain_health(self, world, id, amount, reason) {
+            self.heal_player(id, amount);
         }
     }
 

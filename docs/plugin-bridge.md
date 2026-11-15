@@ -172,6 +172,10 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.block_changes` | `world`, `changes`: `[{event, x, y, z, state, from}]` with `event` `grow`, `fade`, `form`, `spread` (with `from` `[x, y, z]`), `decay` or `moisture` and `state` the new block | `results`: `[{cancelled, state}]`, one per change (`BlockGrowEvent`, `BlockFadeEvent`, `BlockFormEvent`, `BlockSpreadEvent`, `LeavesDecayEvent`, `MoistureChangeEvent`, fired one after another; `state` as listeners left it) |
 | `event.block_flows` | `world`, `flows`: `[{x, y, z, face}]` (the fluid's block and the `BlockFace` it flows towards) | `results`: `[{cancelled}]` (`BlockFromToEvent`, one per flow) |
 | `event.entity_change_block` | `entity`, `world`, `x`, `y`, `z`, `to` (the new block), `cancelled` (preset: a sheep without mob griefing) | `cancelled` (`EntityChangeBlockEvent`) |
+| `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
+| `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
+| `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |
+| `event.combust` | `entity`, `world`, `seconds`, and `by_entity` (what set it alight) or `by_block` `[x, y, z]` | `cancelled`, `seconds` (`EntityCombustEvent`, `EntityCombustByEntityEvent`, `EntityCombustByBlockEvent`) |
 | `event.block_ignite` | `world`, `x`, `y`, `z`, `cause` (`IgniteCause`), and `entity` (a player, a lightning bolt, a fireball's shooter, what exploded) or `from` `[x, y, z]` (lava, a dispenser) | `cancelled` (`BlockIgniteEvent`; flint and steel still wears, a fire charge is still used up) |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
@@ -226,7 +230,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.send_message` | `uuid`, `message`, `overlay` |
 | `player.send_title` / `player.clear_title` | `uuid`, `title`, `subtitle`, `fade_in`, `stay`, `fade_out` / `reset` |
 | `player.send_tab_list` | `uuid`, `header`, `footer` |
-| `player.kick` | `uuid`, `reason` |
+| `player.kick` | `uuid`, `reason`, `cause` (`PlayerKickEvent.Cause`, `PLUGIN` if left out; the server fires `PlayerKickEvent` with it) |
 | `player.teleport` | `uuid`, `world`, `x`, `y`, `z`, `yaw`, `pitch` (answers the new state) |
 | `player.set_game_mode` | `uuid`, `mode` |
 | `player.set_op` | `uuid`, `op` |

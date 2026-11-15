@@ -1047,6 +1047,51 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     }
     let cleared: Vec<_> = stone.iter().map(|(p, _)| *p).chain([spring, spring.offset(0, -1, 0), sand, sand.offset(0, -1, 0)]).map(|p| (p, "minecraft:air")).collect();
     put(&server, &cleared, false);
+
+    // A survival player starting to break stone, being healed, set alight and kicked:
+    // stopped, then let happen (all but the kick).
+    let stone_at = feet.offset(2, 0, 0);
+    put(&server, &[(stone_at, "minecraft:stone")], false);
+    server.handle.run(move |s| s.set_game_mode(alice_id, paper_server::config::GameMode::Survival)).unwrap();
+    for (mode, happened) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        server.handle.run(move |s| s.players.get_mut(&alice_id).unwrap().health = 10.0).unwrap();
+        alice.send(&play::PlayerAction { status: VarInt(play::player_action::START_DESTROY_BLOCK), pos: stone_at, face: 1, sequence: VarInt(95) });
+        alice.drain(QUIET);
+        // (Healed by how much: a mob about may have hurt her meanwhile.)
+        let (digging, healed, burning) = server
+            .handle
+            .run(move |s| {
+                let before = s.players[&alice_id].health;
+                s.heal_entity(0, alice_id, 4.0, "MAGIC");
+                s.players.get_mut(&alice_id).unwrap().fire_ticks = 0;
+                s.set_on_fire(0, alice_id, 100, paper_server::plugins::events::Combuster::Nothing);
+                let p = &s.players[&alice_id];
+                (p.digging.is_some(), p.health - before, p.fire_ticks > 0)
+            })
+            .unwrap();
+        assert_eq!((digging, healed, burning), (happened, if happened { 4.0 } else { 0.0 }, happened), "{mode}");
+        let mut expected = vec!["DAMAGE STONE false", "REGAIN 4.0 MAGIC", "COMBUST 5.0"];
+        if mode == "cancel" {
+            server.handle.console_command("kick Alice Bye");
+            expected.push("KICK KICKED");
+        }
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(expected.iter().all(|e| seen.contains(e)), "{mode}: {seen}");
+        assert!(server.handle.run(move |s| s.players.contains_key(&alice_id)).unwrap(), "{mode}: still here");
+        alice.send(&play::PlayerAction { status: VarInt(play::player_action::ABORT_DESTROY_BLOCK), pos: stone_at, face: 1, sequence: VarInt(96) });
+        server.handle.run(move |s| s.players.get_mut(&alice_id).unwrap().fire_ticks = 0).unwrap();
+    }
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+            s.players.get_mut(&alice_id).unwrap().health = 20.0;
+            s.worlds[0].set_block(stone_at.x, stone_at.y, stone_at.z, paper_data::blocks::AIR);
+        })
+        .unwrap();
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");

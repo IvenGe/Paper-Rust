@@ -234,7 +234,7 @@ impl Server {
         }
         let fire = level("minecraft:fire_aspect");
         if fire > 0 {
-            self.set_on_fire(world, target, 80 * fire);
+            self.set_on_fire(world, target, 80 * fire, crate::plugins::events::Combuster::Entity(id));
         }
         // Weapons wear with use (`weapon.item_damage_per_attack`).
         if let Some(stack) = weapon.0.as_ref() {
@@ -276,7 +276,20 @@ impl Server {
     }
 
     /// Sets a player or mob on fire for `ticks` (if longer than it already burns).
-    pub fn set_on_fire(&mut self, world: usize, id: i32, ticks: i32) {
+    /// Sets a player or mob alight for `ticks` (unless it burns longer already), asking
+    /// plugins first (`EntityCombustEvent`, `by` what).
+    pub fn set_on_fire(&mut self, world: usize, id: i32, ticks: i32, by: crate::plugins::events::Combuster) {
+        let current = match self.players.get(&id) {
+            Some(p) => Some(p.fire_ticks),
+            None => self.worlds[world].entities.get(&id).and_then(|e| match &e.kind {
+                EntityKind::Mob(m) if !e.info.fire_immune => Some(m.living.fire_ticks),
+                _ => None,
+            }),
+        };
+        if current.is_none_or(|c| c >= ticks) {
+            return;
+        }
+        let Some(ticks) = crate::plugins::events::on_combust(self, world, id, ticks, by) else { return };
         if let Some(p) = self.players.get_mut(&id) {
             if p.fire_ticks < ticks {
                 p.fire_ticks = ticks;
@@ -285,9 +298,8 @@ impl Server {
             return;
         }
         if let Some(e) = self.worlds[world].entities.get_mut(&id) {
-            let immune = e.info.fire_immune;
             if let EntityKind::Mob(m) = &mut e.kind {
-                if !immune && m.living.fire_ticks < ticks {
+                if m.living.fire_ticks < ticks {
                     m.living.fire_ticks = ticks;
                     e.metadata_dirty = true;
                 }

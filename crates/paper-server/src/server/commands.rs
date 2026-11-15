@@ -496,7 +496,7 @@ fn cmd_kick(server: &mut Server, source: &CommandSource, args: &[&str]) {
     let reason = if args.len() > 1 { Component::text(args[1..].join(" ")) } else { Component::translatable("multiplayer.disconnect.kicked", vec![]) };
     for target in targets {
         let Some(name) = server.players.get(&target).map(|p| p.name().to_owned()) else { continue };
-        server.kick(target, &reason);
+        server.kick(target, &reason, "KICKED");
         server.feedback(source, Component::translatable("commands.kick.success", vec![Component::text(name), reason.clone()]));
     }
 }
@@ -982,7 +982,7 @@ fn cmd_ban(server: &mut Server, source: &CommandSource, args: &[&str]) {
         return server.fail(source, "Nothing changed. The player is already banned");
     }
     if let Some(id) = server.by_uuid.get(&uuid).copied() {
-        server.kick(id, &Component::translatable("multiplayer.disconnect.banned", vec![]));
+        server.kick(id, &Component::translatable("multiplayer.disconnect.banned", vec![]), "BANNED");
     }
     server.feedback(source, Component::text(format!("Banned {name}: {}", reason.as_deref().unwrap_or("Banned by an operator."))));
 }
@@ -1014,7 +1014,7 @@ fn cmd_ban_ip(server: &mut Server, source: &CommandSource, args: &[&str]) {
     }
     let affected: Vec<i32> = server.players.values().filter(|p| p.conn.addr.ip().to_string() == ip).map(|p| p.entity_id).collect();
     for id in &affected {
-        server.kick(*id, &Component::translatable("multiplayer.disconnect.ip_banned", vec![]));
+        server.kick(*id, &Component::translatable("multiplayer.disconnect.ip_banned", vec![]), "IP_BANNED");
     }
     server.feedback(source, Component::text(format!("Banned IP {ip}: {}", reason.as_deref().unwrap_or("Banned by an operator."))));
 }

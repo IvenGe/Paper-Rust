@@ -70,7 +70,23 @@ impl Server {
     /// START_DESTROY_BLOCK in survival: instant blocks break at once (or are put back on the
     /// client if that fails), others start the clock.
     pub(super) fn start_digging(&mut self, id: i32, pos: BlockPos, state: u32) {
-        let progress = self.destroy_progress(id, state);
+        let mut progress = self.destroy_progress(id, state);
+        // Plugins see the start (`BlockDamageEvent`): stopped, nothing happens; or they make
+        // it break at once.
+        if !blocks::is_air(state) {
+            let face = self.players.get(&id).and_then(|p| p.dig_effects.as_ref().map(|d| d.face)).unwrap_or(1);
+            match crate::plugins::events::on_block_damage(self, id, pos, face, progress >= 1.0) {
+                None => {
+                    if let Some(p) = self.players.get_mut(&id) {
+                        p.dig_effects = None;
+                    }
+                    self.resend_block(id, pos);
+                    return;
+                }
+                Some(true) => progress = progress.max(1.0),
+                Some(false) => {}
+            }
+        }
         if progress >= 1.0 {
             if !self.break_block(id, pos) {
                 self.resend_block(id, pos);

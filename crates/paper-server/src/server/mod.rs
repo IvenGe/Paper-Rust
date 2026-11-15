@@ -972,7 +972,7 @@ impl Server {
         let reason = Component::translatable("multiplayer.disconnect.server_shutdown", vec![]);
         let ids: Vec<i32> = self.player_order.clone();
         for id in ids {
-            self.kick(id, &reason);
+            self.kick(id, &reason, "UNKNOWN");
         }
         // Generation jobs hold unfinished chunks: wait for them, or the chunks they hold
         // (and what neighbours wrote into them) would be lost.

@@ -1012,7 +1012,7 @@ impl Server {
             }
             // Burning zombies set their victims alight.
             if is_zombie && burning && rand::thread_rng().gen::<f32>() < difficulty as f32 * 0.3 {
-                self.set_on_fire(world, target, 40 * difficulty);
+                self.set_on_fire(world, target, 40 * difficulty, crate::plugins::events::Combuster::Entity(id));
             }
             // Poisonous and withering bites (`CaveSpider`, `Husk`, `WitherSkeleton.doHurtTarget`).
             let bite = match name.as_str() {

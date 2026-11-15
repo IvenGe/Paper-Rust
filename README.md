@@ -290,7 +290,12 @@ What works:
   and lava flowing (as in Paper, a stopped flow down stops the spreading to the sides too,
   and the fluid tries again when something next to it changes), and `EntityChangeBlockEvent`
   (endermen taking and placing blocks, blocks starting to fall and landing, sheep eating
-  grass, players trampling farmland). Players,
+  grass, players trampling farmland), `BlockDamageEvent` (a survival player starting to
+  break a block; plugins may stop it or make it break at once), `PlayerKickEvent` for every
+  kick (`/kick`, bans, timeouts, duplicate logins, plugins), `EntityRegainHealthEvent`
+  (natural regeneration, regeneration and instant health) and `EntityCombustEvent` with its
+  `ByEntity` and `ByBlock` forms (fire aspect, burning zombies, lightning, small fireballs,
+  and players catching fire in lava or fire). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -451,7 +456,7 @@ Not yet:
   and `/worldborder` are not there yet.
   Events not fired yet include trees and huge mushrooms growing (`StructureGrowEvent`),
   bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`, projectiles being launched and
-  hitting, and vehicles.
+  hitting, mobs catching fire in lava, fire or daylight, and vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

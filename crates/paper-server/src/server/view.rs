@@ -443,7 +443,7 @@ impl Server {
             player.conn.send(&play::KeepAlive { id });
         }
         for id in timed_out {
-            self.kick(id, &Component::translatable("disconnect.timeout", vec![]));
+            self.kick(id, &Component::translatable("disconnect.timeout", vec![]), "TIMEOUT");
         }
     }
 

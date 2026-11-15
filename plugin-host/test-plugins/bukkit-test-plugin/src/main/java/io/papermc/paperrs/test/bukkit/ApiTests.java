@@ -1487,6 +1487,33 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     @EventHandler
+    public void onBlockDamage(final org.bukkit.event.block.BlockDamageEvent event) {
+        this.blockEvent(event, "DAMAGE " + event.getBlock().getType() + " " + event.getInstaBreak());
+    }
+
+    @EventHandler
+    public void onKick(final org.bukkit.event.player.PlayerKickEvent event) {
+        this.blockEvent(event, "KICK " + event.getCause());
+    }
+
+    // Players only: the test world's mobs heal and burn too.
+    @EventHandler
+    public void onRegainHealth(final org.bukkit.event.entity.EntityRegainHealthEvent event) {
+        if (event.getEntity() instanceof Player) {
+            this.blockEvent(event, "REGAIN " + event.getAmount() + " " + event.getRegainReason());
+        }
+    }
+
+    @EventHandler
+    public void onCombust(final org.bukkit.event.entity.EntityCombustEvent event) {
+        if (event.getEntity() instanceof Player) {
+            final String by = event instanceof org.bukkit.event.entity.EntityCombustByBlockEvent block ? " by " + (block.getCombuster() == null ? "-" : block.getCombuster().getType())
+                : event instanceof org.bukkit.event.entity.EntityCombustByEntityEvent entity ? " by " + entity.getCombuster().getType() : "";
+            this.blockEvent(event, "COMBUST " + event.getDuration() + by);
+        }
+    }
+
+    @EventHandler
     public void onDecay(final org.bukkit.event.block.LeavesDecayEvent event) {
         this.blockEvent(event, "DECAY " + event.getBlock().getType());
     }

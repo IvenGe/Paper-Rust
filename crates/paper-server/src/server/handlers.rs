@@ -217,7 +217,7 @@ impl Server {
                     player.held_slot = p.slot as u8;
                     player.equipment_dirty = true;
                 } else {
-                    self.kick(id, &Component::text("Invalid hotbar selection (Hacking?)"));
+                    self.kick(id, &Component::text("Invalid hotbar selection (Hacking?)"), "ILLEGAL_ACTION");
                 }
             }
             Serverbound::SetCreativeModeSlot(p) => self.handle_creative_slot(id, p.slot, p.item),
@@ -291,7 +291,7 @@ impl Server {
         let Some(player) = self.players.get_mut(&id) else { return };
         let finite = pos.is_none_or(|(x, y, z)| x.is_finite() && y.is_finite() && z.is_finite()) && rot.is_none_or(|(yaw, pitch)| yaw.is_finite() && pitch.is_finite());
         if !finite {
-            self.kick(id, &Component::translatable("multiplayer.disconnect.invalid_player_movement", vec![]));
+            self.kick(id, &Component::translatable("multiplayer.disconnect.invalid_player_movement", vec![]), "INVALID_PLAYER_MOVEMENT");
             return;
         }
         // Until a teleport is confirmed the client is still reporting its old position; in

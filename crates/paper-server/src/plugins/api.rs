@@ -520,7 +520,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         "player.kick" => {
             let id = player_id(server, args)?;
             let reason = component_from(args.get("reason")).unwrap_or_else(|| Component::translatable("multiplayer.disconnect.kicked", vec![]));
-            server.kick(id, &reason);
+            server.kick(id, &reason, args.str("cause").unwrap_or("PLUGIN"));
             Ok(Value::Null)
         }
         "player.teleport" => {

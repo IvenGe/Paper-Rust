@@ -118,6 +118,11 @@ public final class HostEvents {
         GATED.put("BlockIgniteEvent", org.bukkit.event.block.BlockIgniteEvent.class);
         GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
         GATED.put("BlockFromToEvent", org.bukkit.event.block.BlockFromToEvent.class);
+        GATED.put("BlockDamageEvent", org.bukkit.event.block.BlockDamageEvent.class);
+        GATED.put("PlayerKickEvent", org.bukkit.event.player.PlayerKickEvent.class);
+        GATED.put("EntityRegainHealthEvent", org.bukkit.event.entity.EntityRegainHealthEvent.class);
+        // (The ByEntity and ByBlock forms share its handler list.)
+        GATED.put("EntityCombustEvent", org.bukkit.event.entity.EntityCombustEvent.class);
         GATED.put("EntityChangeBlockEvent", org.bukkit.event.entity.EntityChangeBlockEvent.class);
         GATED.put("BlockGrowEvent", org.bukkit.event.block.BlockGrowEvent.class);
         GATED.put("BlockFadeEvent", org.bukkit.event.block.BlockFadeEvent.class);
@@ -415,6 +420,40 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
             }
             case "event.block_changes" -> this.blockChanges(args);
+            case "event.block_damage" -> {
+                final HostPlayer player = this.player(args);
+                final org.bukkit.event.block.BlockDamageEvent event = new org.bukkit.event.block.BlockDamageEvent(player, this.block(args),
+                    org.bukkit.block.BlockFace.valueOf(Values.str(args, "face", "UP")), player.getInventory().getItemInMainHand(), Values.bool(args, "insta", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "insta", event.getInstaBreak());
+            }
+            case "event.kick" -> {
+                final org.bukkit.event.player.PlayerKickEvent event = new org.bukkit.event.player.PlayerKickEvent(this.player(args), Components.fromJson(args.get("reason")),
+                    Components.fromJson(args.get("leave")), org.bukkit.event.player.PlayerKickEvent.Cause.valueOf(Values.str(args, "cause", "UNKNOWN")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "reason", Components.toJson(event.reason()), "leave", Components.toJson(event.leaveMessage()));
+            }
+            case "event.regain_health" -> {
+                final org.bukkit.event.entity.EntityRegainHealthEvent event = new org.bukkit.event.entity.EntityRegainHealthEvent(
+                    io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))), Values.f64(args, "amount", 0),
+                    org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason.valueOf(Values.str(args, "reason", "CUSTOM")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "amount", event.getAmount());
+            }
+            case "event.combust" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                final float seconds = (float) Values.f64(args, "seconds", 0);
+                final org.bukkit.event.entity.EntityCombustEvent event;
+                if (args.get("by_entity") instanceof Map<?, ?> by) {
+                    event = new org.bukkit.event.entity.EntityCombustByEntityEvent(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(by)), entity, seconds);
+                } else if (args.get("by_block") != null) {
+                    event = new org.bukkit.event.entity.EntityCombustByBlockEvent(this.at(this.server.getWorld(Values.str(args, "world")), args.get("by_block")), entity, seconds);
+                } else {
+                    event = new org.bukkit.event.entity.EntityCombustEvent(entity, seconds);
+                }
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "seconds", (double) event.getDuration());
+            }
             case "event.entity_change_block" -> {
                 final org.bukkit.event.entity.EntityChangeBlockEvent event = new org.bukkit.event.entity.EntityChangeBlockEvent(
                     io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))), this.block(args), org.bukkit.Bukkit.createBlockData(Values.str(args, "to")));

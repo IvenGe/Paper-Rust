@@ -19,7 +19,7 @@ impl Server {
     pub fn handle_player_chat(&mut self, id: i32, message: &str) {
         let Some(player) = self.players.get(&id) else { return };
         if !message.chars().all(is_allowed_chat_char) {
-            self.kick(id, &Component::translatable("multiplayer.disconnect.illegal_characters", vec![]));
+            self.kick(id, &Component::translatable("multiplayer.disconnect.illegal_characters", vec![]), "ILLEGAL_CHARACTERS");
             return;
         }
         let message = normalize(message);
