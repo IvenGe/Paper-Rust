@@ -1750,3 +1750,233 @@ pub fn on_cloud_apply(server: &mut Server, world: usize, cloud: i32, affected: V
         _ => affected,
     }
 }
+
+/// `PlayerItemDamageEvent`: the player's `item` is to wear by `wear` points (`original` before
+/// Unbreaking spared some). The wear plugins leave, or `None` if they cancelled it.
+pub fn on_item_damage(server: &mut Server, id: i32, item: &paper_protocol::types::Slot, wear: i32, original: i32) -> Option<i32> {
+    if !listens(server, "PlayerItemDamageEvent") {
+        return Some(wear);
+    }
+    let Some(p) = server.players.get(&id) else { return Some(wear) };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "item" => super::api::item_value(item), "damage" => wear, "original" => original };
+    match fire(server, "PlayerItemDamageEvent", "event.item_damage", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.i32("damage").unwrap_or(wear).max(0)),
+        None => Some(wear),
+    }
+}
+
+/// `PlayerItemBreakEvent`: the player's `item` wore out.
+pub fn on_item_break(server: &mut Server, id: i32, item: &paper_protocol::types::Slot) {
+    if !listens(server, "PlayerItemBreakEvent") {
+        return;
+    }
+    let Some(p) = server.players.get(&id) else { return };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "item" => super::api::item_value(item) };
+    fire(server, "PlayerItemBreakEvent", "event.item_break", args);
+}
+
+/// Who shears an entity: a player with the shears in a hand (0 main, 1 off), or a dispenser.
+#[derive(Clone, Copy, Debug)]
+pub enum Shearer {
+    Player(i32, i32),
+    Dispenser(BlockPos),
+}
+
+/// `PlayerShearEntityEvent` / `BlockShearEntityEvent`: `entity` is to be sheared with `tool`,
+/// dropping `drops`. The drops plugins leave, or `None` if they cancelled it.
+pub fn on_shear(server: &mut Server, world: usize, entity: i32, by: Shearer, tool: &paper_protocol::types::Slot, drops: Vec<paper_protocol::types::Slot>) -> Option<Vec<paper_protocol::types::Slot>> {
+    let event = match by {
+        Shearer::Player(..) => "PlayerShearEntityEvent",
+        Shearer::Dispenser(_) => "BlockShearEntityEvent",
+    };
+    if !listens(server, event) || !server.worlds[world].entities.contains_key(&entity) {
+        return Some(drops);
+    }
+    let mut args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "entity" => actor_value(server, world, entity),
+        "item" => super::api::item_value(tool),
+        "drops" => Value::List(drops.iter().map(super::api::item_value).collect()),
+    };
+    match by {
+        Shearer::Player(id, hand) => {
+            let Some(p) = server.players.get(&id) else { return Some(drops) };
+            args.set("uuid", p.uuid().to_string());
+            args.set("hand", hand);
+        }
+        Shearer::Dispenser(pos) => args.set("block", pos_value(pos)),
+    }
+    match fire(server, event, "event.shear", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => match result.get("drops").as_list() {
+            Some(list) => Some(list.iter().filter_map(|v| super::api::slot_from(v).ok()).collect()),
+            None => Some(drops),
+        },
+        None => Some(drops),
+    }
+}
+
+/// What plugins decided about a player getting into bed (`PlayerBedEnterEvent.useBed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BedUse {
+    /// Sleep, whatever stood in the way.
+    Allow,
+    /// Do not.
+    Deny,
+    /// As the server decided.
+    Default,
+}
+
+/// `PlayerBedEnterEvent`: the player is to get into the bed at `head`, `result` being the
+/// server's verdict as a `BedEnterResult` (`OK`, `NOT_POSSIBLE_NOW`, `TOO_FAR_AWAY`, ...), with
+/// `message` (a translation key) shown if it fails; `dark` and `can_set_spawn` describe the
+/// bed's rules there.
+#[allow(clippy::too_many_arguments)]
+pub fn on_bed_enter(server: &mut Server, id: i32, world: usize, head: BlockPos, result: &str, dark: bool, can_set_spawn: bool, message: Option<&str>) -> BedUse {
+    if !listens(server, "PlayerBedEnterEvent") {
+        return BedUse::Default;
+    }
+    let Some(p) = server.players.get(&id) else { return BedUse::Default };
+    let can_sleep = if !can_set_spawn { "NEVER" } else if dark { "ALLOWED" } else { "TOO_MUCH_LIGHT" };
+    let mut args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "world" => server.worlds[world].name.clone(),
+        "x" => head.x, "y" => head.y, "z" => head.z,
+        "result" => result,
+        "can_sleep" => can_sleep,
+        "can_set_spawn" => if can_set_spawn { "ALLOWED" } else { "NEVER" },
+    };
+    if let Some(message) = message {
+        args.set("message", component_value(&Component::translatable(message, vec![])));
+    }
+    match fire(server, "PlayerBedEnterEvent", "event.bed_enter", args).as_ref().and_then(|r| r.str("use")) {
+        Some("ALLOW") => BedUse::Allow,
+        Some("DENY") => BedUse::Deny,
+        _ => BedUse::Default,
+    }
+}
+
+/// `PlayerBedLeaveEvent`: the player is to get out of the bed at `head`. Returns whether
+/// plugins let it.
+pub fn on_bed_leave(server: &mut Server, id: i32, head: BlockPos) -> bool {
+    if !listens(server, "PlayerBedLeaveEvent") {
+        return true;
+    }
+    let Some(p) = server.players.get(&id) else { return true };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "world" => server.worlds[p.world].name.clone(), "x" => head.x, "y" => head.y, "z" => head.z };
+    match fire(server, "PlayerBedLeaveEvent", "event.bed_leave", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `PlayerChangedMainHandEvent`: the player switched hands; `new` is the main hand now (0 left,
+/// 1 right).
+pub fn on_main_hand_change(server: &mut Server, id: i32, new: i32) {
+    if !listens(server, "PlayerChangedMainHandEvent") {
+        return;
+    }
+    let Some(p) = server.players.get(&id) else { return };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "hand" => if new == 0 { "LEFT" } else { "RIGHT" } };
+    fire(server, "PlayerChangedMainHandEvent", "event.main_hand", args);
+}
+
+/// `PlayerLocaleChangeEvent`: the player's client changed its language to `new`.
+pub fn on_locale_change(server: &mut Server, id: i32, new: &str) {
+    if !listens(server, "PlayerLocaleChangeEvent") {
+        return;
+    }
+    let Some(p) = server.players.get(&id) else { return };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "locale" => new };
+    fire(server, "PlayerLocaleChangeEvent", "event.locale", args);
+}
+
+/// The state of an item entity holding `stack` at `pos` that never enters the world (Paper
+/// makes one for `PlayerPickupArrowEvent`).
+fn passing_item(server: &Server, world: usize, pos: crate::world::entity::Vec3, stack: &paper_protocol::types::ItemStack) -> Value {
+    let Some(info) = paper_data::entity_types::by_name("minecraft:item") else { return Value::Null };
+    let kind = crate::world::entity::EntityKind::Item { stack: paper_protocol::types::Slot(Some(stack.clone())), pickup_delay: 0, thrower: None, owner: None };
+    let item = crate::world::entity::Entity::new(-1, info, pos, kind);
+    bmap! { "entity" => -1i64, "value" => super::entity::entity_value(server, world, &item) }
+}
+
+/// `PlayerPickupArrowEvent`: the player is to pick up the arrow `arrow` as `item`. Returns
+/// whether plugins let them.
+pub fn on_pickup_arrow(server: &mut Server, world: usize, player: i32, arrow: i32, item: &paper_protocol::types::ItemStack) -> bool {
+    if !listens(server, "PlayerPickupArrowEvent") {
+        return true;
+    }
+    let (Some(p), Some(pos)) = (server.players.get(&player), server.worlds[world].entities.get(&arrow).map(|e| e.pos)) else { return true };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "arrow" => actor_value(server, world, arrow), "item" => passing_item(server, world, pos, item) };
+    match fire(server, "PlayerPickupArrowEvent", "event.pickup_arrow", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// A thrown egg `egg` broke: whether it hatches, how many and what (`PlayerEggThrowEvent` when a
+/// player threw it, then Paper's `ThrownEggHatchEvent`). How many hatch (0 for none) and what,
+/// as plugins leave it.
+pub fn on_egg_hatch(server: &mut Server, world: usize, egg: i32, owner: Option<i32>, hatching: bool, count: i32, kind: &str) -> (i32, String) {
+    let count = if hatching { count } else { 0 };
+    let player = owner.and_then(|o| server.players.get(&o)).map(|p| p.uuid().to_string());
+    let throw = player.is_some() && listens(server, "PlayerEggThrowEvent");
+    let hatch = listens(server, "ThrownEggHatchEvent");
+    if !throw && !hatch || !server.worlds[world].entities.contains_key(&egg) {
+        return (count, kind.to_owned());
+    }
+    let mut args = bmap! { "entity" => actor_value(server, world, egg), "hatching" => hatching, "count" => count, "type" => kind, "throw" => throw, "hatch" => hatch };
+    if let Some(uuid) = player {
+        args.set("uuid", uuid);
+    }
+    match fire(server, "", "event.egg", args) {
+        Some(result) => {
+            let hatching = result.bool("hatching").unwrap_or(hatching);
+            let count = if hatching { result.i32("count").unwrap_or(count).clamp(0, 127) } else { 0 };
+            (count, result.str("type").unwrap_or(kind).to_owned())
+        }
+        None => (count, kind.to_owned()),
+    }
+}
+
+/// `ExpBottleEvent`: the bottle o' enchanting `bottle` broke on `hit_entity` or `hit_block`,
+/// to give `amount` experience. The experience and whether its splash shows, as plugins leave
+/// them.
+pub fn on_exp_bottle(server: &mut Server, world: usize, bottle: i32, hit_entity: Option<i32>, hit_block: Option<(BlockPos, usize)>, amount: i32) -> (i32, bool) {
+    if !listens(server, "ExpBottleEvent") || !server.worlds[world].entities.contains_key(&bottle) {
+        return (amount, true);
+    }
+    let mut args = splash_args(server, world, bottle, hit_entity, hit_block);
+    args.set("experience", amount);
+    match fire(server, "ExpBottleEvent", "event.exp_bottle", args) {
+        Some(result) => (result.i32("experience").unwrap_or(amount).max(0), result.bool("show").unwrap_or(true)),
+        None => (amount, true),
+    }
+}
+
+/// `ItemDespawnEvent`: the dropped item `item` is old enough to go. Returns whether plugins let
+/// it.
+pub fn on_item_despawn(server: &mut Server, world: usize, item: i32) -> bool {
+    if !listens(server, "ItemDespawnEvent") || !server.worlds[world].entities.contains_key(&item) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, item) };
+    match fire(server, "ItemDespawnEvent", "event.item_despawn", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `ItemMergeEvent`: the dropped item `item` is to merge into `target`. Returns whether plugins
+/// let it.
+pub fn on_item_merge(server: &mut Server, world: usize, item: i32, target: i32) -> bool {
+    if !listens(server, "ItemMergeEvent") {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, item), "target" => actor_value(server, world, target) };
+    match fire(server, "ItemMergeEvent", "event.item_merge", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}

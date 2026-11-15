@@ -278,12 +278,15 @@ impl Server {
         match name.as_str() {
             "minecraft:snowball" | "minecraft:egg" => {
                 self.entity_event(world, id, 3);
-                // One egg in eight hatches a chick, one of those 32 four (`ThrownEgg`).
-                if name == "minecraft:egg" && rng.gen_range(0..8) == 0 {
+                // One egg in eight hatches a chick, one of those 32 four (`ThrownEgg`); plugins
+                // may change that (`PlayerEggThrowEvent`, `ThrownEggHatchEvent`).
+                if name == "minecraft:egg" {
+                    let hatching = rng.gen_range(0..8) == 0;
                     let count = if rng.gen_range(0..32) == 0 { 4 } else { 1 };
+                    let (count, kind) = crate::plugins::events::on_egg_hatch(self, world, id, owner, hatching, count, "minecraft:chicken");
                     for _ in 0..count {
-                        if let Some(chick) = self.spawn_mob(world, "minecraft:chicken", at, SpawnReason::Natural) {
-                            if let Some(m) = self.worlds[world].entities.get_mut(&chick).and_then(|e| e.mob_mut()) {
+                        if let Some(chick) = self.spawn_mob(world, &kind, at, SpawnReason::Hatched) {
+                            if let Some(m) = self.worlds[world].entities.get_mut(&chick).filter(|e| crate::world::entity_nbt::ages(&e.info.name)).and_then(|e| e.mob_mut()) {
                                 m.baby = true;
                                 m.age = -24000;
                             }
@@ -293,8 +296,12 @@ impl Server {
             }
             "minecraft:ender_pearl" => self.pearl_lands(world, at, owner),
             "minecraft:experience_bottle" => {
-                self.broadcast_level_event(world, 2002, BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32), -13083194, false);
+                // Plugins may change the experience, or hide the splash (`ExpBottleEvent`).
                 let amount = 3 + rng.gen_range(0..5) + rng.gen_range(0..5);
+                let (amount, show) = crate::plugins::events::on_exp_bottle(self, world, id, victim, block, amount);
+                if show {
+                    self.broadcast_level_event(world, 2002, BlockPos::new(at.x.floor() as i32, at.y.floor() as i32, at.z.floor() as i32), -13083194, false);
+                }
                 self.award_experience(world, at, amount);
             }
             "minecraft:splash_potion" | "minecraft:lingering_potion" => self.splash(world, id, at, &item, owner, victim, block, name == "minecraft:lingering_potion"),

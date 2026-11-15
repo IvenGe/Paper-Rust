@@ -307,7 +307,14 @@ What works:
   which stays lit if stopped; the portal a trip builds at the other end, whose trip ends there
   if stopped; the End platform), `PotionSplashEvent` with Paper's `WaterBottleSplashEvent`
   (fired for every thrown potion; water puts out fires where it breaks, too),
-  `LingeringPotionSplashEvent` and `AreaEffectCloudApplyEvent`. Players,
+  `LingeringPotionSplashEvent`, `AreaEffectCloudApplyEvent`, `PlayerItemDamageEvent` and
+  `PlayerItemBreakEvent` (players' tools, weapons and armour wearing), `PlayerShearEntityEvent`
+  and `BlockShearEntityEvent` (sheep; plugins may change what drops), `PlayerBedEnterEvent`
+  (with Paper's enter action; plugins may put a player to bed all the same) and
+  `PlayerBedLeaveEvent`, `PlayerChangedMainHandEvent`, `PlayerLocaleChangeEvent`,
+  `PlayerPickupArrowEvent`, `PlayerEggThrowEvent` and Paper's `ThrownEggHatchEvent`,
+  `ExpBottleEvent`, `ItemDespawnEvent` (a kept item starts its five minutes again) and
+  `ItemMergeEvent`. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,

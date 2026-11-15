@@ -249,6 +249,13 @@ fn line_starting(client: &mut Client, prefix: &str) -> String {
     panic!("no line starting with {prefix:?} among {seen:?}");
 }
 
+/// Waits `d` (while mobs move about, draining until quiet can take ten times as long), then
+/// reads what came meanwhile.
+fn pause(client: &mut Client, d: Duration) {
+    std::thread::sleep(d);
+    client.drain(Duration::from_millis(10));
+}
+
 /// A splash or lingering potion (`kind`) of `potion`.
 fn potion_item(kind: &str, potion: &str) -> paper_protocol::types::Slot {
     let id = paper_data::registries::id("minecraft:potion", potion).unwrap() as i32;
@@ -1329,6 +1336,233 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     });
     assert!(stayed.unwrap(), "the trip ended");
     assert!(seen.contains("PORTAL NETHER_PAIR player 6"), "{seen}");
+
+    // Shearing a sheep (in survival, where shears wear): stopped, shears and all; then let be,
+    // with the diamond the plugin drops instead of the wool, the shears wearing a point.
+    let held = server.handle.run(move |s| s.players[&alice_id].held_slot as usize).unwrap();
+    server.handle.run(move |s| s.set_game_mode(alice_id, paper_server::config::GameMode::Survival)).unwrap();
+    for (mode, sheared) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let at = feet.offset(3, 0, 3);
+        // (On stone: grass would let it grow its wool back.)
+        put(&server, &[(at.offset(0, -1, 0), "minecraft:stone")], false);
+        let sheep = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5);
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.pos.distance_squared(at) < 36.0 && (e.mob().is_some() || matches!(e.kind, EntityKind::Item { .. }))) {
+                    e.removed = true;
+                }
+                let sheep = s.spawn_mob(0, "minecraft:sheep", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+                s.worlds[0].entities.get_mut(&sheep).unwrap().mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+                s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::of(paper_data::items::id("minecraft:shears").unwrap() as i32, 1);
+                s.resync_inventory(alice_id);
+                sheep
+            })
+            .unwrap();
+        pause(&mut alice, Duration::from_millis(150));
+        alice.send(&play::Interact { entity_id: VarInt(sheep), hand: VarInt(0), target: paper_protocol::types::LpVec3(0.0, 0.5, 0.0), sneaking: false });
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("SHEAR SHEEP SHEARS HAND "), "{mode}: {seen}");
+        assert_eq!(seen.contains("WEAR SHEARS 1 1"), sheared, "{mode}: {seen}");
+        let (shorn, damage, diamonds, wool) = server
+            .handle
+            .run(move |s| {
+                let shorn = s.worlds[0].entities[&sheep].mob().unwrap().sheared;
+                let damage = s.players[&alice_id].inventory[36 + held].0.as_ref().map_or(-1, paper_server::server::survival::item_damage);
+                let near = |e: &&paper_server::world::entity::Entity, item: &str| !e.removed && e.pos.distance_squared(s.worlds[0].entities[&sheep].pos) < 16.0 && matches!(&e.kind, EntityKind::Item { stack: Slot(Some(st)), .. } if paper_data::items::get(st.item as u32).is_some_and(|i| i.name == item));
+                let diamonds = s.worlds[0].entities.values().filter(|e| near(e, "minecraft:diamond")).count();
+                let wool = s.worlds[0].entities.values().filter(|e| near(e, "minecraft:white_wool")).count();
+                (shorn, damage, diamonds, wool)
+            })
+            .unwrap();
+        assert_eq!((shorn, damage, diamonds, wool), if sheared { (true, 1, 1, 0) } else { (false, 0, 0, 0) }, "{mode}");
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&sheep).unwrap().removed = true).unwrap();
+    }
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_mode(alice_id, paper_server::config::GameMode::Creative);
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+
+    // A bed by day: stopped; then the plugin puts Alice in it all the same, and daylight gets
+    // her out again (PlayerBedLeaveEvent).
+    server.handle.console_command("time set 1000");
+    let (foot, head) = (feet.offset(1, 0, 2), feet.offset(1, 0, 3));
+    for (mode, slept) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(foot, "minecraft:red_bed[facing=south,part=foot]"), (head, "minecraft:red_bed[facing=south,part=head]")], false);
+        server.handle.run(move |s| s.teleport(alice_id, home)).unwrap();
+        pause(&mut alice, Duration::from_millis(150));
+        alice.send(&play::UseItemOn { hand: VarInt(0), pos: head, face: VarInt(1), cursor_x: 0.5, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(140) });
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("BED NOT_POSSIBLE_NOW false true"), "{mode}: {seen}");
+        assert_eq!(seen.contains("WAKE true"), slept, "{mode}: {seen}");
+        let sleeping = server.handle.run(move |s| s.players[&alice_id].sleeping.is_some()).unwrap();
+        assert!(!sleeping, "{mode}: awake");
+        put(&server, &[(foot, "minecraft:air"), (head, "minecraft:air")], false);
+    }
+    server.handle.run(move |s| s.teleport(alice_id, home)).unwrap();
+
+    // A new main hand and language from the client.
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    alice.send(&play::ClientInformation { settings: paper_protocol::packets::common::ClientSettings { locale: "fr_fr".into(), main_hand: 0, ..Default::default() } });
+    pause(&mut alice, QUIET);
+    alice.command("apitest blockevents");
+    seen = line_starting(&mut alice, "blockevents: ");
+    assert!(seen.contains("HAND LEFT") && seen.contains("LOCALE fr_fr"), "{seen}");
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    alice.send(&play::ClientInformation { settings: paper_protocol::packets::common::ClientSettings::default() });
+
+    // An arrow in the ground at Alice's feet: left there, then picked up.
+    for (mode, taken) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let arrow = server
+            .handle
+            .run(move |s| {
+                let at = s.players[&alice_id].loc;
+                let id = s.spawn_arrow(0, paper_server::world::entity::Vec3::new(at.x, at.y + 0.1, at.z), 0.0, 90.0, 0.1, 0.0, None, 2.0, false, true);
+                let e = s.worlds[0].entities.get_mut(&id).unwrap();
+                if let EntityKind::Arrow { in_ground, .. } = &mut e.kind {
+                    *in_ground = true;
+                }
+                id
+            })
+            .unwrap();
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("ARROW ARROW ARROW"), "{mode}: {seen}");
+        let left = server.handle.run(move |s| s.worlds[0].entities.get(&arrow).is_some_and(|e| !e.removed)).unwrap();
+        assert_eq!(left, !taken, "{mode}: the arrow");
+        server.handle.run(move |s| if let Some(e) = s.worlds[0].entities.get_mut(&arrow) { e.removed = true }).unwrap();
+    }
+
+    // Alice's egg: the plugin makes two chicks hatch ("cancelling"); her bottle o' enchanting
+    // gives no experience then, and some when recording.
+    let ground = feet.offset(-12, 0, -2);
+    for (mode, chicks) in [("cancel", true), ("record", false)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let before = server.handle.run(move |s| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:chicken" && !e.removed).count()).unwrap();
+        server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(ground.x as f64 + 0.5, ground.y as f64 + 2.0, ground.z as f64 + 0.5);
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.info.name == "minecraft:experience_orb") {
+                    e.removed = true;
+                }
+                s.spawn_thrown(0, "minecraft:egg", at, paper_server::world::entity::Vec3::new(0.0, -1.0, 0.0), 0.5, 0.0, 0.03, Slot::of(paper_data::items::id("minecraft:egg").unwrap() as i32, 1), Some(alice_id));
+                s.spawn_thrown(0, "minecraft:experience_bottle", paper_server::world::entity::Vec3::new(at.x + 3.0, at.y, at.z), paper_server::world::entity::Vec3::new(0.0, -1.0, 0.0), 0.5, 0.0, 0.07, Slot::of(paper_data::items::id("minecraft:experience_bottle").unwrap() as i32, 1), Some(alice_id));
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            if seen.contains("HATCH") && seen.contains("XP") || std::time::Instant::now() > deadline {
+                break;
+            }
+            alice.drain(Duration::from_millis(100));
+        }
+        assert!(seen.contains("EGG CHICKEN") && seen.contains("XP true"), "{mode}: {seen}");
+        let (hatched, orbs) = server
+            .handle
+            .run(move |s| {
+                let w = &s.worlds[0];
+                (w.entities.values().filter(|e| e.info.name == "minecraft:chicken" && !e.removed).count(), w.entities.values().filter(|e| e.info.name == "minecraft:experience_orb" && !e.removed).count())
+            })
+            .unwrap();
+        if chicks {
+            assert!(seen.contains("HATCH 2") && hatched == before + 2, "{mode}: {seen}, {before} then {hatched} chickens");
+            assert_eq!(orbs, 0, "{mode}: no experience");
+        } else {
+            assert!(orbs > 0, "{mode}: experience");
+        }
+        // (The chicks would keep the connection busy.)
+        server
+            .handle
+            .run(move |s| {
+                for e in s.worlds[0].entities.values_mut().filter(|e| matches!(e.info.name.as_str(), "minecraft:chicken" | "minecraft:experience_orb")) {
+                    e.removed = true;
+                }
+            })
+            .unwrap();
+    }
+
+    // Two emeralds on the ground: kept apart, then let merge; then old enough to go: kept
+    // (and young again), then let go.
+    let pile = feet.offset(6, 0, -2);
+    let spawn_emerald = move |s: &mut paper_server::server::Server, dx: f64| {
+        let at = paper_server::world::entity::Vec3::new(pile.x as f64 + 0.5 + dx, pile.y as f64, pile.z as f64 + 0.5);
+        s.spawn_item(0, at, Slot::of(paper_data::items::id("minecraft:emerald").unwrap() as i32, 1), paper_server::world::entity::Vec3::new(0.0, 0.0, 0.0), 1000).unwrap()
+    };
+    let emeralds = move |s: &paper_server::server::Server| -> Vec<(i32, i32, i32)> {
+        s.worlds[0].entities.values().filter(|e| !e.removed).filter_map(|e| match &e.kind {
+            EntityKind::Item { stack: Slot(Some(st)), .. } if paper_data::items::get(st.item as u32).is_some_and(|i| i.name == "minecraft:emerald") => Some((e.id, st.count, e.age)),
+            _ => None,
+        }).collect()
+    };
+    for (mode, merged) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        server
+            .handle
+            .run(move |s| {
+                for e in s.worlds[0].entities.values_mut().filter(|e| matches!(e.kind, EntityKind::Item { .. })) {
+                    e.removed = true;
+                }
+                spawn_emerald(s, 0.0);
+                spawn_emerald(s, 0.2);
+            })
+            .unwrap();
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("MERGE 1 1"), "{mode}: {seen}");
+        let piles: Vec<i32> = server.handle.run(move |s| emeralds(s).into_iter().map(|(_, n, _)| n).collect()).unwrap();
+        assert_eq!(piles.len(), if merged { 1 } else { 2 }, "{mode}: {piles:?}");
+    }
+    for (mode, kept) in [("cancel", true), ("record", false)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let id = server
+            .handle
+            .run(move |s| {
+                let (id, _, _) = emeralds(s)[0];
+                s.worlds[0].entities.get_mut(&id).unwrap().age = 5990;
+                id
+            })
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        alice.drain(Duration::from_millis(50));
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("DESPAWN 2"), "{mode}: {seen}");
+        // (Kept, it is young again: well under the 5990 ticks it was given.)
+        let age = server.handle.run(move |s| s.worlds[0].entities.get(&id).filter(|e| !e.removed).map(|e| e.age)).unwrap();
+        assert_eq!(age.is_some_and(|a| a < 3000), kept, "{mode}: {age:?}");
+    }
+    server
+        .handle
+        .run(move |s| {
+            for e in s.worlds[0].entities.values_mut().filter(|e| matches!(e.kind, EntityKind::Item { .. })) {
+                e.removed = true;
+            }
+        })
+        .unwrap();
 
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");

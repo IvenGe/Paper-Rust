@@ -548,7 +548,7 @@ impl Server {
             }
             // Shears harvest a full beehive's honeycomb or shear a sheep in front.
             "minecraft:shears" => {
-                let sheared = self.shear_in_front(world, front, in_front);
+                let sheared = self.shear_in_front(world, pos, front, in_front, &stack);
                 self.dispensed(world, pos, facing, if sheared { 1000 } else { 1001 });
                 if !sheared {
                     return Some(stack);
@@ -729,7 +729,7 @@ impl Server {
 
     /// `ShearsDispenseItemBehavior`: a beehive full of honey gives three honeycomb, or a sheep
     /// in front is sheared. Returns whether anything was.
-    fn shear_in_front(&mut self, world: usize, front: BlockPos, state: u32) -> bool {
+    fn shear_in_front(&mut self, world: usize, dispenser: BlockPos, front: BlockPos, state: u32, shears: &ItemStack) -> bool {
         if in_block_tag(state, "minecraft:beehives") && blocks::property(state, "honey_level") == Some("5") {
             self.harvest_honeycomb(world, front, state);
             return true;
@@ -737,13 +737,13 @@ impl Server {
         let cell = Aabb::new(Vec3::new(front.x as f64, front.y as f64, front.z as f64), Vec3::new(front.x as f64 + 1.0, front.y as f64 + 1.0, front.z as f64 + 1.0));
         let w = &self.worlds[world];
         let sheep = w.entities_in(&cell).into_iter().find(|id| w.entities.get(id).is_some_and(|e| e.info.name == "minecraft:sheep" && e.mob().is_some_and(|m| !m.living.is_dead() && !m.baby && !m.sheared)));
-        match sheep {
-            Some(id) => {
-                self.shear_sheep(world, id);
-                true
-            }
-            None => false,
-        }
+        let Some(id) = sheep else { return false };
+        // Plugins may stop it, or change the wool (`BlockShearEntityEvent`).
+        let wool = self.sheep_wool(world, id);
+        let shears = Slot(Some(shears.clone()));
+        let Some(wool) = crate::plugins::events::on_shear(self, world, id, crate::plugins::events::Shearer::Dispenser(dispenser), &shears, wool) else { return false };
+        self.shear_sheep_dropping(world, id, wool);
+        true
     }
 
     /// Takes the honeycomb of a full beehive (`BeehiveBlock.dropHoneycomb`).

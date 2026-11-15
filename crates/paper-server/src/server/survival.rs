@@ -237,14 +237,21 @@ pub fn set_item_damage(stack: &mut ItemStack, damage: i32) {
 }
 
 /// Wears an item down by `amount` (vanilla's `hurtAndBreak`, with Unbreaking). Returns true if
-/// it broke; the slot is then emptied.
+/// it broke; the slot is then emptied. (A player's items go through
+/// [`Server::wear_player_item`], which plugins hear of.)
 pub fn hurt_item(slot: &mut Slot, amount: i32, armor: bool) -> bool {
-    let Some(stack) = slot.0.as_mut() else { return false };
-    let max = max_damage(stack);
-    if max <= 0 || amount <= 0 {
-        return false;
+    let wear = item_wear(slot, amount, armor);
+    add_wear(slot, wear)
+}
+
+/// The points of wear `amount` uses would do to the item in `slot` once Unbreaking spared some
+/// (`processDurabilityChange`); none for items that do not wear.
+pub fn item_wear(slot: &Slot, amount: i32, armor: bool) -> i32 {
+    let Some(stack) = slot.0.as_ref() else { return 0 };
+    if max_damage(stack) <= 0 || amount <= 0 {
+        return 0;
     }
-    let unbreaking = super::loot::enchantment_level(Some(&Slot(Some(stack.clone()))), "minecraft:unbreaking");
+    let unbreaking = super::loot::enchantment_level(Some(slot), "minecraft:unbreaking");
     let mut rng = rand::thread_rng();
     let mut taken = 0;
     for _ in 0..amount {
@@ -254,7 +261,18 @@ pub fn hurt_item(slot: &mut Slot, amount: i32, armor: bool) -> bool {
             taken += 1;
         }
     }
-    let damage = item_damage(stack) + taken;
+    taken
+}
+
+/// Adds `wear` points of damage to the item in `slot`. Returns true if that broke it; the slot
+/// is then emptied.
+pub fn add_wear(slot: &mut Slot, wear: i32) -> bool {
+    let Some(stack) = slot.0.as_mut() else { return false };
+    let max = max_damage(stack);
+    if max <= 0 || wear <= 0 {
+        return false;
+    }
+    let damage = item_damage(stack) + wear;
     if damage >= max {
         *slot = Slot::EMPTY;
         true
@@ -331,6 +349,30 @@ fn orb_value(amount: i32) -> i32 {
 }
 
 impl Server {
+    /// A player's item in `slot` wears by `amount` uses (`ItemStack.hurtAndBreak`), Unbreaking
+    /// first: plugins may change the wear or stop it (`PlayerItemDamageEvent`), and hear when it
+    /// breaks (`PlayerItemBreakEvent`), which empties the slot. Returns whether it broke. The
+    /// slot is not sent to the player.
+    pub(super) fn wear_player_item(&mut self, id: i32, slot: usize, amount: i32, armor: bool) -> bool {
+        let Some(item) = self.players.get(&id).and_then(|p| p.inventory.get(slot)).cloned() else { return false };
+        let wear = item_wear(&item, amount, armor);
+        if wear <= 0 {
+            return false;
+        }
+        let Some(wear) = crate::plugins::events::on_item_damage(self, id, &item, wear, amount) else { return false };
+        let Some(p) = self.players.get_mut(&id) else { return false };
+        let worn = &mut p.inventory[slot];
+        // (Unless plugins changed the item meanwhile.)
+        if *worn != item {
+            return false;
+        }
+        let broke = add_wear(worn, wear);
+        if broke {
+            crate::plugins::events::on_item_break(self, id, &item);
+        }
+        broke
+    }
+
     // --- sounds ------------------------------------------------------------------------------
 
     /// Plays a sound at a position for players in hearing range (16 blocks, more when louder),
@@ -793,15 +835,15 @@ impl Server {
             return false;
         }
 
-        let p = self.players.get_mut(&id).unwrap();
         // A falling block on the head.
-        if damage.is("damages_helmet") && !p.inventory[5].is_empty() {
+        if damage.is("damages_helmet") && !self.players[&id].inventory[5].is_empty() {
             let wear = (amount / 4.0).max(1.0) as i32;
-            if hurt_item(&mut p.inventory[5], wear, true) {
-                p.equipment_dirty = true;
+            if self.wear_player_item(id, 5, wear, true) {
+                self.players.get_mut(&id).unwrap().equipment_dirty = true;
             }
             amount *= 0.75;
         }
+        let p = self.players.get_mut(&id).unwrap();
         // Within the invulnerability window only damage above the last hit lands.
         let full = if p.invulnerable_time > 10 && !damage.is("bypasses_cooldown") {
             if amount <= p.last_hurt {
@@ -825,13 +867,12 @@ impl Server {
             // Each armour piece wears by a quarter of the damage (at least one point).
             let wear = (amount / 4.0).max(1.0) as i32;
             for slot in 5..9 {
-                if hurt_item(&mut p.inventory[slot], wear, true) {
-                    p.equipment_dirty = true;
-                }
+                self.wear_player_item(id, slot, wear, true);
             }
-            p.equipment_dirty = true;
+            self.players.get_mut(&id).unwrap().equipment_dirty = true;
             amount = damage_after_armor(amount, points, toughness);
         }
+        let p = self.players.get_mut(&id).unwrap();
         // Resistance: 20% less per level.
         // What resistance and absorption took, and what is left, count as statistics.
         let mut awards: Vec<(&str, i32)> = Vec::new();

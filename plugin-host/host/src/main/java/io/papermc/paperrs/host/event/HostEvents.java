@@ -126,6 +126,20 @@ public final class HostEvents {
         GATED.put("PotionSplashEvent", org.bukkit.event.entity.PotionSplashEvent.class);
         GATED.put("LingeringPotionSplashEvent", org.bukkit.event.entity.LingeringPotionSplashEvent.class);
         GATED.put("AreaEffectCloudApplyEvent", org.bukkit.event.entity.AreaEffectCloudApplyEvent.class);
+        GATED.put("PlayerItemDamageEvent", org.bukkit.event.player.PlayerItemDamageEvent.class);
+        GATED.put("PlayerItemBreakEvent", org.bukkit.event.player.PlayerItemBreakEvent.class);
+        GATED.put("PlayerShearEntityEvent", org.bukkit.event.player.PlayerShearEntityEvent.class);
+        GATED.put("BlockShearEntityEvent", org.bukkit.event.block.BlockShearEntityEvent.class);
+        GATED.put("PlayerBedEnterEvent", org.bukkit.event.player.PlayerBedEnterEvent.class);
+        GATED.put("PlayerBedLeaveEvent", org.bukkit.event.player.PlayerBedLeaveEvent.class);
+        GATED.put("PlayerChangedMainHandEvent", org.bukkit.event.player.PlayerChangedMainHandEvent.class);
+        GATED.put("PlayerLocaleChangeEvent", org.bukkit.event.player.PlayerLocaleChangeEvent.class);
+        GATED.put("PlayerPickupArrowEvent", org.bukkit.event.player.PlayerPickupArrowEvent.class);
+        GATED.put("PlayerEggThrowEvent", org.bukkit.event.player.PlayerEggThrowEvent.class);
+        GATED.put("ThrownEggHatchEvent", com.destroystokyo.paper.event.entity.ThrownEggHatchEvent.class);
+        GATED.put("ExpBottleEvent", org.bukkit.event.entity.ExpBottleEvent.class);
+        GATED.put("ItemDespawnEvent", org.bukkit.event.entity.ItemDespawnEvent.class);
+        GATED.put("ItemMergeEvent", org.bukkit.event.entity.ItemMergeEvent.class);
         GATED.put("ProjectileLaunchEvent", org.bukkit.event.entity.ProjectileLaunchEvent.class);
         GATED.put("ProjectileHitEvent", org.bukkit.event.entity.ProjectileHitEvent.class);
         GATED.put("BlockDispenseEvent", org.bukkit.event.block.BlockDispenseEvent.class);
@@ -315,6 +329,41 @@ public final class HostEvents {
             out.add(Values.of("x", (long) state.getX(), "y", (long) state.getY(), "z", (long) state.getZ(), "state", state.getBlockData().getAsString()));
         }
         return out;
+    }
+
+    /** {@code PlayerBedEnterEvent#enterAction}: what the bed's rules allow there, and what stood in the way. */
+    private record HostBedEnterAction(io.papermc.paper.block.bed.BedRuleResult canSleep, io.papermc.paper.block.bed.BedRuleResult canSetSpawn,
+                                      io.papermc.paper.block.bed.@Nullable BedEnterProblem problem, net.kyori.adventure.text.@Nullable Component errorMessage)
+        implements io.papermc.paper.block.bed.BedEnterAction {
+    }
+
+    private static io.papermc.paper.block.bed.BedRuleResult bedRule(final String name) {
+        return switch (name) {
+            case "NEVER" -> io.papermc.paper.block.bed.BedRuleResult.NEVER;
+            case "TOO_MUCH_LIGHT" -> io.papermc.paper.block.bed.BedRuleResult.TOO_MUCH_LIGHT;
+            default -> io.papermc.paper.block.bed.BedRuleResult.ALLOWED;
+        };
+    }
+
+    private static io.papermc.paper.block.bed.@Nullable BedEnterProblem bedProblem(final org.bukkit.event.player.PlayerBedEnterEvent.BedEnterResult result) {
+        return switch (result) {
+            case TOO_FAR_AWAY -> io.papermc.paper.block.bed.BedEnterProblem.TOO_FAR_AWAY;
+            case OBSTRUCTED -> io.papermc.paper.block.bed.BedEnterProblem.OBSTRUCTED;
+            case NOT_SAFE -> io.papermc.paper.block.bed.BedEnterProblem.NOT_SAFE;
+            case EXPLOSION -> io.papermc.paper.block.bed.BedEnterProblem.EXPLOSION;
+            case OTHER_PROBLEM -> io.papermc.paper.block.bed.BedEnterProblem.OTHER;
+            default -> null;
+        };
+    }
+
+    private static org.bukkit.entity.EntityType entityType(final String key) {
+        final org.bukkit.NamespacedKey name = org.bukkit.NamespacedKey.fromString(key);
+        for (final org.bukkit.entity.EntityType type : org.bukkit.entity.EntityType.values()) {
+            if (type != org.bukkit.entity.EntityType.UNKNOWN && type.getKey().equals(name)) {
+                return type;
+            }
+        }
+        return org.bukkit.entity.EntityType.CHICKEN;
     }
 
     /** The living entities a list of entity references names. */
@@ -583,6 +632,126 @@ public final class HostEvents {
                 final org.bukkit.event.entity.AreaEffectCloudApplyEvent event = new org.bukkit.event.entity.AreaEffectCloudApplyEvent(cloud, this.living(args.get("affected")));
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled(), "affected", entityIds(event.getAffectedEntities()));
+            }
+            case "event.item_damage" -> {
+                final org.bukkit.event.player.PlayerItemDamageEvent event = new org.bukkit.event.player.PlayerItemDamageEvent(this.player(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")), Values.i32(args, "damage", 0), Values.i32(args, "original", 0));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "damage", (long) event.getDamage());
+            }
+            case "event.item_break" -> {
+                new org.bukkit.event.player.PlayerItemBreakEvent(this.player(args), io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item"))).callEvent();
+                yield Values.of();
+            }
+            case "event.shear" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.inventory.ItemStack tool = io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item"));
+                final List<org.bukkit.inventory.ItemStack> drops = new ArrayList<>();
+                for (final Object drop : Values.list(args.get("drops"))) {
+                    drops.add(io.papermc.paperrs.host.item.HostItemStack.fromValue(drop));
+                }
+                final List<org.bukkit.inventory.ItemStack> left;
+                final boolean cancelled;
+                if (args.get("uuid") != null) {
+                    final org.bukkit.event.player.PlayerShearEntityEvent event = new org.bukkit.event.player.PlayerShearEntityEvent(this.player(args), entity, tool,
+                        Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND, drops);
+                    event.callEvent();
+                    left = event.getDrops();
+                    cancelled = event.isCancelled();
+                } else {
+                    final org.bukkit.event.block.BlockShearEntityEvent event = new org.bukkit.event.block.BlockShearEntityEvent(
+                        this.at(this.server.getWorld(Values.str(args, "world")), args.get("block")), entity, tool, drops);
+                    event.callEvent();
+                    left = event.getDrops();
+                    cancelled = event.isCancelled();
+                }
+                final List<Object> out = new ArrayList<>();
+                for (final org.bukkit.inventory.ItemStack drop : left) {
+                    out.add(io.papermc.paperrs.host.item.HostItemStack.toValue(drop));
+                }
+                yield Values.of("cancelled", cancelled, "drops", out);
+            }
+            case "event.bed_enter" -> {
+                final net.kyori.adventure.text.Component message = args.get("message") == null ? null : io.papermc.paperrs.host.Components.fromJson(args.get("message"));
+                final org.bukkit.event.player.PlayerBedEnterEvent.BedEnterResult result = org.bukkit.event.player.PlayerBedEnterEvent.BedEnterResult.valueOf(Values.str(args, "result", "OK"));
+                final org.bukkit.event.player.PlayerBedEnterEvent event = new org.bukkit.event.player.PlayerBedEnterEvent(this.player(args), this.block(args), result,
+                    new HostBedEnterAction(bedRule(Values.str(args, "can_sleep", "ALLOWED")), bedRule(Values.str(args, "can_set_spawn", "ALLOWED")), bedProblem(result), message));
+                event.callEvent();
+                yield Values.of("use", event.useBed().name());
+            }
+            case "event.bed_leave" -> {
+                final org.bukkit.event.player.PlayerBedLeaveEvent event = new org.bukkit.event.player.PlayerBedLeaveEvent(this.player(args), this.block(args), true);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.main_hand" -> {
+                new org.bukkit.event.player.PlayerChangedMainHandEvent(this.player(args), org.bukkit.inventory.MainHand.valueOf(Values.str(args, "hand", "RIGHT"))).callEvent();
+                yield Values.of();
+            }
+            case "event.locale" -> {
+                new org.bukkit.event.player.PlayerLocaleChangeEvent(this.player(args), Values.str(args, "locale", "en_us")).callEvent();
+                yield Values.of();
+            }
+            case "event.pickup_arrow" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("arrow"))) instanceof org.bukkit.entity.AbstractArrow arrow)
+                    || !(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("item"))) instanceof org.bukkit.entity.Item item)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.player.PlayerPickupArrowEvent event = new org.bukkit.event.player.PlayerPickupArrowEvent(this.player(args), item, arrow);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.egg" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Egg egg)) {
+                    yield Values.of();
+                }
+                boolean hatching = Values.bool(args, "hatching", false);
+                byte count = (byte) Values.i32(args, "count", 0);
+                org.bukkit.entity.EntityType type = entityType(Values.str(args, "type", "minecraft:chicken"));
+                if (Values.bool(args, "throw", false) && args.get("uuid") != null) {
+                    final org.bukkit.event.player.PlayerEggThrowEvent event = new org.bukkit.event.player.PlayerEggThrowEvent(this.player(args), egg, hatching, count, type);
+                    event.callEvent();
+                    hatching = event.isHatching();
+                    count = hatching ? event.getNumHatches() : 0;
+                    type = event.getHatchingType();
+                }
+                if (Values.bool(args, "hatch", false)) {
+                    final com.destroystokyo.paper.event.entity.ThrownEggHatchEvent event = new com.destroystokyo.paper.event.entity.ThrownEggHatchEvent(egg, hatching, count, type);
+                    event.callEvent();
+                    hatching = event.isHatching();
+                    count = hatching ? event.getNumHatches() : 0;
+                    type = event.getHatchingType();
+                }
+                yield Values.of("hatching", hatching, "count", (long) count, "type", type.getKey().toString());
+            }
+            case "event.exp_bottle" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.ThrownExpBottle bottle)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.ExpBottleEvent event = new org.bukkit.event.entity.ExpBottleEvent(bottle, this.hitEntity(args), this.hitBlock(args), this.hitFace(args),
+                    Values.i32(args, "experience", 0));
+                event.callEvent();
+                yield Values.of("experience", (long) event.getExperience(), "show", event.getShowEffect());
+            }
+            case "event.item_despawn" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.ItemDespawnEvent event = new org.bukkit.event.entity.ItemDespawnEvent(item, item.getLocation());
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.item_merge" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)
+                    || !(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("target"))) instanceof org.bukkit.entity.Item target)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.ItemMergeEvent event = new org.bukkit.event.entity.ItemMergeEvent(item, target);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
             }
             case "event.projectile_launch" -> {
                 final org.bukkit.event.entity.ProjectileLaunchEvent event = new org.bukkit.event.entity.ProjectileLaunchEvent(

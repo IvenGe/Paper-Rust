@@ -627,11 +627,7 @@ impl Server {
             }
         }
         // The stick wears; a broken one leaves a fishing rod.
-        let mut worn = Slot(Some(stack));
-        let broke = super::survival::hurt_item(&mut worn, wear, false);
-        if broke {
-            worn = Slot::of(items::id("minecraft:fishing_rod").unwrap_or(0) as i32, 1);
-        }
+        let worn = if self.wear_player_item(player, slot, wear, false) { Slot::of(items::id("minecraft:fishing_rod").unwrap_or(0) as i32, 1) } else { self.players[&player].inventory[slot].clone() };
         self.set_inventory_slot(player, slot, worn);
         true
     }

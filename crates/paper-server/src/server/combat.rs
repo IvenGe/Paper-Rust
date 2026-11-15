@@ -71,8 +71,8 @@ impl Server {
         if let Some(stack) = held.0.as_ref() {
             let per_block = item_data::by_id(stack.item as u32).tool.as_ref().map_or(0, |t| t.damage_per_block);
             if hardness != 0.0 && per_block > 0 {
-                let p = self.players.get_mut(&id).unwrap();
-                if survival::hurt_item(&mut p.inventory[slot], per_block, false) {
+                if self.wear_player_item(id, slot, per_block, false) {
+                    let p = &self.players[&id];
                     let (w, at) = (p.world, Vec3::new(p.loc.x, p.loc.y, p.loc.z));
                     self.play_sound(w, at, "minecraft:entity.item.break", category::PLAYERS, 0.8, 0.8 + rand::thread_rng().gen::<f32>() * 0.4, None);
                     if let Some(item) = paper_data::items::get(stack.item as u32) {
@@ -242,10 +242,10 @@ impl Server {
             let per_attack = item_data::by_id(stack.item as u32).raw.as_ref().and_then(|r| r.get("weapon")).map_or(0, |w| w.get("item_damage_per_attack").and_then(|v| v.as_i64()).unwrap_or(1)) as i32;
             if per_attack > 0 && self.players.get(&id).is_some_and(|p| p.game_mode != GameMode::Creative) {
                 let slot = HOTBAR_START + self.players[&id].held_slot as usize;
-                let mut item = self.players[&id].inventory[slot].clone();
-                if survival::hurt_item(&mut item, per_attack, false) {
+                if self.wear_player_item(id, slot, per_attack, false) {
                     self.play_sound(world, at, "minecraft:entity.item.break", category::PLAYERS, 0.8, 1.0, None);
                 }
+                let item = self.players[&id].inventory[slot].clone();
                 self.set_inventory_slot(id, slot, item);
             }
         }
@@ -639,11 +639,13 @@ impl Server {
         self.spawn_arrow(world, origin, loc.yaw, loc.pitch, power as f64 * 3.0, 1.0, Some(id), damage, power >= 1.0, !keep_arrow);
         let pitch = 1.0 / (rand::thread_rng().gen::<f32>() * 0.4 + 1.2) + power * 0.5;
         self.play_sound(world, Vec3::new(loc.x, loc.y, loc.z), "minecraft:entity.arrow.shoot", category::PLAYERS, 1.0, pitch, None);
-        let Some(p) = self.players.get_mut(&id) else { return };
-        if !creative {
-            if survival::hurt_item(&mut p.inventory[bow_slot], 1, false) {
+        if !creative && self.wear_player_item(id, bow_slot, 1, false) {
+            if let Some(p) = self.players.get_mut(&id) {
                 p.equipment_dirty = true;
             }
+        }
+        let Some(p) = self.players.get_mut(&id) else { return };
+        if !creative {
             if !keep_arrow {
                 if let Some(slot) = arrow_slot {
                     if let Some(a) = p.inventory[slot].0.as_mut() {
@@ -812,7 +814,12 @@ impl Server {
         let Some(player) = collector else { return };
         let Some(arrow_item) = items::id("minecraft:arrow") else { return };
         let stack = ItemStack::new(arrow_item as i32, 1);
-        if self.players[&player].game_mode != GameMode::Creative && self.add_to_inventory(player, &stack) > 0 {
+        let creative = self.players[&player].game_mode == GameMode::Creative;
+        // Plugins may leave it where it is (`PlayerPickupArrowEvent`, when there is room).
+        if (creative || self.inventory_room(player, &stack) > 0) && !crate::plugins::events::on_pickup_arrow(self, world, player, id, &stack) {
+            return;
+        }
+        if !creative && self.add_to_inventory(player, &stack) > 0 {
             return;
         }
         let packet = play::TakeItemEntity { collected_id: VarInt(id), collector_id: VarInt(player), count: VarInt(1) };

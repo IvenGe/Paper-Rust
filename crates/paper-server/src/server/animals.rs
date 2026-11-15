@@ -319,11 +319,18 @@ impl Server {
                 return;
             }
             ("minecraft:sheep", "minecraft:shears") if !baby && !sheared => {
-                self.shear_sheep(world, target);
+                // Plugins may stop it, or change the wool (`PlayerShearEntityEvent`).
+                let wool = self.sheep_wool(world, target);
+                let shears = self.players[&id].inventory[slot].clone();
+                let Some(wool) = crate::plugins::events::on_shear(self, world, target, crate::plugins::events::Shearer::Player(id, hand), &shears, wool) else {
+                    self.resync_inventory(id);
+                    return;
+                };
+                self.shear_sheep_dropping(world, target, wool);
                 // The shears wear (creative players' do not).
                 if self.players.get(&id).is_some_and(|p| p.game_mode != GameMode::Creative) {
-                    let mut shears = self.players[&id].inventory[slot].clone();
-                    super::survival::hurt_item(&mut shears, 1, false);
+                    self.wear_player_item(id, slot, 1, false);
+                    let shears = self.players[&id].inventory[slot].clone();
                     self.set_inventory_slot(id, slot, shears);
                 }
                 return;
@@ -383,19 +390,31 @@ impl Server {
         }
     }
 
+    /// Shears a sheep with the wool it drops on its own (`Shearable.shear` for plugins).
     pub fn shear_sheep(&mut self, world: usize, id: i32) {
+        let wool = self.sheep_wool(world, id);
+        self.shear_sheep_dropping(world, id, wool);
+    }
+
+    /// The wool a sheep sheared now would drop: one to three of its colour.
+    pub fn sheep_wool(&self, world: usize, id: i32) -> Vec<Slot> {
+        let Some(m) = self.worlds[world].entities.get(&id).and_then(|e| e.mob()) else { return Vec::new() };
+        let color = COLORS[(m.variant & 15) as usize];
+        let Some(wool) = items::id(&format!("minecraft:{color}_wool")) else { return Vec::new() };
+        (0..rand::thread_rng().gen_range(1..=3)).map(|_| Slot::of(wool as i32, 1)).collect()
+    }
+
+    /// Shears a sheep (`Sheep.shear`): `drops` fall off it.
+    pub fn shear_sheep_dropping(&mut self, world: usize, id: i32, drops: Vec<Slot>) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let pos = e.pos;
         let Some(m) = e.mob_mut() else { return };
         m.sheared = true;
-        let color = COLORS[(m.variant & 15) as usize];
         e.metadata_dirty = true;
         let mut rng = rand::thread_rng();
-        if let Some(wool) = items::id(&format!("minecraft:{color}_wool")) {
-            for _ in 0..rng.gen_range(1..=3) {
-                let vel = Vec3::new((rng.gen::<f64>() - rng.gen::<f64>()) * 0.1, rng.gen::<f64>() * 0.05, (rng.gen::<f64>() - rng.gen::<f64>()) * 0.1);
-                self.spawn_item(world, Vec3::new(pos.x, pos.y + 1.0, pos.z), Slot::of(wool as i32, 1), vel, 10);
-            }
+        for drop in drops.into_iter().filter(|d| !d.is_empty()) {
+            let vel = Vec3::new((rng.gen::<f64>() - rng.gen::<f64>()) * 0.1, rng.gen::<f64>() * 0.05, (rng.gen::<f64>() - rng.gen::<f64>()) * 0.1);
+            self.spawn_item(world, Vec3::new(pos.x, pos.y + 1.0, pos.z), drop, vel, 10);
         }
         self.play_sound(world, pos, "minecraft:entity.sheep.shear", super::survival::category::PLAYERS, 1.0, 1.0, None);
     }

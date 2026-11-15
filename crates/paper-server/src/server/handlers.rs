@@ -143,11 +143,21 @@ impl Server {
             Serverbound::PlayerLoaded => player.loaded = true,
             Serverbound::ClientInformation(p) => {
                 let skin_changed = player.settings.skin_parts != p.settings.skin_parts;
+                let (old_locale, old_hand) = (player.settings.locale.clone(), player.settings.main_hand);
+                let (new_locale, new_hand) = (p.settings.locale.clone(), p.settings.main_hand);
                 player.settings = p.settings;
                 if skin_changed {
                     player.metadata_dirty = true;
                 }
                 self.update_view_distance(id);
+                // Plugins hear of a new main hand (`PlayerChangedMainHandEvent`) and language
+                // (`PlayerLocaleChangeEvent`, Bukkit's and Paper's).
+                if old_hand != new_hand {
+                    crate::plugins::events::on_main_hand_change(self, id, new_hand);
+                }
+                if old_locale != new_locale {
+                    crate::plugins::events::on_locale_change(self, id, &new_locale);
+                }
             }
             Serverbound::Chat(p) => self.handle_player_chat(id, &p.message),
             Serverbound::ChatCommand(p) => self.handle_player_command(id, &p.command),

@@ -653,10 +653,9 @@ impl Server {
         // A cancelled `BlockIgniteEvent` still wears the flint and steel, or uses up the fire
         // charge, as in Paper.
         if !creative {
-            let p = self.players.get_mut(&id).unwrap();
             if item == "minecraft:fire_charge" {
-                p.inventory[slot] = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
-            } else if survival::hurt_item(&mut p.inventory[slot], 1, false) {
+                self.players.get_mut(&id).unwrap().inventory[slot] = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
+            } else if self.wear_player_item(id, slot, 1, false) {
                 self.play_sound(world, sound_at, "minecraft:entity.item.break", category::PLAYERS, 0.8, 1.0, None);
             }
             let item = self.players[&id].inventory[slot].clone();

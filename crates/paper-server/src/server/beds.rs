@@ -46,57 +46,66 @@ impl Server {
         }
         let dimension = w.dimension.clone();
         // Beds explode outside the overworld (`bed_rule` with `explodes`).
-        if dimension != "minecraft:overworld" {
-            let (dx, dz) = facing_offset(blocks::property(state, "facing").unwrap_or("north"));
-            let foot = head.offset(-dx, 0, -dz);
-            self.set_block_and_update(world, head, blocks::AIR);
-            if self.worlds[world].block_at(foot.x, foot.y, foot.z).is_some_and(is_bed) {
-                self.set_block_and_update(world, foot, blocks::AIR);
-            }
-            let center = Vec3::new(head.x as f64 + 0.5, head.y as f64 + 0.5, head.z as f64 + 0.5);
-            self.explode(world, center, 5.0, true, None);
-            return true;
-        }
+        let explodes = dimension != "minecraft:overworld";
+        let (dx, dz) = facing_offset(blocks::property(state, "facing").unwrap_or("north"));
+        let foot = head.offset(-dx, 0, -dz);
         if blocks::property(state, "occupied") == Some("true") {
-            self.action_bar(id, Component::translatable("block.minecraft.bed.occupied", vec![]));
+            if explodes {
+                self.explode_bed(world, head, foot);
+            } else {
+                self.action_bar(id, Component::translatable("block.minecraft.bed.occupied", vec![]));
+            }
             return true;
         }
         if p.sleeping.is_some() || p.dead {
             return true;
         }
-        // Within reach of either half.
-        let (dx, dz) = facing_offset(blocks::property(state, "facing").unwrap_or("north"));
-        let foot = head.offset(-dx, 0, -dz);
+        // What stops the player, as `BedEnterResult` names it, with the message shown.
         let near = |b: BlockPos| (p.loc.x - (b.x as f64 + 0.5)).abs() <= 3.0 && (p.loc.y - b.y as f64).abs() <= 2.0 && (p.loc.z - (b.z as f64 + 0.5)).abs() <= 3.0;
-        if !near(head) && !near(foot) {
-            self.action_bar(id, Component::translatable("block.minecraft.bed.too_far_away", vec![]));
-            return true;
-        }
-        if w.block_at(head.x, head.y + 1, head.z).is_some_and(|s| paper_data::physics::flags(s) & paper_data::physics::SOLID_BLOCK != 0) {
-            self.action_bar(id, Component::translatable("block.minecraft.bed.obstructed", vec![]));
-            return true;
-        }
-        // The bed becomes the respawn point, by day too.
-        let changed = p.respawn != Some((world, head));
-        let creative = p.game_mode == GameMode::Creative;
-        if let Some(p) = self.players.get_mut(&id) {
-            p.respawn = Some((world, head));
-        }
-        if changed {
-            self.send_message(id, &Component::translatable("block.minecraft.set_spawn", vec![]));
-        }
         let dark = super::mobs::sky_darken(&self.worlds[world]) >= 4;
-        if !dark {
-            self.action_bar(id, Component::translatable("block.minecraft.bed.no_sleep", vec![]));
-            return true;
-        }
-        if !creative {
-            let around = Aabb::new(Vec3::new(head.x as f64 + 0.5 - 8.0, head.y as f64 - 5.0, head.z as f64 + 0.5 - 8.0), Vec3::new(head.x as f64 + 0.5 + 8.0, head.y as f64 + 5.0, head.z as f64 + 0.5 + 8.0));
-            let monsters = self.worlds[world].entities_in(&around).into_iter().filter_map(|e| self.worlds[world].entities.get(&e)).any(|e| e.is_alive() && e.info.category == "MONSTER" && e.bounding_box().intersects(&around));
-            if monsters {
-                self.action_bar(id, Component::translatable("block.minecraft.bed.not_safe", vec![]));
-                return true;
+        let mut problem: Option<(&str, Option<&str>)> = if explodes {
+            Some(("EXPLOSION", None))
+        } else if !near(head) && !near(foot) {
+            Some(("TOO_FAR_AWAY", Some("block.minecraft.bed.too_far_away")))
+        } else if w.block_at(head.x, head.y + 1, head.z).is_some_and(|s| paper_data::physics::flags(s) & paper_data::physics::SOLID_BLOCK != 0) {
+            Some(("OBSTRUCTED", Some("block.minecraft.bed.obstructed")))
+        } else {
+            None
+        };
+        if problem.is_none() {
+            // The bed becomes the respawn point, by day too.
+            let changed = p.respawn != Some((world, head));
+            if let Some(p) = self.players.get_mut(&id) {
+                p.respawn = Some((world, head));
             }
+            if changed {
+                self.send_message(id, &Component::translatable("block.minecraft.set_spawn", vec![]));
+            }
+            if !dark {
+                problem = Some(("NOT_POSSIBLE_NOW", Some("block.minecraft.bed.no_sleep")));
+            } else if self.players[&id].game_mode != GameMode::Creative {
+                let around = Aabb::new(Vec3::new(head.x as f64 + 0.5 - 8.0, head.y as f64 - 5.0, head.z as f64 + 0.5 - 8.0), Vec3::new(head.x as f64 + 0.5 + 8.0, head.y as f64 + 5.0, head.z as f64 + 0.5 + 8.0));
+                let monsters = self.worlds[world].entities_in(&around).into_iter().filter_map(|e| self.worlds[world].entities.get(&e)).any(|e| e.is_alive() && e.info.category == "MONSTER" && e.bounding_box().intersects(&around));
+                if monsters {
+                    problem = Some(("NOT_SAFE", Some("block.minecraft.bed.not_safe")));
+                }
+            }
+        }
+        // Plugins may let the player sleep anyway, or stop it (`PlayerBedEnterEvent`).
+        let result = problem.map_or("OK", |(r, _)| r);
+        let message = problem.and_then(|(_, m)| m);
+        match crate::plugins::events::on_bed_enter(self, id, world, head, result, dark, !explodes, message) {
+            crate::plugins::events::BedUse::Allow => problem = None,
+            crate::plugins::events::BedUse::Deny => return true,
+            crate::plugins::events::BedUse::Default => {}
+        }
+        if let Some((result, message)) = problem {
+            if result == "EXPLOSION" {
+                self.explode_bed(world, head, foot);
+            } else if let Some(message) = message {
+                self.action_bar(id, Component::translatable(message, vec![]));
+            }
+            return true;
         }
         // Lie down.
         if let Some(occupied) = blocks::with_property(state, "occupied", "true") {
@@ -113,8 +122,24 @@ impl Server {
         true
     }
 
-    /// Gets a player out of bed (`stopSleepInBed`).
+    /// A bed used where beds explode (`AbstractBedBlock.destroyOnUse`): both halves go, and a
+    /// blast takes their place.
+    fn explode_bed(&mut self, world: usize, head: BlockPos, foot: BlockPos) {
+        self.set_block_and_update(world, head, blocks::AIR);
+        if self.worlds[world].block_at(foot.x, foot.y, foot.z).is_some_and(is_bed) {
+            self.set_block_and_update(world, foot, blocks::AIR);
+        }
+        let center = Vec3::new(head.x as f64 + 0.5, head.y as f64 + 0.5, head.z as f64 + 0.5);
+        self.explode(world, center, 5.0, true, None);
+    }
+
+    /// Gets a player out of bed (`stopSleepInBed`), unless plugins keep it there
+    /// (`PlayerBedLeaveEvent`).
     pub(super) fn wake_up(&mut self, id: i32) {
+        let Some(head) = self.players.get(&id).and_then(|p| p.sleeping) else { return };
+        if !crate::plugins::events::on_bed_leave(self, id, head) {
+            return;
+        }
         let Some(p) = self.players.get_mut(&id) else { return };
         let Some(head) = p.sleeping.take() else { return };
         p.sleep_ticks = 0;

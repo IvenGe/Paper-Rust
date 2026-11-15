@@ -84,6 +84,8 @@ pub enum SpawnReason {
     Bucket,
     /// Built from blocks (snow and iron golems).
     Built,
+    /// Hatched from a thrown egg.
+    Hatched,
 }
 
 impl SpawnReason {
@@ -100,6 +102,7 @@ impl SpawnReason {
             SpawnReason::Bucket => "BUCKET",
             SpawnReason::Built if entity == "minecraft:snow_golem" => "BUILD_SNOWMAN",
             SpawnReason::Built => "BUILD_IRONGOLEM",
+            SpawnReason::Hatched => "EGG",
         }
     }
 }

@@ -320,7 +320,7 @@ impl Server {
                         e.vel.y *= -0.5;
                     }
                 }
-                if e.age >= ITEM_LIFETIME || e.pos.y < (w.min_y - 64) as f64 {
+                if e.pos.y < (w.min_y - 64) as f64 || e.age >= ITEM_LIFETIME && !crate::plugins::events::listens(self, "ItemDespawnEvent") {
                     e.removed = true;
                 }
             }
@@ -457,8 +457,21 @@ impl Server {
                 }
             }
         }
+        let despawning = matches!(e.kind, EntityKind::Item { .. }) && !e.removed && e.age >= ITEM_LIFETIME;
         self.worlds[world].entities.insert(id, e);
         self.worlds[world].reindex_entity(id);
+        // An old item goes unless plugins keep it, which makes it young again
+        // (`ItemDespawnEvent`).
+        if despawning {
+            let goes = crate::plugins::events::on_item_despawn(self, world, id);
+            if let Some(e) = self.worlds[world].entities.get_mut(&id) {
+                if goes {
+                    e.removed = true;
+                } else {
+                    e.age = 0;
+                }
+            }
+        }
     }
 
     /// `FallingBlockEntity.fall`: a block that lost its support becomes a falling block
@@ -576,12 +589,16 @@ impl Server {
                     })
             });
             let Some(partner) = partner else { continue };
-            // The larger stack absorbs the smaller one.
+            // The larger stack absorbs the smaller one, unless plugins keep them apart
+            // (`ItemMergeEvent`).
             let other = &w.entities[&partner];
             let (keep, absorb) = match &other.kind {
                 EntityKind::Item { stack: Slot(Some(s)), .. } if s.count > stack.count => (partner, id),
                 _ => (id, partner),
             };
+            if !crate::plugins::events::on_item_merge(self, world, absorb, keep) {
+                continue;
+            }
             let absorbed = match &self.worlds[world].entities[&absorb].kind {
                 EntityKind::Item { stack: Slot(Some(s)), .. } => s.count,
                 _ => 0,

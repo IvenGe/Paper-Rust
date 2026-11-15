@@ -182,6 +182,18 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.potion_splash` | the same hit, `affected` `[{entity, intensity}]` | `cancelled`, `affected` `[{id, intensity}]` (`PotionSplashEvent` for splash potions) |
 | `event.lingering_splash` | the same hit, `cloud` (the cloud left behind) | `cancelled` (`LingeringPotionSplashEvent`: the cloud goes again) |
 | `event.cloud_apply` | `entity` (the cloud), `world`, `affected` (entities) | `cancelled`, `affected` as entity ids (`AreaEffectCloudApplyEvent`) |
+| `event.item_damage` | `uuid`, `item`, `damage` (after Unbreaking), `original` | `cancelled`, `damage` (`PlayerItemDamageEvent`) |
+| `event.item_break` | `uuid`, `item` | nothing (`PlayerItemBreakEvent`) |
+| `event.shear` | `world`, `entity`, `item` (the shears), `drops`, and `uuid` and `hand` for a player or `block` `[x, y, z]` for a dispenser | `cancelled`, `drops` (`PlayerShearEntityEvent`, `BlockShearEntityEvent`) |
+| `event.bed_enter` | `uuid`, `world`, `x`, `y`, `z` (the head of the bed), `result` (`BedEnterResult`), `can_sleep` and `can_set_spawn` (`ALLOWED`, `TOO_MUCH_LIGHT`, `NEVER`), `message` | `use` (`ALLOW`, `DENY`, `DEFAULT`: `PlayerBedEnterEvent.useBed`) |
+| `event.bed_leave` | `uuid`, `world`, `x`, `y`, `z` | `cancelled` (`PlayerBedLeaveEvent`: the player stays in bed) |
+| `event.main_hand` | `uuid`, `hand` (the new one) | nothing (`PlayerChangedMainHandEvent`) |
+| `event.locale` | `uuid`, `locale` | nothing (`PlayerLocaleChangeEvent`) |
+| `event.pickup_arrow` | `uuid`, `arrow`, `item` (an item entity that never enters the world, id -1) | `cancelled` (`PlayerPickupArrowEvent`) |
+| `event.egg` | `entity` (the egg), `hatching`, `count`, `type`, `throw` and `uuid` (fire `PlayerEggThrowEvent`), `hatch` (fire `ThrownEggHatchEvent`) | `hatching`, `count`, `type` |
+| `event.exp_bottle` | the thrown potions' hit fields, `experience` | `experience`, `show` (`ExpBottleEvent`) |
+| `event.item_despawn` | `world`, `entity` | `cancelled` (`ItemDespawnEvent`: it starts its lifetime again) |
+| `event.item_merge` | `world`, `entity`, `target` | `cancelled` (`ItemMergeEvent`) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
 | `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |
@@ -203,7 +215,9 @@ Some events are only fired when a plugin listens to them (the host reports which
 `events`): command preprocess, server command, block break and place, interactions and
 explosions, move, game mode change, chat, the inventory, item, damage, death, respawn
 and spawn events, pistons and fire, login, changing worlds, chunks loading and
-unloading, portals being made, and potions splashing. Join, quit,
+unloading, portals being made, potions splashing, items wearing, shearing, beds, client
+settings, arrows picked up, eggs hatching, bottles o' enchanting, and dropped items going or
+merging. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 

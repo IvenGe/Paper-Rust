@@ -55,8 +55,8 @@ impl Server {
             if item == "minecraft:shears" {
                 self.harvest_honeycomb(world, pos, state);
                 if !creative {
-                    let mut tool = self.players[&id].inventory[slot].clone();
-                    super::survival::hurt_item(&mut tool, 1, false);
+                    self.wear_player_item(id, slot, 1, false);
+                    let tool = self.players[&id].inventory[slot].clone();
                     self.set_inventory_slot(id, slot, tool);
                 }
             } else {
@@ -125,8 +125,8 @@ impl Server {
         self.set_block_and_update(world, pos, new_state);
         self.play_sound(world, at, sound, category::BLOCKS, 1.0, 1.0, None);
         if !creative {
-            let mut tool = self.players[&id].inventory[slot].clone();
-            super::survival::hurt_item(&mut tool, 1, false);
+            self.wear_player_item(id, slot, 1, false);
+            let tool = self.players[&id].inventory[slot].clone();
             self.set_inventory_slot(id, slot, tool);
         }
         true

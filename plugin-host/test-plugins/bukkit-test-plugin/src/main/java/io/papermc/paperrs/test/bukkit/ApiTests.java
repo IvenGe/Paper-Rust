@@ -1442,6 +1442,13 @@ final class ApiTests implements Listener, CommandExecutor {
         }
     }
 
+    /** Records an event that cannot be cancelled (while recording). */
+    private void heard(final String what) {
+        if (!this.blockMode.equals("off")) {
+            this.blockEvents.add(what);
+        }
+    }
+
     private static String types(final List<Block> blocks) {
         return blocks.stream().map(b -> b.getType().name()).toList().toString();
     }
@@ -1544,6 +1551,99 @@ final class ApiTests implements Listener, CommandExecutor {
     public void onCloudApply(final org.bukkit.event.entity.AreaEffectCloudApplyEvent event) {
         this.blockEvent(event, "CLOUD " + event.getAffectedEntities().stream().map(e -> e.getType().name()).sorted().toList()
             + " " + (event.getEntity().getSource() instanceof Player ? "player" : "-"));
+    }
+
+    // (Shears only: other tools wear in other steps.)
+    @EventHandler
+    public void onItemDamage(final org.bukkit.event.player.PlayerItemDamageEvent event) {
+        if (event.getItem().getType() == Material.SHEARS) {
+            this.blockEvent(event, "WEAR " + event.getItem().getType() + " " + event.getDamage() + " " + event.getOriginalDamage());
+        }
+    }
+
+    @EventHandler
+    public void onItemBreak(final org.bukkit.event.player.PlayerItemBreakEvent event) {
+        if (event.getBrokenItem().getType() == Material.SHEARS) {
+            this.heard("BROKE " + event.getBrokenItem().getType());
+        }
+    }
+
+    @EventHandler
+    public void onShear(final org.bukkit.event.player.PlayerShearEntityEvent event) {
+        this.blockEvent(event, "SHEAR " + event.getEntity().getType() + " " + event.getItem().getType() + " " + event.getHand() + " " + event.getDrops().size());
+        // Recording, one diamond instead of the wool.
+        if (this.blockMode.equals("record")) {
+            event.setDrops(List.of(new ItemStack(Material.DIAMOND)));
+        }
+    }
+
+    @EventHandler
+    public void onBedEnter(final org.bukkit.event.player.PlayerBedEnterEvent event) {
+        this.blockEvent(event, "BED " + event.getBedEnterResult() + " " + event.enterAction().canSleep().success() + " " + event.enterAction().canSetSpawn().success());
+        // Recording, in bed whatever stood in the way.
+        if (this.blockMode.equals("record")) {
+            event.setUseBed(org.bukkit.event.Event.Result.ALLOW);
+        }
+    }
+
+    @EventHandler
+    public void onBedLeave(final org.bukkit.event.player.PlayerBedLeaveEvent event) {
+        this.blockEvent(event, "WAKE " + event.getBed().getType().name().endsWith("_BED"));
+    }
+
+    @EventHandler
+    public void onMainHand(final org.bukkit.event.player.PlayerChangedMainHandEvent event) {
+        this.heard("HAND " + event.getNewMainHand());
+    }
+
+    @EventHandler
+    public void onLocale(final org.bukkit.event.player.PlayerLocaleChangeEvent event) {
+        this.heard("LOCALE " + event.getLocale());
+    }
+
+    @EventHandler
+    public void onPickupArrow(final org.bukkit.event.player.PlayerPickupArrowEvent event) {
+        this.blockEvent(event, "ARROW " + event.getItem().getItemStack().getType() + " " + event.getArrow().getType());
+    }
+
+    @EventHandler
+    public void onEggThrow(final org.bukkit.event.player.PlayerEggThrowEvent event) {
+        this.heard("EGG " + event.getHatchingType());
+        // "Cancelling", two hatch for sure.
+        if (this.blockMode.equals("cancel")) {
+            event.setHatching(true);
+            event.setNumHatches((byte) 2);
+        }
+    }
+
+    @EventHandler
+    public void onEggHatch(final com.destroystokyo.paper.event.entity.ThrownEggHatchEvent event) {
+        this.heard("HATCH " + (event.isHatching() ? event.getNumHatches() : 0));
+    }
+
+    @EventHandler
+    public void onExpBottle(final org.bukkit.event.entity.ExpBottleEvent event) {
+        this.heard("XP " + (event.getExperience() >= 3 && event.getExperience() <= 11) + " " + (event.getHitBlock() == null ? "-" : event.getHitBlock().getType()));
+        // "Cancelling", none and no splash.
+        if (this.blockMode.equals("cancel")) {
+            event.setExperience(0);
+            event.setShowEffect(false);
+        }
+    }
+
+    // (Emeralds only: other items lie about in other steps.)
+    @EventHandler
+    public void onItemDespawn(final org.bukkit.event.entity.ItemDespawnEvent event) {
+        if (event.getEntity().getItemStack().getType() == Material.EMERALD) {
+            this.blockEvent(event, "DESPAWN " + event.getEntity().getItemStack().getAmount());
+        }
+    }
+
+    @EventHandler
+    public void onItemMerge(final org.bukkit.event.entity.ItemMergeEvent event) {
+        if (event.getEntity().getItemStack().getType() == Material.EMERALD) {
+            this.blockEvent(event, "MERGE " + event.getEntity().getItemStack().getAmount() + " " + event.getTarget().getItemStack().getAmount());
+        }
     }
 
     @EventHandler
