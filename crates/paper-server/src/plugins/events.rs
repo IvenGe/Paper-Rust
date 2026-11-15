@@ -2156,3 +2156,151 @@ pub fn on_vehicle_move(server: &mut Server, world: usize, vehicle: i32, from: (f
     };
     fire(server, "VehicleMoveEvent", "event.vehicle_move", args);
 }
+
+fn effect_value(effect: &crate::server::effects::ActiveEffect) -> Value {
+    bmap! { "effect" => effect.name(), "duration" => effect.duration, "amplifier" => effect.amplifier, "ambient" => effect.ambient, "particles" => effect.particles, "icon" => effect.icon }
+}
+
+/// `EntityPotionEffectEvent`: `entity`'s effect `old` is to become `new` (`action` `ADDED`,
+/// `CHANGED`, `REMOVED` or `CLEARED`) for `cause`; `replaces` says whether it would
+/// (`isOverride` as the event starts). `None` if plugins cancelled it, else whether the new
+/// effect replaces the old one, even if weaker.
+#[allow(clippy::too_many_arguments)]
+pub fn on_potion_effect(server: &mut Server, world: usize, entity: i32, old: Option<&crate::server::effects::ActiveEffect>, new: Option<&crate::server::effects::ActiveEffect>, cause: &str, action: &str, replaces: bool) -> Option<bool> {
+    let override_default = replaces;
+    if !listens(server, "EntityPotionEffectEvent") || !(server.players.contains_key(&entity) || server.worlds[world].entities.contains_key(&entity)) {
+        return Some(override_default);
+    }
+    let mut args = bmap! { "entity" => actor_value(server, world, entity), "cause" => cause, "action" => action, "override" => override_default };
+    if let Some(old) = old {
+        args.set("old", effect_value(old));
+    }
+    if let Some(new) = new {
+        args.set("new", effect_value(new));
+    }
+    match fire(server, "EntityPotionEffectEvent", "event.potion_effect", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.bool("override").unwrap_or(override_default)),
+        None => Some(override_default),
+    }
+}
+
+/// `EntityShootBowEvent`: `shooter` shot the arrow `arrow` from `bow` in `hand` (0 main, 1
+/// off) at `force` (0 to 1), using up `consumable` if `consume`. `None` if plugins cancelled it,
+/// else whether the arrow is used up (`setConsumeItem`).
+#[allow(clippy::too_many_arguments)]
+pub fn on_shoot_bow(server: &mut Server, world: usize, shooter: i32, bow: &paper_protocol::types::Slot, consumable: &paper_protocol::types::Slot, arrow: i32, hand: i32, force: f32, consume: bool) -> Option<bool> {
+    if !listens(server, "EntityShootBowEvent") || !server.worlds[world].entities.contains_key(&arrow) {
+        return Some(consume);
+    }
+    let args = bmap! {
+        "entity" => actor_value(server, world, shooter),
+        "bow" => super::api::item_value(bow),
+        "consumable" => super::api::item_value(consumable),
+        "projectile" => actor_value(server, world, arrow),
+        "hand" => hand,
+        "force" => force as f64,
+        "consume" => consume,
+    };
+    match fire(server, "EntityShootBowEvent", "event.shoot_bow", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.bool("consume").unwrap_or(consume)),
+        None => Some(consume),
+    }
+}
+
+/// `ItemSpawnEvent`: the item entity `item` has just come into the world. Returns whether
+/// plugins let it stay.
+pub fn on_item_spawn(server: &mut Server, world: usize, item: i32) -> bool {
+    if !listens(server, "ItemSpawnEvent") || !server.worlds[world].entities.contains_key(&item) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, item) };
+    match fire(server, "ItemSpawnEvent", "event.item_spawn", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `SpawnerSpawnEvent`: the spawner at `spawner` has just spawned `entity`. Returns whether
+/// plugins let it stay.
+pub fn on_spawner_spawn(server: &mut Server, world: usize, entity: i32, spawner: BlockPos) -> bool {
+    if !listens(server, "SpawnerSpawnEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, entity), "x" => spawner.x, "y" => spawner.y, "z" => spawner.z };
+    match fire(server, "SpawnerSpawnEvent", "event.spawner_spawn", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `UnknownCommandEvent`: `source` ran `line`, which names no command. The error message as
+/// plugins leave it, or `None` if they took it away.
+pub fn on_unknown_command(server: &mut Server, source: &CommandSource, line: &str, message: Component) -> Option<Component> {
+    if !listens(server, "UnknownCommandEvent") {
+        return Some(message);
+    }
+    let args = bmap! { "sender" => source_value(server, source), "command" => line, "message" => component_value(&message) };
+    match fire(server, "UnknownCommandEvent", "event.unknown_command", args) {
+        Some(result) => component_from(result.get("message")),
+        None => Some(message),
+    }
+}
+
+/// Paper's `PlayerOpenSignEvent` and then, if anyone listens, Bukkit's `PlayerSignOpenEvent`:
+/// `id` is about to write on one side of the sign at `pos` (`cause`: `PLACE`, `INTERACT`,
+/// `PLUGIN` or `UNKNOWN`). Returns whether plugins let the editor open.
+pub fn on_sign_open(server: &mut Server, id: i32, world: usize, pos: BlockPos, front: bool, cause: &str) -> bool {
+    if !listens(server, "PlayerOpenSignEvent") && !listens(server, "PlayerSignOpenEvent") {
+        return true;
+    }
+    let Some(player) = server.players.get(&id) else { return true };
+    let args = bmap! { "uuid" => player.uuid().to_string(), "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "front" => front, "cause" => cause };
+    match fire(server, "", "event.sign_open", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `PlayerClientLoadedWorldEvent`: the client of `id` has loaded the world after joining or
+/// respawning, or the server gave up waiting for it (`timeout`).
+pub fn on_client_loaded(server: &mut Server, id: i32, timeout: bool) {
+    if !listens(server, "PlayerClientLoadedWorldEvent") {
+        return;
+    }
+    let Some(player) = server.players.get(&id) else { return };
+    let args = bmap! { "uuid" => player.uuid().to_string(), "timeout" => timeout };
+    fire(server, "PlayerClientLoadedWorldEvent", "event.client_loaded", args);
+}
+
+/// Paper's `BlockPreDispenseEvent`: the dispenser or dropper at `pos` is about to use the stack
+/// in `slot`. Returns whether plugins let it.
+pub fn on_pre_dispense(server: &mut Server, world: usize, pos: BlockPos, stack: &paper_protocol::types::ItemStack, slot: usize) -> bool {
+    if !listens(server, "BlockPreDispenseEvent") {
+        return true;
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "item" => super::api::item_value(&paper_protocol::types::Slot(Some(stack.clone()))),
+        "slot" => slot as i32,
+    };
+    match fire(server, "BlockPreDispenseEvent", "event.pre_dispense", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// Paper's `BlockFailedDispenseEvent`: the dispenser or dropper at `pos` fired with nothing in
+/// it. Returns whether it still clicks.
+pub fn on_failed_dispense(server: &mut Server, world: usize, pos: BlockPos) -> bool {
+    if !listens(server, "BlockFailedDispenseEvent") {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z };
+    match fire(server, "BlockFailedDispenseEvent", "event.failed_dispense", args) {
+        Some(result) => result.bool("effect") != Some(false),
+        None => true,
+    }
+}

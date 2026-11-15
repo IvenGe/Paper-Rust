@@ -389,8 +389,18 @@ impl Server {
 
     // --- creating mobs -----------------------------------------------------------------------
 
-    /// Spawns a mob (or any entity type) at a position. Returns its id.
+    /// Spawns a mob (or any entity type) at a position. Returns its id; plugins hear of a mob
+    /// (`CreatureSpawnEvent`) and may take it away again.
     pub fn spawn_mob(&mut self, world: usize, name: &str, pos: Vec3, reason: SpawnReason) -> Option<i32> {
+        let id = self.spawn_mob_unannounced(world, name, pos, reason)?;
+        if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Mob(_))) {
+            crate::plugins::events::on_creature_spawn(self, world, id, reason);
+        }
+        Some(id)
+    }
+
+    /// `spawn_mob` without telling plugins yet.
+    pub(super) fn spawn_mob_unannounced(&mut self, world: usize, name: &str, pos: Vec3, reason: SpawnReason) -> Option<i32> {
         let name = if name.contains(':') { name.to_owned() } else { format!("minecraft:{name}") };
         let info = entity_types::by_name(&name)?;
         if !info.mob {
@@ -488,9 +498,7 @@ impl Server {
         e.head_yaw = e.yaw;
         e.flags.left_handed = rng.gen::<f32>() < 0.05;
         e.flags.spawn_reason = Some(reason.bukkit_name(&name).to_owned());
-        let id = self.spawn_entity(world, e);
-        crate::plugins::events::on_creature_spawn(self, world, id, reason);
-        Some(id)
+        Some(self.spawn_entity(world, e))
     }
 
     // --- per tick ------------------------------------------------------------------------------
@@ -1036,7 +1044,7 @@ impl Server {
             };
             if let Some((effect, ticks)) = bite.filter(|(_, t)| *t > 0) {
                 if let Some(e) = super::effects::ActiveEffect::new(effect, ticks, 0) {
-                    self.add_effect(world, target, e);
+                    self.add_effect(world, target, e, "ATTACK");
                 }
             }
         }
@@ -1055,7 +1063,16 @@ impl Server {
         let mut rng = rand::thread_rng();
         let damage = 2.0 + (rng.gen::<f64>() - rng.gen::<f64>()) * 0.57425 + difficulty as f64 * 0.11;
         let pos = e.pos;
-        self.spawn_arrow_towards(world, origin, dir, 1.6, inaccuracy, Some(id), damage, false, false);
+        let bow = e.mob().map_or(paper_protocol::types::Slot::EMPTY, |m| m.equipment[0].clone());
+        let arrow = self.spawn_arrow_unlaunched(world, origin, dir, 1.6, inaccuracy, Some(id), damage, false, false);
+        // Plugins may stop the shot (`EntityShootBowEvent`), then the arrow's launch (the
+        // skeleton still makes its sound).
+        let consumable = paper_protocol::types::Slot::of(items::id("minecraft:arrow").unwrap_or(0) as i32, 1);
+        if crate::plugins::events::on_shoot_bow(self, world, id, &bow, &consumable, arrow, 0, 0.8, true).is_none() {
+            self.worlds[world].remove_entity(arrow);
+            return;
+        }
+        self.launch(world, arrow);
         let pitch = 1.0 / (rng.gen::<f32>() * 0.4 + 0.8);
         self.play_sound(world, pos, "minecraft:entity.skeleton.shoot", category::HOSTILE, 1.0, pitch, None);
     }

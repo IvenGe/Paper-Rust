@@ -422,15 +422,22 @@ impl Server {
             }
         }
         let Some(slot) = chosen else {
-            self.broadcast_level_event(world, 1001, pos, 0, false);
+            // Empty: it clicks, unless plugins keep it quiet (`BlockFailedDispenseEvent`).
+            if crate::plugins::events::on_failed_dispense(self, world, pos) {
+                self.broadcast_level_event(world, 1001, pos, 0, false);
+            }
             return;
         };
         let stack = items[slot].0.clone().unwrap();
         let front = at(pos, facing);
-        // Plugins see the item go (`BlockDispenseEvent`) and may stop it or send another; a
-        // dropper filling a container in front does not ask.
+        // Plugins may stop it before anything happens (`BlockPreDispenseEvent`), then see the
+        // item go (`BlockDispenseEvent`) and may stop it or send another; a dropper filling a
+        // container in front asks neither.
         let mut instead = None;
         if !(name == "minecraft:dropper" && self.loaded_inventory_at(world, front).is_some()) {
+            if !crate::plugins::events::on_pre_dispense(self, world, pos, &stack, slot) {
+                return;
+            }
             match crate::plugins::events::on_dispense(self, world, pos, &stack, facing.offset()) {
                 None => return,
                 Some(item) if item.with_count(1) != stack.with_count(1) => instead = Some(item.with_count(1)),

@@ -70,8 +70,14 @@ impl Server {
         }
     }
 
-    /// Spawns an item entity.
+    /// Spawns an item entity, unless plugins take it away again (`ItemSpawnEvent`).
     pub fn spawn_item(&mut self, world: usize, pos: Vec3, stack: Slot, vel: Vec3, pickup_delay: i32) -> Option<i32> {
+        let id = self.spawn_item_unannounced(world, pos, stack, vel, pickup_delay)?;
+        self.keep_spawned_item(world, id).then_some(id)
+    }
+
+    /// `spawn_item` without asking plugins yet (see `keep_spawned_item`).
+    fn spawn_item_unannounced(&mut self, world: usize, pos: Vec3, stack: Slot, vel: Vec3, pickup_delay: i32) -> Option<i32> {
         if stack.0.as_ref().is_none_or(|s| s.count <= 0) {
             return None;
         }
@@ -80,6 +86,16 @@ impl Server {
         e.vel = vel;
         e.yaw = rand::thread_rng().gen_range(0.0..360.0);
         Some(self.spawn_entity(world, e))
+    }
+
+    /// `ItemSpawnEvent` for an item that was just added: whether it stays. A refused one is
+    /// gone before anyone sees it.
+    fn keep_spawned_item(&mut self, world: usize, id: i32) -> bool {
+        if crate::plugins::events::on_item_spawn(self, world, id) {
+            return true;
+        }
+        self.worlds[world].remove_entity(id);
+        false
     }
 
     /// Drops a stack out of a block the way vanilla's `Block.popResource` does.
@@ -170,13 +186,16 @@ impl Server {
             Vec3::new(rng.gen_range(-0.25..0.25), 0.2, rng.gen_range(-0.25..0.25))
         };
         let uuid = player.uuid();
-        if let Some(item) = self.spawn_item(world, eye, stack.clone(), vel, 40) {
+        if let Some(item) = self.spawn_item_unannounced(world, eye, stack.clone(), vel, 40) {
             if let Some(EntityKind::Item { thrower, .. }) = self.worlds[world].entities.get_mut(&item).map(|e| &mut e.kind) {
                 *thrower = Some(uuid);
             }
-            // Plugin hook: PlayerDropItemEvent. A cancelled drop goes back to the player
+            // Plugin hook: PlayerDropItemEvent, then the item spawns as any other
+            // (`ItemSpawnEvent`; refused, it is lost). A cancelled drop goes back to the player
             // (the held slot first, as CraftBukkit does), or stays dropped if it cannot.
-            if !crate::plugins::events::on_drop_item(self, id, item, &stack) {
+            if crate::plugins::events::on_drop_item(self, id, item, &stack) {
+                self.keep_spawned_item(world, item);
+            } else {
                 let Some(e) = self.worlds[world].entities.get_mut(&item) else { return };
                 let EntityKind::Item { stack: Slot(Some(back)), .. } = std::mem::replace(&mut e.kind, EntityKind::Other) else { return };
                 e.removed = true;

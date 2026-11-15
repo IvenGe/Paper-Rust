@@ -143,10 +143,11 @@ impl Server {
         self.broadcast_to_chunk_viewers(world, ChunkPos::of_block(pos.x, pos.z), &packet);
     }
 
-    /// Opens the sign editor for a player on one side (`SignBlock.openTextEdit`): only they
-    /// may write on it until they are done.
-    fn open_sign_editor(&mut self, player: i32, world: usize, pos: BlockPos, front: bool) {
-        if self.sign_data(world, pos).is_none() {
+    /// Opens the sign editor for a player on one side (`SignBlock.openTextEdit`), unless
+    /// plugins refuse (`PlayerOpenSignEvent`; `cause` is its `Cause`): only they may write on
+    /// it until they are done.
+    fn open_sign_editor(&mut self, player: i32, world: usize, pos: BlockPos, front: bool, cause: &str) {
+        if self.sign_data(world, pos).is_none() || !crate::plugins::events::on_sign_open(self, player, world, pos, front, cause) {
             return;
         }
         let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return };
@@ -163,7 +164,7 @@ impl Server {
     /// After a player placed a sign (`SignItem.updateCustomBlockEntityTag`): its front opens
     /// for writing.
     pub(super) fn sign_placed(&mut self, player: i32, world: usize, pos: BlockPos) {
-        self.open_sign_editor(player, world, pos, true);
+        self.open_sign_editor(player, world, pos, true, "PLACE");
     }
 
     /// A click on a sign (`SignBlock.useItemOn` and `useWithoutItem`): dyes, glow ink sacs,
@@ -244,7 +245,7 @@ impl Server {
         if other || !may_build {
             return false;
         }
-        self.open_sign_editor(player, world, pos, front);
+        self.open_sign_editor(player, world, pos, front, "INTERACT");
         true
     }
 

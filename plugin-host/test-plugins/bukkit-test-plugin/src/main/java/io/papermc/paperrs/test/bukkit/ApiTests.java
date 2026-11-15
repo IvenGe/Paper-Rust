@@ -72,6 +72,8 @@ final class ApiTests implements Listener, CommandExecutor {
     private @org.jetbrains.annotations.Nullable ItemStack guardHeld;
     /** Piston and fire events seen ("apitest blocks record|cancel|off"); cancelled in cancel mode. */
     private final java.util.TreeSet<String> blockEvents = new java.util.TreeSet<>();
+    /** PlayerClientLoadedWorldEvent: who, and whether the server stopped waiting. */
+    private final java.util.TreeSet<String> clientLoaded = new java.util.TreeSet<>();
     private String blockMode = "off";
     /** PlayerChangedWorldEvents seen ("apitest worldhop"). */
     private final List<String> changedWorlds = new ArrayList<>();
@@ -236,6 +238,7 @@ final class ApiTests implements Listener, CommandExecutor {
                     sender.sendMessage("blocks: " + this.blockMode);
                 }
                 case "blockevents" -> sender.sendMessage("blockevents: " + String.join(", ", this.blockEvents));
+                case "loaded" -> sender.sendMessage("loaded: " + String.join(", ", this.clientLoaded));
                 case "worldhop" -> {
                     // To the nether and back: PlayerChangedWorldEvent each time.
                     final Player player = (Player) sender;
@@ -1729,6 +1732,81 @@ final class ApiTests implements Listener, CommandExecutor {
     public void onItemMerge(final org.bukkit.event.entity.ItemMergeEvent event) {
         if (event.getEntity().getItemStack().getType() == Material.EMERALD) {
             this.blockEvent(event, "MERGE " + event.getEntity().getItemStack().getAmount() + " " + event.getTarget().getItemStack().getAmount());
+        }
+    }
+
+    // Effects given and taken by command only.
+    @EventHandler
+    public void onPotionEffect(final org.bukkit.event.entity.EntityPotionEffectEvent event) {
+        if (event.getCause() == org.bukkit.event.entity.EntityPotionEffectEvent.Cause.COMMAND) {
+            this.blockEvent(event, "EFFECT " + event.getModifiedType().getKey().getKey() + " " + event.getAction()
+                + " " + (event.getOldEffect() == null ? "-" : event.getOldEffect().getAmplifier())
+                + " " + (event.getNewEffect() == null ? "-" : event.getNewEffect().getAmplifier()) + " " + event.isOverride());
+        }
+    }
+
+    // Players' bows only: the test world's skeletons shoot too.
+    @EventHandler
+    public void onShootBow(final org.bukkit.event.entity.EntityShootBowEvent event) {
+        if (event.getEntity() instanceof Player) {
+            this.blockEvent(event, "BOW " + (event.getBow() == null ? "-" : event.getBow().getType()) + " " + (event.getConsumable() == null ? "-" : event.getConsumable().getType())
+                + " " + event.getProjectile().getType() + " " + event.getHand() + " " + event.shouldConsumeItem());
+        }
+    }
+
+    // (Amethyst shards only: other steps drop other things.)
+    @EventHandler
+    public void onItemSpawn(final org.bukkit.event.entity.ItemSpawnEvent event) {
+        if (event.getEntity().getItemStack().getType() == Material.AMETHYST_SHARD) {
+            this.blockEvent(event, "ITEMSPAWN " + event.getEntity().getItemStack().getAmount());
+        }
+    }
+
+    @EventHandler
+    public void onSpawnerSpawn(final org.bukkit.event.entity.SpawnerSpawnEvent event) {
+        this.blockEvent(event, "SPAWNER " + event.getEntityType() + " " + event.getSpawner().getSpawnedType());
+    }
+
+    @EventHandler
+    public void onOpenSign(final io.papermc.paper.event.player.PlayerOpenSignEvent event) {
+        this.blockEvent(event, "OPENSIGN " + event.getCause() + " " + event.getSide() + " " + event.getSign().getType());
+    }
+
+    @EventHandler
+    public void onSignOpen(final org.bukkit.event.player.PlayerSignOpenEvent event) {
+        this.heard("SIGNOPEN " + event.getCause() + " " + event.getSide());
+    }
+
+    @EventHandler
+    public void onUnknownCommand(final org.bukkit.event.command.UnknownCommandEvent event) {
+        if (event.getCommandLine().startsWith("nosuch")) {
+            event.message(event.getCommandLine().equals("nosuch quiet") ? null
+                : net.kyori.adventure.text.Component.text("No /" + event.getCommandLine() + " for " + event.getSender().getName()));
+        }
+    }
+
+    @EventHandler
+    public void onClientLoaded(final io.papermc.paper.event.player.PlayerClientLoadedWorldEvent event) {
+        this.clientLoaded.add(event.getPlayer().getName() + " " + event.isTimeout());
+    }
+
+    // Only amethyst shards are stopped: the dispenser step must still see BlockDispenseEvent.
+    @EventHandler
+    public void onPreDispense(final io.papermc.paper.event.block.BlockPreDispenseEvent event) {
+        final String what = "PREDISPENSE " + event.getItemStack().getType() + " " + event.getSlot();
+        if (event.getItemStack().getType() == Material.AMETHYST_SHARD) {
+            this.blockEvent(event, what);
+        } else {
+            this.heard(what);
+        }
+    }
+
+    // "Cancelling" keeps it quiet.
+    @EventHandler
+    public void onFailedDispense(final io.papermc.paper.event.block.BlockFailedDispenseEvent event) {
+        this.heard("FAILDISPENSE " + event.getBlock().getType());
+        if (this.blockMode.equals("cancel")) {
+            event.shouldPlayEffect(false);
         }
     }
 

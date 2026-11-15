@@ -225,6 +225,9 @@ pub struct Player {
     pub keep_alive: KeepAlive,
     /// The client finished loading terrain after joining or respawning.
     pub loaded: bool,
+    /// Ticks the server still waits for the client to say it has loaded before taking it as
+    /// loaded anyway (`clientLoadedTimeoutTimer`).
+    pub load_timeout: i32,
     pub op_level: u8,
     pub display_name: Option<Component>,
     pub list_name: Option<Component>,

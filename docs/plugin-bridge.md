@@ -203,6 +203,15 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.entity_place` | `uuid`, `world`, `x`, `y`, `z` (the block it was put against), `face`, `hand`, `entity` | `cancelled` (`EntityPlaceEvent`) |
 | `event.vehicle_move` | `world`, `entity`, `from` `[x, y, z, yaw, pitch]` (where it was after its last tick) | nothing (`VehicleMoveEvent`) |
 | `event.zap` | `world`, `entity`, `bolt`, `into` (the new mob, already there), `pig` | `cancelled` (`PigZapEvent`, or Paper's `EntityZapEvent` then `EntityTransformEvent`; the new mob goes) |
+| `event.potion_effect` | `entity`, `old` and `new` (`{effect, duration, amplifier, ambient, particles, icon}`, either missing), `cause` (`EntityPotionEffectEvent.Cause`), `action` (`ADDED`, `CHANGED`, `REMOVED`, `CLEARED`), `override` (whether the new effect would replace the old) | `cancelled`, `override` (`EntityPotionEffectEvent`: a weaker effect replaces a stronger one when overridden) |
+| `event.shoot_bow` | `entity` (a player or skeleton), `bow`, `consumable`, `projectile` (the arrow, not yet launched), `hand`, `force`, `consume` | `cancelled`, `consume` (`EntityShootBowEvent`, before the arrow's `ProjectileLaunchEvent`; stopped, nothing is used up; an arrow kept cannot be picked up) |
+| `event.item_spawn` | `world`, `entity` (the item, in the world but not yet seen) | `cancelled` (`ItemSpawnEvent`: it goes again; a player's drop asks after `PlayerDropItemEvent`) |
+| `event.spawner_spawn` | `world`, `entity` (the mob, before its `CreatureSpawnEvent`), `x`, `y`, `z` (the spawner) | `cancelled` (`SpawnerSpawnEvent`: the mob goes, the spawner tries the next) |
+| `event.sign_open` | `uuid`, `world`, `x`, `y`, `z`, `front`, `cause` (`PLACE`, `INTERACT`) | `cancelled` (Paper's `PlayerOpenSignEvent`, then Bukkit's `PlayerSignOpenEvent` if anyone listens: the editor stays shut) |
+| `event.unknown_command` | `sender`, `command` (without `/`), `message` (the error) | `message` (`UnknownCommandEvent`; none, and nothing is said) |
+| `event.client_loaded` | `uuid`, `timeout` | nothing (`PlayerClientLoadedWorldEvent`, once after joining and after each respawn: when the client says it has loaded the world, or after three seconds without) |
+| `event.pre_dispense` | `world`, `x`, `y`, `z`, `item` (the stack), `slot` | `cancelled` (Paper's `BlockPreDispenseEvent`, before `BlockDispenseEvent`; a dropper filling a container in front asks neither) |
+| `event.failed_dispense` | `world`, `x`, `y`, `z` | `effect` (Paper's `BlockFailedDispenseEvent` for an empty dispenser or dropper: whether it clicks) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
 | `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |
@@ -226,9 +235,14 @@ explosions, move, game mode change, chat, the inventory, item, damage, death, re
 and spawn events, pistons and fire, login, changing worlds, chunks loading and
 unloading, portals being made, potions splashing, items wearing, shearing, beds, client
 settings, arrows picked up, eggs hatching, bottles o' enchanting, dropped items going or
-merging, TNT and explosions, lightning, and vehicles. Join, quit,
+merging, TNT and explosions, lightning, vehicles, potion effects, bows, items and spawner
+mobs coming into the world, signs opening, unknown commands, clients loading the world, and
+dispensers about to fire or firing empty. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
-`{entity: id, value: <state>}` (see `entity.state`).
+`{entity: id, value: <state>}` (see `entity.state`). Creature, item and spawner spawns share
+`EntitySpawnEvent`'s handler list; each counts as listened only when some listener class
+has an `@EventHandler` method for it or a supertype (or was registered without any), so that
+a creature spawn listener does not make every dropped item wait for the host.
 
 Piston moves, fire burning or spreading, lava setting fires, fire lighting a portal, TNT set
 off by redstone or fire, fluids flowing, trees growing, and blocks growing, fading, forming,

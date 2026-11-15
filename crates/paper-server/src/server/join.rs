@@ -70,6 +70,7 @@ impl Server {
             next_teleport_id: 1,
             keep_alive: KeepAlive { last_sent: now, pending: None, latency: 0 },
             loaded: false,
+            load_timeout: 60,
             op_level,
             display_name: None,
             list_name: None,

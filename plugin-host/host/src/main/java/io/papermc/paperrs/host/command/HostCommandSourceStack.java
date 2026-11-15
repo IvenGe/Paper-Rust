@@ -14,6 +14,14 @@ import org.jetbrains.annotations.Nullable;
 
 /** Who runs a Brigadier command, and where. */
 public record HostCommandSourceStack(CommandSender sender, Location location, @Nullable Entity executor) implements CommandSourceStack {
+    /** The source for {@code sender}: an entity runs where it stands, others at the spawn. */
+    public static CommandSourceStack of(final CommandSender sender) {
+        if (sender instanceof Entity entity) {
+            return new HostCommandSourceStack(sender, entity.getLocation(), entity);
+        }
+        return new HostCommandSourceStack(sender, org.bukkit.Bukkit.getWorlds().getFirst().getSpawnLocation(), null);
+    }
+
     private static final SimpleCommandExceptionType NOT_PLAYER = new SimpleCommandExceptionType(new LiteralMessage("A player is required to run this command here"));
     private static final SimpleCommandExceptionType NOT_ENTITY = new SimpleCommandExceptionType(new LiteralMessage("An entity is required to run this command here"));
 

@@ -95,7 +95,8 @@ fn ghast_fireballs_explode_where_they_land() {
             s.spawn_thrown(0, "minecraft:fireball", Vec3::new(14.5, -55.0, 8.5), Vec3::new(0.0, -1.0, 0.0), 0.5, 0.0, 0.0, paper_protocol::types::Slot::EMPTY, None);
         })
         .unwrap();
-    let crater = |s: &mut paper_server::server::Server| s.worlds[0].block_at(14, -61, 8).is_some_and(paper_data::blocks::is_air);
+    // (The blast may leave fire where the grass was: with mob griefing on, it sets fires.)
+    let crater = |s: &mut paper_server::server::Server| s.worlds[0].block_at(14, -61, 8).is_some_and(|b| matches!(paper_data::blocks::block_of_state(b).name, "minecraft:air" | "minecraft:fire"));
     wait_reading(&mut alice, "the explosion", || server.handle.run(crater).unwrap());
     assert!(fireballs(&server, "minecraft:fireball").is_empty(), "the fireball is gone");
     server.stop();

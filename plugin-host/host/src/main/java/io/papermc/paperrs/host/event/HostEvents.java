@@ -171,6 +171,16 @@ public final class HostEvents {
         GATED.put("PlayerLoginEvent", org.bukkit.event.player.PlayerLoginEvent.class);
         GATED.put("ChunkLoadEvent", org.bukkit.event.world.ChunkLoadEvent.class);
         GATED.put("ChunkUnloadEvent", org.bukkit.event.world.ChunkUnloadEvent.class);
+        GATED.put("EntityPotionEffectEvent", org.bukkit.event.entity.EntityPotionEffectEvent.class);
+        GATED.put("EntityShootBowEvent", org.bukkit.event.entity.EntityShootBowEvent.class);
+        GATED.put("ItemSpawnEvent", org.bukkit.event.entity.ItemSpawnEvent.class);
+        GATED.put("SpawnerSpawnEvent", org.bukkit.event.entity.SpawnerSpawnEvent.class);
+        GATED.put("PlayerOpenSignEvent", io.papermc.paper.event.player.PlayerOpenSignEvent.class);
+        GATED.put("PlayerSignOpenEvent", org.bukkit.event.player.PlayerSignOpenEvent.class);
+        GATED.put("UnknownCommandEvent", org.bukkit.event.command.UnknownCommandEvent.class);
+        GATED.put("PlayerClientLoadedWorldEvent", io.papermc.paper.event.player.PlayerClientLoadedWorldEvent.class);
+        GATED.put("BlockPreDispenseEvent", io.papermc.paper.event.block.BlockPreDispenseEvent.class);
+        GATED.put("BlockFailedDispenseEvent", io.papermc.paper.event.block.BlockFailedDispenseEvent.class);
     }
 
     private final CraftServer server;
@@ -197,11 +207,73 @@ public final class HostEvents {
     public Set<String> listened() {
         final Set<String> out = new LinkedHashSet<>();
         this.handlerLists.forEach((name, list) -> {
-            if (list.getRegisteredListeners().length > 0) {
+            final org.bukkit.plugin.RegisteredListener[] all = list.getRegisteredListeners();
+            if (all.length > 0 && (!NARROWED.contains(name) || this.heard(name, all))) {
                 out.add(name);
             }
         });
         return out;
+    }
+
+    /**
+     * Events whose handler list is another's: {@code EntitySpawnEvent}'s also holds the
+     * listeners of creature, item and spawner spawns. Each of these counts as listened only
+     * when some listener takes it or a supertype, so that a creature spawn listener does not
+     * make every dropped item wait for the host.
+     */
+    private static final Set<String> NARROWED = Set.of("CreatureSpawnEvent", "ItemSpawnEvent", "SpawnerSpawnEvent");
+    /** For each narrowed event, the listeners last looked at (lists keep their array until they change) and the answer. */
+    private final Map<String, org.bukkit.plugin.RegisteredListener[]> narrowedFor = new java.util.HashMap<>();
+    private final Map<String, Boolean> narrowedHeard = new java.util.HashMap<>();
+
+    private boolean heard(final String name, final org.bukkit.plugin.RegisteredListener[] all) {
+        if (this.narrowedFor.get(name) != all) {
+            final Class<? extends Event> type = GATED.get(name);
+            boolean heard = false;
+            for (final org.bukkit.plugin.RegisteredListener listener : all) {
+                if (takes(listener.getListener().getClass(), type)) {
+                    heard = true;
+                    break;
+                }
+            }
+            this.narrowedFor.put(name, all);
+            this.narrowedHeard.put(name, heard);
+        }
+        return this.narrowedHeard.get(name);
+    }
+
+    /**
+     * The event types that a listener class's {@code @EventHandler} methods take, found as
+     * Paper's event manager finds them. A class without any was registered some other way
+     * ({@code PluginManager#registerEvent}) and might take anything.
+     */
+    private static final ClassValue<List<Class<?>>> HANDLED = new ClassValue<>() {
+        @Override
+        protected List<Class<?>> computeValue(final Class<?> type) {
+            final Set<java.lang.reflect.Method> methods = new java.util.HashSet<>();
+            try {
+                methods.addAll(List.of(type.getMethods()));
+                methods.addAll(List.of(type.getDeclaredMethods()));
+            } catch (final LinkageError e) {
+                return List.of(Event.class);
+            }
+            final List<Class<?>> out = new ArrayList<>();
+            for (final java.lang.reflect.Method method : methods) {
+                if (method.isAnnotationPresent(org.bukkit.event.EventHandler.class) && method.getParameterCount() == 1) {
+                    out.add(method.getParameterTypes()[0]);
+                }
+            }
+            return out.isEmpty() ? List.of(Event.class) : List.copyOf(out);
+        }
+    };
+
+    private static boolean takes(final Class<?> listener, final Class<? extends Event> type) {
+        for (final Class<?> handled : HANDLED.get(listener)) {
+            if (handled.isAssignableFrom(type)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The faces of the protocol's directions, 0 down to 5 east. */
@@ -416,6 +488,27 @@ public final class HostEvents {
     private Block at(final World world, final Object xyz) {
         final List<Object> at = Values.list(xyz);
         return world.getBlockAt(((Number) at.get(0)).intValue(), ((Number) at.get(1)).intValue(), ((Number) at.get(2)).intValue());
+    }
+
+    /**
+     * Paper's {@code SignBlock#openTextEdit}: {@code PlayerOpenSignEvent}, then Bukkit's
+     * {@code PlayerSignOpenEvent} if anyone listens; either may keep the editor shut.
+     */
+    private Map<String, Object> signOpen(final Map<String, Object> args) {
+        final HostPlayer player = this.player(args);
+        if (!(this.block(args).getState() instanceof org.bukkit.block.Sign sign)) {
+            return Values.of();
+        }
+        final org.bukkit.block.sign.Side side = Values.bool(args, "front", true) ? org.bukkit.block.sign.Side.FRONT : org.bukkit.block.sign.Side.BACK;
+        final String cause = Values.str(args, "cause", "UNKNOWN");
+        if (!new io.papermc.paper.event.player.PlayerOpenSignEvent(player, sign, side, io.papermc.paper.event.player.PlayerOpenSignEvent.Cause.valueOf(cause)).callEvent()) {
+            return Values.of("cancelled", true);
+        }
+        if (org.bukkit.event.player.PlayerSignOpenEvent.getHandlerList().getRegisteredListeners().length > 0
+            && !new org.bukkit.event.player.PlayerSignOpenEvent(player, sign, side, org.bukkit.event.player.PlayerSignOpenEvent.Cause.valueOf(cause)).callEvent()) {
+            return Values.of("cancelled", true);
+        }
+        return Values.of("cancelled", false);
     }
 
     private Block block(final Map<String, Object> args) {
@@ -750,6 +843,64 @@ public final class HostEvents {
                 event.callEvent();
                 yield Values.of("experience", (long) event.getExperience(), "show", event.getShowEffect());
             }
+            case "event.potion_effect" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.LivingEntity living)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.EntityPotionEffectEvent event = new org.bukkit.event.entity.EntityPotionEffectEvent(living,
+                    io.papermc.paperrs.host.entity.Effects.of(args.get("old")), io.papermc.paperrs.host.entity.Effects.of(args.get("new")), null,
+                    org.bukkit.event.entity.EntityPotionEffectEvent.Cause.valueOf(Values.str(args, "cause", "UNKNOWN")),
+                    org.bukkit.event.entity.EntityPotionEffectEvent.Action.valueOf(Values.str(args, "action", "ADDED")), Values.bool(args, "override", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "override", event.isOverride());
+            }
+            case "event.shoot_bow" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.LivingEntity shooter)) {
+                    yield Values.of();
+                }
+                final org.bukkit.inventory.ItemStack consumable = io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("consumable"));
+                final org.bukkit.event.entity.EntityShootBowEvent event = new org.bukkit.event.entity.EntityShootBowEvent(shooter,
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("bow")), consumable == null || consumable.isEmpty() ? null : consumable,
+                    io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("projectile"))),
+                    Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND, (float) Values.f64(args, "force", 1), Values.bool(args, "consume", true));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "consume", event.shouldConsumeItem());
+            }
+            case "event.item_spawn" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.ItemSpawnEvent event = new org.bukkit.event.entity.ItemSpawnEvent(item);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.spawner_spawn" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null || !(this.block(args).getState() instanceof org.bukkit.block.CreatureSpawner spawner)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.SpawnerSpawnEvent event = new org.bukkit.event.entity.SpawnerSpawnEvent(entity, spawner);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.sign_open" -> this.signOpen(args);
+            case "event.unknown_command" -> {
+                final org.bukkit.event.command.UnknownCommandEvent event = new org.bukkit.event.command.UnknownCommandEvent(
+                    io.papermc.paperrs.host.command.HostCommandSourceStack.of(this.server.senderFor(Values.str(args, "sender", "console"))),
+                    Values.str(args, "command", ""), Components.fromJson(args.get("message")));
+                event.callEvent();
+                yield Values.of("message", event.message() == null ? null : Components.toJson(event.message()));
+            }
+            case "event.client_loaded" -> {
+                new io.papermc.paper.event.player.PlayerClientLoadedWorldEvent(this.player(args), Values.bool(args, "timeout", false)).callEvent();
+                yield Values.of();
+            }
+            case "event.pre_dispense" -> {
+                final io.papermc.paper.event.block.BlockPreDispenseEvent event = new io.papermc.paper.event.block.BlockPreDispenseEvent(this.block(args),
+                    io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")), Values.i32(args, "slot", 0));
+                yield Values.of("cancelled", !event.callEvent());
+            }
+            case "event.failed_dispense" -> Values.of("effect", new io.papermc.paper.event.block.BlockFailedDispenseEvent(this.block(args)).callEvent());
             case "event.item_despawn" -> {
                 if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)) {
                     yield Values.of();

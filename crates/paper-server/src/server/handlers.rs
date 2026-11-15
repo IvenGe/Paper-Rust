@@ -140,7 +140,7 @@ impl Server {
             Serverbound::KeepAlive(p) => self.handle_keep_alive(id, p.id),
             Serverbound::ChunkBatchReceived(p) => self.handle_chunk_batch_received(id, p.chunks_per_tick),
             Serverbound::PingRequest(p) => player.conn.send(&play::PongResponse { payload: p.payload }),
-            Serverbound::PlayerLoaded => player.loaded = true,
+            Serverbound::PlayerLoaded => self.mark_client_loaded(id, false),
             Serverbound::ClientInformation(p) => {
                 let skin_changed = player.settings.skin_parts != p.settings.skin_parts;
                 let (old_locale, old_hand) = (player.settings.locale.clone(), player.settings.main_hand);

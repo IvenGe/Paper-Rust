@@ -185,16 +185,23 @@ impl Server {
         true
     }
 
-    fn unknown_command(&self, source: &CommandSource, line: &str) {
-        {
-            match source {
-                CommandSource::Console => log::info!("Unknown command. Type \"help\" for help."),
-                CommandSource::Player(_) => {
-                    self.feedback(source, Component::translatable("command.unknown.command", vec![]).color("red"));
-                    let context = Component::text(line.to_owned()).color("red").underlined(true).append(Component::translatable("command.context.here", vec![]).color("red").italic(true).underlined(false));
-                    self.feedback(source, context);
-                }
+    /// No command by that name (`Commands.finishParsing`): the error, in one message as Paper
+    /// sends it, goes back to the source unless plugins change or drop it
+    /// (`UnknownCommandEvent`).
+    fn unknown_command(&mut self, source: &CommandSource, line: &str) {
+        let message = match source {
+            CommandSource::Console => Component::text("Unknown command. Type \"help\" for help."),
+            CommandSource::Player(_) => {
+                let context = Component::text("")
+                    .color("gray")
+                    .click_suggest_command(&format!("/{line}"))
+                    .append(Component::text(line.to_owned()).color("red").underlined(true))
+                    .append(Component::translatable("command.context.here", vec![]).color("red").italic(true));
+                Component::text("").color("red").append(Component::translatable("command.unknown.command", vec![])).append(Component::text("\n")).append(context)
             }
+        };
+        if let Some(message) = crate::plugins::events::on_unknown_command(self, source, line, message) {
+            self.feedback(source, message);
         }
     }
 

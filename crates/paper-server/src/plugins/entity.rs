@@ -338,13 +338,13 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     effect.ambient = args.bool("ambient").unwrap_or(false);
                     effect.particles = args.bool("particles").unwrap_or(true);
                     effect.icon = args.bool("icon").unwrap_or(true);
-                    Ok(Value::Bool(server.add_effect(world, id, effect)))
+                    Ok(Value::Bool(server.add_effect(world, id, effect, "PLUGIN")))
                 }
                 "entity.remove_effect" => {
                     let effect = paper_data::effects::by_name(effect_name()?).ok_or_else(|| anyhow!("unknown effect"))?;
-                    Ok(Value::Bool(server.remove_effect(world, id, effect.id)))
+                    Ok(Value::Bool(server.remove_effect(world, id, effect.id, "PLUGIN")))
                 }
-                "entity.clear_effects" => Ok(Value::Int(server.clear_effects(world, id) as i64)),
+                "entity.clear_effects" => Ok(Value::Int(server.clear_effects(world, id, "PLUGIN") as i64)),
                 _ => Ok(Value::List(
                     server
                         .effects_of(world, id)

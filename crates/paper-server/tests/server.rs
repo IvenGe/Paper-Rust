@@ -274,13 +274,11 @@ fn commands_and_permissions() {
     alice.drain(QUIET);
     alice.clear_backlog();
 
-    // Not an operator: operator commands are unknown, followed by a line pointing at the
-    // offending input.
+    // Not an operator: operator commands are unknown, with a line pointing at the offending
+    // input.
     alice.command("gamemode survival");
     let reply: play::SystemChat = alice.expect();
-    assert_eq!(reply.content.0["translate"], "command.unknown.command");
-    let context: play::SystemChat = alice.expect();
-    assert_eq!(context.content.to_plain(), "gamemode survival<--[HERE]");
+    assert_eq!(reply.content.to_plain(), "Unknown or incomplete command. See below for error\ngamemode survival<--[HERE]");
     alice.clear_backlog();
 
     // Everyone may use /list.

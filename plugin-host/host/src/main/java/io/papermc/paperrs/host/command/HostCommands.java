@@ -36,13 +36,11 @@ import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandException;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.PluginIdentifiableCommand;
 import org.bukkit.craftbukkit.command.CraftCommandMap;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.player.PlayerCommandSendEvent;
 import org.jetbrains.annotations.Nullable;
@@ -224,16 +222,7 @@ public final class HostCommands implements Commands, PaperRegistrar<LifecycleEve
     // --- running commands -------------------------------------------------------------------
 
     public CommandSourceStack source(final CommandSender sender) {
-        final Location location;
-        final Entity executor;
-        if (sender instanceof Entity entity) {
-            location = entity.getLocation();
-            executor = entity;
-        } else {
-            location = Bukkit.getWorlds().getFirst().getSpawnLocation();
-            executor = null;
-        }
-        return new HostCommandSourceStack(sender, location, executor);
+        return HostCommandSourceStack.of(sender);
     }
 
     private static String label(final String line) {

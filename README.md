@@ -325,7 +325,12 @@ What works:
   (boats, horses, pigs, striders and the other Bukkit vehicles, before `EntityMountEvent` and
   `EntityDismountEvent`), and for boats `VehicleDamageEvent`, `VehicleDestroyEvent` (a boat
   kept whole stays at its most damaged), `VehicleCreateEvent`, `EntityPlaceEvent` and
-  `VehicleMoveEvent`. Players,
+  `VehicleMoveEvent`. Also `EntityPotionEffectEvent` (effects from food, milk, potions,
+  splashes, clouds, mobs, trades, commands, plugins, death and running out),
+  `EntityShootBowEvent` (players and skeletons, before the arrow's `ProjectileLaunchEvent`),
+  `ItemSpawnEvent`, `SpawnerSpawnEvent`, Paper's `PlayerOpenSignEvent` and Bukkit's
+  `PlayerSignOpenEvent`, `UnknownCommandEvent`, `PlayerClientLoadedWorldEvent`, and Paper's
+  `BlockPreDispenseEvent` and `BlockFailedDispenseEvent`. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,

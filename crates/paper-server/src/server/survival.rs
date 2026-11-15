@@ -406,10 +406,36 @@ impl Server {
 
     pub(super) fn tick_players(&mut self) {
         for id in self.player_order.clone() {
+            self.tick_client_load(id);
             self.tick_player(id);
             self.tick_player_portal(id);
         }
         self.tick_travels();
+    }
+
+    /// A client that never says it has loaded is taken as loaded after three seconds
+    /// (`ServerGamePacketListenerImpl.tickClientLoadTimeout`).
+    fn tick_client_load(&mut self, id: i32) {
+        let Some(p) = self.players.get_mut(&id) else { return };
+        if p.loaded || p.load_timeout <= 0 {
+            return;
+        }
+        if p.load_timeout > 1 {
+            p.load_timeout -= 1;
+        } else {
+            self.mark_client_loaded(id, true);
+        }
+    }
+
+    /// The client has loaded the world after joining or respawning, or the server stopped
+    /// waiting for it (`timeout`): plugins hear `PlayerClientLoadedWorldEvent` once.
+    pub(super) fn mark_client_loaded(&mut self, id: i32, timeout: bool) {
+        let Some(p) = self.players.get_mut(&id) else { return };
+        p.load_timeout = 0;
+        if std::mem::replace(&mut p.loaded, true) {
+            return;
+        }
+        crate::plugins::events::on_client_loaded(self, id, timeout);
     }
 
     fn tick_player(&mut self, id: i32) {
@@ -1037,7 +1063,7 @@ impl Server {
         let show = self.worlds[world].rules.bool("show_death_messages") && death.message.is_some();
         let message = death.message.clone().unwrap_or_else(|| Component::text(""));
         self.close_menu(id, true);
-        self.clear_effects(world, id);
+        self.clear_effects(world, id, "DEATH");
         let Some(p) = self.players.get_mut(&id) else { return };
         p.dead = true;
         p.absorption = 0.0;
@@ -1134,6 +1160,9 @@ impl Server {
         }
         p.dead = false;
         p.won_game = false;
+        // The client loads the world again (`restartClientLoadTimerAfterRespawn`).
+        p.loaded = false;
+        p.load_timeout = 60;
         p.fire_ticks = 0;
         p.fall_distance = 0.0;
         p.invulnerable_time = 0;

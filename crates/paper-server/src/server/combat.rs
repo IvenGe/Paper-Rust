@@ -639,8 +639,28 @@ impl Server {
         if power_level > 0 {
             damage += 0.5 * power_level as f64 + 0.5;
         }
-        let keep_arrow = creative || infinity && arrow_slot.is_some_and(|s| p.inventory[s].0.as_ref().is_some_and(|a| items::get(a.item as u32).is_some_and(|i| i.name == "minecraft:arrow")));
-        self.spawn_arrow(world, origin, loc.yaw, loc.pitch, power as f64 * 3.0, 1.0, Some(id), damage, power >= 1.0, !keep_arrow);
+        let mut keep_arrow = creative || infinity && arrow_slot.is_some_and(|s| p.inventory[s].0.as_ref().is_some_and(|a| items::get(a.item as u32).is_some_and(|i| i.name == "minecraft:arrow")));
+        let hand = if bow_slot == super::player::OFFHAND_SLOT { 1 } else { 0 };
+        let consumable = arrow_slot.map_or(Slot::of(items::id("minecraft:arrow").unwrap_or(0) as i32, 1), |s| p.inventory[s].clone());
+        let arrow = self.spawn_arrow_unlaunched(world, origin, Vec3::from_rotation(loc.yaw, loc.pitch), power as f64 * 3.0, 1.0, Some(id), damage, power >= 1.0, !keep_arrow);
+        // Plugins may stop the shot, or keep the arrow from being used up
+        // (`EntityShootBowEvent`), and then the arrow's launch (`ProjectileLaunchEvent`). A
+        // stopped shot uses nothing up, as in Paper.
+        let consume = crate::plugins::events::on_shoot_bow(self, world, id, &bow, &consumable, arrow, hand, power, !keep_arrow);
+        if consume.is_none() {
+            self.worlds[world].remove_entity(arrow);
+        }
+        if consume.is_none() || !self.launch(world, arrow) {
+            self.resync_inventory(id);
+            return;
+        }
+        if consume == Some(false) && !keep_arrow {
+            // An arrow kept in the inventory cannot be picked up as well.
+            keep_arrow = true;
+            if let Some(EntityKind::Arrow { pickup, .. }) = self.worlds[world].entities.get_mut(&arrow).map(|e| &mut e.kind) {
+                *pickup = false;
+            }
+        }
         let pitch = 1.0 / (rand::thread_rng().gen::<f32>() * 0.4 + 1.2) + power * 0.5;
         self.play_sound(world, Vec3::new(loc.x, loc.y, loc.z), "minecraft:entity.arrow.shoot", category::PLAYERS, 1.0, pitch, None);
         if !creative && self.wear_player_item(id, bow_slot, 1, false) {
@@ -673,6 +693,24 @@ impl Server {
 
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_arrow_towards(&mut self, world: usize, origin: Vec3, dir: Vec3, velocity: f64, inaccuracy: f64, owner: Option<i32>, damage: f64, critical: bool, pickup: bool) -> i32 {
+        let id = self.spawn_arrow_unlaunched(world, origin, dir, velocity, inaccuracy, owner, damage, critical, pickup);
+        self.launch(world, id);
+        id
+    }
+
+    /// A projectile that was just added sets off, unless plugins stop it before anyone sees it
+    /// (`ProjectileLaunchEvent`). Returns whether it flies.
+    pub(super) fn launch(&mut self, world: usize, id: i32) -> bool {
+        if crate::plugins::events::on_projectile_launch(self, world, id) {
+            return true;
+        }
+        self.worlds[world].remove_entity(id);
+        false
+    }
+
+    /// `spawn_arrow_towards` without the launch event yet (see `launch`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn spawn_arrow_unlaunched(&mut self, world: usize, origin: Vec3, dir: Vec3, velocity: f64, inaccuracy: f64, owner: Option<i32>, damage: f64, critical: bool, pickup: bool) -> i32 {
         let mut rng = rand::thread_rng();
         let mut triangle = || (rng.gen::<f64>() - rng.gen::<f64>()) * 0.0172275 * inaccuracy;
         let d = dir.normalize();
@@ -685,12 +723,7 @@ impl Server {
         e.pitch = (vel.y.atan2(h).to_degrees()) as f32;
         e.yaw = -e.yaw;
         e.pitch = -e.pitch;
-        let id = self.spawn_entity(world, e);
-        // Plugins may stop it before anyone sees it (`ProjectileLaunchEvent`).
-        if !crate::plugins::events::on_projectile_launch(self, world, id) {
-            self.worlds[world].remove_entity(id);
-        }
-        id
+        self.spawn_entity(world, e)
     }
 
     /// Arrow flight, hits and pickup (`AbstractArrow.tick`).

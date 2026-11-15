@@ -38,15 +38,24 @@ public final class Effects {
     public static List<PotionEffect> list(final CraftServer server, final int id) {
         final List<PotionEffect> out = new ArrayList<>();
         for (final Object o : Values.list(server.call("entity.effects", Values.of("id", id)))) {
-            final Map<String, Object> m = Values.map(o);
-            final NamespacedKey key = NamespacedKey.fromString(Values.str(m, "effect"));
-            final PotionEffectType type = key == null ? null : Registry.MOB_EFFECT.get(key);
-            if (type != null) {
-                out.add(new PotionEffect(type, Values.i32(m, "duration", 0), Values.i32(m, "amplifier", 0),
-                    Values.bool(m, "ambient", false), Values.bool(m, "particles", true), Values.bool(m, "icon", true)));
+            final PotionEffect effect = of(o);
+            if (effect != null) {
+                out.add(effect);
             }
         }
         return out;
+    }
+
+    /** An effect as the server describes it, or null for none or an unknown type. */
+    public static @Nullable PotionEffect of(final @Nullable Object value) {
+        if (!(value instanceof Map<?, ?>)) {
+            return null;
+        }
+        final Map<String, Object> m = Values.map(value);
+        final NamespacedKey key = NamespacedKey.fromString(Values.str(m, "effect"));
+        final PotionEffectType type = key == null ? null : Registry.MOB_EFFECT.get(key);
+        return type == null ? null : new PotionEffect(type, Values.i32(m, "duration", 0), Values.i32(m, "amplifier", 0),
+            Values.bool(m, "ambient", false), Values.bool(m, "particles", true), Values.bool(m, "icon", true));
     }
 
     public static @Nullable PotionEffect get(final CraftServer server, final int id, final PotionEffectType type) {

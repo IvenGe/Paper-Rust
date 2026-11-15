@@ -996,7 +996,7 @@ impl Server {
         }
         if regenerate {
             if let Some(effect) = ActiveEffect::new("minecraft:regeneration", 200, 0) {
-                self.add_effect(world, id, effect);
+                self.add_effect(world, id, effect, "VILLAGER_TRADE");
             }
         }
         if baby {

@@ -641,7 +641,7 @@ fn server_continues_when_the_host_dies_if_configured() {
     alice.clear_backlog();
     alice.command("hello");
     let reply: play::SystemChat = alice.expect();
-    assert_eq!(reply.content.0["translate"], "command.unknown.command");
+    assert!(reply.content.to_plain().starts_with("Unknown or incomplete command"), "{}", reply.content.to_plain());
     alice.chat("still here");
     let line: play::SystemChat = alice.find(TIMEOUT, |m: &play::SystemChat| m.content.to_plain().contains("still here")).expect("vanilla chat");
     assert_eq!(line.content.0["translate"], "chat.type.text");

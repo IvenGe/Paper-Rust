@@ -1785,6 +1785,249 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         })
         .unwrap();
 
+    // Effects by command (EntityPotionEffectEvent): haste given (refused first), made
+    // stronger, not made weaker, and taken away.
+    let op = server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.effects.retain(|e| e.name() != "minecraft:haste");
+            std::mem::replace(&mut p.op_level, 4)
+        })
+        .unwrap();
+    let haste = move |s: &mut paper_server::server::Server| s.players[&alice_id].effects.iter().find(|e| e.name() == "minecraft:haste").map(|e| e.amplifier);
+    for (mode, given) in [("cancel", None), ("record", Some(0))] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        alice.command("effect give Alice minecraft:haste 60 0");
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("EFFECT haste ADDED - 0 true"), "{mode}: {seen}");
+        assert_eq!(server.handle.run(haste).unwrap(), given, "{mode}: haste");
+    }
+    alice.command("effect give Alice minecraft:haste 60 2");
+    alice.command("effect give Alice minecraft:haste 60 1");
+    alice.command("apitest blockevents");
+    seen = line_starting(&mut alice, "blockevents: ");
+    assert!(seen.contains("EFFECT haste CHANGED 0 2 true") && seen.contains("EFFECT haste CHANGED 2 1 false"), "{seen}");
+    assert_eq!(server.handle.run(haste).unwrap(), Some(2), "a weaker effect does not replace a stronger one");
+    alice.command("effect clear Alice minecraft:haste");
+    alice.command("apitest blockevents");
+    seen = line_starting(&mut alice, "blockevents: ");
+    assert!(seen.contains("EFFECT haste REMOVED 2 - false"), "{seen}");
+    assert_eq!(server.handle.run(haste).unwrap(), None);
+    server.handle.run(move |s| s.players.get_mut(&alice_id).unwrap().op_level = op).unwrap();
+
+    // A bow drawn and let go (EntityShootBowEvent): the shot refused, then let fly. In
+    // creative, nothing is used up.
+    let bow = Slot::of(paper_data::items::id("minecraft:bow").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            s.teleport(alice_id, paper_server::server::player::Location { yaw: 0.0, pitch: -30.0, ..home });
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = bow;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    let arrows = move |s: &mut paper_server::server::Server| -> Vec<i32> {
+        s.worlds[0].entities.values().filter(|e| !e.removed && matches!(e.kind, EntityKind::Arrow { owner: Some(o), .. } if o == alice_id)).map(|e| e.id).collect()
+    };
+    for (mode, shot) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        server
+            .handle
+            .run(move |s| {
+                for id in arrows(s) {
+                    s.worlds[0].entities.get_mut(&id).unwrap().removed = true;
+                }
+            })
+            .unwrap();
+        pause(&mut alice, Duration::from_millis(100));
+        alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(170), yaw: 0.0, pitch: -30.0 });
+        pause(&mut alice, Duration::from_millis(400));
+        alice.send(&play::PlayerAction { status: VarInt(play::player_action::RELEASE_USE_ITEM), pos: BlockPos::new(0, 0, 0), face: 0, sequence: VarInt(0) });
+        pause(&mut alice, Duration::from_millis(100));
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("BOW BOW ARROW ARROW HAND false"), "{mode}: {seen}");
+        assert_eq!(server.handle.run(move |s| arrows(s).len()).unwrap(), usize::from(shot), "{mode}: arrows");
+    }
+
+    // An amethyst shard coming into the world (ItemSpawnEvent): refused, then let be.
+    let shard = paper_data::items::id("minecraft:amethyst_shard").unwrap() as i32;
+    for (mode, stays) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let spawned = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(home.x + 2.0, home.y + 0.5, home.z - 3.0);
+                let id = s.spawn_item(0, at, Slot::of(shard, 3), paper_server::world::entity::Vec3::new(0.0, 0.0, 0.0), 1000);
+                (id, id.is_some_and(|id| s.worlds[0].entities.contains_key(&id)))
+            })
+            .unwrap();
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("ITEMSPAWN 3"), "{mode}: {seen}");
+        assert_eq!((spawned.0.is_some(), spawned.1), (stays, stays), "{mode}: the shard");
+        if let Some(id) = spawned.0 {
+            server.handle.run(move |s| s.worlds[0].entities.get_mut(&id).unwrap().removed = true).unwrap();
+        }
+    }
+
+    // A spawner's pigs (SpawnerSpawnEvent): refused, then let come.
+    let spawner = feet.offset(-6, 0, -6);
+    let pigs = move |s: &mut paper_server::server::Server| {
+        let center = (spawner.x as f64 + 0.5, spawner.z as f64 + 0.5);
+        s.worlds[0].entities.values().filter(|e| !e.removed && e.info.name == "minecraft:pig" && (e.pos.x - center.0).abs() <= 5.0 && (e.pos.z - center.1).abs() <= 5.0).count()
+    };
+    for (mode, come) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        server
+            .handle
+            .run(move |s| {
+                for e in s.worlds[0].entities.values_mut().filter(|e| e.info.name == "minecraft:pig") {
+                    e.removed = true;
+                }
+                s.set_block_and_update(0, spawner, paper_data::blocks::default_state("minecraft:spawner").unwrap());
+                let chunk = paper_server::world::chunk::ChunkPos::of_block(spawner.x, spawner.z);
+                let pig = paper_nbt::Compound::new().with("id", paper_nbt::Tag::String("minecraft:pig".into()));
+                let nbt = paper_nbt::Compound::new()
+                    .with("id", paper_nbt::Tag::String("minecraft:mob_spawner".into()))
+                    .with("SpawnData", paper_nbt::Tag::Compound(paper_nbt::Compound::new().with("entity", paper_nbt::Tag::Compound(pig))))
+                    .with("Delay", paper_nbt::Tag::Short(0));
+                s.worlds[0].chunks.get_mut(&chunk).unwrap().block_entities.insert((spawner.y, (spawner.z & 15) as u8, (spawner.x & 15) as u8), nbt);
+            })
+            .unwrap();
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            alice.command("apitest blockevents");
+            seen = line_starting(&mut alice, "blockevents: ");
+            if seen.contains("SPAWNER PIG PIG") || std::time::Instant::now() > deadline {
+                break;
+            }
+            pause(&mut alice, Duration::from_millis(100));
+        }
+        assert!(seen.contains("SPAWNER PIG PIG"), "{mode}: {seen}");
+        assert_eq!(server.handle.run(pigs).unwrap() > 0, come, "{mode}: pigs");
+    }
+    put(&server, &[(spawner, "minecraft:air")], false);
+    server
+        .handle
+        .run(move |s| {
+            for e in s.worlds[0].entities.values_mut().filter(|e| e.info.name == "minecraft:pig") {
+                e.removed = true;
+            }
+        })
+        .unwrap();
+
+    // A sign Alice puts down and then clicks (Paper's PlayerOpenSignEvent, then Bukkit's
+    // PlayerSignOpenEvent): its editor kept shut, then let open.
+    let (ground, sign_at) = (feet.offset(1, -1, -2), feet.offset(1, 0, -2));
+    let oak_sign = Slot::of(paper_data::items::id("minecraft:oak_sign").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            // Facing north, towards the sign, which then faces her.
+            s.teleport(alice_id, paper_server::server::player::Location { yaw: 180.0, pitch: 30.0, ..home });
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = oak_sign;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    for (mode, opens) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        pause(&mut alice, Duration::from_millis(100));
+        alice.clear_backlog();
+        let (clicked, cause) = if opens { (sign_at, "INTERACT") } else { (ground, "PLACE") };
+        if opens {
+            // (With an empty hand: a click, not another sign.)
+            server
+                .handle
+                .run(move |s| {
+                    s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+                    s.resync_inventory(alice_id);
+                })
+                .unwrap();
+        }
+        alice.send(&play::UseItemOn { hand: VarInt(0), pos: clicked, face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(180) });
+        let editor = alice.find(Duration::from_millis(500), |e: &play::OpenSignEditor| e.pos == sign_at);
+        assert_eq!(editor.is_some(), opens, "{mode}: the editor");
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains(&format!("OPENSIGN {cause} FRONT OAK_SIGN")) && seen.contains(&format!("SIGNOPEN {cause} FRONT")) == opens, "{mode}: {seen}");
+    }
+    put(&server, &[(sign_at, "minecraft:air")], false);
+
+    // A command nobody has (UnknownCommandEvent): the plugin words the reply, or keeps quiet.
+    alice.clear_backlog();
+    alice.command("nosuch thing");
+    let reply = line_starting(&mut alice, "No /nosuch");
+    assert_eq!(reply, "No /nosuch thing for Alice");
+    alice.command("nosuch quiet");
+    alice.command("apitest blockevents");
+    loop {
+        let text = alice.expect::<play::SystemChat>().content.to_plain();
+        if text.starts_with("blockevents: ") {
+            break;
+        }
+        assert!(!text.contains("nosuch") && !text.contains("Unknown"), "{text}");
+    }
+
+    // A dropper about to drop an amethyst shard (BlockPreDispenseEvent): stopped, then let
+    // go; and an empty one firing (BlockFailedDispenseEvent): kept quiet, then let click.
+    let dropper = feet.offset(-5, 0, 3);
+    let facing_up = paper_data::blocks::parse_state("minecraft:dropper[facing=up]").unwrap();
+    let power = paper_data::blocks::default_state("minecraft:redstone_block").unwrap();
+    for (mode, dropped) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        server
+            .handle
+            .run(move |s| {
+                s.worlds[0].set_block(dropper.x, dropper.y, dropper.z, facing_up);
+                s.set_container_items(0, dropper, &[Slot::of(shard, 1)]);
+                s.set_block_and_update(0, dropper.offset(1, 0, 0), power);
+            })
+            .unwrap();
+        pause(&mut alice, Duration::from_millis(500));
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("PREDISPENSE AMETHYST_SHARD 0") && seen.contains("ITEMSPAWN 1") == dropped, "{mode}: {seen}");
+        let emptied = server.handle.run(move |s| s.container_items(0, dropper)[0].is_empty()).unwrap();
+        assert_eq!(emptied, dropped, "{mode}: the shard went");
+        server.handle.run(move |s| s.set_container_items(0, dropper, &[Slot::EMPTY])).unwrap();
+        put(&server, &[(dropper, "minecraft:air"), (dropper.offset(1, 0, 0), "minecraft:air")], false);
+    }
+    for (mode, clicks) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        alice.clear_backlog();
+        server
+            .handle
+            .run(move |s| {
+                s.worlds[0].set_block(dropper.x, dropper.y, dropper.z, facing_up);
+                s.set_block_and_update(0, dropper.offset(1, 0, 0), power);
+            })
+            .unwrap();
+        let click = alice.find(Duration::from_millis(800), |e: &play::LevelEvent| e.event == 1001 && e.pos == dropper);
+        assert_eq!(click.is_some(), clicks, "{mode}: the click");
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("FAILDISPENSE DROPPER"), "{mode}: {seen}");
+        put(&server, &[(dropper, "minecraft:air"), (dropper.offset(1, 0, 0), "minecraft:air")], false);
+    }
+    server
+        .handle
+        .run(move |s| {
+            for e in s.worlds[0].entities.values_mut().filter(|e| matches!(e.kind, EntityKind::Item { .. })) {
+                e.removed = true;
+            }
+        })
+        .unwrap();
+
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");
@@ -1952,12 +2195,26 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     expect_line(&mut alice, "scoreboard: ok");
     // A player who joins later sees the main board, team colours included.
     let mut carol = Client::join(server.port(), "Carol");
+    carol.send(&play::PlayerLoaded {});
     let objective: play::SetObjective = carol.find(TIMEOUT, |o: &play::SetObjective| o.name == "kills").expect("main board for newcomers");
     assert_eq!(objective.mode, 0);
     let team: play::SetPlayerTeam = carol.find(TIMEOUT, |t: &play::SetPlayerTeam| t.name == "red").expect("teams for newcomers");
     assert_eq!((team.method, team.members.clone()), (0, vec!["Alice".to_owned()]));
     assert_eq!(team.parameters.as_ref().and_then(|p| p.color), Some(12), "red");
     assert_eq!(team.parameters.as_ref().map(|p| p.prefix.to_plain()), Some("[R] ".to_owned()));
+    // PlayerClientLoadedWorldEvent: Carol's client said it had loaded the world; Alice's never
+    // did, so the server stopped waiting for it.
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        alice.command("apitest loaded");
+        let loaded = line_starting(&mut alice, "loaded: ");
+        if loaded.contains("Carol false") {
+            assert!(loaded.contains("Alice true"), "{loaded}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{loaded}");
+        pause(&mut alice, Duration::from_millis(100));
+    }
 
     // --- potion effects and boss bars -----------------------------------------------------------
     alice.clear_backlog();

@@ -423,7 +423,7 @@ impl Server {
                             let duration = (scale * *duration as f64 + 0.5) as i32;
                             if duration > 20 {
                                 if let Some(e) = ActiveEffect::new(effect, duration, *amplifier) {
-                                    self.add_effect(world, target, e);
+                                    self.add_effect(world, target, e, "POTION_SPLASH");
                                 }
                             }
                         }
@@ -569,7 +569,7 @@ impl Server {
                 if effects::by_name(effect).is_some_and(|i| i.instantaneous) {
                     self.apply_instant_scaled(world, *target, effect, *amplifier, 0.5, owner);
                 } else if let Some(e) = ActiveEffect::new(effect, duration / 4, *amplifier) {
-                    self.add_effect(world, *target, e);
+                    self.add_effect(world, *target, e, "AREA_EFFECT_CLOUD");
                 }
             }
         }

@@ -84,19 +84,30 @@ impl Server {
         mob.living.effects.iter().map(|(id, amplifier, duration)| ActiveEffect { id: *id, amplifier: *amplifier, duration: *duration, ambient: false, particles: true, icon: true }).collect()
     }
 
-    /// Gives an effect (instant ones act at once). Returns whether it took effect.
-    pub fn add_effect(&mut self, world: usize, target: i32, effect: ActiveEffect) -> bool {
+    /// The effect with protocol id `id` a player or mob has, if it has it.
+    fn effect_of(&self, world: usize, target: i32, id: i32) -> Option<ActiveEffect> {
+        self.effects_of(world, target).into_iter().find(|e| e.id == id)
+    }
+
+    /// Gives an effect (instant ones act at once) for `cause`, an
+    /// `EntityPotionEffectEvent.Cause`: plugins may stop it, or have it replace a stronger one
+    /// (`EntityPotionEffectEvent`). Returns whether it took effect.
+    pub fn add_effect(&mut self, world: usize, target: i32, effect: ActiveEffect, cause: &str) -> bool {
         let Some(info) = effects::by_id(effect.id) else { return false };
         if info.instantaneous {
             self.apply_instant(world, target, &info.name, effect.amplifier);
             return true;
         }
+        let old = self.effect_of(world, target, effect.id);
+        let action = if old.is_some() { "CHANGED" } else { "ADDED" };
+        let replaces = old.as_ref().is_none_or(|old| old.replaced_by(&effect));
+        let Some(force) = crate::plugins::events::on_potion_effect(self, world, target, old.as_ref(), Some(&effect), cause, action, replaces) else { return false };
         if let Some(p) = self.players.get_mut(&target) {
             if p.dead {
                 return false;
             }
             match p.effects.iter_mut().find(|e| e.id == effect.id) {
-                Some(existing) if !existing.replaced_by(&effect) => return false,
+                Some(existing) if !force && !existing.replaced_by(&effect) => return false,
                 Some(existing) => *existing = effect.clone(),
                 None => p.effects.push(effect.clone()),
             }
@@ -114,7 +125,7 @@ impl Server {
         let Some(mob) = e.mob_mut() else { return false };
         match mob.living.effects.iter_mut().find(|(id, _, _)| *id == effect.id) {
             Some(existing) => {
-                if effect.amplifier < existing.1 || effect.amplifier == existing.1 && effect.duration <= existing.2 {
+                if !force && (effect.amplifier < existing.1 || effect.amplifier == existing.1 && effect.duration <= existing.2) {
                     return false;
                 }
                 *existing = (effect.id, effect.amplifier, effect.duration);
@@ -128,8 +139,17 @@ impl Server {
         true
     }
 
-    /// Removes one effect. Returns whether there was one.
-    pub fn remove_effect(&mut self, world: usize, target: i32, id: i32) -> bool {
+    /// Removes one effect for `cause` (`EXPIRATION`, `MILK`, `COMMAND`, `PLUGIN`, ...), unless
+    /// plugins keep it (`EntityPotionEffectEvent`, action `REMOVED`). Returns whether it went.
+    pub fn remove_effect(&mut self, world: usize, target: i32, id: i32, cause: &str) -> bool {
+        self.take_effect(world, target, id, cause, "REMOVED")
+    }
+
+    fn take_effect(&mut self, world: usize, target: i32, id: i32, cause: &str, action: &str) -> bool {
+        let Some(old) = self.effect_of(world, target, id) else { return false };
+        if crate::plugins::events::on_potion_effect(self, world, target, Some(&old), None, cause, action, false).is_none() {
+            return false;
+        }
         if let Some(p) = self.players.get_mut(&target) {
             let before = p.effects.len();
             p.effects.retain(|e| e.id != id);
@@ -159,16 +179,11 @@ impl Server {
         removed
     }
 
-    /// Removes every effect (milk, death). Returns how many there were.
-    pub fn clear_effects(&mut self, world: usize, target: i32) -> usize {
-        let ids: Vec<i32> = match self.players.get(&target) {
-            Some(p) => p.effects.iter().map(|e| e.id).collect(),
-            None => self.worlds.get(world).and_then(|w| w.entities.get(&target)).and_then(|e| e.mob()).map(|m| m.living.effects.iter().map(|(id, _, _)| *id).collect()).unwrap_or_default(),
-        };
-        for id in &ids {
-            self.remove_effect(world, target, *id);
-        }
-        ids.len()
+    /// Removes every effect (milk, death, `/effect clear`) for `cause`; plugins may keep some
+    /// (`EntityPotionEffectEvent`, action `CLEARED`). Returns how many went.
+    pub fn clear_effects(&mut self, world: usize, target: i32, cause: &str) -> usize {
+        let ids: Vec<i32> = self.effects_of(world, target).iter().map(|e| e.id).collect();
+        ids.into_iter().filter(|id| self.take_effect(world, target, *id, cause, "CLEARED")).count()
     }
 
     /// Instant health and damage, saturation.
@@ -237,7 +252,7 @@ impl Server {
                 self.apply_periodic(world, id, name, amplifier);
             }
             for effect in expired {
-                self.remove_effect(world, id, effect);
+                self.remove_effect(world, id, effect, "EXPIRATION");
             }
         }
         // Mobs (only those with effects).
@@ -265,7 +280,7 @@ impl Server {
                     self.apply_periodic(world, id, name, amplifier);
                 }
                 for effect in expired {
-                    self.remove_effect(world, id, effect);
+                    self.remove_effect(world, id, effect, "EXPIRATION");
                 }
             }
         }
@@ -317,12 +332,12 @@ impl Server {
                             let amplifier = e.get("amplifier").and_then(|a| a.as_i64()).unwrap_or(0) as i32;
                             if let Some(mut effect) = ActiveEffect::new(name, duration, amplifier) {
                                 effect.icon = e.get("show_icon").and_then(|v| v.as_bool()).unwrap_or(true);
-                                self.add_effect(world, id, effect);
+                                self.add_effect(world, id, effect, "FOOD");
                             }
                         }
                     }
                     "minecraft:clear_all_effects" => {
-                        self.clear_effects(world, id);
+                        self.clear_effects(world, id, "MILK");
                     }
                     "minecraft:remove_effects" => {
                         let names: Vec<String> = match entry.get("effects") {
@@ -331,7 +346,7 @@ impl Server {
                             _ => Vec::new(),
                         };
                         for name in names {
-                            self.remove_effect(world, id, effect_id(&name));
+                            self.remove_effect(world, id, effect_id(&name), "FOOD");
                         }
                     }
                     "minecraft:teleport_randomly" => {
@@ -346,7 +361,7 @@ impl Server {
         if let Some(potion) = potion_of(stack) {
             for (effect, duration, amplifier) in effects::potion(&potion) {
                 if let Some(e) = ActiveEffect::new(effect, *duration, *amplifier) {
-                    self.add_effect(world, id, e);
+                    self.add_effect(world, id, e, "POTION_DRINK");
                 }
             }
         }
@@ -423,7 +438,7 @@ impl Server {
                 for t in &targets {
                     let world = self.players[t].world;
                     let effect = ActiveEffect { id: info.id, amplifier, duration, ambient: false, particles: !hide, icon: true };
-                    if self.add_effect(world, *t, effect) {
+                    if self.add_effect(world, *t, effect, "COMMAND") {
                         given += 1;
                     }
                 }
@@ -443,8 +458,8 @@ impl Server {
                 for t in &targets {
                     let world = self.players[t].world;
                     cleared += match rest.get(1) {
-                        Some(effect) => self.remove_effect(world, *t, effect_id(effect)) as usize,
-                        None => self.clear_effects(world, *t),
+                        Some(effect) => self.remove_effect(world, *t, effect_id(effect), "COMMAND") as usize,
+                        None => self.clear_effects(world, *t, "COMMAND"),
                     };
                 }
                 if cleared == 0 {

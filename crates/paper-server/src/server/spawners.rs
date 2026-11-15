@@ -121,10 +121,25 @@ impl Server {
                 self.reset_spawner(world, pos, &settings);
                 return;
             }
-            let Some(id) = self.spawn_mob(world, &name, at, SpawnReason::Spawner) else {
+            let Some(id) = self.spawn_mob_unannounced(world, &name, at, SpawnReason::Spawner) else {
                 self.reset_spawner(world, pos, &settings);
                 return;
             };
+            // Plugins may stop this one (`SpawnerSpawnEvent`); the spawner tries the next.
+            if !crate::plugins::events::on_spawner_spawn(self, world, id, pos) {
+                self.worlds[world].remove_entity(id);
+                spawned = true;
+                continue;
+            }
+            // Then it spawns like any creature; a refused one ends the round
+            // (`BaseSpawner.serverTick`).
+            if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, crate::world::entity::EntityKind::Mob(_))) {
+                crate::plugins::events::on_creature_spawn(self, world, id, SpawnReason::Spawner);
+                if self.worlds[world].entities.get(&id).is_none_or(|e| e.removed) {
+                    self.reset_spawner(world, pos, &settings);
+                    return;
+                }
+            }
             if let Some(e) = self.worlds[world].entities.get_mut(&id) {
                 e.yaw = rng.gen::<f32>() * 360.0;
                 e.head_yaw = e.yaw;
