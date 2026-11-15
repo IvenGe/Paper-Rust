@@ -1,7 +1,7 @@
 //! Entities in vanilla's saved form (the `Entities` list of `entities/r.x.z.mca` chunks):
 //! `id`, `Pos`, `Motion`, `Rotation`, `UUID`, ... and the fields of each kind.
 
-use super::entity::{Entity, EntityKind, LivingState, Mob, MobBrain, Vec3};
+use super::entity::{Entity, EntityFlags, EntityKind, LivingState, Mob, MobBrain, Vec3};
 use super::storage::{state_from_nbt, state_nbt};
 use crate::server::playerdata::{item_from_nbt, item_to_nbt};
 use paper_nbt::{Compound, Tag};
@@ -103,6 +103,21 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
     if e.no_gravity {
         c.insert("NoGravity", Tag::Byte(1));
     }
+    let f = &e.flags;
+    for (key, set) in [("Glowing", f.glowing), ("Silent", f.silent), ("Invulnerable", f.invulnerable), ("HasVisualFire", f.visual_fire), ("Bukkit.invisible", f.invisible)] {
+        if set {
+            c.insert(key, Tag::Byte(1));
+        }
+    }
+    if f.portal_cooldown > 0 {
+        c.insert("PortalCooldown", Tag::Int(f.portal_cooldown));
+    }
+    if f.freeze_ticks > 0 {
+        c.insert("TicksFrozen", Tag::Int(f.freeze_ticks));
+    }
+    if !f.tags.is_empty() {
+        c.insert("Tags", Tag::List(f.tags.iter().map(|t| Tag::String(t.clone())).collect()));
+    }
     match &e.kind {
         EntityKind::Item { stack, pickup_delay, thrower, owner } => {
             c.insert("Item", Tag::Compound(item_to_nbt(stack)?));
@@ -143,6 +158,17 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
             c.insert("Air", short(l.air));
             c.insert("fall_distance", Tag::Double(l.fall_distance));
             c.insert("PersistenceRequired", Tag::Byte(mob.persistent as i8));
+            for (key, set) in [("NoAI", f.no_ai), ("LeftHanded", f.left_handed), ("CanPickUpLoot", f.can_pick_up_loot), ("AgeLocked", f.age_locked)] {
+                if set {
+                    c.insert(key, Tag::Byte(1));
+                }
+            }
+            if f.unaware {
+                c.insert("Bukkit.Aware", Tag::Byte(0));
+            }
+            if let Some(reason) = &f.spawn_reason {
+                c.insert("Paper.SpawnReason", Tag::String(reason.clone()));
+            }
             c.insert("attributes", mob.attributes.to_nbt());
             let mut equipment = Compound::new();
             for (key, slot) in EQUIPMENT.iter().zip(mob.equipment.iter()) {
@@ -326,6 +352,23 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
         other => Component::from_nbt(other),
     });
     e.custom_name_visible = c.bool("CustomNameVisible").unwrap_or(false);
+    let flag = |key: &str| c.bool(key).unwrap_or(false);
+    e.flags = EntityFlags {
+        glowing: flag("Glowing"),
+        silent: flag("Silent"),
+        invisible: flag("Bukkit.invisible"),
+        invulnerable: flag("Invulnerable"),
+        visual_fire: flag("HasVisualFire"),
+        portal_cooldown: c.i32("PortalCooldown").unwrap_or(0).max(0),
+        freeze_ticks: c.i32("TicksFrozen").unwrap_or(0).max(0),
+        tags: c.list("Tags").unwrap_or(&[]).iter().filter_map(Tag::as_str).map(str::to_owned).collect(),
+        no_ai: flag("NoAI"),
+        unaware: c.bool("Bukkit.Aware") == Some(false),
+        left_handed: flag("LeftHanded"),
+        can_pick_up_loot: flag("CanPickUpLoot"),
+        age_locked: flag("AgeLocked"),
+        spawn_reason: c.string("Paper.SpawnReason").map(str::to_owned),
+    };
     Some(e)
 }
 

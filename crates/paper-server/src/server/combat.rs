@@ -333,6 +333,12 @@ impl Server {
         if self.players.contains_key(&id) {
             return self.hurt_player(id, damage, amount);
         }
+        // An invulnerable entity is hurt only by what bypasses invulnerability (`/kill`, the
+        // void) and by creative players (`Entity.isInvulnerableToBase`).
+        let by_creative = damage.attacker.and_then(|a| self.players.get(&a)).is_some_and(|p| p.game_mode == GameMode::Creative);
+        if self.worlds[world].entities.get(&id).is_some_and(|e| e.flags.invulnerable) && !damage.is("bypasses_invulnerability") && !by_creative {
+            return false;
+        }
         if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Boat { .. })) {
             return self.hurt_boat(world, id, &damage, amount);
         }
@@ -409,6 +415,7 @@ impl Server {
         let e = self.worlds[world].entities.get_mut(&id).unwrap();
         let info = e.info;
         let pos = e.pos;
+        let silent = e.flags.silent;
         let EntityKind::Mob(mob) = &mut e.kind else { return false };
         let living = &mut mob.living;
         let full = if living.invulnerable_time > 10 && !damage.is("bypasses_cooldown") {
@@ -462,7 +469,7 @@ impl Server {
                     self.knockback_entity(world, id, 0.4, from.x - pos.x, from.z - pos.z);
                 }
             }
-            if !dead {
+            if !dead && !silent {
                 if let Some(sound) = info.hurt_sound.as_deref() {
                     self.play_sound(world, pos, sound, mob_category(info), 1.0, Self::mob_pitch(world, self, id), None);
                 }
@@ -544,7 +551,8 @@ impl Server {
             }
             return;
         };
-        if let Some(sound) = info.death_sound.as_deref() {
+        let silent = self.worlds[world].entities.get(&id).is_some_and(|e| e.flags.silent);
+        if let Some(sound) = info.death_sound.as_deref().filter(|_| !silent) {
             self.play_sound(world, pos, sound, mob_category(info), 1.0, Self::mob_pitch(world, self, id), None);
         }
         self.broadcast_entity(world, id, Bytes::from(encode_packet(&play::EntityEvent { entity_id: id, status: 3 })));

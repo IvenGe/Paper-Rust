@@ -33,7 +33,7 @@ pub(crate) mod playerdata;
 pub mod portals;
 pub mod recipes;
 pub mod scoreboard;
-mod animals;
+pub(crate) mod animals;
 pub mod endermen;
 pub mod riding;
 pub mod taming;

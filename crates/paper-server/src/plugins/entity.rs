@@ -39,7 +39,33 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
         "living" => matches!(e.kind, EntityKind::Mob(_)),
         "passengers" => Value::List(e.passengers.iter().map(|p| shallow_ref(server, *p)).collect()),
         "vehicle" => e.vehicle.map(|v| shallow_ref(server, v)),
+        "glowing" => e.flags.glowing,
+        "silent" => e.flags.silent,
+        "invisible" => e.flags.invisible,
+        "invulnerable" => e.flags.invulnerable,
+        "visual_fire" => e.flags.visual_fire,
+        "portal_cooldown" => e.flags.portal_cooldown,
+        "freeze_ticks" => e.flags.freeze_ticks,
+        "tags" => Value::List(e.flags.tags.iter().map(|t| Value::Str(t.clone())).collect()),
+        "spawn_reason" => e.flags.spawn_reason.clone(),
+        "tracked_by" => Value::List(e.viewers.iter().filter_map(|v| server.players.get(v)).map(|p| Value::Str(p.uuid().to_string())).collect()),
     };
+    // Where it is: in water, lava, rain, a bubble column, powder snow.
+    {
+        use crate::server::survival::{box_in_fluid, point_in_fluid, Fluid};
+        let w = &server.worlds[world];
+        let area = e.bounding_box();
+        let in_water = box_in_fluid(w, &area, Fluid::Water);
+        let (x, y, z) = (e.pos.x.floor() as i32, e.pos.y.floor() as i32, e.pos.z.floor() as i32);
+        let at_feet = w.block_at(x, y, z).map_or("minecraft:air", |s| paper_data::blocks::block_of_state(s).name);
+        let eye = e.eye_pos();
+        out.set("in_water", in_water);
+        out.set("under_water", point_in_fluid(w, Vec3::new(eye.x, eye.y - 0.11111111, eye.z), Fluid::Water));
+        out.set("in_lava", box_in_fluid(w, &area, Fluid::Lava));
+        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (e.pos.y + e.info.height as f64).ceil() as i32, z));
+        out.set("in_bubble_column", at_feet == "minecraft:bubble_column");
+        out.set("in_powder_snow", at_feet == "minecraft:powder_snow");
+    }
     match &e.kind {
         EntityKind::Mob(m) => {
             out.set("health", m.living.health);
@@ -55,6 +81,28 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("temper", m.temper);
             out.set("jump_strength", m.attributes.value("jump_strength"));
             out.set("no_damage_ticks", m.living.invulnerable_time);
+            out.set("last_damage", m.living.last_hurt);
+            out.set("fall_distance", m.living.fall_distance);
+            out.set("ai", !e.flags.no_ai);
+            out.set("aware", !e.flags.unaware);
+            out.set("left_handed", e.flags.left_handed);
+            out.set("can_pick_up_loot", e.flags.can_pick_up_loot);
+            // Animals and villagers (`AgeableMob`): how old, love mode, who fed it.
+            out.set("ages", crate::world::entity_nbt::ages(&e.info.name));
+            out.set("mob_age", m.age);
+            out.set("age_locked", e.flags.age_locked);
+            out.set("love_ticks", m.in_love);
+            out.set("love_cause", m.love_cause.and_then(|p| server.players.get(&p)).map(|p| p.uuid().to_string()));
+            out.set("sheared", m.sheared);
+            out.set("variant", m.variant);
+            out.set("no_action_ticks", m.no_player_ticks);
+            out.set("experience_reward", e.info.experience);
+            // The player who hurt it in the last five seconds (`lastHurtByPlayer`).
+            let killer = m.living.last_attacker.filter(|(_, t)| server.tick.saturating_sub(*t) < 100).and_then(|(a, _)| server.players.get(&a));
+            out.set("killer", killer.map(|p| p.uuid().to_string()));
+            out.set("hurt_sound", e.info.hurt_sound.clone());
+            out.set("death_sound", e.info.death_sound.clone());
+            out.set("ambient_sound", e.info.ambient_sound.clone());
             out.set("equipment", Value::List(m.equipment.iter().map(item_value).collect()));
             let target = m.brain.target.map(|t| match server.players.get(&t) {
                 Some(p) => bmap! { "player" => p.uuid().to_string() },
@@ -92,7 +140,14 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
         EntityKind::ExperienceOrb { value } => out.set("experience", *value),
         EntityKind::Tnt { fuse } => out.set("fuse", *fuse),
         EntityKind::FallingBlock { state, .. } => out.set("block", paper_data::blocks::state_to_string(*state)),
-        EntityKind::Thrown { item, .. } => out.set("item", item_value(item)),
+        EntityKind::Thrown { item, owner, left_owner, .. } => {
+            out.set("item", item_value(item));
+            out.set("shooter", owner.map(|o| match server.players.get(&o) {
+                Some(p) => bmap! { "player" => p.uuid().to_string() },
+                None => bmap! { "entity" => o as i64 },
+            }));
+            out.set("left_shooter", *left_owner);
+        }
         EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
     out
@@ -362,6 +417,71 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             server.dismount(rider);
             Ok(Value::Bool(true))
         }
+        // `ProjectileSource.launchProjectile`: a player or mob shoots a projectile the way it
+        // looks, as vanilla's items do (`CraftLivingEntity.launchProjectile`).
+        "entity.launch" => {
+            let shooter = target_id(server, args.get("shooter")).ok_or_else(|| anyhow!("no such shooter"))?;
+            let kind = args.str("type").ok_or_else(|| anyhow!("no type"))?;
+            let (world, eye, yaw, pitch, player) = match server.players.get(&shooter) {
+                Some(p) => (p.world, Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z), p.loc.yaw, p.loc.pitch, true),
+                None => {
+                    let world = world_of(server, shooter).ok_or_else(|| anyhow!("no such shooter"))?;
+                    let e = &server.worlds[world].entities[&shooter];
+                    (world, e.eye_pos(), e.yaw, e.pitch, false)
+                }
+            };
+            let look = |pitch_offset: f32| {
+                let (y, p) = ((yaw as f64).to_radians(), ((pitch + pitch_offset) as f64).to_radians());
+                Vec3::new(-y.sin() * (pitch as f64).to_radians().cos(), -p.sin(), y.cos() * (pitch as f64).to_radians().cos())
+            };
+            let id = match kind {
+                "minecraft:arrow" | "minecraft:spectral_arrow" => Some(server.spawn_arrow(world, Vec3::new(eye.x, eye.y - 0.1, eye.z), yaw, pitch, 3.0, 1.0, Some(shooter), 2.0, false, player)),
+                // A fireball starts slowly from the eyes and speeds up (`AbstractHurtingProjectile`).
+                "minecraft:fireball" | "minecraft:small_fireball" | "minecraft:dragon_fireball" => server.spawn_thrown(world, kind, eye, look(0.0), 0.1, 0.0, 0.0, paper_protocol::types::Slot::EMPTY, Some(shooter)),
+                _ => {
+                    let (entity, pitch_offset, speed, gravity, _) = crate::server::throwing::throwable(kind).filter(|(e, ..)| *e == kind).ok_or_else(|| anyhow!("cannot launch {kind} yet"))?;
+                    let item = paper_data::items::id(kind).map_or(paper_protocol::types::Slot::EMPTY, |i| paper_protocol::types::Slot::of(i as i32, 1));
+                    server.spawn_thrown(world, entity, Vec3::new(eye.x, eye.y - 0.1, eye.z), look(pitch_offset), speed, 1.0, gravity, item, Some(shooter))
+                }
+            }
+            .ok_or_else(|| anyhow!("could not launch {kind}"))?;
+            if let Some(v) = vec_arg(args, "vx", "vy", "vz") {
+                let e = server.worlds[world].entities.get_mut(&id).unwrap();
+                e.vel = v;
+                e.force_sync = true;
+            }
+            Ok(entity_value(server, world, &server.worlds[world].entities[&id]))
+        }
+        // `Entity.playEffect(EntityEffect)`: an entity event its viewers see.
+        "entity.event" => {
+            let (world, id) = entity_arg(server, args)?;
+            let status = args.i32("status").ok_or_else(|| anyhow!("no status"))? as i8;
+            let packet = paper_protocol::packets::play::EntityEvent { entity_id: id, status };
+            server.broadcast_entity(world, id, bytes::Bytes::from(paper_protocol::packets::encode_packet(&packet)));
+            Ok(Value::Null)
+        }
+        // `LivingEntity.swingMainHand`/`swingOffHand`.
+        "entity.swing" => {
+            let (world, id) = entity_arg(server, args)?;
+            let packet = paper_protocol::packets::play::SwingAnimation { entity_id: paper_protocol::codec::VarInt(id), hand: paper_protocol::codec::VarInt(args.i32("hand").unwrap_or(0)), animation_type: paper_protocol::codec::VarInt(1), duration: paper_protocol::codec::VarInt(6) };
+            server.broadcast_entity(world, id, bytes::Bytes::from(paper_protocol::packets::encode_packet(&packet)));
+            Ok(Value::Null)
+        }
+        // `Shearable.shear` (sheep).
+        "entity.shear" => {
+            let (world, id) = entity_arg(server, args)?;
+            if server.worlds[world].entities[&id].info.name != "minecraft:sheep" {
+                bail!("only sheep can be sheared yet");
+            }
+            server.shear_sheep(world, id);
+            Ok(entity_value(server, world, &server.worlds[world].entities[&id]))
+        }
+        // `Animals.isBreedItem`.
+        "entity.breed_item" => {
+            let (world, id) = entity_arg(server, args)?;
+            let item = args.str("item").and_then(paper_data::items::id).ok_or_else(|| anyhow!("unknown item {:?}", args.get("item")))?;
+            Ok(Value::Bool(crate::server::animals::is_food(&server.worlds[world].entities[&id].info.name, item as i32)))
+        }
         "entity.set" => {
             let (world, id) = entity_arg(server, args)?;
             let target = match args.get("target") {
@@ -372,6 +492,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             if let Some(sitting) = args.bool("sitting") {
                 server.set_sitting(world, id, sitting);
             }
+            // `Projectile.setShooter` (an empty map for none).
+            let shooter = target_id(server, args.get("shooter"));
+            // Players by uuid, for `Animals.setBreedCause`.
+            let server_players: Vec<(i32, String)> = if args.get("love_cause").is_null() { Vec::new() } else { server.players.values().map(|p| (p.entity_id, p.uuid().to_string())).collect() };
             let e = server.worlds[world].entities.get_mut(&id).unwrap();
             if args.bool("clear_custom_name") == Some(true) {
                 e.custom_name = None;
@@ -388,6 +512,53 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             if let Some(gravity) = args.bool("gravity") {
                 e.no_gravity = !gravity;
                 e.metadata_dirty = true;
+            }
+            // Flags any entity has; those clients see are sent again.
+            let f = &mut e.flags;
+            let shown = [("glowing", &mut f.glowing), ("silent", &mut f.silent), ("invisible", &mut f.invisible), ("visual_fire", &mut f.visual_fire), ("left_handed", &mut f.left_handed)]
+                .into_iter()
+                .fold(false, |changed, (key, flag)| match args.bool(key) {
+                    Some(v) => {
+                        *flag = v;
+                        true
+                    }
+                    None => changed,
+                });
+            for (key, flag) in [("invulnerable", &mut f.invulnerable), ("can_pick_up_loot", &mut f.can_pick_up_loot), ("age_locked", &mut f.age_locked)] {
+                if let Some(v) = args.bool(key) {
+                    *flag = v;
+                }
+            }
+            if let Some(ai) = args.bool("ai") {
+                f.no_ai = !ai;
+            }
+            if let Some(aware) = args.bool("aware") {
+                f.unaware = !aware;
+            }
+            if let Some(t) = args.i32("portal_cooldown") {
+                f.portal_cooldown = t.max(0);
+            }
+            if let Some(t) = args.i32("freeze_ticks") {
+                f.freeze_ticks = t.max(0);
+            }
+            if let Some(tag) = args.str("add_tag") {
+                if f.tags.len() < 1024 && !f.tags.iter().any(|t| t == tag) {
+                    f.tags.push(tag.to_owned());
+                }
+            }
+            if let Some(tag) = args.str("remove_tag") {
+                f.tags.retain(|t| t != tag);
+            }
+            if shown || args.bool("ai").is_some() || args.i32("freeze_ticks").is_some() {
+                e.metadata_dirty = true;
+            }
+            if let Some(t) = args.i32("ticks_lived") {
+                e.age = t.max(0);
+            }
+            if let Some(m) = e.mob_mut() {
+                if let Some(t) = args.i32("no_action_ticks") {
+                    m.no_player_ticks = t.max(0);
+                }
             }
             let mut pet_changed = false;
             if let Some(m) = e.mob_mut() {
@@ -445,9 +616,50 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     if let Some(p) = args.bool("persistent") {
                         m.persistent = p;
                     }
+                    // An animal is a baby while its age is below zero (`AgeableMob.setAge`);
+                    // other mobs (zombies, piglins) just are one.
+                    let ages = crate::world::entity_nbt::ages(&e.info.name);
                     if let Some(b) = args.bool("baby") {
+                        if ages && b && m.age >= 0 {
+                            m.age = -24000;
+                        } else if ages && !b && m.age < 0 {
+                            m.age = 0;
+                        }
                         m.baby = b;
                         e.metadata_dirty = true;
+                    }
+                    if let Some(age) = args.i32("mob_age") {
+                        if ages {
+                            m.age = age;
+                        }
+                        if m.baby != (age < 0) {
+                            m.baby = age < 0;
+                            e.metadata_dirty = true;
+                        }
+                    }
+                    if let Some(t) = args.i32("love_ticks") {
+                        m.in_love = t.max(0);
+                    }
+                    match args.get("love_cause") {
+                        Value::Str(uuid) => m.love_cause = server_players.iter().find(|(_, u)| u == uuid).map(|(id, _)| *id),
+                        Value::Null => {}
+                        _ => m.love_cause = None,
+                    }
+                    if let Some(d) = args.f64("fall_distance") {
+                        m.living.fall_distance = d;
+                    }
+                    if let Some(d) = args.f64("last_damage") {
+                        m.living.last_hurt = d as f32;
+                    }
+                    if e.info.name == "minecraft:sheep" {
+                        if let Some(sheared) = args.bool("sheared") {
+                            m.sheared = sheared;
+                            e.metadata_dirty = true;
+                        }
+                        if let Some(color) = args.i32("variant") {
+                            m.variant = color.clamp(0, 15);
+                            e.metadata_dirty = true;
+                        }
                     }
                     if let Some(equipment) = args.list("equipment") {
                         for entry in equipment {
@@ -516,7 +728,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                         *pickup_delay = d.clamp(0, 32767);
                     }
                 }
-                EntityKind::Arrow { damage, pickup, critical, .. } => {
+                EntityKind::Arrow { damage, pickup, critical, owner, .. } => {
+                    if !args.get("shooter").is_null() {
+                        *owner = shooter;
+                    }
                     if let Some(d) = args.f64("damage") {
                         *damage = d;
                     }
@@ -525,6 +740,19 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     }
                     if let Some(c) = args.bool("critical") {
                         *critical = c;
+                        e.metadata_dirty = true;
+                    }
+                }
+                EntityKind::Thrown { item, owner, left_owner, .. } => {
+                    // `Projectile.setShooter`, `setHasLeftShooter`, `ThrowableProjectile.setItem`.
+                    if !args.get("shooter").is_null() {
+                        *owner = shooter;
+                    }
+                    if let Some(left) = args.bool("left_shooter") {
+                        *left_owner = left;
+                    }
+                    if !args.get("item").is_null() {
+                        *item = slot_from(args.get("item"))?;
                         e.metadata_dirty = true;
                     }
                 }

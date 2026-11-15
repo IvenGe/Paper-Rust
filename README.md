@@ -271,8 +271,18 @@ What works:
     velocity, names, health, damage, equipment, targets, ...), the owners (who alone may pick
     them up) and throwers of items, passengers and vehicles
     (`addPassenger`, `eject`, `leaveVehicle`, ...), tamed animals (`Tameable`, `Sittable`) and
-    horses (domestication, jump strength), and the persistent data containers of players and
-    entities, saved with them as Bukkit's `BukkitValues`;
+    horses (domestication, jump strength), the flags of any entity (glowing, silent,
+    invisible, invulnerable, visual fire, freezing, portal cooldown, scoreboard tags) and of
+    mobs (`setAI`, `setAware`, left-handed), why a mob was spawned, ages, age locks and love
+    mode (`Ageable`, `Breedable`, `Animals`), sheep (wool colour, `shear`), projectiles
+    launched by players and mobs (`launchProjectile`: arrows, fireballs, snowballs, eggs,
+    ender pearls, bottles o' enchanting, potions) or spawned and aimed by plugins
+    (`setShooter`, `Fireball.setDirection`), and the
+    persistent data containers of players and entities, saved with them as Bukkit's
+    `BukkitValues`;
+  * the server's settings as plugins read them from `Bukkit.spigot()` (`getConfig`,
+    `getBukkitConfig`, `getPaperConfig`; proxy forwarding reads as off, as Paper-RS has
+    none);
   * offline players, from the player data files and the name cache (`usercache.json`);
   * statistics of online and offline players (`getStatistic`, `setStatistic`,
     `incrementStatistic`, `decrementStatistic`, with CraftBukkit's argument checks);

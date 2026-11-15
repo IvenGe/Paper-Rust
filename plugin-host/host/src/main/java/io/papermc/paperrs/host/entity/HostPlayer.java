@@ -2434,6 +2434,12 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
     }
 
     @Override
+    public <T extends org.bukkit.entity.Projectile> T launchProjectile(final Class<? extends T> projectile, final @Nullable Vector velocity,
+                                                                     final java.util.function.@Nullable Consumer<? super T> function) {
+        return Entities.launch(this.server, this, projectile, velocity, function);
+    }
+
+    @Override
     public void playHurtAnimation(final float yaw) {
         this.server.send("player.hurt_animation", this.args("yaw", (double) yaw, "everyone", true));
     }

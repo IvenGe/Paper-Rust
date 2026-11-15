@@ -349,13 +349,41 @@ public final class HostWorld extends AbstractWorld {
         return Entities.fromState(this.server, state);
     }
 
-    private static EntityType typeOf(final Class<? extends Entity> clazz) {
+    /**
+     * The entity type spawned for an API class. Classes several types share stand for the one
+     * CraftBukkit spawns for them ({@code Fireball} a large fireball, {@code AbstractArrow} an
+     * arrow, ...); otherwise the one type whose class it is.
+     */
+    public static EntityType typeOf(final Class<? extends Entity> clazz) {
         for (EntityType type : EntityType.values()) {
             if (type.getEntityClass() == clazz) {
                 return type;
             }
         }
-        throw new IllegalArgumentException("Cannot spawn an entity for " + clazz.getName());
+        final EntityType preferred = clazz == org.bukkit.entity.Fireball.class || clazz == org.bukkit.entity.SizedFireball.class ? EntityType.FIREBALL
+            : clazz == org.bukkit.entity.AbstractArrow.class || clazz == org.bukkit.entity.Projectile.class ? EntityType.ARROW
+            : clazz == org.bukkit.entity.ThrownPotion.class ? EntityType.SPLASH_POTION
+            : clazz == org.bukkit.entity.Minecart.class ? EntityType.MINECART
+            : clazz == org.bukkit.entity.Boat.class ? EntityType.OAK_BOAT
+            : clazz == org.bukkit.entity.ChestBoat.class ? EntityType.OAK_CHEST_BOAT
+            : null;
+        if (preferred != null) {
+            return preferred;
+        }
+        EntityType only = null;
+        for (EntityType type : EntityType.values()) {
+            if (type.getEntityClass() != null && clazz.isAssignableFrom(type.getEntityClass())) {
+                if (only != null) {
+                    only = null;
+                    break;
+                }
+                only = type;
+            }
+        }
+        if (only == null) {
+            throw new IllegalArgumentException("Cannot spawn an entity for " + clazz.getName());
+        }
+        return only;
     }
 
     @Override

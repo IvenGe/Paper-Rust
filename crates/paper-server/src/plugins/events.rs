@@ -602,18 +602,7 @@ pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: cra
         return;
     }
     let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return };
-    let reason = match reason {
-        crate::server::mobs::SpawnReason::Natural => "NATURAL",
-        crate::server::mobs::SpawnReason::ChunkGeneration => "CHUNK_GEN",
-        crate::server::mobs::SpawnReason::Command => "COMMAND",
-        crate::server::mobs::SpawnReason::Plugin => "CUSTOM",
-        crate::server::mobs::SpawnReason::Egg => "SPAWNER_EGG",
-        crate::server::mobs::SpawnReason::Spawner => "SPAWNER",
-        crate::server::mobs::SpawnReason::Breeding => "BREEDING",
-        crate::server::mobs::SpawnReason::Bucket => "BUCKET",
-        crate::server::mobs::SpawnReason::Built if e.info.name == "minecraft:snow_golem" => "BUILD_SNOWMAN",
-        crate::server::mobs::SpawnReason::Built => "BUILD_IRONGOLEM",
-    };
+    let reason = reason.bukkit_name(&e.info.name);
     let args = bmap! {
         "entity" => id as i64,
         "type" => e.info.name.clone(),

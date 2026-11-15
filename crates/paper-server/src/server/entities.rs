@@ -285,6 +285,14 @@ impl Server {
     fn tick_entity(&mut self, world: usize, id: i32) {
         let Some(mut e) = self.worlds[world].entities.remove(&id) else { return };
         e.age += 1;
+        if e.flags.portal_cooldown > 0 {
+            e.flags.portal_cooldown -= 1;
+        }
+        // Frozen mobs thaw out of powder snow (`LivingEntity.aiStep`).
+        if e.flags.freeze_ticks > 0 && e.mob().is_some() {
+            e.flags.freeze_ticks = (e.flags.freeze_ticks - 2).max(0);
+            e.metadata_dirty = true;
+        }
         match &mut e.kind {
             EntityKind::Item { pickup_delay, .. } => {
                 if *pickup_delay > 0 && *pickup_delay != 32767 {
@@ -831,22 +839,34 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
     let info = e.info;
     let mut m = Metadata::new();
     let mut shared = 0i8;
-    if let EntityKind::Mob(mob) = &e.kind {
-        if mob.living.fire_ticks > 0 {
-            shared |= flags::ON_FIRE;
-        }
+    let has_effect = |name: &str| e.mob().is_some_and(|mob| paper_data::effects::by_name(name).is_some_and(|effect| mob.living.effects.iter().any(|(id, _, _)| *id == effect.id)));
+    if e.mob().is_some_and(|mob| mob.living.fire_ticks > 0) || e.flags.visual_fire {
+        shared |= flags::ON_FIRE;
+    }
+    if e.flags.invisible || has_effect("minecraft:invisibility") {
+        shared |= flags::INVISIBLE;
+    }
+    if e.flags.glowing || has_effect("minecraft:glowing") {
+        shared |= flags::GLOWING;
     }
     if shared != 0 || !spawning {
         m = m.byte(0, shared);
     }
-    if e.custom_name.is_some() {
+    // While playing, a name taken away or a flag turned off is sent too.
+    if e.custom_name.is_some() || !spawning {
         m = m.optional_component(2, e.custom_name.as_ref());
-        if e.custom_name_visible {
-            m = m.boolean(3, true);
-        }
     }
-    if e.no_gravity {
-        m = m.boolean(5, true);
+    if e.custom_name_visible || !spawning {
+        m = m.boolean(3, e.custom_name_visible);
+    }
+    if e.flags.silent || !spawning {
+        m = m.boolean(4, e.flags.silent);
+    }
+    if e.no_gravity || !spawning {
+        m = m.boolean(5, e.no_gravity);
+    }
+    if e.flags.freeze_ticks > 0 || !spawning {
+        m = m.varint(7, e.flags.freeze_ticks);
     }
     match &e.kind {
         EntityKind::Item { stack, .. } => {
@@ -863,9 +883,15 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
                     m = m.varint(i, dragon.phase as i32);
                 }
             }
-            if mob.baby {
+            // (A calf that grew up is told so.)
+            if mob.baby || !spawning {
                 if let Some(i) = info.data_index("DATA_BABY_ID") {
-                    m = m.boolean(i, true);
+                    m = m.boolean(i, mob.baby);
+                }
+            }
+            if let Some(i) = info.data_index("AGE_LOCKED") {
+                if e.flags.age_locked || !spawning {
+                    m = m.boolean(i, e.flags.age_locked);
                 }
             }
             if let Some(i) = info.data_index("DATA_SWELL_DIR") {
@@ -874,8 +900,10 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
             if let Some(i) = info.data_index("DATA_WOOL_ID") {
                 m = m.byte(i, (mob.variant & 15) as i8 | if mob.sheared { 0x10 } else { 0 });
             }
+            // No AI, left-handed, aggressive.
             if let Some(i) = info.data_index("DATA_MOB_FLAGS_ID") {
-                m = m.byte(i, if mob.brain.target.is_some() { 4 } else { 0 });
+                let bits = e.flags.no_ai as i8 | if e.flags.left_handed { 2 } else { 0 } | if mob.brain.target.is_some() { 4 } else { 0 };
+                m = m.byte(i, bits);
             }
             // Tamed animals: the sitting and tame flags, the owner, the collar.
             if super::taming::is_tameable(&info.name) {

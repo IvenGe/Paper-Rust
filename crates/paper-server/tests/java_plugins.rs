@@ -584,6 +584,60 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let crater = BlockPos::new((at.x - 12.0).floor() as i32, at.y.floor() as i32 - 1, (at.z - 12.0).floor() as i32);
     let hole = server.handle.run(move |s| s.worlds[0].block_at(crater.x, crater.y, crater.z).map(paper_data::blocks::is_air)).unwrap();
     assert_eq!(hole, Some(true), "the explosion's crater");
+    // --- entity flags and tags, age and breeding, sheep ----------------------------------------
+    alice.clear_backlog();
+    alice.command("apitest entityflags");
+    let ids: play::SystemChat = alice.find(TIMEOUT, |m: &play::SystemChat| m.content.to_plain().starts_with("entityflags ids: ")).expect("the entities");
+    let ids: Vec<i32> = ids.content.to_plain()["entityflags ids: ".len()..].split(' ').map(|i| i.parse().unwrap()).collect();
+    let (cow, sheep) = (ids[0], ids[1]);
+    expect_line(&mut alice, "entityflags: ok");
+    // Alice sees the cow glow and keep quiet.
+    alice.find(TIMEOUT, |m: &play::SetEntityData| m.entity_id.0 == cow && m.metadata.0.windows(3).any(|w| w == [0, 0, 0x40]) && m.metadata.0.windows(3).any(|w| w == [4, 8, 1])).expect("a glowing, silent cow");
+    let (flags, age, sheared, color, saved) = server
+        .handle
+        .run(move |s| {
+            let e = &s.worlds[0].entities[&cow];
+            let m = e.mob().unwrap();
+            let saved = paper_server::world::entity_nbt::entity_from_nbt(cow, &paper_server::world::entity_nbt::entity_to_nbt(e).unwrap()).unwrap().flags;
+            let sheep = s.worlds[0].entities[&sheep].mob().unwrap();
+            (e.flags.clone(), m.age, sheep.sheared, sheep.variant, saved)
+        })
+        .unwrap();
+    assert!(flags.glowing && flags.silent && flags.invulnerable && flags.no_ai && flags.age_locked, "{flags:?}");
+    assert_eq!(flags.tags, vec!["paper-rs".to_owned()]);
+    assert_eq!(flags.spawn_reason.as_deref(), Some("CUSTOM"));
+    assert_eq!(age, 0, "ready to breed");
+    assert!(sheared && color == 14, "a sheared red sheep: {sheared} {color}");
+    assert!(saved.glowing && saved.silent && saved.invulnerable && saved.no_ai && saved.age_locked && saved.tags == flags.tags && saved.spawn_reason == flags.spawn_reason, "saved {saved:?}");
+    // Only what bypasses invulnerability hurts it.
+    let hurt = server
+        .handle
+        .run(move |s| {
+            use paper_server::server::survival::Damage;
+            (s.hurt_entity(0, cow, Damage::new("minecraft:generic"), 2.0), s.hurt_entity(0, cow, Damage::new("minecraft:generic_kill"), 2.0))
+        })
+        .unwrap();
+    assert_eq!(hurt, (false, true));
+    // Projectiles: a snowball Alice threw, a fireball the plugin aimed up and gave her.
+    alice.command("apitest projectiles");
+    let ids: play::SystemChat = alice.find(TIMEOUT, |m: &play::SystemChat| m.content.to_plain().starts_with("projectiles ids: ")).expect("the projectiles");
+    let ids: Vec<i32> = ids.content.to_plain()["projectiles ids: ".len()..].split(' ').map(|i| i.parse().unwrap()).collect();
+    expect_line(&mut alice, "projectiles: ok");
+    let alice_id = alice.entity_id;
+    let fireball = ids[1];
+    let shots = server
+        .handle
+        .run(move |s| {
+            let owner = |id: i32| s.worlds[0].entities.get(&id).and_then(|e| match e.kind {
+                paper_server::world::entity::EntityKind::Thrown { owner, .. } => Some((owner, e.vel.y)),
+                _ => None,
+            });
+            owner(fireball)
+        })
+        .unwrap();
+    let (owner, vy) = shots.expect("the fireball flies");
+    assert!(owner == Some(alice_id) && vy > 0.0, "{owner:?} {vy}");
+
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

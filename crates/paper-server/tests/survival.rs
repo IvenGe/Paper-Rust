@@ -190,6 +190,9 @@ fn creepers_explode_near_players() {
 #[test]
 fn game_rules_can_turn_damage_off() {
     let server = survival_server();
+    // Only the fall could hurt her: no mob spawns to reach her. (Once, with the whole suite
+    // running, she lost a little health to something other than the fall.)
+    server.handle.run(|s| s.set_game_rule(0, "spawn_mobs", paper_data::game_rules::Value::Bool(false))).unwrap();
     let mut alice = join(&server, "Alice");
     server.handle.console_command("gamerule fall_damage false");
     alice.drain(QUIET);

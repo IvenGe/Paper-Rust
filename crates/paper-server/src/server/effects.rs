@@ -121,6 +121,8 @@ impl Server {
             }
             None => mob.living.effects.push((effect.id, effect.amplifier, effect.duration)),
         }
+        // Glowing and invisibility show in its metadata.
+        e.metadata_dirty = true;
         let packet = play::UpdateMobEffect { entity_id: VarInt(target), effect: VarInt(effect.id), amplifier: VarInt(effect.amplifier), duration: VarInt(effect.duration), flags: effect.flags() };
         self.broadcast_entity(world, target, bytes::Bytes::from(paper_protocol::packets::encode_packet(&packet)));
         true
@@ -150,6 +152,7 @@ impl Server {
         mob.living.effects.retain(|(e, _, _)| *e != id);
         let removed = mob.living.effects.len() != before;
         if removed {
+            e.metadata_dirty = true;
             let packet = play::RemoveMobEffect { entity_id: VarInt(target), effect: VarInt(id) };
             self.broadcast_entity(world, target, bytes::Bytes::from(paper_protocol::packets::encode_packet(&packet)));
         }

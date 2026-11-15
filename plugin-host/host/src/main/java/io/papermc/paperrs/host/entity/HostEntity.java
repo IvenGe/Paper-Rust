@@ -646,6 +646,15 @@ public final class HostEntity implements HostProxies.Backed {
         this.set("baby", true);
     }
 
+    /** Zombies and the like (Zombie#setBaby). */
+    public void setBaby(final boolean baby) {
+        this.set("baby", baby);
+    }
+
+    public boolean isBaby() {
+        return !this.isAdult();
+    }
+
     // mobs
 
     public @Nullable LivingEntity getTarget() {
@@ -743,8 +752,12 @@ public final class HostEntity implements HostProxies.Backed {
         }
     }
 
+    /** A tamed animal's owner, or a projectile's shooter (Projectile#getOwnerUniqueId). */
     public @Nullable UUID getOwnerUniqueId() {
-        return this.state().get("owner") instanceof String uuid && !uuid.isEmpty() ? UUID.fromString(uuid) : null;
+        if (this.state().get("owner") instanceof String uuid && !uuid.isEmpty()) {
+            return UUID.fromString(uuid);
+        }
+        return this.state().containsKey("shooter") && this.getShooter() instanceof Entity entity ? entity.getUniqueId() : null;
     }
 
     /**
@@ -883,6 +896,79 @@ public final class HostEntity implements HostProxies.Backed {
     public @Nullable ProjectileSource getShooter() {
         final Object shooter = this.state().get("shooter");
         return shooter instanceof Map<?, ?> s && Entities.of(this.server, Values.map(s)) instanceof ProjectileSource source ? source : null;
+    }
+
+    /** Only players and mobs shoot here; other sources (dispensers) clear the shooter. */
+    public void setShooter(final @Nullable ProjectileSource shooter) {
+        this.set("shooter", shooter instanceof Entity entity ? Entities.ref(entity) : Map.of());
+    }
+
+    public boolean hasLeftShooter() {
+        return Values.bool(this.state(), "left_shooter", true);
+    }
+
+    public void setHasLeftShooter(final boolean leftShooter) {
+        this.set("left_shooter", leftShooter);
+    }
+
+    public boolean hasBeenShot() {
+        return true;
+    }
+
+    public boolean doesBounce() {
+        return false;
+    }
+
+    public void setBounce(final boolean doesBounce) {
+        // Deprecated in Bukkit, and without effect there too.
+    }
+
+    public <T extends org.bukkit.entity.Projectile> T launchProjectile(final Class<? extends T> projectile, final @Nullable Vector velocity,
+                                                                     final java.util.function.@Nullable Consumer<? super T> function) {
+        return Entities.launch(this.server, this.self(), projectile, velocity, function);
+    }
+
+    // thrown items (ThrowableProjectile)
+
+    public ItemStack getItem() {
+        return HostItemStack.fromValue(this.state().get("item"));
+    }
+
+    public void setItem(final @Nullable ItemStack item) {
+        this.set("item", HostItemStack.toValue(item));
+    }
+
+    // fireballs (CraftFireball): they speed up the way they fly, by 0.1 a tick
+
+    public Vector getDirection() {
+        return this.getVelocity().normalize();
+    }
+
+    public void setDirection(final Vector direction) {
+        com.google.common.base.Preconditions.checkArgument(direction != null, "Vector direction cannot be null");
+        if (direction.isZero()) {
+            this.setVelocity(direction);
+            return;
+        }
+        final double speed = Math.max(this.getVelocity().length(), 0.1);
+        this.setVelocity(direction.clone().normalize().multiply(speed));
+    }
+
+    public Vector getAcceleration() {
+        final Vector velocity = this.getVelocity();
+        return velocity.isZero() ? velocity : velocity.normalize().multiply(0.1);
+    }
+
+    public void setAcceleration(final Vector acceleration) {
+        this.setDirection(acceleration);
+    }
+
+    public Vector getPower() {
+        return this.getAcceleration();
+    }
+
+    public void setPower(final Vector power) {
+        this.setDirection(power);
     }
 
     // --- primed TNT -----------------------------------------------------------------------------
@@ -1067,6 +1153,590 @@ public final class HostEntity implements HostProxies.Backed {
 
     public void setDespawnDelay(final int despawnDelay) {
         this.set("despawn_delay", despawnDelay);
+    }
+
+    // --- flags any entity has (CraftEntity) ----------------------------------------------------
+
+    public boolean isGlowing() {
+        return Values.bool(this.state(), "glowing", false);
+    }
+
+    public void setGlowing(final boolean flag) {
+        this.set("glowing", flag);
+    }
+
+    public boolean isSilent() {
+        return Values.bool(this.state(), "silent", false);
+    }
+
+    public void setSilent(final boolean flag) {
+        this.set("silent", flag);
+    }
+
+    public boolean isInvulnerable() {
+        return Values.bool(this.state(), "invulnerable", false);
+    }
+
+    public boolean isMarkedInvulnerable() {
+        return this.isInvulnerable();
+    }
+
+    public void setInvulnerable(final boolean flag) {
+        this.set("invulnerable", flag);
+    }
+
+    public boolean isInvisible() {
+        return Values.bool(this.state(), "invisible", false);
+    }
+
+    public void setInvisible(final boolean invisible) {
+        this.set("invisible", invisible);
+    }
+
+    /** Fire shown without burning. ({@code TriState.FALSE}, never showing fire, is taken as not set.) */
+    public boolean isVisualFire() {
+        return Values.bool(this.state(), "visual_fire", false);
+    }
+
+    public net.kyori.adventure.util.TriState getVisualFire() {
+        return this.isVisualFire() ? net.kyori.adventure.util.TriState.TRUE : net.kyori.adventure.util.TriState.NOT_SET;
+    }
+
+    public void setVisualFire(final boolean fire) {
+        this.set("visual_fire", fire);
+    }
+
+    public void setVisualFire(final net.kyori.adventure.util.TriState fire) {
+        com.google.common.base.Preconditions.checkArgument(fire != null, "TriState cannot be null");
+        this.set("visual_fire", fire == net.kyori.adventure.util.TriState.TRUE);
+    }
+
+    public int getFreezeTicks() {
+        return Values.i32(this.state(), "freeze_ticks", 0);
+    }
+
+    public void setFreezeTicks(final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(0 <= ticks, "Ticks (%s) cannot be less than 0", ticks);
+        this.set("freeze_ticks", ticks);
+    }
+
+    public int getMaxFreezeTicks() {
+        return 140;
+    }
+
+    public boolean isFrozen() {
+        return this.getFreezeTicks() >= this.getMaxFreezeTicks();
+    }
+
+    public float getFallDistance() {
+        return (float) Values.f64(this.state(), "fall_distance", 0);
+    }
+
+    public void setFallDistance(final float distance) {
+        this.set("fall_distance", (double) distance);
+    }
+
+    public void setTicksLived(final int value) {
+        com.google.common.base.Preconditions.checkArgument(value > 0, "Age value (%s) must be greater than 0", value);
+        this.set("ticks_lived", value);
+    }
+
+    public int getPortalCooldown() {
+        return Values.i32(this.state(), "portal_cooldown", 0);
+    }
+
+    public void setPortalCooldown(final int cooldown) {
+        com.google.common.base.Preconditions.checkArgument(cooldown >= 0, "Portal cooldown (%s) must be beq 0", cooldown);
+        this.set("portal_cooldown", cooldown);
+    }
+
+    private List<String> tags() {
+        final List<String> tags = new ArrayList<>();
+        for (final Object tag : Values.list(this.state().get("tags"))) {
+            tags.add(String.valueOf(tag));
+        }
+        return tags;
+    }
+
+    /** The entity's own tags, as CraftEntity hands out: adding to or removing from the set changes them. */
+    public Set<String> getScoreboardTags() {
+        return new java.util.AbstractSet<>() {
+            @Override
+            public java.util.Iterator<String> iterator() {
+                final java.util.Iterator<String> tags = HostEntity.this.tags().iterator();
+                return new java.util.Iterator<>() {
+                    private @Nullable String last;
+
+                    @Override
+                    public boolean hasNext() {
+                        return tags.hasNext();
+                    }
+
+                    @Override
+                    public String next() {
+                        return this.last = tags.next();
+                    }
+
+                    @Override
+                    public void remove() {
+                        if (this.last == null) {
+                            throw new IllegalStateException();
+                        }
+                        HostEntity.this.removeScoreboardTag(this.last);
+                        this.last = null;
+                    }
+                };
+            }
+
+            @Override
+            public int size() {
+                return HostEntity.this.tags().size();
+            }
+
+            @Override
+            public boolean contains(final Object o) {
+                return HostEntity.this.tags().contains(o);
+            }
+
+            @Override
+            public boolean add(final String tag) {
+                return HostEntity.this.addScoreboardTag(tag);
+            }
+
+            @Override
+            public boolean remove(final Object o) {
+                return o instanceof String tag && HostEntity.this.removeScoreboardTag(tag);
+            }
+        };
+    }
+
+    public boolean addScoreboardTag(final String tag) {
+        final List<String> tags = this.tags();
+        if (tags.size() >= 1024 || tags.contains(tag)) {
+            return false;
+        }
+        this.set("add_tag", tag);
+        return true;
+    }
+
+    public boolean removeScoreboardTag(final String tag) {
+        if (!this.tags().contains(tag)) {
+            return false;
+        }
+        this.set("remove_tag", tag);
+        return true;
+    }
+
+    public org.bukkit.entity.Pose getPose() {
+        return this.isDead() ? org.bukkit.entity.Pose.DYING : org.bukkit.entity.Pose.STANDING;
+    }
+
+    public boolean isSneaking() {
+        return false;
+    }
+
+    public org.bukkit.entity.SpawnCategory getSpawnCategory() {
+        return switch (Values.str(this.state(), "category", "MISC")) {
+            case "MONSTER" -> org.bukkit.entity.SpawnCategory.MONSTER;
+            case "CREATURE" -> org.bukkit.entity.SpawnCategory.ANIMAL;
+            case "AMBIENT" -> org.bukkit.entity.SpawnCategory.AMBIENT;
+            case "AXOLOTLS" -> org.bukkit.entity.SpawnCategory.AXOLOTL;
+            case "WATER_CREATURE" -> org.bukkit.entity.SpawnCategory.WATER_ANIMAL;
+            case "WATER_AMBIENT" -> org.bukkit.entity.SpawnCategory.WATER_AMBIENT;
+            case "UNDERGROUND_WATER_CREATURE" -> org.bukkit.entity.SpawnCategory.WATER_UNDERGROUND_CREATURE;
+            default -> org.bukkit.entity.SpawnCategory.MISC;
+        };
+    }
+
+    public org.bukkit.SoundCategory getSoundCategory() {
+        return "MONSTER".equals(Values.str(this.state(), "category", "MISC")) ? org.bukkit.SoundCategory.HOSTILE : org.bukkit.SoundCategory.NEUTRAL;
+    }
+
+    public org.bukkit.block.PistonMoveReaction getPistonMoveReaction() {
+        return org.bukkit.block.PistonMoveReaction.MOVE;
+    }
+
+    // where it is
+
+    public boolean isInWater() {
+        return Values.bool(this.state(), "in_water", false);
+    }
+
+    public boolean isUnderWater() {
+        return Values.bool(this.state(), "under_water", false);
+    }
+
+    public boolean isInLava() {
+        return Values.bool(this.state(), "in_lava", false);
+    }
+
+    public boolean isInRain() {
+        return Values.bool(this.state(), "in_rain", false);
+    }
+
+    public boolean isInBubbleColumn() {
+        return Values.bool(this.state(), "in_bubble_column", false);
+    }
+
+    public boolean isInPowderedSnow() {
+        return Values.bool(this.state(), "in_powder_snow", false);
+    }
+
+    public boolean isInWorld() {
+        return !this.gone && Values.bool(this.state(), "valid", false);
+    }
+
+    /** Every entity in a loaded chunk ticks. */
+    public boolean isTicking() {
+        return this.isInWorld();
+    }
+
+    public Set<org.bukkit.entity.Player> getTrackedBy() {
+        final Set<org.bukkit.entity.Player> players = new java.util.HashSet<>();
+        for (final Object uuid : Values.list(this.state().get("tracked_by"))) {
+            final org.bukkit.entity.Player player = this.server.getPlayer(UUID.fromString(String.valueOf(uuid)));
+            if (player != null) {
+                players.add(player);
+            }
+        }
+        return players;
+    }
+
+    public Set<org.bukkit.entity.Player> getTrackedPlayers() {
+        return this.getTrackedBy();
+    }
+
+    public boolean isTrackedBy(final org.bukkit.entity.Player player) {
+        return this.getTrackedBy().contains(player);
+    }
+
+    // how it came to be
+
+    public org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason getEntitySpawnReason() {
+        final String reason = Values.str(this.state(), "spawn_reason", null);
+        if (reason != null) {
+            try {
+                return org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.valueOf(reason);
+            } catch (IllegalArgumentException ignored) {
+                // a reason of a newer server
+            }
+        }
+        return org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.DEFAULT;
+    }
+
+    public boolean fromMobSpawner() {
+        return "SPAWNER".equals(Values.str(this.state(), "spawn_reason", null));
+    }
+
+    /** Where it was first spawned is not recorded. */
+    public @Nullable Location getOrigin() {
+        return null;
+    }
+
+    public void playEffect(final org.bukkit.EntityEffect type) {
+        com.google.common.base.Preconditions.checkArgument(type != null, "Type cannot be null");
+        if (!this.gone && type.isApplicableTo(this.self())) {
+            this.server.call("entity.event", Values.of("id", this.id, "status", (int) type.getData()));
+        }
+    }
+
+    // --- living entities and mobs (CraftLivingEntity, CraftMob) ---------------------------------
+
+    public boolean hasAI() {
+        return Values.bool(this.state(), "ai", false);
+    }
+
+    public void setAI(final boolean ai) {
+        this.set("ai", ai);
+    }
+
+    public boolean isAware() {
+        return Values.bool(this.state(), "aware", true);
+    }
+
+    public void setAware(final boolean aware) {
+        this.set("aware", aware);
+    }
+
+    public boolean isLeftHanded() {
+        return Values.bool(this.state(), "left_handed", false);
+    }
+
+    public void setLeftHanded(final boolean leftHanded) {
+        this.set("left_handed", leftHanded);
+    }
+
+    public boolean getCanPickupItems() {
+        return Values.bool(this.state(), "can_pick_up_loot", false);
+    }
+
+    public void setCanPickupItems(final boolean pickup) {
+        this.set("can_pick_up_loot", pickup);
+    }
+
+    public boolean isAggressive() {
+        return this.state().get("target") != null;
+    }
+
+    public int getPossibleExperienceReward() {
+        return Values.i32(this.state(), "experience_reward", 0);
+    }
+
+    public int getHeadRotationSpeed() {
+        return 10;
+    }
+
+    public int getMaxHeadPitch() {
+        return 40;
+    }
+
+    public double getLastDamage() {
+        return Values.f64(this.state(), "last_damage", 0);
+    }
+
+    public void setLastDamage(final double damage) {
+        this.set("last_damage", damage);
+    }
+
+    public int getNoActionTicks() {
+        return Values.i32(this.state(), "no_action_ticks", 0);
+    }
+
+    public void setNoActionTicks(final int ticks) {
+        this.set("no_action_ticks", ticks);
+    }
+
+    /** The player who hurt it in the last five seconds. */
+    public org.bukkit.entity.@Nullable Player getKiller() {
+        final String killer = Values.str(this.state(), "killer", null);
+        return killer == null ? null : this.server.getPlayer(UUID.fromString(killer));
+    }
+
+    /** Leads are not supported yet: nothing is leashed. */
+    public boolean isLeashed() {
+        return false;
+    }
+
+    public Entity getLeashHolder() {
+        throw new IllegalStateException("Entity not leashed");
+    }
+
+    public boolean isGliding() {
+        return false;
+    }
+
+    public boolean isSwimming() {
+        return false;
+    }
+
+    public boolean isRiptiding() {
+        return false;
+    }
+
+    public boolean isSleeping() {
+        return false;
+    }
+
+    public boolean isClimbing() {
+        return false;
+    }
+
+    public void swingMainHand() {
+        this.server.call("entity.swing", Values.of("id", this.id, "hand", 0));
+    }
+
+    public void swingOffHand() {
+        this.server.call("entity.swing", Values.of("id", this.id, "hand", 1));
+    }
+
+    public float getBodyYaw() {
+        return this.getYaw();
+    }
+
+    public void setBodyYaw(final float bodyYaw) {
+        this.setRotation(bodyYaw, this.getPitch());
+    }
+
+    public void knockback(final double strength, final double directionX, final double directionZ) {
+        com.google.common.base.Preconditions.checkArgument(strength > 0, "Knockback strength must be > 0");
+        // LivingEntity.knockback: half the current motion, pushed away from the direction.
+        final Vector now = this.getVelocity();
+        final Vector push = new Vector(directionX, 0, directionZ).normalize().multiply(strength);
+        this.setVelocity(new Vector(now.getX() / 2 - push.getX(), this.isOnGround() ? Math.min(0.4, now.getY() / 2 + strength) : now.getY(), now.getZ() / 2 - push.getZ()));
+    }
+
+    /** Turns it to look at a point at once (Paper's Mob#lookAt turns its head over the next ticks). */
+    public void lookAt(final double x, final double y, final double z) {
+        final Location eye = this.getEyeLocation();
+        final double dx = x - eye.getX(), dy = y - eye.getY(), dz = z - eye.getZ();
+        final float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90);
+        final float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        this.setRotation(yaw, pitch);
+    }
+
+    public void lookAt(final double x, final double y, final double z, final float headRotationSpeed, final float maxHeadPitch) {
+        this.lookAt(x, y, z);
+    }
+
+    public void lookAt(final Location location) {
+        this.lookAt(location.getX(), location.getY(), location.getZ());
+    }
+
+    public void lookAt(final Location location, final float headRotationSpeed, final float maxHeadPitch) {
+        this.lookAt(location);
+    }
+
+    public void lookAt(final Entity entity) {
+        this.lookAt(entity instanceof LivingEntity living ? living.getEyeLocation() : entity.getLocation());
+    }
+
+    public void lookAt(final Entity entity, final float headRotationSpeed, final float maxHeadPitch) {
+        this.lookAt(entity);
+    }
+
+    private static org.bukkit.@Nullable Sound sound(final @Nullable String key) {
+        final org.bukkit.NamespacedKey name = key == null ? null : org.bukkit.NamespacedKey.fromString(key);
+        return name == null ? null : org.bukkit.Registry.SOUND_EVENT.get(name);
+    }
+
+    public org.bukkit.@Nullable Sound getHurtSound() {
+        return sound(Values.str(this.state(), "hurt_sound", null));
+    }
+
+    public org.bukkit.@Nullable Sound getDeathSound() {
+        return sound(Values.str(this.state(), "death_sound", null));
+    }
+
+    public org.bukkit.@Nullable Sound getAmbientSound() {
+        return sound(Values.str(this.state(), "ambient_sound", null));
+    }
+
+    public float getSoundVolume() {
+        return 1.0f;
+    }
+
+    public float getSoundPitch() {
+        return this.isAdult() ? 1.0f : 1.5f;
+    }
+
+    // --- ageable and animals (CraftAgeable, CraftAnimals) ---------------------------------------
+
+    /** Animals and villagers have an age; zombies, piglins and the like are just babies or not. */
+    private boolean ages() {
+        return Values.bool(this.state(), "ages", false);
+    }
+
+    public int getAge() {
+        if (!this.ages()) {
+            return this.isAdult() ? 0 : -1;
+        }
+        return Values.i32(this.state(), "mob_age", 0);
+    }
+
+    public void setAge(final int age) {
+        this.set("mob_age", age);
+    }
+
+    public boolean getAgeLock() {
+        return Values.bool(this.state(), "age_locked", false);
+    }
+
+    public void setAgeLock(final boolean lock) {
+        if (this.ages()) {
+            this.set("age_locked", lock);
+        }
+    }
+
+    public boolean canBreed() {
+        return this.ages() && this.getAge() == 0;
+    }
+
+    public void setBreed(final boolean breed) {
+        if (!this.ages()) {
+            return;
+        }
+        if (breed) {
+            this.setAge(0);
+        } else if (this.getAge() == 0) {
+            this.setAge(6000);
+        }
+    }
+
+    public @Nullable UUID getBreedCause() {
+        final String cause = Values.str(this.state(), "love_cause", null);
+        return cause == null ? null : UUID.fromString(cause);
+    }
+
+    public void setBreedCause(final @Nullable UUID uuid) {
+        this.set("love_cause", uuid == null ? "" : uuid.toString());
+    }
+
+    public boolean isLoveMode() {
+        return this.getLoveModeTicks() > 0;
+    }
+
+    public int getLoveModeTicks() {
+        return Values.i32(this.state(), "love_ticks", 0);
+    }
+
+    public void setLoveModeTicks(final int ticks) {
+        com.google.common.base.Preconditions.checkArgument(ticks >= 0, "Love mode ticks must be positive or 0");
+        this.set("love_ticks", ticks);
+    }
+
+    public boolean isBreedItem(final @Nullable ItemStack stack) {
+        return stack != null && !stack.isEmpty() && this.isBreedItem(stack.getType());
+    }
+
+    public boolean isBreedItem(final @Nullable Material material) {
+        if (material == null || !material.isItem() || material.isAir()) {
+            return false;
+        }
+        return Boolean.TRUE.equals(this.server.call("entity.breed_item", Values.of("id", this.id, "item", material.getKey().toString())));
+    }
+
+    // --- sheep (CraftSheep) ----------------------------------------------------------------------
+
+    private void sheepOnly(final String method) {
+        if (this.type != EntityType.SHEEP) {
+            throw io.papermc.paperrs.host.Unsupported.method(this.type.getEntityClass().getSimpleName() + "#" + method);
+        }
+    }
+
+    public boolean isSheared() {
+        return Values.bool(this.state(), "sheared", false);
+    }
+
+    public void setSheared(final boolean flag) {
+        this.sheepOnly("setSheared");
+        this.set("sheared", flag);
+    }
+
+    public org.bukkit.@Nullable DyeColor getColor() {
+        this.sheepOnly("getColor");
+        return org.bukkit.DyeColor.getByWoolData((byte) Values.i32(this.state(), "variant", 0));
+    }
+
+    public void setColor(final org.bukkit.@Nullable DyeColor color) {
+        this.sheepOnly("setColor");
+        com.google.common.base.Preconditions.checkArgument(color != null, "color cannot be null");
+        this.set("variant", (int) color.getWoolData());
+    }
+
+    public boolean readyToBeSheared() {
+        return !this.isDead() && !this.isSheared() && this.isAdult();
+    }
+
+    public void shear() {
+        this.shear(net.kyori.adventure.sound.Sound.Source.PLAYER);
+    }
+
+    public void shear(final net.kyori.adventure.sound.Sound.Source source) {
+        this.sheepOnly("shear");
+        final Object fresh = this.server.call("entity.shear", Values.of("id", this.id));
+        if (fresh instanceof Map<?, ?>) {
+            this.updateState(Values.map(fresh));
+        }
     }
 
     // --- object -------------------------------------------------------------------------------

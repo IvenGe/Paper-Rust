@@ -93,6 +93,32 @@ public final class Entities {
         return state instanceof Map<?, ?> s ? fromState(server, Values.map(s)) : null;
     }
 
+    /**
+     * {@code ProjectileSource#launchProjectile} for a player or mob: the server shoots it the way
+     * the shooter looks, with vanilla's speed for its kind; a velocity given replaces that.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends org.bukkit.entity.Projectile> T launch(final CraftServer server, final Entity shooter, final Class<? extends T> projectile,
+                                                                  final org.bukkit.util.@Nullable Vector velocity, final java.util.function.@Nullable Consumer<? super T> function) {
+        com.google.common.base.Preconditions.checkArgument(projectile != null, "projectile class cannot be null");
+        final EntityType type = io.papermc.paperrs.host.world.HostWorld.typeOf(projectile);
+        final Map<String, Object> args = Values.of("shooter", ref(shooter), "type", type.getKey().toString());
+        if (velocity != null) {
+            args.put("vx", velocity.getX());
+            args.put("vy", velocity.getY());
+            args.put("vz", velocity.getZ());
+        }
+        final Entity launched = fromState(server, Values.map(server.call("entity.launch", args)));
+        if (!projectile.isInstance(launched)) {
+            launched.remove();
+            throw new IllegalArgumentException("Projectile not supported: " + projectile.getName());
+        }
+        if (function != null) {
+            function.accept((T) launched);
+        }
+        return (T) launched;
+    }
+
     /** The reference the server understands for an entity. */
     public static @Nullable Map<String, Object> ref(final @Nullable Entity entity) {
         if (entity == null) {

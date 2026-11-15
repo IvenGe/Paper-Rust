@@ -369,7 +369,7 @@ impl Server {
         }
     }
 
-    pub(super) fn shear_sheep(&mut self, world: usize, id: i32) {
+    pub fn shear_sheep(&mut self, world: usize, id: i32) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let pos = e.pos;
         let Some(m) = e.mob_mut() else { return };
@@ -395,14 +395,18 @@ impl Server {
         }
         let name = e.info.name.clone();
         let pos = e.pos;
+        let age_locked = e.flags.age_locked;
         let Some(m) = e.mob_mut() else { return };
         if m.living.is_dead() {
             return;
         }
-        if m.age < 0 {
-            m.age += 1;
-        } else if m.age > 0 {
-            m.age -= 1;
+        // (Unless locked, as Paper's `Ageable.setAgeLock` does.)
+        if !age_locked {
+            if m.age < 0 {
+                m.age += 1;
+            } else if m.age > 0 {
+                m.age -= 1;
+            }
         }
         let grew = m.baby && m.age >= 0;
         if grew {

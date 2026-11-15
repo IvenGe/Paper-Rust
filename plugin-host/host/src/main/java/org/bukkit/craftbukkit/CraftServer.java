@@ -1276,9 +1276,98 @@ public final class CraftServer extends AbstractServer {
 
     @Override
     public Spigot spigot() {
-        return new Spigot() {
-        };
+        return this.spigot;
     }
+
+    /**
+     * The settings plugins read from bukkit.yml, spigot.yml and Paper's global configuration,
+     * with what Paper-RS does: it has no proxy (BungeeCord or Velocity) forwarding, so those
+     * read as off.
+     */
+    private final Spigot spigot = new Spigot() {
+        @Override
+        public org.bukkit.configuration.file.YamlConfiguration getConfig() {
+            return this.getSpigotConfig();
+        }
+
+        @Override
+        public org.bukkit.configuration.file.YamlConfiguration getSpigotConfig() {
+            final org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+            config.set("settings.bungeecord", false);
+            config.set("settings.timeout-time", 60);
+            config.set("settings.restart-on-crash", false);
+            config.set("settings.restart-script", "");
+            config.set("settings.sample-count", 12);
+            config.set("settings.player-shuffle", 0);
+            config.set("messages.whitelist", "You are not whitelisted on this server!");
+            config.set("messages.unknown-command", "Unknown command. Type \"/help\" for help.");
+            config.set("messages.server-full", "The server is full!");
+            config.set("messages.restart", "Server is restarting");
+            return config;
+        }
+
+        @Override
+        public org.bukkit.configuration.file.YamlConfiguration getBukkitConfig() {
+            final org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+            config.set("settings.allow-end", CraftServer.this.getAllowEnd());
+            config.set("settings.warn-on-overload", true);
+            config.set("settings.permissions-file", "permissions.yml");
+            config.set("settings.update-folder", CraftServer.this.getUpdateFolder());
+            config.set("settings.connection-throttle", CraftServer.this.getConnectionThrottle());
+            config.set("settings.query-plugins", true);
+            config.set("settings.shutdown-message", CraftServer.this.getShutdownMessage());
+            config.set("settings.minimum-api", "none");
+            final org.bukkit.entity.SpawnCategory[] categories = {
+                org.bukkit.entity.SpawnCategory.MONSTER, org.bukkit.entity.SpawnCategory.ANIMAL, org.bukkit.entity.SpawnCategory.WATER_ANIMAL,
+                org.bukkit.entity.SpawnCategory.WATER_AMBIENT, org.bukkit.entity.SpawnCategory.WATER_UNDERGROUND_CREATURE,
+                org.bukkit.entity.SpawnCategory.AXOLOTL, org.bukkit.entity.SpawnCategory.AMBIENT
+            };
+            final String[] limits = {"monsters", "animals", "water-animals", "water-ambient", "water-underground-creature", "axolotls", "ambient"};
+            final String[] ticks = {"monster-spawns", "animal-spawns", "water-spawns", "water-ambient-spawns", "water-underground-creature-spawns", "axolotl-spawns", "ambient-spawns"};
+            for (int i = 0; i < categories.length; i++) {
+                config.set("spawn-limits." + limits[i], CraftServer.this.getSpawnLimit(categories[i]));
+                config.set("ticks-per." + ticks[i], CraftServer.this.getTicksPerSpawns(categories[i]));
+            }
+            config.set("ticks-per.autosave", 6000);
+            config.set("chunk-gc.period-in-ticks", 600);
+            config.set("aliases", "now-in-commands.yml");
+            return config;
+        }
+
+        /** Paper's global configuration (with the keys of its older paper.yml as well). */
+        @Override
+        public org.bukkit.configuration.file.YamlConfiguration getPaperConfig() {
+            final org.bukkit.configuration.file.YamlConfiguration config = new org.bukkit.configuration.file.YamlConfiguration();
+            config.set("proxies.bungee-cord.online-mode", true);
+            config.set("proxies.proxy-protocol", false);
+            config.set("proxies.velocity.enabled", false);
+            config.set("proxies.velocity.online-mode", false);
+            config.set("proxies.velocity.secret", "");
+            config.set("settings.velocity-support.enabled", false);
+            config.set("settings.velocity-support.online-mode", false);
+            config.set("settings.velocity-support.secret", "");
+            config.set("settings.bungee-online-mode", true);
+            return config;
+        }
+
+        @Override
+        public void restart() {
+            // No restart script: like Spigot without one, the server only stops.
+            CraftServer.this.shutdown();
+        }
+
+        @Override
+        public void broadcast(final net.md_5.bungee.api.chat.BaseComponent component) {
+            this.broadcast(new net.md_5.bungee.api.chat.BaseComponent[] {component});
+        }
+
+        @Override
+        public void broadcast(final net.md_5.bungee.api.chat.BaseComponent... components) {
+            final net.kyori.adventure.text.Component message = net.kyori.adventure.text.serializer.gson.GsonComponentSerializer.gson()
+                .deserialize(net.md_5.bungee.chat.ComponentSerializer.toString(components));
+            CraftServer.this.broadcast(message);
+        }
+    };
 
     @Override
     public String toString() {

@@ -131,6 +131,27 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "worldstate" -> this.worldState((Player) sender);
                 case "signs" -> this.signs((Player) sender);
                 case "worldapi" -> this.worldApi((Player) sender);
+                case "entityflags" -> this.entityFlags((Player) sender);
+                case "projectiles" -> {
+                    // Launched by a player, spawned and aimed by the plugin.
+                    final Player player = (Player) sender;
+                    final List<String> failures = new ArrayList<>();
+                    final org.bukkit.entity.Snowball snowball = player.launchProjectile(org.bukkit.entity.Snowball.class);
+                    check(failures, player.equals(snowball.getShooter()) && snowball.getVelocity().length() > 1, "a snowball " + snowball.getVelocity());
+                    final org.bukkit.entity.Fireball fireball = player.getWorld().spawn(player.getLocation().add(0, 10, 0), org.bukkit.entity.Fireball.class);
+                    check(failures, fireball.getType() == org.bukkit.entity.EntityType.FIREBALL, "a large fireball " + fireball.getType());
+                    fireball.setDirection(new org.bukkit.util.Vector(0, 1, 0));
+                    fireball.setShooter(player);
+                    check(failures, fireball.getDirection().getY() > 0.99 && player.equals(fireball.getShooter()), "aimed " + fireball.getDirection());
+                    final org.bukkit.entity.Arrow arrow = player.launchProjectile(org.bukkit.entity.Arrow.class, new org.bukkit.util.Vector(-3, 0.2, 0));
+                    check(failures, arrow.getVelocity().getX() == -3 && arrow.getPickupStatus() == org.bukkit.entity.AbstractArrow.PickupStatus.ALLOWED, "an arrow");
+                    final Zombie zombie = player.getWorld().spawn(player.getLocation().add(-3, 0, 3), Zombie.class);
+                    zombie.setBaby(true);
+                    check(failures, zombie.isBaby() && !zombie.isAdult(), "a baby zombie");
+                    zombie.remove();
+                    sender.sendMessage("projectiles ids: " + snowball.getEntityId() + " " + fireball.getEntityId());
+                    report(sender, "projectiles", failures);
+                }
                 case "recipes" -> this.recipes((Player) sender);
                 case "worldeffects" -> {
                     // Particles, a level effect, lightning that only flashes, an explosion.
@@ -345,6 +366,48 @@ final class ApiTests implements Listener, CommandExecutor {
      * Game rules, the world's own plugin data and metadata, blocks broken naturally, and block
      * entities: custom names, plugin data, banners and spawners.
      */
+    /** Flags and tags, age and breeding, a sheep's wool, and the server's own configuration. */
+    private void entityFlags(final Player player) {
+        final List<String> failures = new ArrayList<>();
+        final World world = player.getWorld();
+        final Location at = player.getLocation().add(4, 0, 0);
+        final org.bukkit.entity.Cow cow = world.spawn(at, org.bukkit.entity.Cow.class);
+        check(failures, cow.getEntitySpawnReason() == CreatureSpawnEvent.SpawnReason.CUSTOM, "spawn reason " + cow.getEntitySpawnReason());
+        cow.setGlowing(true);
+        cow.setSilent(true);
+        cow.setInvulnerable(true);
+        check(failures, cow.isGlowing() && cow.isSilent() && cow.isInvulnerable(), "flags");
+        final double health = cow.getHealth();
+        cow.damage(4);
+        check(failures, cow.getHealth() == health, "an invulnerable cow hurt: " + cow.getHealth());
+        check(failures, cow.addScoreboardTag("paper-rs") && !cow.addScoreboardTag("paper-rs"), "a tag added once");
+        cow.getScoreboardTags().add("second");
+        check(failures, cow.getScoreboardTags().equals(java.util.Set.of("paper-rs", "second")), "tags " + cow.getScoreboardTags());
+        cow.getScoreboardTags().removeIf("second"::equals);
+        check(failures, cow.getScoreboardTags().equals(java.util.Set.of("paper-rs")), "tags after removal " + cow.getScoreboardTags());
+        cow.setAI(false);
+        check(failures, !cow.hasAI(), "AI");
+        cow.setAge(-1200);
+        check(failures, !cow.isAdult() && cow.getAge() == -1200 && !cow.canBreed(), "a calf " + cow.getAge());
+        cow.setAgeLock(true);
+        cow.setBreed(true);
+        check(failures, cow.isAdult() && cow.canBreed() && cow.getAgeLock(), "grown up to breed");
+        cow.setLoveModeTicks(600);
+        cow.setBreedCause(player.getUniqueId());
+        check(failures, cow.isLoveMode() && player.getUniqueId().equals(cow.getBreedCause()), "love mode");
+        check(failures, cow.isBreedItem(Material.WHEAT) && !cow.isBreedItem(Material.STONE), "breed items");
+        check(failures, cow.getSpawnCategory() == org.bukkit.entity.SpawnCategory.ANIMAL && cow.getHurtSound() == org.bukkit.Sound.ENTITY_COW_HURT, "category and sound");
+        final org.bukkit.entity.Sheep sheep = world.spawn(at.clone().add(0, 0, 3), org.bukkit.entity.Sheep.class);
+        sheep.setColor(org.bukkit.DyeColor.RED);
+        check(failures, sheep.getColor() == org.bukkit.DyeColor.RED && sheep.readyToBeSheared(), "a red sheep");
+        sheep.shear();
+        check(failures, sheep.isSheared() && !sheep.readyToBeSheared(), "sheared");
+        check(failures, !Bukkit.spigot().getConfig().getBoolean("settings.bungeecord", true), "bungeecord");
+        check(failures, !Bukkit.spigot().getPaperConfig().getBoolean("proxies.velocity.enabled", true), "velocity");
+        player.sendMessage("entityflags ids: " + cow.getEntityId() + " " + sheep.getEntityId());
+        report(player, "entityflags", failures);
+    }
+
     private void worldApi(final Player player) {
         final List<String> failures = new ArrayList<>();
         final World world = player.getWorld();

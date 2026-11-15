@@ -452,6 +452,39 @@ pub enum EntityKind {
     Other,
 }
 
+/// What commands and plugins set on any entity, with vanilla's defaults: `Entity`'s
+/// `Glowing`, `Silent`, `Invulnerable`, `Tags`, ... and `Mob`'s `NoAI`, `LeftHanded`, ...
+#[derive(Clone, Debug, Default)]
+pub struct EntityFlags {
+    pub glowing: bool,
+    /// Makes no sounds of its own (ambient, hurt, death).
+    pub silent: bool,
+    /// `Entity.setInvisible` (Bukkit's `persistentInvisibility`), on top of the invisibility
+    /// effect.
+    pub invisible: bool,
+    /// Only `/kill`, the void and creative players hurt it.
+    pub invulnerable: bool,
+    /// Shown burning without being on fire (`HasVisualFire`).
+    pub visual_fire: bool,
+    pub portal_cooldown: i32,
+    /// How frozen it is (`TicksFrozen`); thaws by two a tick.
+    pub freeze_ticks: i32,
+    /// Scoreboard tags (`Tags`, `/tag`).
+    pub tags: Vec<String>,
+    /// Mobs: stands still, without even falling (`NoAI`).
+    pub no_ai: bool,
+    /// Mobs: moves but does nothing of its own accord (Paper's `Mob.setAware(false)`).
+    pub unaware: bool,
+    pub left_handed: bool,
+    pub can_pick_up_loot: bool,
+    /// Animals and villagers: does not grow up or become able to breed again (Paper's
+    /// `AgeLocked`).
+    pub age_locked: bool,
+    /// Mobs: why it was spawned, as Bukkit's `CreatureSpawnEvent.SpawnReason` (Paper's
+    /// `Paper.SpawnReason`).
+    pub spawn_reason: Option<String>,
+}
+
 /// An entity in a world.
 #[derive(Clone, Debug)]
 pub struct Entity {
@@ -491,6 +524,7 @@ pub struct Entity {
     pub pdc: Option<paper_nbt::Compound>,
     /// What it rides.
     pub vehicle: Option<i32>,
+    pub flags: EntityFlags,
 }
 
 impl Entity {
@@ -527,6 +561,7 @@ impl Entity {
             passengers: Vec::new(),
             pdc: None,
             vehicle: None,
+            flags: EntityFlags::default(),
         }
     }
 

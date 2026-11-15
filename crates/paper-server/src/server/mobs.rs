@@ -86,6 +86,24 @@ pub enum SpawnReason {
     Built,
 }
 
+impl SpawnReason {
+    /// The `CreatureSpawnEvent.SpawnReason` Bukkit gives it, for a mob of type `entity`.
+    pub fn bukkit_name(self, entity: &str) -> &'static str {
+        match self {
+            SpawnReason::Natural => "NATURAL",
+            SpawnReason::ChunkGeneration => "CHUNK_GEN",
+            SpawnReason::Command => "COMMAND",
+            SpawnReason::Plugin => "CUSTOM",
+            SpawnReason::Egg => "SPAWNER_EGG",
+            SpawnReason::Spawner => "SPAWNER",
+            SpawnReason::Breeding => "BREEDING",
+            SpawnReason::Bucket => "BUCKET",
+            SpawnReason::Built if entity == "minecraft:snow_golem" => "BUILD_SNOWMAN",
+            SpawnReason::Built => "BUILD_IRONGOLEM",
+        }
+    }
+}
+
 // --- light and sky ---------------------------------------------------------------------------
 
 /// How much the sky light is dimmed at the world's time of day (`Level.skyDarken`, clear
@@ -374,7 +392,13 @@ impl Server {
                 "minecraft:tnt" => EntityKind::Tnt { fuse: 80 },
                 "minecraft:experience_orb" => EntityKind::ExperienceOrb { value: 1 },
                 n if super::boats::is_boat(n) => super::boats::boat_kind(n),
-                _ => EntityKind::Other,
+                // Projectiles, still until given a velocity (or a fireball a direction).
+                "minecraft:fireball" | "minecraft:small_fireball" | "minecraft:dragon_fireball" => EntityKind::Thrown { item: Slot::EMPTY, owner: None, gravity: 0.0, left_owner: false },
+                "minecraft:arrow" | "minecraft:spectral_arrow" => EntityKind::Arrow { damage: 2.0, owner: None, in_ground: false, life: 0, pickup: false, critical: false },
+                n => match super::throwing::throwable(n) {
+                    Some((entity, _, _, gravity, _)) if entity == n => EntityKind::Thrown { item: items::id(n).map_or(Slot::EMPTY, |i| Slot::of(i as i32, 1)), owner: None, gravity, left_owner: false },
+                    _ => EntityKind::Other,
+                },
             };
             let e = Entity::new(self.next_entity_id(), info, pos, kind);
             return Some(self.spawn_entity(world, e));
@@ -447,6 +471,8 @@ impl Server {
         let mut e = Entity::new(if info.name == super::dragon::DRAGON { self.reserve_entity_ids(9) } else { self.next_entity_id() }, info, pos, EntityKind::Mob(Box::new(mob)));
         e.yaw = rng.gen_range(0.0..360.0);
         e.head_yaw = e.yaw;
+        e.flags.left_handed = rng.gen::<f32>() < 0.05;
+        e.flags.spawn_reason = Some(reason.bukkit_name(&name).to_owned());
         let id = self.spawn_entity(world, e);
         crate::plugins::events::on_creature_spawn(self, world, id, reason);
         Some(id)
@@ -469,10 +495,17 @@ impl Server {
         self.tick_animal(world, id);
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let (name, riding, sitting) = (e.info.name.clone(), e.vehicle.is_some(), e.mob().is_some_and(|m| m.sitting));
-        if name == super::endermen::ENDERMAN {
+        // Without AI it stands where it is, without even falling; an unaware mob is still
+        // moved by what pushes it, but does nothing of its own accord.
+        let (no_ai, unaware) = (e.flags.no_ai, e.flags.unaware);
+        if no_ai {
+            self.mob_sounds(world, id);
+            return;
+        }
+        if name == super::endermen::ENDERMAN && !unaware {
             self.tick_enderman(world, id);
         }
-        if super::taming::is_tameable(&name) {
+        if super::taming::is_tameable(&name) && !unaware {
             self.tick_pet(world, id);
         }
         // A mount a player steers is moved by that player's client; a mob riding something
@@ -480,7 +513,7 @@ impl Server {
         if riding || self.steered(world, id) {
             return;
         }
-        if sitting {
+        if sitting || unaware {
             if let Some(m) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.mob_mut()) {
                 m.brain.path.clear();
             }
@@ -1144,7 +1177,7 @@ impl Server {
 
     /// Ambient noises now and then (`Mob.baseTick`).
     fn mob_sounds(&mut self, world: usize, id: i32) {
-        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        let Some(e) = self.worlds[world].entities.get_mut(&id).filter(|e| !e.flags.silent) else { return };
         let Some(sound) = e.info.ambient_sound.clone() else { return };
         let pos = e.pos;
         let category = if e.info.category == "MONSTER" { category::HOSTILE } else { category::NEUTRAL };
