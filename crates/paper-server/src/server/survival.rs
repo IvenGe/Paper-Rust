@@ -772,7 +772,7 @@ impl Server {
             }
             // Jumping on farmland tramples it.
             let world = self.players[&id].world;
-            self.landed_on(world, below_pos, distance, Some(id));
+            self.landed_on(world, below_pos, distance, id);
         }
         // Statistics: jumps and how far it went (`checkMovementStatistics`).
         if was_on_ground && !on_ground && dy > 0.0 {
@@ -1420,7 +1420,8 @@ impl Server {
             let mut e = Entity::new(self.next_entity_id(), info, pos, EntityKind::ExperienceOrb { value });
             e.vel = Vec3::new((rng.gen::<f64>() * 0.2 - 0.1) * 2.0, rng.gen::<f64>() * 0.2 * 2.0, (rng.gen::<f64>() * 0.2 - 0.1) * 2.0);
             e.yaw = rng.gen_range(0.0..360.0);
-            self.spawn_entity(world, e);
+            let id = self.spawn_entity(world, e);
+            self.keep_spawned(world, id);
         }
     }
 

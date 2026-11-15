@@ -144,28 +144,47 @@ impl Server {
         self.set_inventory_slot(id, slot, stack);
     }
 
-    /// A player or mob landed on `pos` after falling `distance` blocks: farmland may be
-    /// trampled (`FarmBlock.fallOn`; players always may, mobs only with mob griefing).
-    pub(super) fn landed_on(&mut self, world: usize, pos: BlockPos, distance: f64, player: Option<i32>) {
+    /// A player or mob (`who`) landed on `pos` after falling `distance` blocks: farmland may be
+    /// trampled (`FarmBlock.fallOn`): by players, and with mob griefing by mobs bigger than
+    /// 0.512 cubic blocks (`getBbWidth² × getBbHeight`).
+    pub(super) fn landed_on(&mut self, world: usize, pos: BlockPos, distance: f64, who: i32) {
         let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return };
         if blocks::block_of_state(state).name != "minecraft:farmland" {
             return;
         }
-        let griefing = player.is_some() || self.worlds[world].rules.bool("mob_griefing");
-        // A player about to trample it asks plugins first: `PlayerInteractEvent` (PHYSICAL),
-        // then `EntityChangeBlockEvent`.
+        let player = self.players.contains_key(&who);
+        if !player {
+            let Some(e) = self.worlds[world].entities.get(&who).filter(|e| e.mob().is_some()) else { return };
+            let b = e.bounding_box();
+            let (width, height) = (b.max.x - b.min.x, b.max.y - b.min.y);
+            if width * width * height <= 0.512 {
+                return;
+            }
+        }
+        let griefing = player || self.worlds[world].rules.bool("mob_griefing");
+        // About to trample it, a player asks plugins first with `PlayerInteractEvent`
+        // (PHYSICAL) and a mob with `EntityInteractEvent`, then both with
+        // `EntityChangeBlockEvent`.
         let mut distance = distance;
-        let (interact, change) = (crate::plugins::events::listens(self, "PlayerInteractEvent"), crate::plugins::events::listens(self, "EntityChangeBlockEvent"));
-        if let Some(id) = player.filter(|_| interact || change) {
+        let interact = crate::plugins::events::listens(self, if player { "PlayerInteractEvent" } else { "EntityInteractEvent" });
+        let change = crate::plugins::events::listens(self, "EntityChangeBlockEvent");
+        if griefing && (interact || change) {
             use rand::Rng;
             if (rand::thread_rng().gen::<f32>() as f64) >= distance - 0.5 {
                 return;
             }
-            if interact && crate::plugins::events::on_interact(self, id, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block == crate::plugins::events::Use::Deny {
-                return;
+            if interact {
+                let allowed = if player {
+                    crate::plugins::events::on_interact(self, who, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block != crate::plugins::events::Use::Deny
+                } else {
+                    crate::plugins::events::on_entity_interact(self, world, who, pos)
+                };
+                if !allowed {
+                    return;
+                }
             }
             let dirt = blocks::default_state("minecraft:dirt").unwrap_or(state);
-            if change && !crate::plugins::events::on_entity_change_block(self, world, id, pos, dirt, false) {
+            if change && !crate::plugins::events::on_entity_change_block(self, world, who, pos, dirt, false) {
                 return;
             }
             distance = f64::INFINITY;

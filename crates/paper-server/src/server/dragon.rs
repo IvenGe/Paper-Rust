@@ -782,7 +782,8 @@ impl Server {
         let info = paper_data::entity_types::by_name("minecraft:area_effect_cloud")?;
         let kind = EntityKind::Cloud { potion: potion.to_owned(), owner: Some(owner), radius, duration, wait: 20, uses: Vec::new(), growth, on_use: 0.0, breath: true };
         let e = crate::world::entity::Entity::new(self.next_entity_id(), info, at, kind);
-        Some(self.spawn_entity(world, e))
+        let id = self.spawn_entity(world, e);
+        self.keep_spawned(world, id).then_some(id)
     }
 
     /// A dragon's fireball bursts (`DragonFireball.onHit`) into a cloud of breath that grows

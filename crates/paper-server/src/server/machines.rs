@@ -211,9 +211,26 @@ impl Server {
 
     /// Puts as much of `stack` as fits into `inv` through `face` (`HopperBlockEntity.addItem`);
     /// returns what is left.
-    fn insert_into(&mut self, world: usize, inv: &Inventory, mut stack: ItemStack, face: Option<Face>) -> ItemStack {
+    fn insert_into(&mut self, world: usize, inv: &Inventory, stack: ItemStack, face: Option<Face>) -> ItemStack {
+        let before = stack.count;
+        let (items, left) = self.fitted(world, inv, stack, face);
+        if left.count < before {
+            self.set_inventory_items(world, inv, &items);
+        }
+        left
+    }
+
+    /// Whether any of `stack` would go into `inv` through `face`. Hoppers ask plugins about a
+    /// move only then: Paper asks before trying, but a hopper stuck on a full container would
+    /// then ask the plugin host every tick.
+    fn would_take(&self, world: usize, inv: &Inventory, stack: &ItemStack, face: Option<Face>) -> bool {
+        self.fitted(world, inv, stack.clone(), face).1.count < stack.count
+    }
+
+    /// The slots of `inv` after `stack` was put in through `face`, and what did not fit
+    /// (`HopperBlockEntity.addItem`), without changing anything.
+    fn fitted(&self, world: usize, inv: &Inventory, mut stack: ItemStack, face: Option<Face>) -> (Vec<Slot>, ItemStack) {
         let mut items = self.inventory_items(world, inv);
-        let mut changed = false;
         let disabled = if inv.crafter { Some(self.crafter_disabled(world, inv.positions[0])) } else { None };
         for slot in Self::slots_for_face(inv, items.len(), face) {
             if stack.count <= 0 {
@@ -230,7 +247,6 @@ impl Server {
                     let moved = stack.count.min(max_stack(&stack));
                     items[slot] = Slot(Some(stack.with_count(moved)));
                     stack.count -= moved;
-                    changed = true;
                 }
                 Some(existing) if same_item(existing, &stack) => {
                     let room = max_stack(existing) - existing.count;
@@ -238,16 +254,12 @@ impl Server {
                         let moved = room.min(stack.count);
                         existing.count += moved;
                         stack.count -= moved;
-                        changed = true;
                     }
                 }
                 Some(_) => {}
             }
         }
-        if changed {
-            self.set_inventory_items(world, inv, &items);
-        }
-        stack
+        (items, stack)
     }
 
     /// `CrafterBlock.dispenseItem`'s container part: puts a crafted stack into the container at
@@ -331,18 +343,37 @@ impl Server {
         }
     }
 
-    /// One item into the container the hopper points at.
+    /// One item into the container the hopper points at. Plugins may stop it, which makes the
+    /// hopper wait, or send another item (`InventoryMoveItemEvent`).
     fn hopper_eject(&mut self, world: usize, pos: BlockPos, state: u32, me: &Inventory) -> bool {
         let Some(facing) = blocks::property(state, "facing").and_then(Face::parse) else { return false };
         let target = at(pos, facing);
         let Some(dest) = self.loaded_inventory_at(world, target) else { return false };
-        let mut items = self.container_items(world, pos);
+        let items = self.container_items(world, pos);
+        let mut ask = crate::plugins::events::listens(self, "InventoryMoveItemEvent");
         for i in 0..items.len() {
             let Some(stack) = items[i].0.clone() else { continue };
-            let left = self.insert_into(world, &dest, stack.with_count(1), Some(facing.opposite()));
-            if left.count == 0 {
-                items[i] = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
-                self.set_inventory_items(world, me, &items);
+            let mut moving = stack.with_count(1);
+            if ask && self.would_take(world, &dest, &moving, Some(facing.opposite())) {
+                match crate::plugins::events::on_inventory_move(self, world, (&me.positions, me.entity), &moving, (&dest.positions, dest.entity), true) {
+                    crate::plugins::events::Move::Cancelled => {
+                        self.set_hopper_cooldown(world, pos, 8);
+                        return false;
+                    }
+                    crate::plugins::events::Move::Item(item, looked) => {
+                        moving = item;
+                        ask = looked;
+                    }
+                }
+            }
+            let left = self.insert_into(world, &dest, moving.clone(), Some(facing.opposite()));
+            if left.count < moving.count {
+                // The slot gives up its one item, whatever went instead.
+                let mut items = self.container_items(world, pos);
+                if let Some(now) = items.get(i).and_then(|s| s.0.clone()) {
+                    items[i] = if now.count > 1 { Slot(Some(now.with_count(now.count - 1))) } else { Slot::EMPTY };
+                    self.set_inventory_items(world, me, &items);
+                }
                 return true;
             }
         }
@@ -353,16 +384,32 @@ impl Server {
     fn hopper_suck(&mut self, world: usize, pos: BlockPos, me: &Inventory) -> bool {
         let above = at(pos, Face::Up);
         if let Some(source) = self.loaded_inventory_at(world, above) {
-            let mut items = self.inventory_items(world, &source);
+            let items = self.inventory_items(world, &source);
+            let mut ask = crate::plugins::events::listens(self, "InventoryMoveItemEvent");
             for slot in Self::slots_for_face(&source, items.len(), Some(Face::Down)) {
                 let Some(stack) = items[slot].0.clone() else { continue };
                 if !Self::can_take(&source, slot, &stack, Face::Down) {
                     continue;
                 }
-                let left = self.insert_into(world, me, stack.with_count(1), None);
-                if left.count == 0 {
-                    items[slot] = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
-                    self.set_inventory_items(world, &source, &items);
+                // Plugins may stop it (the hopper then waits as if it had moved something) or
+                // take another item (`InventoryMoveItemEvent`).
+                let mut moving = stack.with_count(1);
+                if ask && self.would_take(world, me, &moving, None) {
+                    match crate::plugins::events::on_inventory_move(self, world, (&source.positions, source.entity), &moving, (&me.positions, me.entity), false) {
+                        crate::plugins::events::Move::Cancelled => return true,
+                        crate::plugins::events::Move::Item(item, looked) => {
+                            moving = item;
+                            ask = looked;
+                        }
+                    }
+                }
+                let left = self.insert_into(world, me, moving.clone(), None);
+                if left.count < moving.count {
+                    let mut items = self.inventory_items(world, &source);
+                    if let Some(now) = items.get(slot).and_then(|s| s.0.clone()) {
+                        items[slot] = if now.count > 1 { Slot(Some(now.with_count(now.count - 1))) } else { Slot::EMPTY };
+                        self.set_inventory_items(world, &source, &items);
+                    }
                     return true;
                 }
             }
@@ -381,6 +428,10 @@ impl Server {
                 continue;
             }
             let stack = stack.clone();
+            // Plugins may keep it out (`InventoryPickupItemEvent`), asked only if it fits.
+            if !self.would_take(world, me, &stack, None) || !crate::plugins::events::on_inventory_pickup(self, world, pos, id) {
+                continue;
+            }
             let left = self.insert_into(world, me, stack.clone(), None);
             if left.count == stack.count {
                 continue;
@@ -455,8 +506,15 @@ impl Server {
         } else if name == "minecraft:dropper" {
             match self.loaded_inventory_at(world, front) {
                 Some(dest) => {
-                    let left = self.insert_into(world, &dest, stack.with_count(1), Some(facing.opposite()));
-                    if left.count == 0 {
+                    // Plugins may stop it or send another item, which costs the dropper
+                    // nothing (`InventoryMoveItemEvent`, as `DropperBlock.dispenseFrom`).
+                    let one = stack.with_count(1);
+                    let moving = match crate::plugins::events::on_inventory_move(self, world, (&[pos], None), &one, (&dest.positions, dest.entity), true) {
+                        crate::plugins::events::Move::Cancelled => return,
+                        crate::plugins::events::Move::Item(item, _) => item,
+                    };
+                    let left = self.insert_into(world, &dest, moving.clone(), Some(facing.opposite()));
+                    if left.count == 0 && moving == one {
                         Some(stack.with_count(stack.count - 1))
                     } else {
                         Some(stack)
@@ -859,11 +917,35 @@ impl Server {
                 self.check_pressure_plate(world, pos);
             }
             for pos in strings {
+                if !self.may_press_string(world, pos) {
+                    continue;
+                }
                 let Some(w) = self.worlds.get_mut(world) else { continue };
                 crate::world::block_updates::tripwire::check_pressed(&mut Level::new(w), pos, true);
                 self.publish_block_updates(world);
             }
         }
+    }
+
+    /// Whether what entered the string at `pos` presses it (`TripWireBlock.checkPressed`): for
+    /// hooked-up string, plugins hear of each player (`PlayerInteractEvent`, PHYSICAL) and
+    /// other entity (`EntityInteractEvent`) in it, and it goes down unless they stop them all.
+    fn may_press_string(&mut self, world: usize, pos: BlockPos) -> bool {
+        let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return false };
+        let (players_heard, others_heard) = (crate::plugins::events::listens(self, "PlayerInteractEvent"), crate::plugins::events::listens(self, "EntityInteractEvent"));
+        if blocks::property(state, "attached") != Some("true") || !players_heard && !others_heard {
+            return true;
+        }
+        let space = Aabb::new(Vec3::new(pos.x as f64, pos.y as f64, pos.z as f64), Vec3::new(pos.x as f64 + 1.0, pos.y as f64 + 1.0, pos.z as f64 + 1.0));
+        let players: Vec<i32> = self.players.values().filter(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&space)).map(|p| p.entity_id).collect();
+        let w = &self.worlds[world];
+        let others: Vec<i32> = w.entities_in(&space).into_iter().filter(|id| w.entities.get(id).is_some_and(|e| e.is_alive() && e.bounding_box().intersects(&space))).collect();
+        for p in players {
+            if !players_heard || crate::plugins::events::on_interact(self, p, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block != crate::plugins::events::Use::Deny {
+                return true;
+            }
+        }
+        others.into_iter().any(|e| !others_heard || crate::plugins::events::on_entity_interact(self, world, e, pos))
     }
 
     /// Recomputes a plate's signal from what stands on it (`checkPressed`).
@@ -883,7 +965,13 @@ impl Server {
         if plate_signal(state) == 0 && count > 0 && crate::plugins::events::listens(self, "PlayerInteractEvent") {
             count = players_on.iter().filter(|p| crate::plugins::events::on_interact(self, **p, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block != crate::plugins::events::Use::Deny).count();
         }
-        count += self.worlds[world].entities_in(&touch).into_iter().filter_map(|id| self.worlds[world].entities.get(&id)).filter(|e| e.is_alive() && e.bounding_box().intersects(&touch) && (!mobs_only || e.mob().is_some())).count();
+        let on: Vec<i32> = self.worlds[world].entities_in(&touch).into_iter().filter(|id| self.worlds[world].entities.get(id).is_some_and(|e| e.is_alive() && e.bounding_box().intersects(&touch) && (!mobs_only || e.mob().is_some()))).collect();
+        // Likewise other entities, with `EntityInteractEvent`.
+        if plate_signal(state) == 0 && !on.is_empty() && crate::plugins::events::listens(self, "EntityInteractEvent") {
+            count += on.into_iter().filter(|e| crate::plugins::events::on_entity_interact(self, world, *e, pos)).count();
+        } else {
+            count += on.len();
+        }
         let signal = match name {
             "minecraft:light_weighted_pressure_plate" => ((count.min(15) as f32 / 15.0) * 15.0).ceil() as i32,
             "minecraft:heavy_weighted_pressure_plate" => ((count.min(150) as f32 / 150.0) * 15.0).ceil() as i32,

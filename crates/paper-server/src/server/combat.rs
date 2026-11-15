@@ -1061,7 +1061,10 @@ impl Server {
         let angle = rand::thread_rng().gen::<f64>() * std::f64::consts::TAU;
         e.vel = Vec3::new(-angle.sin() * 0.02, 0.2, -angle.cos() * 0.02);
         let at = e.pos;
-        self.spawn_entity(world, e);
+        let id = self.spawn_entity(world, e);
+        if !self.keep_spawned(world, id) {
+            return;
+        }
         self.play_sound(world, at, "minecraft:entity.tnt.primed", category::BLOCKS, 1.0, 1.0, None);
     }
 }

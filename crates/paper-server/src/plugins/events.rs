@@ -521,10 +521,13 @@ pub fn on_sign_change(server: &mut Server, id: i32, world: usize, pos: BlockPos,
     }
 }
 
-/// A player is about to place a block. Returns whether the placement may proceed.
-pub fn on_block_place(server: &mut Server, id: i32, world: usize, pos: BlockPos, state: u32, replaced: u32, against: BlockPos, offhand: bool) -> bool {
+/// A player is about to place a block (`BlockPlaceEvent`), or one that comes in two
+/// (`second`: where the other half goes, its state and what it replaces;
+/// `BlockMultiPlaceEvent`). Returns whether the placement may proceed.
+#[allow(clippy::too_many_arguments)]
+pub fn on_block_place(server: &mut Server, id: i32, world: usize, pos: BlockPos, state: u32, replaced: u32, against: BlockPos, offhand: bool, second: Option<(BlockPos, u32, u32)>) -> bool {
     let Some(player) = server.players.get(&id) else { return true };
-    let args = bmap! {
+    let mut args = bmap! {
         "uuid" => player.uuid().to_string(),
         "world" => server.worlds[world].name.clone(),
         "x" => pos.x, "y" => pos.y, "z" => pos.z,
@@ -533,6 +536,9 @@ pub fn on_block_place(server: &mut Server, id: i32, world: usize, pos: BlockPos,
         "against" => Value::List(vec![against.x.into(), against.y.into(), against.z.into()]),
         "offhand" => offhand,
     };
+    if let Some((at, state, replaced)) = second {
+        args.set("second", bmap! { "x" => at.x, "y" => at.y, "z" => at.z, "state" => paper_data::blocks::state_to_string(state), "replaced" => paper_data::blocks::state_to_string(replaced) });
+    }
     match fire(server, "BlockPlaceEvent", "event.block_place", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
@@ -2301,6 +2307,124 @@ pub fn on_failed_dispense(server: &mut Server, world: usize, pos: BlockPos) -> b
     let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z };
     match fire(server, "BlockFailedDispenseEvent", "event.failed_dispense", args) {
         Some(result) => result.bool("effect") != Some(false),
+        None => true,
+    }
+}
+
+/// What plugins made of an item a hopper or dropper moves (`InventoryMoveItemEvent`).
+pub enum Move {
+    /// Stopped.
+    Cancelled,
+    /// The item that goes (another one if a listener set it), and whether a listener looked at
+    /// it: as in Paper, a hopper whose listeners did not look does not ask again for its other
+    /// slots this time.
+    Item(paper_protocol::types::ItemStack, bool),
+}
+
+/// `InventoryMoveItemEvent`: one item is about to go from the container `source` to
+/// `destination` (each its blocks, or a chest boat): `pushed` by a hopper or dropper, or
+/// pulled by the hopper below.
+pub fn on_inventory_move(server: &mut Server, world: usize, source: (&[BlockPos], Option<i32>), item: &paper_protocol::types::ItemStack, destination: (&[BlockPos], Option<i32>), pushed: bool) -> Move {
+    if !listens(server, "InventoryMoveItemEvent") {
+        return Move::Item(item.clone(), false);
+    }
+    let args = bmap! {
+        "source" => super::inventory::container_value(server, world, source.0, source.1),
+        "item" => super::api::item_value(&paper_protocol::types::Slot(Some(item.clone()))),
+        "destination" => super::inventory::container_value(server, world, destination.0, destination.1),
+        "pushed" => pushed,
+    };
+    match fire(server, "InventoryMoveItemEvent", "event.inventory_move", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => Move::Cancelled,
+        Some(result) => {
+            let moved = match super::api::slot_from(result.get("item")) {
+                Ok(paper_protocol::types::Slot(Some(other))) => other,
+                _ => item.clone(),
+            };
+            Move::Item(moved, result.bool("looked").unwrap_or(true))
+        }
+        None => Move::Item(item.clone(), true),
+    }
+}
+
+/// `InventoryPickupItemEvent`: the hopper at `hopper` is about to take in the item entity
+/// `item`. Returns whether plugins let it.
+pub fn on_inventory_pickup(server: &mut Server, world: usize, hopper: BlockPos, item: i32) -> bool {
+    if !listens(server, "InventoryPickupItemEvent") || !server.worlds[world].entities.contains_key(&item) {
+        return true;
+    }
+    let args = bmap! { "inventory" => super::inventory::container_value(server, world, &[hopper], None), "entity" => actor_value(server, world, item) };
+    match fire(server, "InventoryPickupItemEvent", "event.inventory_pickup", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `EntityInteractEvent`: the entity `entity` (not a player) is about to trample the farmland
+/// or press the plate or string at `pos`. Returns whether plugins let it.
+pub fn on_entity_interact(server: &mut Server, world: usize, entity: i32, pos: BlockPos) -> bool {
+    if !listens(server, "EntityInteractEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, entity), "x" => pos.x, "y" => pos.y, "z" => pos.z };
+    match fire(server, "EntityInteractEvent", "event.entity_interact", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// A newly generated chunk is ready: plugins' block populators of its world run on it
+/// (`BlockPopulator#populate(World, Random, Chunk)`), then `ChunkPopulateEvent` fires, as
+/// `LevelChunk.loadCallback` does after `ChunkLoadEvent`. (The host reports
+/// `ChunkPopulateEvent` as listened while a world has populators too.)
+pub fn on_chunk_populate(server: &mut Server, world: usize, pos: crate::world::chunk::ChunkPos) {
+    if !listens(server, "ChunkPopulateEvent") {
+        return;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "z" => pos.z };
+    fire(server, "ChunkPopulateEvent", "event.chunk_populate", args);
+}
+
+/// What plugins said about a mob about to be made (`PreCreatureSpawnEvent`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreSpawn {
+    Spawn,
+    /// Not this one.
+    Skip,
+    /// None at all this time (`setShouldAbortSpawn`).
+    Abort,
+}
+
+/// Paper's `PreCreatureSpawnEvent`: a mob of type `entity` is about to be made at `at` for
+/// `reason` (`NATURAL`, `SPAWNER`), before anything is made, so that plugins can refuse it
+/// cheaply.
+pub fn on_pre_creature_spawn(server: &mut Server, world: usize, entity: &str, at: crate::world::entity::Vec3, reason: &str) -> PreSpawn {
+    if !listens(server, "PreCreatureSpawnEvent") {
+        return PreSpawn::Spawn;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => at.x, "y" => at.y, "z" => at.z, "type" => entity, "reason" => reason };
+    match fire(server, "PreCreatureSpawnEvent", "event.pre_creature_spawn", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => {
+            if result.bool("abort") == Some(true) {
+                PreSpawn::Abort
+            } else {
+                PreSpawn::Skip
+            }
+        }
+        _ => PreSpawn::Spawn,
+    }
+}
+
+/// Bukkit's plain `EntitySpawnEvent`: the entity `entity` (primed TNT, a falling block, an
+/// experience orb, a cloud, an eye of ender, ...) has just come into the world. Returns
+/// whether plugins let it stay.
+pub fn on_entity_spawn(server: &mut Server, world: usize, entity: i32) -> bool {
+    if !listens(server, "EntitySpawnEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, entity) };
+    match fire(server, "EntitySpawnEvent", "event.entity_spawn", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
         None => true,
     }
 }

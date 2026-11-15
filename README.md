@@ -330,7 +330,13 @@ What works:
   `EntityShootBowEvent` (players and skeletons, before the arrow's `ProjectileLaunchEvent`),
   `ItemSpawnEvent`, `SpawnerSpawnEvent`, Paper's `PlayerOpenSignEvent` and Bukkit's
   `PlayerSignOpenEvent`, `UnknownCommandEvent`, `PlayerClientLoadedWorldEvent`, and Paper's
-  `BlockPreDispenseEvent` and `BlockFailedDispenseEvent`. Players,
+  `BlockPreDispenseEvent` and `BlockFailedDispenseEvent`. And `InventoryMoveItemEvent`
+  (hoppers pushing and pulling, droppers filling containers), `InventoryPickupItemEvent`,
+  `EntityInteractEvent` (mobs trampling farmland, which they now do, and entities on pressure
+  plates and string), `ChunkPopulateEvent` (plugins' block populators run on new chunks
+  first), Paper's `PreCreatureSpawnEvent` (natural spawning and spawners), plain
+  `EntitySpawnEvent` (primed TNT, falling blocks, experience orbs, clouds, eyes of ender) and
+  `BlockMultiPlaceEvent` (doors, beds and tall plants). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -479,7 +485,8 @@ Not yet:
   cauldrons, cakes, flower pots, gliding with elytra, ...) stay at zero, and items count as
   used or broken only when placed, eaten or drunk, thrown, used as spawn eggs, buckets or
   bottles, or worn out as tools.
-* Plugin API: plugins' own chunk generators and biome providers, amplified and large-biome
+* Plugin API: plugins' own chunk generators and biome providers (block populators get the
+  classic `populate(World, Random, Chunk)` call only), amplified and large-biome
   worlds, unloading worlds, registry and tag lifecycle events,
   dialogs, signed chat messages, entity AI goals, the data component API
   for components without plain values, the remaining special item metas (bundles,

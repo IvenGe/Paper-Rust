@@ -640,3 +640,14 @@ pub fn friction_below(world: &World, pos: Vec3) -> f64 {
     let (x, y, z) = (pos.x.floor() as i32, (pos.y - 0.5000001).floor() as i32, pos.z.floor() as i32);
     world.block_at(x, y, z).map_or(0.6, |state| physics::block(paper_data::blocks::block_of_state(state).name).slipperiness as f64)
 }
+
+/// Whether Paper announces an entity of this kind with plain `EntitySpawnEvent`: not a living
+/// thing, item, projectile, vehicle or lightning bolt, which have spawn events of their own
+/// (`CraftEventFactory.doEntityAddEventCalling`).
+pub fn announced_plainly(e: &Entity) -> bool {
+    match e.kind {
+        EntityKind::FallingBlock { .. } | EntityKind::ExperienceOrb { .. } | EntityKind::Tnt { .. } | EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } => true,
+        EntityKind::Other => e.info.name != "minecraft:lightning_bolt",
+        _ => false,
+    }
+}

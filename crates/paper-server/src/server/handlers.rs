@@ -651,7 +651,8 @@ impl Server {
         }
 
         let replaced = self.worlds[world].block_at(target.x, target.y, target.z).unwrap_or(blocks::AIR);
-        if !crate::plugins::events::on_block_place(self, id, world, target, state, replaced, use_on.pos, use_on.hand.0 == 1) {
+        let other_half = second.map(|(pos, half)| (pos, half, self.worlds[world].block_at(pos.x, pos.y, pos.z).unwrap_or(blocks::AIR)));
+        if !crate::plugins::events::on_block_place(self, id, world, target, state, replaced, use_on.pos, use_on.hand.0 == 1, other_half) {
             return false;
         }
         // A plugin that set the block itself during the event keeps its block, as in Paper

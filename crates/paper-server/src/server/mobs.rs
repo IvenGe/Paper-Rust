@@ -395,6 +395,8 @@ impl Server {
         let id = self.spawn_mob_unannounced(world, name, pos, reason)?;
         if self.worlds[world].entities.get(&id).is_some_and(|e| matches!(e.kind, EntityKind::Mob(_))) {
             crate::plugins::events::on_creature_spawn(self, world, id, reason);
+        } else if self.worlds[world].entities.get(&id).is_some_and(crate::world::entity::announced_plainly) && !self.keep_spawned(world, id) {
+            return None;
         }
         Some(id)
     }
@@ -1213,7 +1215,10 @@ impl Server {
         // Falling.
         let fall_immune = is_fall_immune(&info.name) || kind == Behavior::Flyer || info.name == "minecraft:chicken";
         let mut landed = None;
+        // Where it came down after a fall, for the block there (`Block.fallOn`: farmland).
+        let mut came_down = None;
         let (pos_y, on_ground) = (e.pos.y, e.on_ground);
+        let feet = paper_protocol::codec::BlockPos::new(e.pos.x.floor() as i32, (e.pos.y - 0.2).floor() as i32, e.pos.z.floor() as i32);
         if let EntityKind::Mob(mob) = &mut e.kind {
             let dy = pos_y - y_before;
             if in_water || in_lava {
@@ -1221,6 +1226,9 @@ impl Server {
             } else if on_ground {
                 if mob.living.fall_distance > 3.0 && !was_on_ground && !fall_immune {
                     landed = Some(mob.living.fall_distance);
+                }
+                if mob.living.fall_distance > 0.5 && !was_on_ground {
+                    came_down = Some(mob.living.fall_distance as f64);
                 }
                 mob.living.fall_distance = 0.0;
             } else if dy < 0.0 {
@@ -1233,6 +1241,9 @@ impl Server {
         }
         self.worlds[world].entities.insert(id, e);
         self.worlds[world].reindex_entity(id);
+        if let Some(distance) = came_down {
+            self.landed_on(world, feet, distance, id);
+        }
         if let Some(distance) = landed {
             let amount = (distance - 3.0).ceil() as f32;
             if amount > 0.0 {
@@ -1375,6 +1386,15 @@ impl Server {
                 let entry = chosen.clone().unwrap();
                 if !self.can_spawn_at(world, &entry.entity, x, y, z, SpawnReason::Natural) {
                     continue;
+                }
+                // Plugins may skip this one, or end this whole attempt (Paper's
+                // `PreCreatureSpawnEvent`). Paper asks before checking the spot; asking the
+                // plugin host for every try would cost far more than the check, so only spots
+                // where the mob would spawn are asked about.
+                match crate::plugins::events::on_pre_creature_spawn(self, world, &entry.entity, at, "NATURAL") {
+                    crate::plugins::events::PreSpawn::Spawn => {}
+                    crate::plugins::events::PreSpawn::Skip => continue,
+                    crate::plugins::events::PreSpawn::Abort => return count,
                 }
                 if self.spawn_mob(world, &entry.entity, at, SpawnReason::Natural).is_some() {
                     count += 1;

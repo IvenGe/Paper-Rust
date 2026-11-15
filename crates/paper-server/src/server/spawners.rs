@@ -114,6 +114,19 @@ impl Server {
                     continue;
                 }
             }
+            // Plugins may skip this one or end the round (Paper's `PreCreatureSpawnEvent`);
+            // either way the spawner starts its wait again.
+            match crate::plugins::events::on_pre_creature_spawn(self, world, &name, at, "SPAWNER") {
+                crate::plugins::events::PreSpawn::Spawn => {}
+                crate::plugins::events::PreSpawn::Skip => {
+                    spawned = true;
+                    continue;
+                }
+                crate::plugins::events::PreSpawn::Abort => {
+                    spawned = true;
+                    break;
+                }
+            }
             let r = settings.spawn_range;
             let area = Aabb::new(Vec3::new(pos.x as f64 - r, pos.y as f64 - r, pos.z as f64 - r), Vec3::new(pos.x as f64 + 1.0 + r, pos.y as f64 + 1.0 + r, pos.z as f64 + 1.0 + r));
             let nearby = self.worlds[world].entities_in(&area).into_iter().filter(|e| self.worlds[world].entities.get(e).is_some_and(|e| e.info.name == name)).count();

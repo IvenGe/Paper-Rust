@@ -624,6 +624,9 @@ impl Server {
                         self.spawn_for_chunk_generation(world, pos);
                     }
                     crate::plugins::events::on_chunk_load(self, world, pos, fresh);
+                    if fresh {
+                        crate::plugins::events::on_chunk_populate(self, world, pos);
+                    }
                 }
             }
             MainTask::ConsoleCommand(line) => {

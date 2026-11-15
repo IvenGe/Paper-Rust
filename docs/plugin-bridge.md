@@ -153,7 +153,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.server_command` | `command` | `cancelled`, `command` |
 | `event.block_break` | `uuid`, `world`, `x`, `y`, `z`, `state` | `cancelled` |
 | `event.resource_pack_status` | `uuid`, `id` (the pack), `status` (0 loaded ... 7 discarded) | nothing |
-| `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand` | `cancelled`; the server places the block after the event, unless a listener has set that block itself |
+| `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand`, and for a block in two halves `second` `{x, y, z, state, replaced}` | `cancelled` (`BlockPlaceEvent`, or `BlockMultiPlaceEvent` for doors, beds and tall plants); the server places the block after the event, unless a listener has set that block itself |
 | `event.interact` | `uuid`, `world`, `action` (`LEFT_CLICK_BLOCK`, `RIGHT_CLICK_BLOCK`, `LEFT_CLICK_AIR`, `RIGHT_CLICK_AIR`, `PHYSICAL`), `hand` (0 main, 1 off), and for a block `x`, `y`, `z`, `face` (0 down to 5 east, -1 none) and `cursor` `[x, y, z]` on it | `use_block`, `use_item` (`DEFAULT`, `ALLOW`, `DENY`; `PlayerInteractEvent`): a denied block is not used (no door, chest, lever, plate or trampled farmland), a denied item not used on it or in the air; a cancelled left click breaks nothing |
 | `event.interact_entity` | `uuid`, `entity` (a mob, any entity or a player), `hand`, `at` `[x, y, z]` (where it was clicked, relative to its position) | `cancelled` (`PlayerInteractAtEntityEvent`, which `PlayerInteractEntityEvent` listeners hear too: no riding, trading, taming, ...) |
 | `event.entity_explode` / `event.block_explode` | `world`, `x`, `y`, `z` (the centre), `blocks` `[[x, y, z]]`, `result` (`DESTROY`, `DESTROY_WITH_DECAY`), and `entity` for the first | `cancelled`, `blocks` (`EntityExplodeEvent`, `BlockExplodeEvent`): only the blocks left are broken |
@@ -212,6 +212,12 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.client_loaded` | `uuid`, `timeout` | nothing (`PlayerClientLoadedWorldEvent`, once after joining and after each respawn: when the client says it has loaded the world, or after three seconds without) |
 | `event.pre_dispense` | `world`, `x`, `y`, `z`, `item` (the stack), `slot` | `cancelled` (Paper's `BlockPreDispenseEvent`, before `BlockDispenseEvent`; a dropper filling a container in front asks neither) |
 | `event.failed_dispense` | `world`, `x`, `y`, `z` | `effect` (Paper's `BlockFailedDispenseEvent` for an empty dispenser or dropper: whether it clicks) |
+| `event.inventory_move` | `source`, `destination` (containers as `{type, size, inventory}`), `item` (one), `pushed` (by a hopper or dropper; else pulled by the hopper below) | `cancelled`, `item` (if a listener set another), `looked` (`InventoryMoveItemEvent`; a stopped hopper waits; a hopper whose listeners did not look at the item does not ask again for its other slots in the same move, as in Paper; another item from a dropper costs it nothing). Unlike Paper, hoppers ask only about items that would go in, so that one stuck on a full container does not ask every tick |
+| `event.inventory_pickup` | `inventory` (the hopper), `entity` (the item) | `cancelled` (`InventoryPickupItemEvent`, for items that would go in) |
+| `event.entity_interact` | `world`, `entity` (not a player), `x`, `y`, `z` (farmland, a pressure plate or string) | `cancelled` (`EntityInteractEvent`: no trampling; a plate or string pressed only by stopped entities stays up) |
+| `event.chunk_populate` | `world`, `x`, `z` (a newly generated chunk, after its `ChunkLoadEvent`) | nothing (the world's block populators run on it, then `ChunkPopulateEvent`) |
+| `event.pre_creature_spawn` | `world`, `x`, `y`, `z`, `type`, `reason` (`NATURAL`, `SPAWNER`) | `cancelled`, `abort` (Paper's `PreCreatureSpawnEvent`, before anything is made: not this one, or none this time). Paper asks for every spot natural spawning tries; here only spots where the mob would spawn are asked about, as a round trip to the host for every try slowed the server to a third of its speed |
+| `event.entity_spawn` | `world`, `entity` (in the world but not yet seen) | `cancelled` (plain `EntitySpawnEvent` for entities without a spawn event of their own: primed TNT, falling blocks, experience orbs, clouds, eyes of ender, ...; a refused falling block's block is gone, as in Paper) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
 | `event.regain_health` | `entity`, `amount`, `reason` (`RegainReason`) | `cancelled`, `amount` (`EntityRegainHealthEvent`) |
@@ -237,10 +243,12 @@ unloading, portals being made, potions splashing, items wearing, shearing, beds,
 settings, arrows picked up, eggs hatching, bottles o' enchanting, dropped items going or
 merging, TNT and explosions, lightning, vehicles, potion effects, bows, items and spawner
 mobs coming into the world, signs opening, unknown commands, clients loading the world, and
-dispensers about to fire or firing empty. Join, quit,
+dispensers about to fire or firing empty, hoppers and droppers moving items, entities
+trampling or pressing blocks, new chunks (also while a world has block populators), mobs
+about to spawn, and other entities spawning. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`). Creature, item and spawner spawns share
-`EntitySpawnEvent`'s handler list; each counts as listened only when some listener class
+`EntitySpawnEvent`'s handler list (plain `EntitySpawnEvent` too); each counts as listened only when some listener class
 has an `@EventHandler` method for it or a supertype (or was registered without any), so that
 a creature spawn listener does not make every dropped item wait for the host.
 

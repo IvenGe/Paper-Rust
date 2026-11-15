@@ -1196,10 +1196,31 @@ public final class HostWorld extends AbstractWorld {
         return this.getBlockAt(x, y, z).getState();
     }
 
-    /** Vanilla's generation: no populators or biome provider of a plugin. */
+    /**
+     * Plugins' block populators: vanilla generation makes the chunks, then each new chunk is
+     * handed to these ({@code populate(World, Random, Chunk)}) before {@code ChunkPopulateEvent},
+     * as in CraftBukkit's {@code LevelChunk.loadCallback}.
+     */
+    private final List<org.bukkit.generator.BlockPopulator> populators = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     @Override
     public List<org.bukkit.generator.BlockPopulator> getPopulators() {
-        return new ArrayList<>();
+        return this.populators;
+    }
+
+    /** Runs the populators on a newly generated chunk, with CraftBukkit's random. */
+    public void populate(final int x, final int z) {
+        if (this.populators.isEmpty()) {
+            return;
+        }
+        final java.util.Random random = new java.util.Random(this.seed);
+        final long xRand = random.nextLong() / 2L * 2L + 1L;
+        final long zRand = random.nextLong() / 2L * 2L + 1L;
+        random.setSeed((long) x * xRand + (long) z * zRand ^ this.seed);
+        final org.bukkit.Chunk chunk = this.getChunkAt(x, z, false);
+        for (final org.bukkit.generator.BlockPopulator populator : this.populators) {
+            populator.populate(this, random, chunk);
+        }
     }
 
     @Override

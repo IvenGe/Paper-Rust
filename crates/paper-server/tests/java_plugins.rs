@@ -1910,7 +1910,7 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             }
             pause(&mut alice, Duration::from_millis(100));
         }
-        assert!(seen.contains("SPAWNER PIG PIG"), "{mode}: {seen}");
+        assert!(seen.contains("SPAWNER PIG PIG") && seen.contains("PRESPAWN PIG SPAWNER"), "{mode}: {seen}");
         assert_eq!(server.handle.run(pigs).unwrap() > 0, come, "{mode}: pigs");
     }
     put(&server, &[(spawner, "minecraft:air")], false);
@@ -2027,6 +2027,200 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
             }
         })
         .unwrap();
+
+    // Nether quartz through a hopper (InventoryMoveItemEvent): pulled out of a barrel above
+    // and pushed into a chest beside it, stopped and then let go. Then quartz lying on the
+    // hopper (InventoryPickupItemEvent), and a dropper filling the chest.
+    let quartz = paper_data::items::id("minecraft:quartz").unwrap() as i32;
+    let hopper = feet.offset(4, 0, 4);
+    let (barrel, chest, dropper) = (hopper.offset(0, 1, 0), hopper.offset(1, 0, 0), hopper.offset(1, 0, 1));
+    let count = move |s: &mut paper_server::server::Server, at: BlockPos| s.container_items(0, at).iter().filter_map(|i| i.0.as_ref()).map(|i| i.count).sum::<i32>();
+    let poll = |alice: &mut Client, wanted: &str| -> String {
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        loop {
+            alice.command("apitest blockevents");
+            let seen = line_starting(alice, "blockevents: ");
+            if seen.contains(wanted) || std::time::Instant::now() > deadline {
+                return seen;
+            }
+            pause(alice, Duration::from_millis(100));
+        }
+    };
+    put(&server, &[(chest, "minecraft:chest[facing=north]"), (hopper, "minecraft:hopper[facing=east]")], true);
+    for (mode, moves) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(barrel, "minecraft:barrel[facing=up]")], true);
+        server
+            .handle
+            .run(move |s| {
+                s.set_container_items(0, chest, &[]);
+                s.set_container_items(0, hopper, &[]);
+                s.set_container_items(0, barrel, &[Slot::of(quartz, 1)]);
+            })
+            .unwrap();
+        let wanted = if moves { "MOVE HOPPER CHEST pushed" } else { "MOVE BARREL HOPPER pulled" };
+        seen = poll(&mut alice, wanted);
+        assert!(seen.contains("MOVE BARREL HOPPER pulled") && seen.contains(wanted), "{mode}: {seen}");
+        let at = server.handle.run(move |s| (count(s, barrel), count(s, chest))).unwrap();
+        assert_eq!(at, if moves { (0, 1) } else { (1, 0) }, "{mode}: quartz in the barrel and the chest");
+        server.handle.run(move |s| s.set_container_items(0, barrel, &[])).unwrap();
+        put(&server, &[(barrel, "minecraft:air")], true);
+    }
+    for (mode, taken) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let lying = server
+            .handle
+            .run(move |s| {
+                s.set_container_items(0, hopper, &[]);
+                s.set_container_items(0, chest, &[]);
+                let at = paper_server::world::entity::Vec3::new(hopper.x as f64 + 0.5, hopper.y as f64 + 1.0, hopper.z as f64 + 0.5);
+                s.spawn_item(0, at, Slot::of(quartz, 2), paper_server::world::entity::Vec3::new(0.0, 0.0, 0.0), 0)
+            })
+            .unwrap()
+            .expect("quartz on the hopper");
+        seen = poll(&mut alice, "PICKUP HOPPER 2");
+        assert!(seen.contains("PICKUP HOPPER 2"), "{mode}: {seen}");
+        pause(&mut alice, Duration::from_millis(100));
+        let gone = server.handle.run(move |s| s.worlds[0].entities.get(&lying).is_none_or(|e| e.removed)).unwrap();
+        assert_eq!(gone, taken, "{mode}: the quartz taken in");
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&lying).map(|e| e.removed = true)).unwrap();
+    }
+    for (mode, fills) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(dropper, "minecraft:dropper[facing=north]")], false);
+        server
+            .handle
+            .run(move |s| {
+                s.set_container_items(0, hopper, &[]);
+                s.set_container_items(0, chest, &[]);
+                s.set_container_items(0, dropper, &[Slot::of(quartz, 1)]);
+                s.set_block_and_update(0, dropper.offset(0, 0, 1), paper_data::blocks::default_state("minecraft:redstone_block").unwrap());
+            })
+            .unwrap();
+        seen = poll(&mut alice, "MOVE DROPPER CHEST pushed");
+        assert!(seen.contains("MOVE DROPPER CHEST pushed"), "{mode}: {seen}");
+        let at = server.handle.run(move |s| (count(s, dropper), count(s, chest) + count(s, hopper))).unwrap();
+        assert_eq!(at, if fills { (0, 1) } else { (1, 0) }, "{mode}: quartz in the dropper and the chest");
+        server.handle.run(move |s| s.set_container_items(0, dropper, &[])).unwrap();
+        put(&server, &[(dropper, "minecraft:air"), (dropper.offset(0, 0, 1), "minecraft:air")], true);
+    }
+    server
+        .handle
+        .run(move |s| {
+            s.set_container_items(0, hopper, &[]);
+            s.set_container_items(0, chest, &[]);
+        })
+        .unwrap();
+    put(&server, &[(hopper, "minecraft:air"), (chest, "minecraft:air")], true);
+
+    // A cow on a stone pressure plate, and one falling onto farmland, which tramples it
+    // (EntityInteractEvent): stopped, then let be.
+    let (plate, soil) = (feet.offset(-4, 0, -4), feet.offset(-4, -1, -1));
+    let cow_at = move |s: &mut paper_server::server::Server, at: paper_server::world::entity::Vec3, ai: bool| -> i32 {
+        let cow = s.spawn_mob(0, "minecraft:cow", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+        let e = s.worlds[0].entities.get_mut(&cow).unwrap();
+        e.flags.no_ai = !ai;
+        e.mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+        cow
+    };
+    for (mode, pressed) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(plate, "minecraft:stone_pressure_plate")], true);
+        let cow = server.handle.run(move |s| cow_at(s, paper_server::world::entity::Vec3::new(plate.x as f64 + 0.5, plate.y as f64, plate.z as f64 + 0.5), false)).unwrap();
+        seen = poll(&mut alice, "EINTERACT COW STONE_PRESSURE_PLATE");
+        assert!(seen.contains("EINTERACT COW STONE_PRESSURE_PLATE"), "{mode}: {seen}");
+        pause(&mut alice, Duration::from_millis(100));
+        assert_eq!(block_state(&server, plate).contains("powered=true"), pressed, "{mode}: the plate");
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&cow).unwrap().removed = true).unwrap();
+        put(&server, &[(plate, "minecraft:air")], true);
+    }
+    for (mode, trampled) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[(soil, "minecraft:farmland")], false);
+        let cow = server.handle.run(move |s| cow_at(s, paper_server::world::entity::Vec3::new(soil.x as f64 + 0.5, soil.y as f64 + 3.0, soil.z as f64 + 0.5), true)).unwrap();
+        seen = poll(&mut alice, "EINTERACT COW FARMLAND");
+        assert!(seen.contains("EINTERACT COW FARMLAND"), "{mode}: {seen}");
+        pause(&mut alice, Duration::from_millis(100));
+        assert_eq!(block_state(&server, soil).starts_with("minecraft:dirt"), trampled, "{mode}: {}", block_state(&server, soil));
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&cow).unwrap().removed = true).unwrap();
+        put(&server, &[(soil, "minecraft:grass_block")], false);
+    }
+
+    // Experience orbs coming into the world (plain EntitySpawnEvent): refused, then let be.
+    for (mode, stay) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let orbs = server
+            .handle
+            .run(move |s| {
+                s.award_experience(0, paper_server::world::entity::Vec3::new(home.x + 3.0, home.y + 1.0, home.z - 3.0), 7);
+                let orbs: Vec<i32> = s.worlds[0].entities.values().filter(|e| !e.removed && matches!(e.kind, EntityKind::ExperienceOrb { .. })).map(|e| e.id).collect();
+                for id in &orbs {
+                    s.worlds[0].entities.get_mut(id).unwrap().removed = true;
+                }
+                orbs.len()
+            })
+            .unwrap();
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("ESPAWN EXPERIENCE_ORB"), "{mode}: {seen}");
+        assert_eq!(orbs > 0, stay, "{mode}: {orbs} orbs");
+    }
+
+    // An oak door Alice puts down in two halves (BlockMultiPlaceEvent): refused, then let be.
+    let (step, door) = (feet.offset(2, -1, 2), feet.offset(2, 0, 2));
+    let oak_door = Slot::of(paper_data::items::id("minecraft:oak_door").unwrap() as i32, 1);
+    server
+        .handle
+        .run(move |s| {
+            s.teleport(alice_id, home);
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = oak_door;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    for (mode, placed) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        pause(&mut alice, Duration::from_millis(100));
+        alice.send(&play::UseItemOn { hand: VarInt(0), pos: step, face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(190) });
+        seen = poll(&mut alice, "MULTIPLACE OAK_DOOR");
+        assert!(seen.contains("MULTIPLACE OAK_DOOR [AIR, AIR]"), "{mode}: {seen}");
+        pause(&mut alice, Duration::from_millis(100));
+        let halves = (block_state(&server, door), block_state(&server, door.offset(0, 1, 0)));
+        assert_eq!(halves.0.contains("half=lower") && halves.1.contains("half=upper"), placed, "{mode}: {halves:?}");
+        put(&server, &[(door.offset(0, 1, 0), "minecraft:air"), (door, "minecraft:air")], false);
+    }
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+
+    // A plugin's block populator and ChunkPopulateEvent: chunks newly made far away get both.
+    alice.command("apitest populator");
+    expect_line(&mut alice, "populator: added");
+    server.handle.run(move |s| s.teleport(alice_id, paper_server::server::player::Location { x: home.x + 3000.0, ..home })).unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    let marked = loop {
+        alice.command("apitest populated");
+        let line = line_starting(&mut alice, "populated: ");
+        let parts: Vec<&str> = line["populated: ".len()..].split(' ').collect();
+        if parts.len() == 4 && parts[0] == "true" && parts[1] == "true" {
+            break (parts[2].parse::<i32>().unwrap(), parts[3].parse::<i32>().unwrap());
+        }
+        assert!(std::time::Instant::now() < deadline, "{line}");
+        pause(&mut alice, Duration::from_millis(200));
+    };
+    assert_eq!(block_state(&server, BlockPos::new(marked.0 * 16, 100, marked.1 * 16)), "minecraft:gold_block", "the populator's mark");
+    server.handle.run(move |s| s.teleport(alice_id, home)).unwrap();
+    pause(&mut alice, Duration::from_millis(300));
 
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");

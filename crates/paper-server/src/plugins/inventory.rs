@@ -289,6 +289,32 @@ pub fn set_slots(server: &mut Server, inv: &InvRef, changes: Vec<(usize, Slot)>)
 }
 
 /// Bukkit's inventory type for the storage of a container block.
+/// A container as the host knows it, `{type, size, inventory}` (as `inventory.of_block`
+/// answers): the container blocks at `positions` (both halves of a double chest), or the
+/// chest boat `entity`. Null for blocks plugins see no inventory of.
+pub fn container_value(server: &Server, world: usize, positions: &[BlockPos], entity: Option<i32>) -> Value {
+    if let Some(id) = entity {
+        return bmap! { "type" => "CHEST", "size" => 27i64, "inventory" => InvRef::Entity { world, id }.value(server) };
+    }
+    use crate::server::containers::ContainerBlock;
+    let Some(state) = positions.first().and_then(|p| server.worlds[world].block_at(p.x, p.y, p.z)) else { return Value::Null };
+    let Some(kind) = crate::server::containers::container_block(state) else { return Value::Null };
+    let (ty, size) = match kind {
+        ContainerBlock::Chest => ("CHEST", positions.len() * 27),
+        ContainerBlock::Barrel => ("BARREL", 27),
+        ContainerBlock::Furnace("minecraft:smoking") => ("SMOKER", 3),
+        ContainerBlock::Furnace("minecraft:blasting") => ("BLAST_FURNACE", 3),
+        ContainerBlock::Furnace(_) => ("FURNACE", 3),
+        ContainerBlock::Hopper => ("HOPPER", 5),
+        ContainerBlock::Dispenser => (block_inventory_type(paper_data::blocks::block_of_state(state).name), 9),
+        ContainerBlock::BrewingStand => ("BREWING", 5),
+        ContainerBlock::Crafter => ("CRAFTER", 9),
+        ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => return Value::Null,
+    };
+    let inv = InvRef::Block { world, positions: positions.to_vec() };
+    bmap! { "type" => ty, "size" => size as i64, "inventory" => inv.value(server) }
+}
+
 fn block_inventory_type(block: &str) -> &'static str {
     match block {
         "minecraft:barrel" => "BARREL",
@@ -489,27 +515,12 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 None => 0,
             };
             let pos = BlockPos::new(args.i32("x").unwrap_or(0), args.i32("y").unwrap_or(0), args.i32("z").unwrap_or(0));
-            let Some((kind, positions)) = server.container_positions(world, pos) else { return Ok(Value::Null) };
+            let Some((_, positions)) = server.container_positions(world, pos) else { return Ok(Value::Null) };
             // Plugins see a loot chest filled, as in Paper.
             for p in &positions {
                 server.unpack_loot(world, *p);
             }
-            use crate::server::containers::ContainerBlock;
-            let block = server.worlds[world].block_at(pos.x, pos.y, pos.z).map(|s| paper_data::blocks::block_of_state(s).name).unwrap_or("");
-            let (ty, size) = match kind {
-                ContainerBlock::Chest => ("CHEST", positions.len() * 27),
-                ContainerBlock::Barrel => ("BARREL", 27),
-                ContainerBlock::Furnace("minecraft:smoking") => ("SMOKER", 3),
-                ContainerBlock::Furnace("minecraft:blasting") => ("BLAST_FURNACE", 3),
-                ContainerBlock::Furnace(_) => ("FURNACE", 3),
-                ContainerBlock::Hopper => ("HOPPER", 5),
-                ContainerBlock::Dispenser => (block_inventory_type(block), 9),
-                ContainerBlock::BrewingStand => ("BREWING", 5),
-                ContainerBlock::Crafter => ("CRAFTER", 9),
-                ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => return Ok(Value::Null),
-            };
-            let inv = InvRef::Block { world, positions };
-            Ok(bmap! { "type" => ty, "size" => size as i64, "inventory" => inv.value(server) })
+            Ok(container_value(server, world, &positions, None))
         }
         "inventory.viewers" => {
             let inv = InvRef::parse(server, args.get("inventory"))?;

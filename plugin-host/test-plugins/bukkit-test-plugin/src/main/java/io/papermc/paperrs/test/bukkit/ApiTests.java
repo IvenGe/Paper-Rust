@@ -74,6 +74,10 @@ final class ApiTests implements Listener, CommandExecutor {
     private final java.util.TreeSet<String> blockEvents = new java.util.TreeSet<>();
     /** PlayerClientLoadedWorldEvent: who, and whether the server stopped waiting. */
     private final java.util.TreeSet<String> clientLoaded = new java.util.TreeSet<>();
+    /** ChunkPopulateEvents heard, chunks the test populator had, and the one it marked. */
+    private int populates;
+    private int populated;
+    private String marked;
     private String blockMode = "off";
     /** PlayerChangedWorldEvents seen ("apitest worldhop"). */
     private final List<String> changedWorlds = new ArrayList<>();
@@ -239,6 +243,23 @@ final class ApiTests implements Listener, CommandExecutor {
                 }
                 case "blockevents" -> sender.sendMessage("blockevents: " + String.join(", ", this.blockEvents));
                 case "loaded" -> sender.sendMessage("loaded: " + String.join(", ", this.clientLoaded));
+                case "populator" -> {
+                    // A populator on the first world: it marks the first new chunk it gets
+                    // with a gold block up in the air.
+                    Bukkit.getWorlds().getFirst().getPopulators().add(new org.bukkit.generator.BlockPopulator() {
+                        @Override
+                        @SuppressWarnings("deprecation")
+                        public void populate(final World world, final java.util.Random random, final org.bukkit.Chunk chunk) {
+                            ApiTests.this.populated++;
+                            if (ApiTests.this.marked == null) {
+                                chunk.getBlock(0, 100, 0).setType(Material.GOLD_BLOCK);
+                                ApiTests.this.marked = chunk.getX() + " " + chunk.getZ();
+                            }
+                        }
+                    });
+                    sender.sendMessage("populator: added");
+                }
+                case "populated" -> sender.sendMessage("populated: " + (this.populates > 0) + " " + (this.populated > 0) + " " + this.marked);
                 case "worldhop" -> {
                     // To the nether and back: PlayerChangedWorldEvent each time.
                     final Player player = (Player) sender;
@@ -1808,6 +1829,58 @@ final class ApiTests implements Listener, CommandExecutor {
         if (this.blockMode.equals("cancel")) {
             event.shouldPlayEffect(false);
         }
+    }
+
+    // Nether quartz only, through hoppers and droppers.
+    @EventHandler
+    public void onInventoryMove(final org.bukkit.event.inventory.InventoryMoveItemEvent event) {
+        if (event.getItem().getType() == Material.QUARTZ) {
+            this.blockEvent(event, "MOVE " + event.getSource().getType() + " " + event.getDestination().getType() + " " + (event.getInitiator() == event.getSource() ? "pushed" : "pulled"));
+        }
+    }
+
+    @EventHandler
+    public void onInventoryPickup(final org.bukkit.event.inventory.InventoryPickupItemEvent event) {
+        if (event.getItem().getItemStack().getType() == Material.QUARTZ) {
+            this.blockEvent(event, "PICKUP " + event.getInventory().getType() + " " + event.getItem().getItemStack().getAmount());
+        }
+    }
+
+    // Cows only: other steps have mobs about.
+    @EventHandler
+    public void onEntityInteract(final org.bukkit.event.entity.EntityInteractEvent event) {
+        if (event.getEntityType() == org.bukkit.entity.EntityType.COW) {
+            this.blockEvent(event, "EINTERACT COW " + event.getBlock().getType());
+        }
+    }
+
+    // Only heard: the spawner step must still see SpawnerSpawnEvent.
+    @EventHandler
+    public void onPreCreatureSpawn(final com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent event) {
+        if (event.getReason() == CreatureSpawnEvent.SpawnReason.SPAWNER) {
+            this.heard("PRESPAWN " + event.getType() + " " + event.getReason());
+        }
+    }
+
+    // Plain EntitySpawnEvent, for experience orbs only (it hears creature and item spawns too).
+    @EventHandler
+    public void onEntitySpawn(final org.bukkit.event.entity.EntitySpawnEvent event) {
+        if (event.getEntityType() == org.bukkit.entity.EntityType.EXPERIENCE_ORB) {
+            this.blockEvent(event, "ESPAWN " + event.getEntityType());
+        }
+    }
+
+    // Oak doors only, put down in two halves.
+    @EventHandler
+    public void onMultiPlace(final org.bukkit.event.block.BlockMultiPlaceEvent event) {
+        if (event.getBlockPlaced().getType() == Material.OAK_DOOR) {
+            this.blockEvent(event, "MULTIPLACE " + event.getBlockPlaced().getType() + " " + event.getReplacedBlockStates().stream().map(b -> b.getType().name()).toList());
+        }
+    }
+
+    @EventHandler
+    public void onChunkPopulate(final org.bukkit.event.world.ChunkPopulateEvent event) {
+        this.populates++;
     }
 
     @EventHandler

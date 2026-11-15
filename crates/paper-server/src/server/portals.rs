@@ -686,7 +686,12 @@ impl Server {
         let mut rng = rand::thread_rng();
         let kind = crate::world::entity::EntityKind::EyeOfEnder { target, life: 0, survive: rng.gen_range(0..5) > 0 };
         let e = crate::world::entity::Entity::new(self.next_entity_id(), info, start, kind);
-        self.spawn_entity(world, e);
+        let eye = self.spawn_entity(world, e);
+        // Refused (`EntitySpawnEvent`), the eye is not thrown and stays in hand.
+        if !self.keep_spawned(world, eye) {
+            self.resync_inventory(id);
+            return;
+        }
         let pitch = 0.33 + rng.gen::<f32>() * (0.5 - 0.33);
         self.play_sound(world, Vec3::new(loc.x, loc.y, loc.z), "minecraft:entity.ender_eye.launch", category::NEUTRAL, 1.0, pitch, None);
         if !creative {

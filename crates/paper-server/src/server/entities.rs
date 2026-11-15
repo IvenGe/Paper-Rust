@@ -88,6 +88,18 @@ impl Server {
         Some(self.spawn_entity(world, e))
     }
 
+    /// Bukkit's plain `EntitySpawnEvent` for an entity that was just added and has no more
+    /// particular spawn event (`doEntityAddEventCalling`: primed TNT, falling blocks,
+    /// experience orbs, clouds, eyes of ender, ...): whether it stays. A refused one is gone
+    /// before anyone sees it.
+    pub(super) fn keep_spawned(&mut self, world: usize, id: i32) -> bool {
+        if crate::plugins::events::on_entity_spawn(self, world, id) {
+            return true;
+        }
+        self.worlds[world].remove_entity(id);
+        false
+    }
+
     /// `ItemSpawnEvent` for an item that was just added: whether it stays. A refused one is
     /// gone before anyone sees it.
     fn keep_spawned_item(&mut self, world: usize, id: i32) -> bool {
@@ -528,8 +540,12 @@ impl Server {
             if !allowed {
                 self.worlds[world].remove_entity(id);
                 self.set_block_with_flags(world, pos, state, crate::world::block_updates::flags::CLIENTS | crate::world::block_updates::flags::SKIP_ON_PLACE);
+                return;
             }
         }
+        // Then it comes into the world (`EntitySpawnEvent`); refused, the block is gone with
+        // it, as in Paper.
+        self.keep_spawned(world, id);
     }
 
     /// A falling block landed (`FallingBlockEntity.tick` on the ground): an anvil hurts what

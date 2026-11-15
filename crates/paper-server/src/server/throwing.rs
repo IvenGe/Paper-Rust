@@ -510,7 +510,8 @@ impl Server {
         let info = entity_types::by_name("minecraft:area_effect_cloud")?;
         let kind = EntityKind::Cloud { potion, owner, radius: 3.0, duration: 600, wait: 10, uses: Default::default(), growth: -3.0 / 600.0, on_use: -0.5, breath: false };
         let e = Entity::new(self.next_entity_id(), info, at, kind);
-        Some(self.spawn_entity(world, e))
+        let id = self.spawn_entity(world, e);
+        self.keep_spawned(world, id).then_some(id)
     }
 
     /// A cloud's tick: after a short wait it gives a quarter of the potion's effects to

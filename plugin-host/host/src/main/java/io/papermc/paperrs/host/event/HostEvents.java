@@ -181,6 +181,12 @@ public final class HostEvents {
         GATED.put("PlayerClientLoadedWorldEvent", io.papermc.paper.event.player.PlayerClientLoadedWorldEvent.class);
         GATED.put("BlockPreDispenseEvent", io.papermc.paper.event.block.BlockPreDispenseEvent.class);
         GATED.put("BlockFailedDispenseEvent", io.papermc.paper.event.block.BlockFailedDispenseEvent.class);
+        GATED.put("InventoryMoveItemEvent", org.bukkit.event.inventory.InventoryMoveItemEvent.class);
+        GATED.put("InventoryPickupItemEvent", org.bukkit.event.inventory.InventoryPickupItemEvent.class);
+        GATED.put("EntityInteractEvent", org.bukkit.event.entity.EntityInteractEvent.class);
+        GATED.put("ChunkPopulateEvent", org.bukkit.event.world.ChunkPopulateEvent.class);
+        GATED.put("PreCreatureSpawnEvent", com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent.class);
+        GATED.put("EntitySpawnEvent", org.bukkit.event.entity.EntitySpawnEvent.class);
     }
 
     private final CraftServer server;
@@ -212,16 +218,21 @@ public final class HostEvents {
                 out.add(name);
             }
         });
+        // New chunks also go to plugins' block populators.
+        if (!out.contains("ChunkPopulateEvent") && this.server.getWorlds().stream().anyMatch(w -> !w.getPopulators().isEmpty())) {
+            out.add("ChunkPopulateEvent");
+        }
         return out;
     }
 
     /**
      * Events whose handler list is another's: {@code EntitySpawnEvent}'s also holds the
-     * listeners of creature, item and spawner spawns. Each of these counts as listened only
-     * when some listener takes it or a supertype, so that a creature spawn listener does not
-     * make every dropped item wait for the host.
+     * listeners of creature, item and spawner spawns. Each of these (and plain
+     * {@code EntitySpawnEvent}) counts as listened only when some listener takes it or a
+     * supertype, so that a creature spawn listener does not make every dropped item wait for
+     * the host.
      */
-    private static final Set<String> NARROWED = Set.of("CreatureSpawnEvent", "ItemSpawnEvent", "SpawnerSpawnEvent");
+    private static final Set<String> NARROWED = Set.of("EntitySpawnEvent", "CreatureSpawnEvent", "ItemSpawnEvent", "SpawnerSpawnEvent");
     /** For each narrowed event, the listeners last looked at (lists keep their array until they change) and the answer. */
     private final Map<String, org.bukkit.plugin.RegisteredListener[]> narrowedFor = new java.util.HashMap<>();
     private final Map<String, Boolean> narrowedHeard = new java.util.HashMap<>();
@@ -488,6 +499,47 @@ public final class HostEvents {
     private Block at(final World world, final Object xyz) {
         final List<Object> at = Values.list(xyz);
         return world.getBlockAt(((Number) at.get(0)).intValue(), ((Number) at.get(1)).intValue(), ((Number) at.get(2)).intValue());
+    }
+
+    /** A container the server describes ({@code inventory::container_value}), or null. */
+    private org.bukkit.inventory.@Nullable Inventory container(final Object value) {
+        if (!(value instanceof Map<?, ?> m)) {
+            return null;
+        }
+        final Map<String, Object> info = Values.map(m);
+        return io.papermc.paperrs.host.inventory.Inventories.of(this.server, Values.map(info.get("inventory")),
+            io.papermc.paperrs.host.inventory.Inventories.type(Values.str(info, "type", "CHEST")), Values.i32(info, "size", 27));
+    }
+
+    /**
+     * Paper's {@code PaperInventoryMoveItemEvent}: it notes whether listeners looked at the item
+     * or changed it. A hopper whose listeners never look is not asked again for its other
+     * slots in the same move.
+     */
+    private static final class MoveEvent extends org.bukkit.event.inventory.InventoryMoveItemEvent {
+        boolean looked;
+        boolean changed;
+
+        MoveEvent(final org.bukkit.inventory.Inventory source, final org.bukkit.inventory.ItemStack item, final org.bukkit.inventory.Inventory destination, final boolean pushed) {
+            super(source, item, destination, pushed);
+        }
+
+        @Override
+        public org.bukkit.inventory.ItemStack getItem() {
+            this.looked = true;
+            return super.getItem();
+        }
+
+        @Override
+        public void setItem(final org.bukkit.inventory.ItemStack item) {
+            this.looked = true;
+            this.changed = true;
+            super.setItem(item);
+        }
+
+        org.bukkit.inventory.ItemStack item() {
+            return super.getItem();
+        }
     }
 
     /**
@@ -901,6 +953,65 @@ public final class HostEvents {
                 yield Values.of("cancelled", !event.callEvent());
             }
             case "event.failed_dispense" -> Values.of("effect", new io.papermc.paper.event.block.BlockFailedDispenseEvent(this.block(args)).callEvent());
+            case "event.inventory_move" -> {
+                final org.bukkit.inventory.Inventory source = this.container(args.get("source"));
+                final org.bukkit.inventory.Inventory destination = this.container(args.get("destination"));
+                if (source == null || destination == null) {
+                    yield Values.of();
+                }
+                final MoveEvent event = new MoveEvent(source, io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("item")), destination, Values.bool(args, "pushed", true));
+                event.callEvent();
+                final Map<String, Object> out = Values.of("cancelled", event.isCancelled(), "looked", event.looked);
+                if (event.changed) {
+                    out.put("item", io.papermc.paperrs.host.item.HostItemStack.toValue(event.item()));
+                }
+                yield out;
+            }
+            case "event.inventory_pickup" -> {
+                final org.bukkit.inventory.Inventory inventory = this.container(args.get("inventory"));
+                if (inventory == null || !(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.inventory.InventoryPickupItemEvent event = new org.bukkit.event.inventory.InventoryPickupItemEvent(inventory, item);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.entity_interact" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.EntityInteractEvent event = new org.bukkit.event.entity.EntityInteractEvent(entity, this.block(args));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.chunk_populate" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final int x = Values.i32(args, "x", 0);
+                final int z = Values.i32(args, "z", 0);
+                if (world instanceof io.papermc.paperrs.host.world.HostWorld host) {
+                    host.populate(x, z);
+                }
+                new org.bukkit.event.world.ChunkPopulateEvent(world.getChunkAt(x, z, false)).callEvent();
+                yield Values.of();
+            }
+            case "event.pre_creature_spawn" -> {
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent event = new com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent(
+                    new Location(world, Values.f64(args, "x", 0), Values.f64(args, "y", 0), Values.f64(args, "z", 0)), entityType(Values.str(args, "type", "")),
+                    org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.valueOf(Values.str(args, "reason", "NATURAL")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "abort", event.shouldAbortSpawn());
+            }
+            case "event.entity_spawn" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.EntitySpawnEvent event = new org.bukkit.event.entity.EntitySpawnEvent(entity);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
             case "event.item_despawn" -> {
                 if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)) {
                     yield Values.of();
@@ -1157,12 +1268,23 @@ public final class HostEvents {
                 final Block clicked = placed.getWorld().getBlockAt(((Number) against.get(0)).intValue(), ((Number) against.get(1)).intValue(), ((Number) against.get(2)).intValue());
                 final HostPlayer player = this.player(args);
                 final EquipmentSlot hand = Values.bool(args, "offhand", false) ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND;
-                final BlockPlaceEvent event = new BlockPlaceEvent(placed, HostBlockState.of(placed, Values.str(args, "replaced", "minecraft:air")), clicked,
-                    player.getInventory().getItem(hand), player, true, hand);
+                // A block in two halves (a door, a bed, a tall plant) is placed as one
+                // (`BlockMultiPlaceEvent`, which BlockPlaceEvent listeners hear too).
+                final HostBlock other = args.get("second") instanceof Map<?, ?> m
+                    ? ((HostBlock) placed.getWorld().getBlockAt(Values.i32(Values.map(m), "x", 0), Values.i32(Values.map(m), "y", 0), Values.i32(Values.map(m), "z", 0))).pending(Values.str(Values.map(m), "state", "minecraft:air"))
+                    : null;
+                final org.bukkit.block.BlockState replaced = HostBlockState.of(placed, Values.str(args, "replaced", "minecraft:air"));
+                final BlockPlaceEvent event = other == null
+                    ? new BlockPlaceEvent(placed, replaced, clicked, player.getInventory().getItem(hand), player, true, hand)
+                    : new org.bukkit.event.block.BlockMultiPlaceEvent(List.of(replaced, HostBlockState.of(other, Values.str(Values.map(args.get("second")), "replaced", "minecraft:air"))),
+                        clicked, player.getInventory().getItem(hand), player, true, hand);
                 try {
                     event.callEvent();
                 } finally {
                     placed.settle();
+                    if (other != null) {
+                        other.settle();
+                    }
                 }
                 yield Values.of("cancelled", event.isCancelled() || !event.canBuild());
             }
