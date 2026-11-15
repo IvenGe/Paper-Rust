@@ -806,9 +806,15 @@ impl Server {
     /// An explosion (`ServerExplosion.explode`): breaks blocks along rays, hurts and pushes
     /// entities, and tells nearby clients.
     pub fn explode(&mut self, world: usize, center: Vec3, radius: f32, destroy_blocks: bool, source: Option<i32>) {
+        self.explode_with(world, center, radius, destroy_blocks, false, source);
+    }
+
+    /// [`Server::explode`], and with `fire` an incendiary explosion (`createFire`): fire on a
+    /// third of the blocks it reached that are empty above a solid block.
+    pub fn explode_with(&mut self, world: usize, center: Vec3, radius: f32, destroy_blocks: bool, fire: bool, source: Option<i32>) {
         let mut rng = rand::thread_rng();
         let mut affected: HashSet<(i32, i32, i32)> = HashSet::new();
-        if destroy_blocks {
+        if destroy_blocks || fire {
             let w = &self.worlds[world];
             for j in 0..16 {
                 for k in 0..16 {
@@ -901,7 +907,7 @@ impl Server {
                 None => self.worlds[world].rules.bool("block_explosion_drop_decay"),
             };
             let drops = self.worlds[world].rules.bool("block_drops");
-            let mut list: Vec<(i32, i32, i32)> = affected.into_iter().collect();
+            let mut list: Vec<(i32, i32, i32)> = affected.iter().copied().collect();
             list.sort_unstable();
             for (x, y, z) in list {
                 let Some(state) = self.worlds[world].block_at(x, y, z) else { continue };
@@ -922,6 +928,20 @@ impl Server {
                 }
                 if self.set_block_and_update(world, pos, blocks::AIR) {
                     broken += 1;
+                }
+            }
+        }
+
+        if fire {
+            let mut list: Vec<(i32, i32, i32)> = affected.into_iter().collect();
+            list.sort_unstable();
+            for (x, y, z) in list {
+                let (Some(here), Some(below)) = (self.worlds[world].block_at(x, y, z), self.worlds[world].block_at(x, y - 1, z)) else { continue };
+                let solid_below = blocks::flags(below) & blocks::FLAG_FULL_CUBE != 0 && blocks::opacity(below) >= 15;
+                if rng.gen_range(0..3) == 0 && blocks::is_air(here) && solid_below {
+                    let pos = BlockPos::new(x, y, z);
+                    let state = crate::world::block_updates::fire::fire_state_for(&self.worlds[world], pos);
+                    self.set_block_and_update(world, pos, state);
                 }
             }
         }

@@ -217,11 +217,17 @@ impl Server {
         }
     }
 
+    /// A bolt that only flashes and thunders (`LightningBolt.setVisualOnly`): no fire, no
+    /// harm. Returns the bolt.
+    pub fn lightning_effect(&mut self, world: usize, at: Vec3) -> Option<i32> {
+        self.spawn_mob(world, "minecraft:lightning_bolt", at, super::mobs::SpawnReason::Natural)
+    }
+
     /// A lightning bolt strikes (`LightningBolt`): fire where it lands (on normal and hard),
-    /// five damage and eight seconds of fire to everything close by.
-    pub fn strike_lightning(&mut self, world: usize, pos: BlockPos) {
+    /// five damage and eight seconds of fire to everything close by. Returns the bolt.
+    pub fn strike_lightning(&mut self, world: usize, pos: BlockPos) -> Option<i32> {
         let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5);
-        let Some(bolt) = self.spawn_mob(world, "minecraft:lightning_bolt", at, super::mobs::SpawnReason::Natural) else { return };
+        let bolt = self.spawn_mob(world, "minecraft:lightning_bolt", at, super::mobs::SpawnReason::Natural)?;
         if matches!(self.difficulty, Difficulty::Normal | Difficulty::Hard) && self.worlds[world].updates.settings.fire_spreads {
             let mut rng = rand::thread_rng();
             let mut targets = vec![pos];
@@ -249,6 +255,7 @@ impl Server {
             self.set_on_fire(world, id, 8 * 20);
             self.hurt_entity(world, id, Damage::new("minecraft:lightning_bolt"), 5.0);
         }
+        Some(bolt)
     }
 
     /// `/weather clear|rain|thunder [duration]`.

@@ -263,6 +263,10 @@ same name, which stay reachable as `minecraft:<name>`.
 | `world.save` | `world`, `flush` |
 | `world.play_sound` | `world`, `x`, `y`, `z`, `sound`, `category`, `volume`, `pitch`, `seed` (players within 16 blocks, or 16 times a louder volume) |
 | `world.counts` | `world` (answers `entities`, `players`, `block_entities`) |
+| `world.particles` | `world`, `particle`, `data` (its options), `x`, `y`, `z`, `count`, `offset_x`/`_y`/`_z`, `speed_x`/`_y`/`_z`, `force`, `randomization`, `to` (uuids; all players near otherwise) |
+| `world.level_event` | `world`, `x`, `y`, `z`, `event`, `data` or `state`, `radius` |
+| `world.explode` | `world`, `x`, `y`, `z`, `power`, `fire`, `break_blocks`, `source` (an entity id) |
+| `world.strike_lightning` | `world`, `x`, `y`, `z`, `effect` (only the flash) (answers the bolt) |
 | `server.add_recipe` | `key`, `type` (`shaped`, `shapeless`, `transmute`, `smelting`, `blasting`, `smoking`, `campfire_cooking`), `result`; `rows` and `keys` (a letter to an ingredient), `ingredients`, `input` and `material`, or `input`, `experience`, `cooking_time`; an ingredient has `items` (item names) or `exact` (items) (answers false for a key there is) |
 | `server.remove_recipe` / `has_recipe` | `key` |
 | `server.clear_recipes` / `reset_recipes` / `recipes` | (`recipes` answers every recipe as `add_recipe` takes them) |

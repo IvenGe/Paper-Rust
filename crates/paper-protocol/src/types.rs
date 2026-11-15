@@ -157,6 +157,24 @@ impl ItemStack {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Slot(pub Option<ItemStack>);
 
+impl ItemStack {
+    /// An item template (`ItemStackTemplate`, in item particles): the item, its count and its
+    /// components, as a stack's trusted encoding has them.
+    pub fn encode_template(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.item);
+        w.put_varint(self.count.max(1));
+        w.put_varint(self.added.len() as i32);
+        w.put_varint(self.removed.len() as i32);
+        for (ty, data) in &self.added {
+            w.put_varint(*ty);
+            w.put_slice(data);
+        }
+        for ty in &self.removed {
+            w.put_varint(*ty);
+        }
+    }
+}
+
 impl Slot {
     pub const EMPTY: Slot = Slot(None);
 

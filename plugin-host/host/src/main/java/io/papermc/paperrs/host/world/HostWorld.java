@@ -916,6 +916,146 @@ public final class HostWorld extends AbstractWorld {
         this.sound(at.getX(), at.getY(), at.getZ(), soundKey(sound), category, volume, pitch, seed);
     }
 
+    // --- particles, effects, explosions and lightning ----------------------------------------
+
+    /** A particle's options as the server takes them ({@code CraftParticle}'s data). */
+    public static Map<String, Object> particleData(final org.bukkit.Particle particle, final @Nullable Object data) {
+        if (data != null && !particle.getDataType().isInstance(data)) {
+            throw new IllegalArgumentException("data (" + data.getClass() + ") should be " + particle.getDataType());
+        }
+        if (data == null && particle.getDataType() != Void.class) {
+            throw new IllegalArgumentException("missing required data " + particle.getDataType());
+        }
+        final Map<String, Object> out = new java.util.LinkedHashMap<>();
+        switch (data) {
+            case null -> {
+            }
+            case org.bukkit.Particle.DustTransition transition -> {
+                out.put("color", transition.getColor().asRGB());
+                out.put("to_color", transition.getToColor().asRGB());
+                out.put("scale", (double) transition.getSize());
+            }
+            case org.bukkit.Particle.DustOptions dust -> {
+                out.put("color", dust.getColor().asRGB());
+                out.put("scale", (double) dust.getSize());
+            }
+            case org.bukkit.block.data.BlockData block -> out.put("state", block.getAsString());
+            case org.bukkit.inventory.ItemStack item -> out.put("item", io.papermc.paperrs.host.item.HostItemStack.toValue(item));
+            case org.bukkit.Color color -> out.put("color", color.asARGB());
+            case org.bukkit.Particle.Trail trail -> {
+                out.put("target_x", trail.getTarget().getX());
+                out.put("target_y", trail.getTarget().getY());
+                out.put("target_z", trail.getTarget().getZ());
+                out.put("color", trail.getColor().asRGB());
+                out.put("duration", trail.getDuration());
+            }
+            case org.bukkit.Particle.Spell spell -> {
+                out.put("color", spell.getColor().asARGB());
+                out.put("power", (double) spell.getPower());
+            }
+            case org.bukkit.Vibration vibration -> {
+                switch (vibration.getDestination()) {
+                    case org.bukkit.Vibration.Destination.EntityDestination entity -> out.put("entity", entity.getEntity().getEntityId());
+                    case org.bukkit.Vibration.Destination.BlockDestination block -> {
+                        out.put("target_x", block.getLocation().getX());
+                        out.put("target_y", block.getLocation().getY());
+                        out.put("target_z", block.getLocation().getZ());
+                    }
+                    default -> {
+                    }
+                }
+                out.put("ticks", vibration.getArrivalTime());
+            }
+            case Float value -> out.put(particle == org.bukkit.Particle.SCULK_CHARGE ? "roll" : "power", (double) value);
+            case Integer value -> out.put("delay", value);
+            default -> {
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public <T> void spawnParticle(final org.bukkit.Particle particle, final @Nullable List<Player> receivers, final @Nullable Player sender, final double x, final double y, final double z,
+                                  final int count, final double offsetX, final double offsetY, final double offsetZ, final double speedX, final double speedY, final double speedZ,
+                                  final @Nullable T data, final boolean force, final org.bukkit.Particle.RandomizationType randomization) {
+        final Map<String, Object> args = Values.of("world", this.name, "particle", particle.getKey().asString(), "data", particleData(particle, data),
+            "x", x, "y", y, "z", z, "count", count, "offset_x", offsetX, "offset_y", offsetY, "offset_z", offsetZ,
+            "speed_x", speedX, "speed_y", speedY, "speed_z", speedZ, "force", force, "randomization", randomization.ordinal());
+        if (receivers != null) {
+            args.put("to", receivers.stream().filter(p -> sender == null || p.canSee(sender)).map(p -> p.getUniqueId().toString()).toList());
+        }
+        this.server.call("world.particles", args);
+    }
+
+    /** {@code CraftWorld#playEffect}: the level event to the players within {@code radius}. */
+    @Override
+    @SuppressWarnings("deprecation")
+    public void playEffect(final Location location, final org.bukkit.Effect effect, final int data, final int radius) {
+        this.server.call("world.level_event", Values.of("world", this.name, "x", location.getBlockX(), "y", location.getBlockY(), "z", location.getBlockZ(),
+            "at_x", location.getX(), "at_y", location.getY(), "at_z", location.getZ(), "event", effect.getId(), "data", data, "radius", (double) radius));
+    }
+
+    /** Data objects as {@code CraftEffect#getDataValue} turns them into a number (a block as its state). */
+    @Override
+    @SuppressWarnings("deprecation")
+    public <T> void playEffect(final Location location, final org.bukkit.Effect effect, final @Nullable T data, final int radius) {
+        if (data != null && (effect.getData() == null || !effect.getData().isAssignableFrom(data.getClass()))) {
+            throw new IllegalArgumentException(data.getClass().getName() + " data cannot be used for the " + effect + " effect");
+        }
+        final Map<String, Object> args = Values.of("world", this.name, "x", location.getBlockX(), "y", location.getBlockY(), "z", location.getBlockZ(),
+            "at_x", location.getX(), "at_y", location.getY(), "at_z", location.getZ(), "event", effect.getId(), "radius", (double) radius);
+        switch (data) {
+            case null -> args.put("data", 0);
+            case org.bukkit.block.data.BlockData block -> args.put("state", block.getAsString());
+            case org.bukkit.Material material when material.isBlock() -> args.put("state", material.createBlockData().getAsString());
+            case org.bukkit.Color color -> args.put("data", color.asRGB());
+            case org.bukkit.block.BlockFace face -> args.put("data", switch (face) {
+                case DOWN -> 0;
+                case UP -> 1;
+                case NORTH -> 2;
+                case SOUTH -> 3;
+                case WEST -> 4;
+                default -> 5;
+            });
+            case Integer value -> args.put("data", value);
+            case Boolean value -> args.put("data", value ? 1 : 0);
+            default -> args.put("data", 0);
+        }
+        this.server.call("world.level_event", args);
+    }
+
+    @Override
+    public boolean createExplosion(final double x, final double y, final double z, final float power, final boolean setFire, final boolean breakBlocks, final @Nullable Entity source) {
+        return Boolean.TRUE.equals(this.server.call("world.explode", Values.of("world", this.name, "x", x, "y", y, "z", z, "power", (double) power, "fire", setFire,
+            "break_blocks", breakBlocks, "source", source == null ? null : source.getEntityId())));
+    }
+
+    @Override
+    public boolean createExplosion(final Location location, final float power, final boolean setFire, final boolean breakBlocks, final @Nullable Entity source) {
+        return this.createExplosion(location.getX(), location.getY(), location.getZ(), power, setFire, breakBlocks, source);
+    }
+
+    @Override
+    public boolean createExplosion(final @Nullable Entity source, final Location location, final float power, final boolean setFire, final boolean breakBlocks, final boolean excludeSourceFromDamage) {
+        return this.createExplosion(location.getX(), location.getY(), location.getZ(), power, setFire, breakBlocks, source);
+    }
+
+    private org.bukkit.entity.LightningStrike lightning(final Location location, final boolean effect) {
+        final Object bolt = this.server.call("world.strike_lightning", Values.of("world", this.name, "x", location.getX(), "y", location.getY(), "z", location.getZ(), "effect", effect));
+        return bolt instanceof Map<?, ?> state ? (org.bukkit.entity.LightningStrike) Entities.fromState(this.server, Values.map(state)) : null;
+    }
+
+    @Override
+    public org.bukkit.entity.LightningStrike strikeLightning(final Location location) {
+        return this.lightning(location, false);
+    }
+
+    /** Only the flash and the thunder: no fire, no harm. */
+    @Override
+    public org.bukkit.entity.LightningStrike strikeLightningEffect(final Location location) {
+        return this.lightning(location, true);
+    }
+
     // --- settings and counts ---------------------------------------------------------------------
 
     private final Map<org.bukkit.entity.SpawnCategory, Integer> spawnLimits = new java.util.EnumMap<>(org.bukkit.entity.SpawnCategory.class);

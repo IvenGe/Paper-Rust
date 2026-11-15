@@ -688,6 +688,84 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             Ok(Value::Null)
         }
+        // Particles (`World#spawnParticle`, `Player#spawnParticle`): a particle by name with its
+        // options (`data`), shown to the world's players within 32 blocks (512 with `force`),
+        // or only to the players in `to` (uuids). Answers how many were shown it.
+        "world.particles" => {
+            let world = world_index(server, args)?;
+            let particle = particle_bytes(args.str("particle").unwrap_or(""), args.get("data"))?;
+            let force = args.bool("force").unwrap_or(false);
+            let f = |key: &str| args.f64(key).unwrap_or(0.0);
+            let packet = play::LevelParticles {
+                particle,
+                override_limiter: force,
+                always_show: force,
+                x: f("x"),
+                y: f("y"),
+                z: f("z"),
+                offset: (f("offset_x") as f32, f("offset_y") as f32, f("offset_z") as f32),
+                max_speed: (f("speed_x") as f32, f("speed_y") as f32, f("speed_z") as f32),
+                count: args.i32("count").unwrap_or(1),
+                randomization: args.i32("randomization").unwrap_or(0),
+            };
+            let to: Option<Vec<String>> = args.list("to").map(|l| l.iter().filter_map(Value::as_str).map(str::to_owned).collect());
+            let range = if force { 512.0 } else { 32.0 };
+            let mut shown = 0;
+            for player in server.players.values().filter(|p| p.world == world) {
+                if to.as_ref().is_some_and(|to| !to.contains(&player.uuid().to_string())) {
+                    continue;
+                }
+                let (dx, dy, dz) = (player.loc.x - packet.x, player.loc.y - packet.y, player.loc.z - packet.z);
+                if dx * dx + dy * dy + dz * dz < range * range {
+                    player.conn.send(&packet);
+                    shown += 1;
+                }
+            }
+            Ok(Value::Int(shown))
+        }
+        // `World#createExplosion`: blocks break (if `break_blocks`) and fire starts (if `fire`)
+        // as for any explosion; `source` is the entity responsible.
+        "world.explode" => {
+            let world = world_index(server, args)?;
+            let center = crate::world::entity::Vec3::new(args.f64("x").unwrap_or(0.0), args.f64("y").unwrap_or(0.0), args.f64("z").unwrap_or(0.0));
+            let source = args.i32("source");
+            server.explode_with(world, center, args.f64("power").unwrap_or(4.0) as f32, args.bool("break_blocks").unwrap_or(true), args.bool("fire").unwrap_or(false), source);
+            Ok(Value::Bool(true))
+        }
+        // `World#strikeLightning`: a bolt that burns and hurts; with `effect`, only its flash
+        // and thunder. Answers the bolt's entity.
+        "world.strike_lightning" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = (args.f64("x").unwrap_or(0.0), args.f64("y").unwrap_or(0.0), args.f64("z").unwrap_or(0.0));
+            let pos = paper_protocol::codec::BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
+            let bolt = if args.bool("effect").unwrap_or(false) {
+                server.lightning_effect(world, crate::world::entity::Vec3::new(x, y, z))
+            } else {
+                server.strike_lightning(world, pos)
+            };
+            Ok(bolt.and_then(|id| server.worlds[world].entities.get(&id)).map_or(Value::Null, |e| crate::plugins::entity::entity_value(server, world, e)))
+        }
+        // `World#playEffect`: a level event (`LevelEvent`) at a block for the players within
+        // `radius` blocks; its data a number, or a block state (`state`) for block effects.
+        "world.level_event" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            let pos = paper_protocol::codec::BlockPos::new(x, y, z);
+            let data = match args.str("state") {
+                Some(state) => blocks::parse_state(state).ok_or_else(|| anyhow!("invalid block state {state}"))? as i32,
+                None => args.i32("data").unwrap_or(0),
+            };
+            let packet = play::LevelEvent { event: args.i32("event").unwrap_or(0), pos, data, global: false };
+            let radius = args.f64("radius").unwrap_or(64.0);
+            let (cx, cy, cz) = (args.f64("at_x").unwrap_or(x as f64), args.f64("at_y").unwrap_or(y as f64), args.f64("at_z").unwrap_or(z as f64));
+            for player in server.players.values().filter(|p| p.world == world) {
+                let (dx, dy, dz) = (player.loc.x - cx, player.loc.y - cy, player.loc.z - cz);
+                if dx * dx + dy * dy + dz * dz <= radius * radius {
+                    player.conn.send(&packet);
+                }
+            }
+            Ok(Value::Null)
+        }
         // How many entities, players and block entities a world has (`World#getEntityCount`...).
         "world.counts" => {
             let world = world_index(server, args)?;
@@ -1503,5 +1581,94 @@ fn cooking_recipe_value(recipe: &crate::server::recipes::CookingRecipe) -> Value
         "result" => item_value(&Slot(Some(recipe.result.clone()))),
         "experience" => recipe.experience as f64,
         "cooking_time" => recipe.cooking_time,
+    }
+}
+
+/// A particle and its options as `level_particles` carries them (`ParticleTypes.STREAM_CODEC`):
+/// block particles a block state, dust a colour and size, ...; `data` holds what the API gave.
+fn particle_bytes(name: &str, data: &Value) -> Result<Vec<u8>> {
+    use paper_protocol::codec::WriteExt;
+    let name = if name.contains(':') { name.to_owned() } else { format!("minecraft:{name}") };
+    let id = paper_data::registries::id("minecraft:particle_type", &name).ok_or_else(|| anyhow!("unknown particle {name}"))?;
+    let mut w = Vec::new();
+    w.put_varint(id as i32);
+    let f = |key: &str, default: f64| data.f64(key).unwrap_or(default);
+    let color = |key: &str| data.i32(key).unwrap_or(-1);
+    match name.trim_start_matches("minecraft:") {
+        "block" | "block_marker" | "falling_dust" | "dust_pillar" | "block_crumble" => {
+            let state = data.str("state").and_then(blocks::parse_state).unwrap_or_else(|| blocks::default_state("minecraft:stone").unwrap_or(blocks::AIR));
+            w.put_varint(state as i32);
+        }
+        "dust" => {
+            w.put_i32(color("color"));
+            w.put_f32(f("scale", 1.0) as f32);
+        }
+        "dust_color_transition" => {
+            w.put_i32(color("color"));
+            w.put_i32(color("to_color"));
+            w.put_f32(f("scale", 1.0) as f32);
+        }
+        "entity_effect" | "tinted_leaves" | "flash" => w.put_i32(color("color")),
+        "trail" => {
+            w.put_f64(f("target_x", 0.0));
+            w.put_f64(f("target_y", 0.0));
+            w.put_f64(f("target_z", 0.0));
+            w.put_i32(color("color"));
+            w.put_varint(data.i32("duration").unwrap_or(20));
+        }
+        "vibration" => {
+            match data.i32("entity") {
+                Some(entity) => {
+                    w.put_varint(1);
+                    w.put_varint(entity);
+                    w.put_f32(f("y_offset", 0.0) as f32);
+                }
+                None => {
+                    w.put_varint(0);
+                    w.put_position(paper_protocol::codec::BlockPos::new(f("target_x", 0.0).floor() as i32, f("target_y", 0.0).floor() as i32, f("target_z", 0.0).floor() as i32));
+                }
+            }
+            w.put_varint(data.i32("ticks").unwrap_or(20));
+        }
+        "sculk_charge" => w.put_f32(f("roll", 0.0) as f32),
+        "shriek" => w.put_varint(data.i32("delay").unwrap_or(0)),
+        "dragon_breath" => w.put_f32(f("power", 1.0) as f32),
+        "effect" | "instant_effect" => {
+            w.put_i32(color("color"));
+            w.put_f32(f("power", 1.0) as f32);
+        }
+        "geyser" | "geyser_plume" => w.put_i32(data.i32("water_blocks").unwrap_or(1)),
+        "geyser_base" | "geyser_poof" => {
+            w.put_i32(data.i32("water_blocks").unwrap_or(1));
+            w.put_f32(f("impulse", 1.0) as f32);
+        }
+        "item" => {
+            // An item template: the item, its count and its components.
+            let stack = slot_from(data.get("item"))?.0.unwrap_or_else(|| paper_protocol::types::ItemStack::new(items::id("minecraft:stone").unwrap_or(1) as i32, 1));
+            stack.encode_template(&mut w);
+        }
+        _ => {}
+    }
+    Ok(w)
+}
+
+#[cfg(test)]
+mod particle_tests {
+    use super::*;
+
+    /// Particles carry their options after their type: dust a colour and a size, block particles
+    /// a block state.
+    #[test]
+    fn particle_options() {
+        let id = |name: &str| paper_data::registries::id("minecraft:particle_type", name).unwrap() as u8;
+        let dust = particle_bytes("dust", &bmap! { "color" => 0xFF0000_i64, "scale" => 2.0 }).unwrap();
+        assert_eq!(dust, [&[id("minecraft:dust")][..], &0xFF0000_i32.to_be_bytes(), &2.0_f32.to_be_bytes()].concat());
+        let stone = blocks::default_state("minecraft:stone").unwrap();
+        let block = particle_bytes("minecraft:block", &bmap! { "state" => "minecraft:stone" }).unwrap();
+        let mut expected = vec![id("minecraft:block")];
+        paper_protocol::codec::WriteExt::put_varint(&mut expected, stone as i32);
+        assert_eq!(block, expected);
+        assert_eq!(particle_bytes("heart", &Value::Null).unwrap(), [id("minecraft:heart")]);
+        assert!(particle_bytes("no_such_particle", &Value::Null).is_err());
     }
 }

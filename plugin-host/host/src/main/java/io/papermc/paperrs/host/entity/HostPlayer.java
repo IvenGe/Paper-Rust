@@ -2319,6 +2319,17 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
             footer == null ? null : new net.md_5.bungee.api.chat.BaseComponent[] {footer});
     }
 
+    /** Particles only this player sees. */
+    @Override
+    public <T> void spawnParticle(final org.bukkit.Particle particle, final double x, final double y, final double z, final int count,
+                                  final double offsetX, final double offsetY, final double offsetZ, final double speedX, final double speedY, final double speedZ,
+                                  final @Nullable T data, final boolean force, final org.bukkit.Particle.RandomizationType randomization) {
+        this.server.call("world.particles", Values.of("world", this.getWorld().getName(), "particle", particle.getKey().asString(),
+            "data", io.papermc.paperrs.host.world.HostWorld.particleData(particle, data), "x", x, "y", y, "z", z, "count", count,
+            "offset_x", offsetX, "offset_y", offsetY, "offset_z", offsetZ, "speed_x", speedX, "speed_y", speedY, "speed_z", speedZ,
+            "force", force, "randomization", randomization.ordinal(), "to", List.of(this.uuid.toString())));
+    }
+
     private static String soundKey(final org.bukkit.Sound sound) {
         return ((net.kyori.adventure.key.Keyed) sound).key().asString();
     }

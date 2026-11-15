@@ -565,6 +565,25 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let model_data = paper_data::registries::id("minecraft:data_component_type", "minecraft:custom_model_data").unwrap() as i32;
     let sword = server.handle.run(move |s| s.players[&id].inventory[37].clone()).unwrap();
     assert!(sword.0.as_ref().is_some_and(|s| s.added.iter().any(|(ty, bytes)| *ty == model_data && bytes.windows(5).any(|w| w == b"blade"))), "{sword:?}");
+    // Particles reach the players (the world's to all near, the player's to Alice), so do the
+    // level effect of a broken stone block and the flash of lightning; the explosion leaves a
+    // crater.
+    let at = server.handle.run(|s| s.player_by_name("Alice").unwrap().loc).unwrap();
+    alice.clear_backlog();
+    alice.command("apitest worldeffects");
+    let particle = |name: &str| paper_data::registries::id("minecraft:particle_type", name).unwrap() as i32;
+    let (heart, flame) = (particle("minecraft:heart"), particle("minecraft:flame"));
+    let is = |p: &play::LevelParticles, id: i32| p.particle.first().is_some_and(|b| *b as i32 == id);
+    alice.find(TIMEOUT, |p: &play::LevelParticles| is(p, heart) && p.count == 3 && p.offset == (0.5, 0.5, 0.5)).expect("hearts");
+    alice.find(TIMEOUT, |p: &play::LevelParticles| is(p, flame) && p.count == 5).expect("flames for Alice");
+    let stone = paper_data::blocks::default_state("minecraft:stone").unwrap() as i32;
+    alice.find(TIMEOUT, |e: &play::LevelEvent| e.event == 2001 && e.data == stone).expect("the stone's break effect");
+    let bolt = paper_data::entity_types::by_name("minecraft:lightning_bolt").unwrap().id;
+    alice.find(TIMEOUT, |a: &play::AddEntity| a.entity_type.0 == bolt).expect("the lightning");
+    expect_line(&mut alice, "worldeffects: true true");
+    let crater = BlockPos::new((at.x - 12.0).floor() as i32, at.y.floor() as i32 - 1, (at.z - 12.0).floor() as i32);
+    let hole = server.handle.run(move |s| s.worlds[0].block_at(crater.x, crater.y, crater.z).map(paper_data::blocks::is_air)).unwrap();
+    assert_eq!(hole, Some(true), "the explosion's crater");
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

@@ -339,6 +339,10 @@ What works:
     dimension (`getCoordinateScale`, `hasCeiling`, `isUltraWarm`, `isBedWorks`, ...), the
     difficulty (shared by all worlds), sounds at a place (`World#playSound`), spawn limits and
     flags, entity counts;
+  * particles (`World#spawnParticle` for the players near, `Player#spawnParticle` for one,
+    with their options: dust colours, block and item particles, trails, vibrations, spells...),
+    level effects (`World#playEffect`), explosions (`createExplosion`, breaking blocks and
+    starting fires if asked) and lightning (`strikeLightning`, `strikeLightningEffect`);
   * Folia's entity scheduler (`Entity.getScheduler`) and region checks, `matchPlayer`, player
     profiles, server-wide plugin messages and the server's settings;
   * WorldEdit: it only works through an adapter for the server version, and the ones it ships

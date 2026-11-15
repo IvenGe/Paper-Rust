@@ -1765,6 +1765,66 @@ impl Encode for SoundEntity {
     }
 }
 
+/// Particles at a place (`level_particles`). Since 26.3 the particle (its type and options)
+/// comes first, then where, how far they spread, their speed along each axis, how many, and
+/// how they are spread (`Particle.RandomizationType`: 0 the default).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LevelParticles {
+    /// The particle type id followed by its options (`ParticleTypes.STREAM_CODEC`).
+    pub particle: Vec<u8>,
+    pub override_limiter: bool,
+    pub always_show: bool,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub offset: (f32, f32, f32),
+    pub max_speed: (f32, f32, f32),
+    pub count: i32,
+    pub randomization: i32,
+}
+
+packet_id!(LevelParticles = play::clientbound::LEVEL_PARTICLES);
+
+impl Encode for LevelParticles {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_slice(&self.particle);
+        w.put_bool(self.override_limiter);
+        w.put_bool(self.always_show);
+        w.put_f64(self.x);
+        w.put_f64(self.y);
+        w.put_f64(self.z);
+        w.put_f32(self.offset.0);
+        w.put_f32(self.offset.1);
+        w.put_f32(self.offset.2);
+        w.put_f32(self.max_speed.0);
+        w.put_f32(self.max_speed.1);
+        w.put_f32(self.max_speed.2);
+        w.put_varint(self.count);
+        w.put_varint(self.randomization);
+    }
+}
+
+/// Decodes particles without options (`minecraft:heart`, `minecraft:flame`, ...): the options
+/// of the others have no length, so only their sender can tell where they end.
+impl Decode for LevelParticles {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let mut particle = Vec::new();
+        particle.put_varint(r.varint()?);
+        Ok(Self {
+            particle,
+            override_limiter: r.bool()?,
+            always_show: r.bool()?,
+            x: r.f64()?,
+            y: r.f64()?,
+            z: r.f64()?,
+            offset: (r.f32()?, r.f32()?, r.f32()?),
+            max_speed: (r.f32()?, r.f32()?, r.f32()?),
+            count: r.varint()?,
+            randomization: r.varint()?,
+        })
+    }
+}
+
 /// An explosion: the client plays its effects and applies `knockback` to its player.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Explode {

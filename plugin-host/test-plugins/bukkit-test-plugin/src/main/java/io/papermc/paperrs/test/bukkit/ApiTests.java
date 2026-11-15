@@ -132,6 +132,21 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "signs" -> this.signs((Player) sender);
                 case "worldapi" -> this.worldApi((Player) sender);
                 case "recipes" -> this.recipes((Player) sender);
+                case "worldeffects" -> {
+                    // Particles, a level effect, lightning that only flashes, an explosion.
+                    final Player player = (Player) sender;
+                    final World world = player.getWorld();
+                    final Location above = player.getLocation().add(0, 2, 0);
+                    world.spawnParticle(org.bukkit.Particle.HEART, above, 3, 0.5, 0.5, 0.5);
+                    player.spawnParticle(org.bukkit.Particle.FLAME, above, 5);
+                    // Dust (with options) to nobody: its options are checked by api.rs's tests.
+                    world.spawnParticle(org.bukkit.Particle.DUST, List.of(), null, above.getX(), above.getY(), above.getZ(), 1, 0, 0, 0, 0,
+                        new org.bukkit.Particle.DustOptions(org.bukkit.Color.RED, 2f), false);
+                    world.playEffect(player.getLocation(), org.bukkit.Effect.STEP_SOUND, Material.STONE.createBlockData());
+                    final org.bukkit.entity.LightningStrike bolt = world.strikeLightningEffect(player.getLocation().add(10, 0, 10));
+                    final boolean exploded = world.createExplosion(player.getLocation().add(-12, -1, -12), 2f, false, true);
+                    sender.sendMessage("worldeffects: " + (bolt != null) + " " + exploded);
+                }
                 case "components" -> {
                     // Paper's data component API: values built with its builders.
                     final List<String> failures = new ArrayList<>();
