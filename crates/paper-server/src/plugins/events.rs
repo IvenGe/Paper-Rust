@@ -1081,6 +1081,46 @@ pub fn on_block_changes(server: &mut Server, world: usize, changes: &[crate::wor
     }
 }
 
+/// `EntityChangeBlockEvent`: an entity is to change the block at `pos` to `to` (an enderman
+/// taking or placing a block, a block starting to fall or landing, a sheep eating grass, a
+/// player trampling farmland). `cancelled` presets it (a sheep without mob griefing). Returns
+/// whether the change goes ahead.
+pub fn on_entity_change_block(server: &mut Server, world: usize, entity: i32, pos: BlockPos, to: u32, cancelled: bool) -> bool {
+    if !listens(server, "EntityChangeBlockEvent") || !(server.players.contains_key(&entity) || server.worlds[world].entities.contains_key(&entity)) {
+        return !cancelled;
+    }
+    let args = bmap! {
+        "entity" => super::entity::shallow_ref(server, entity),
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "to" => paper_data::blocks::state_to_string(to),
+        "cancelled" => cancelled,
+    };
+    match fire(server, "EntityChangeBlockEvent", "event.entity_change_block", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => !cancelled,
+    }
+}
+
+/// Fluids flowing (`Ask::Flow`), fired in one call: a `BlockFromToEvent` for each, from the
+/// fluid's block towards a face. Returns whether each may go ahead.
+pub fn on_flows(server: &mut Server, world: usize, flows: &[crate::world::block_updates::Ask]) -> Vec<bool> {
+    use crate::world::block_updates::Ask;
+    let list: Vec<Value> = flows
+        .iter()
+        .filter_map(|ask| match ask {
+            Ask::Flow { from, dir, .. } => Some(bmap! { "x" => from.x, "y" => from.y, "z" => from.z, "face" => ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"][dir.index()] }),
+            _ => None,
+        })
+        .collect();
+    let count = list.len();
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "flows" => Value::List(list) };
+    match fire(server, "BlockFromToEvent", "event.block_flows", args).as_ref().and_then(|r| r.list("results")) {
+        Some(results) if results.len() == count => results.iter().map(|r| r.bool("cancelled") != Some(true)).collect(),
+        _ => vec![true; count],
+    }
+}
+
 /// `BlockBurnEvent`: fire at `by` is to burn the block at `pos` away. Returns whether plugins
 /// let it.
 pub fn on_block_burn(server: &mut Server, world: usize, pos: BlockPos, by: BlockPos) -> bool {

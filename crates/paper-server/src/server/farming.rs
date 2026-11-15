@@ -152,14 +152,20 @@ impl Server {
             return;
         }
         let griefing = player.is_some() || self.worlds[world].rules.bool("mob_griefing");
-        // A player about to trample it asks plugins first (`PlayerInteractEvent`, PHYSICAL).
+        // A player about to trample it asks plugins first: `PlayerInteractEvent` (PHYSICAL),
+        // then `EntityChangeBlockEvent`.
         let mut distance = distance;
-        if let Some(id) = player.filter(|_| crate::plugins::events::listens(self, "PlayerInteractEvent")) {
+        let (interact, change) = (crate::plugins::events::listens(self, "PlayerInteractEvent"), crate::plugins::events::listens(self, "EntityChangeBlockEvent"));
+        if let Some(id) = player.filter(|_| interact || change) {
             use rand::Rng;
             if (rand::thread_rng().gen::<f32>() as f64) >= distance - 0.5 {
                 return;
             }
-            if crate::plugins::events::on_interact(self, id, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block == crate::plugins::events::Use::Deny {
+            if interact && crate::plugins::events::on_interact(self, id, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block == crate::plugins::events::Use::Deny {
+                return;
+            }
+            let dirt = blocks::default_state("minecraft:dirt").unwrap_or(state);
+            if change && !crate::plugins::events::on_entity_change_block(self, world, id, pos, dirt, false) {
                 return;
             }
             distance = f64::INFINITY;

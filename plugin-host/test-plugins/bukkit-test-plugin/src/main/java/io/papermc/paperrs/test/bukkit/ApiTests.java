@@ -1474,6 +1474,19 @@ final class ApiTests implements Listener, CommandExecutor {
     }
 
     @EventHandler
+    public void onFlow(final org.bukkit.event.block.BlockFromToEvent event) {
+        this.blockEvent(event, "FLOW " + event.getBlock().getType() + " " + event.getFace());
+    }
+
+    @EventHandler
+    public void onEntityChangeBlock(final org.bukkit.event.entity.EntityChangeBlockEvent event) {
+        // Only falling blocks: the test world's sheep eat grass now and then.
+        if (event.getEntityType() == org.bukkit.entity.EntityType.FALLING_BLOCK) {
+            this.blockEvent(event, "CHANGE " + event.getEntityType() + " " + event.getBlock().getType() + " -> " + event.getTo());
+        }
+    }
+
+    @EventHandler
     public void onDecay(final org.bukkit.event.block.LeavesDecayEvent event) {
         this.blockEvent(event, "DECAY " + event.getBlock().getType());
     }

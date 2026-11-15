@@ -135,6 +135,7 @@ impl Server {
             spread: listens("BlockSpreadEvent"),
             decay: listens("LeavesDecayEvent"),
             moisture: listens("MoistureChangeEvent"),
+            flow: listens("BlockFromToEvent"),
         };
         for index in 0..self.worlds.len() {
             self.worlds[index].updates.vetting = vetting;
@@ -152,9 +153,17 @@ impl Server {
     /// last round wait for the next tick.
     fn answer_block_asks(&mut self, world: usize) {
         for _ in 0..MAX_ASK_ROUNDS {
-            let (changes, asks): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.worlds[world].updates.asks).into_iter().partition(|a| matches!(a, Ask::Change { .. }));
-            if changes.is_empty() && asks.is_empty() {
+            let (batched, asks): (Vec<Ask>, Vec<Ask>) = std::mem::take(&mut self.worlds[world].updates.asks).into_iter().partition(|a| matches!(a, Ask::Change { .. } | Ask::Flow { .. }));
+            if batched.is_empty() && asks.is_empty() {
                 return;
+            }
+            let (flows, changes): (Vec<Ask>, Vec<Ask>) = batched.into_iter().partition(|a| matches!(a, Ask::Flow { .. }));
+            // Fluids flowing go to plugins in one call.
+            if !flows.is_empty() {
+                let allowed = events::on_flows(self, world, &flows);
+                for (ask, allowed) in flows.iter().zip(allowed) {
+                    block_updates::answer(&mut self.worlds[world], ask, allowed, &ticking);
+                }
             }
             // Block changes (growing, fading, forming, spreading, decaying) go to plugins in
             // one call.
@@ -179,7 +188,7 @@ impl Server {
                         None => false,
                     },
                     Ask::Ignite { pos, from, .. } => events::on_block_ignite(self, world, *pos, "LAVA", events::Igniter::Block(*from)),
-                    Ask::Change { .. } => unreachable!("answered above"),
+                    Ask::Change { .. } | Ask::Flow { .. } => unreachable!("answered above"),
                 };
                 block_updates::answer(&mut self.worlds[world], &ask, allowed, &ticking);
             }

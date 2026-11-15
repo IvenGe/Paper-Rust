@@ -163,6 +163,9 @@ pub enum Ask {
     Ignite { pos: BlockPos, from: BlockPos, state: u32 },
     /// The block at `pos`, `old`, is to become `new` (see [`Level::change_block`]).
     Change { change: Change, pos: BlockPos, old: u32, new: u32, flags: u32, drops: bool, then: Option<Then> },
+    /// Fluid at `from` is to flow towards `dir` as `new` (`BlockFromToEvent`); after a flow down,
+    /// `sides_after` it spreads to the sides too.
+    Flow { from: BlockPos, dir: Dir, fluid: fluid::Fluid, new: fluid::FluidState, sides_after: bool },
 }
 
 /// The plugin events the engine asks about because plugins listen to them (see [`Ask`]).
@@ -177,6 +180,8 @@ pub struct Vetting {
     pub spread: bool,
     pub decay: bool,
     pub moisture: bool,
+    /// Fluids flowing.
+    pub flow: bool,
 }
 
 impl Vetting {
@@ -1101,6 +1106,7 @@ pub fn answer(world: &mut World, ask: &Ask, allowed: bool, ticking: &dyn Fn(&Wor
         }
         Ask::Burn { pos, age, .. } if allowed => fire::burn_away(&mut Level::new(world), *pos, *age),
         Ask::Spread { pos, state, .. } | Ask::Ignite { pos, state, .. } if allowed => fire::set_fire(&mut Level::new(world), *pos, *state),
+        Ask::Flow { from, dir, fluid, new, sides_after } if allowed => fluid::flow(&mut Level::new(world), *fluid, *from, *dir, *new, *sides_after),
         // Unless the block changed meanwhile.
         Ask::Change { pos, old, new, flags, drops, then, .. } if allowed && world.block_at(pos.x, pos.y, pos.z) == Some(*old) => {
             Level::new(world).apply_change(*pos, *old, *new, *flags, *drops, *then)

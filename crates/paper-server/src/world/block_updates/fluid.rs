@@ -300,8 +300,15 @@ fn spread(level: &mut Level, fluid: Fluid, pos: BlockPos, state: u32, fs: FluidS
     if can_maybe_pass_through(fluid, state, Dir::Down, below_state, below_fluid) {
         let new = get_new_liquid(level, fluid, below, below_state);
         if can_be_replaced_with(below_fluid, level, below, new, Dir::Down) && can_hold_specific_fluid(below_state, new) {
+            let sides_after = source_neighbor_count(level, fluid, pos) >= 3;
+            // Plugins listening have their say first (see `Ask`); a flow down they stop stops
+            // the spreading to the sides too, as in Paper.
+            if level.world.updates.vetting.flow {
+                level.world.updates.asks.push(super::Ask::Flow { from: pos, dir: Dir::Down, fluid, new, sides_after });
+                return;
+            }
             spread_to(level, fluid, below, below_state, Dir::Down, new);
-            if source_neighbor_count(level, fluid, pos) >= 3 {
+            if sides_after {
                 spread_to_sides(level, fluid, pos, fs, state);
             }
             return;
@@ -326,8 +333,35 @@ fn spread_to_sides(level: &mut Level, fluid: Fluid, pos: BlockPos, fs: FluidStat
         if !level.is_loaded(npos) {
             continue;
         }
+        if level.world.updates.vetting.flow {
+            level.world.updates.asks.push(super::Ask::Flow { from: pos, dir, fluid, new, sides_after: false });
+            continue;
+        }
         let nstate = level.state(npos);
         spread_to(level, fluid, npos, nstate, dir, new);
+    }
+}
+
+/// A flow plugins allowed (`BlockFromToEvent`), if it can still happen: the fluid is still
+/// at `from` and may still go towards `dir`.
+pub fn flow(level: &mut Level, fluid: Fluid, from: BlockPos, dir: Dir, new: FluidState, sides_after: bool) {
+    let to = from.rel(dir);
+    let source = level.state(from);
+    if !level.is_loaded(to) || fluid_state(source).fluid != fluid {
+        return;
+    }
+    let target = level.state(to);
+    let tfluid = fluid_state(target);
+    if !can_maybe_pass_through(fluid, source, dir, target, tfluid) || !can_hold_specific_fluid(target, new) || !can_be_replaced_with(tfluid, level, to, new, dir) {
+        return;
+    }
+    spread_to(level, fluid, to, target, dir, new);
+    if sides_after {
+        let state = level.state(from);
+        let fs = fluid_state(state);
+        if fs.fluid == fluid && !fs.is_empty() {
+            spread_to_sides(level, fluid, from, fs, state);
+        }
     }
 }
 

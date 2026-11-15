@@ -369,7 +369,7 @@ impl Server {
                     e.removed = true;
                     let area = e.bounding_box();
                     self.worlds[world].entities.insert(id, e);
-                    self.land_falling_block(world, pos, state, fallen, area);
+                    self.land_falling_block(world, id, pos, state, fallen, area);
                     return;
                 }
                 // Lost below the world, or falling for too long: it drops where it is.
@@ -465,17 +465,30 @@ impl Server {
     /// (its block is already gone).
     pub(super) fn start_falling(&mut self, world: usize, pos: BlockPos, state: u32) {
         let Some(info) = entity_types::by_name("minecraft:falling_block") else { return };
-        let state = blocks::with_property(state, "waterlogged", "false").unwrap_or(state);
+        let falling = blocks::with_property(state, "waterlogged", "false").unwrap_or(state);
         let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5);
-        let e = Entity::new(self.next_entity_id(), info, at, EntityKind::FallingBlock { state, time: 0, fall: 0.0 });
-        self.spawn_entity(world, e);
+        let e = Entity::new(self.next_entity_id(), info, at, EntityKind::FallingBlock { state: falling, time: 0, fall: 0.0 });
+        let id = self.spawn_entity(world, e);
+        // `EntityChangeBlockEvent`, before anyone sees the entity, with the block still in
+        // place for plugins as in Paper (the block engine took it already): stopped, the block
+        // stays.
+        if crate::plugins::events::listens(self, "EntityChangeBlockEvent") {
+            let left = self.worlds[world].block_at(pos.x, pos.y, pos.z).unwrap_or(blocks::AIR);
+            self.worlds[world].set_block(pos.x, pos.y, pos.z, state);
+            let allowed = crate::plugins::events::on_entity_change_block(self, world, id, pos, left, false);
+            self.worlds[world].set_block(pos.x, pos.y, pos.z, left);
+            if !allowed {
+                self.worlds[world].remove_entity(id);
+                self.set_block_with_flags(world, pos, state, crate::world::block_updates::flags::CLIENTS | crate::world::block_updates::flags::SKIP_ON_PLACE);
+            }
+        }
     }
 
     /// A falling block landed (`FallingBlockEntity.tick` on the ground): an anvil hurts what
     /// it lands on (2 per block fallen, at most 40) and may chip. The block is placed again
     /// where the block it lands in can be replaced and something holds it (concrete powder
     /// by water hardens, `onLand`); otherwise it drops as its item.
-    fn land_falling_block(&mut self, world: usize, pos: BlockPos, mut state: u32, fallen: f32, area: Aabb) {
+    fn land_falling_block(&mut self, world: usize, id: i32, pos: BlockPos, mut state: u32, fallen: f32, area: Aabb) {
         use crate::world::block_updates::falling;
         let anvil = blocks::block_of_state(state).name.ends_with("anvil");
         let mut broken = false;
@@ -523,6 +536,10 @@ impl Server {
                 let level = crate::world::block_updates::Level::new(&mut self.worlds[world]);
                 falling::concrete_of(state).filter(|_| falling::hardens_at(&level, pos, here))
             };
+            // `EntityChangeBlockEvent`: stopped, the block is gone without a drop, as in Paper.
+            if !crate::plugins::events::on_entity_change_block(self, world, id, pos, state, false) {
+                return;
+            }
             if self.set_block_and_update(world, pos, concrete.unwrap_or(state)) {
                 if anvil {
                     self.broadcast_level_event(world, 1031, pos, 0, false);

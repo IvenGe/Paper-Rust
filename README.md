@@ -286,7 +286,11 @@ What works:
   snow melting; grass, mycelium and farmland turning to dirt; fire going out),
   `BlockFormEvent` (lava hardening beside water, ice and snow forming in cold weather),
   `BlockSpreadEvent` for grass and mycelium, `LeavesDecayEvent` and `MoistureChangeEvent`
-  (a listener may change the new state where Paper lets it). Players,
+  (a listener may change the new state where Paper lets it), `BlockFromToEvent` for water
+  and lava flowing (as in Paper, a stopped flow down stops the spreading to the sides too,
+  and the fluid tries again when something next to it changes), and `EntityChangeBlockEvent`
+  (endermen taking and placing blocks, blocks starting to fall and landing, sheep eating
+  grass, players trampling farmland). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -445,9 +449,9 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
-  Events not fired yet include fluids flowing, trees and huge mushrooms growing
-  (`StructureGrowEvent`), bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`,
-  `EntityChangeBlockEvent`, projectiles being launched and hitting, and vehicles.
+  Events not fired yet include trees and huge mushrooms growing (`StructureGrowEvent`),
+  bone meal (`BlockFertilizeEvent`), `TNTPrimeEvent`, projectiles being launched and
+  hitting, and vehicles.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

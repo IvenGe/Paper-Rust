@@ -448,15 +448,18 @@ impl Server {
             let w = &self.worlds[world];
             let here = w.block_at(x, y, z).map(|s| blocks::block_of_state(s).name);
             let below = w.block_at(x, y - 1, z).map(|s| blocks::block_of_state(s).name);
+            // `EntityChangeBlockEvent` either way, cancelled to begin with without mob griefing.
             let ate = if here == Some("minecraft:short_grass") {
-                if griefing {
-                    self.set_block_and_update(world, paper_protocol::codec::BlockPos::new(x, y, z), blocks::AIR);
+                let at = paper_protocol::codec::BlockPos::new(x, y, z);
+                if crate::plugins::events::on_entity_change_block(self, world, id, at, blocks::AIR, !griefing) {
+                    self.set_block_and_update(world, at, blocks::AIR);
                 }
                 true
             } else if below == Some("minecraft:grass_block") {
-                if griefing {
-                    if let Some(dirt) = blocks::default_state("minecraft:dirt") {
-                        self.set_block_and_update(world, paper_protocol::codec::BlockPos::new(x, y - 1, z), dirt);
+                let at = paper_protocol::codec::BlockPos::new(x, y - 1, z);
+                if let Some(dirt) = blocks::default_state("minecraft:dirt") {
+                    if crate::plugins::events::on_entity_change_block(self, world, id, at, dirt, !griefing) {
+                        self.set_block_and_update(world, at, dirt);
                     }
                 }
                 true

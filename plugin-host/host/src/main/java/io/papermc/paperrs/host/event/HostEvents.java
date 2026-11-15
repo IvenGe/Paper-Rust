@@ -117,6 +117,8 @@ public final class HostEvents {
         GATED.put("BlockBurnEvent", org.bukkit.event.block.BlockBurnEvent.class);
         GATED.put("BlockIgniteEvent", org.bukkit.event.block.BlockIgniteEvent.class);
         GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
+        GATED.put("BlockFromToEvent", org.bukkit.event.block.BlockFromToEvent.class);
+        GATED.put("EntityChangeBlockEvent", org.bukkit.event.entity.EntityChangeBlockEvent.class);
         GATED.put("BlockGrowEvent", org.bukkit.event.block.BlockGrowEvent.class);
         GATED.put("BlockFadeEvent", org.bukkit.event.block.BlockFadeEvent.class);
         GATED.put("BlockFormEvent", org.bukkit.event.block.BlockFormEvent.class);
@@ -413,6 +415,25 @@ public final class HostEvents {
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
             }
             case "event.block_changes" -> this.blockChanges(args);
+            case "event.entity_change_block" -> {
+                final org.bukkit.event.entity.EntityChangeBlockEvent event = new org.bukkit.event.entity.EntityChangeBlockEvent(
+                    io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))), this.block(args), org.bukkit.Bukkit.createBlockData(Values.str(args, "to")));
+                event.setCancelled(Values.bool(args, "cancelled", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.block_flows" -> {
+                // Fluids flowing from a block towards a face, one BlockFromToEvent each.
+                final World world = this.server.getWorld(Values.str(args, "world"));
+                final List<Object> results = new ArrayList<>();
+                for (final Object f : Values.list(args.get("flows"))) {
+                    final Map<String, Object> flow = Values.map(f);
+                    final Block from = world.getBlockAt(Values.i32(flow, "x", 0), Values.i32(flow, "y", 0), Values.i32(flow, "z", 0));
+                    final boolean allowed = new org.bukkit.event.block.BlockFromToEvent(from, org.bukkit.block.BlockFace.valueOf(Values.str(flow, "face"))).callEvent();
+                    results.add(Values.of("cancelled", !allowed));
+                }
+                yield Values.of("results", results);
+            }
             case "event.changed_world" -> {
                 new org.bukkit.event.player.PlayerChangedWorldEvent(this.player(args), this.server.getWorld(Values.str(args, "from"))).callEvent();
                 yield Values.of();

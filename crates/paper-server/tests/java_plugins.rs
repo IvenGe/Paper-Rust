@@ -1023,11 +1023,33 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         assert!(seen.contains("FORM LAVA -> OBSIDIAN") && (seen.contains("DECAY OAK_LEAVES") || mode == "record"), "{mode}: {seen}");
         assert_eq!((name_at(leaves).as_str(), name_at(hot) == "minecraft:obsidian"), (leaves_left, hardened), "{mode}");
     }
+    let cleared: Vec<_> = basin.iter().map(|(p, _)| (*p, "minecraft:air")).chain([(hot, "minecraft:air")]).collect();
+    put(&server, &cleared, false);
+
+    // Water flowing down a well and sand falling into a cup: stopped, then let happen.
+    let (spring, sand) = (feet.offset(-10, 6, -10), feet.offset(-13, 6, -10));
+    let sides = [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1)];
+    let mut stone: Vec<(BlockPos, &str)> = [spring, spring.offset(0, -1, 0), sand.offset(0, -1, 0)].iter().flat_map(|p| sides.map(|(x, y, z)| (p.offset(x, y, z), "minecraft:stone"))).collect();
+    stone.extend([(spring.offset(0, -2, 0), "minecraft:stone"), (sand.offset(0, -2, 0), "minecraft:stone")]);
+    put(&server, &stone, false);
+    for (mode, happened) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        put(&server, &[spring, spring.offset(0, -1, 0), sand, sand.offset(0, -1, 0)].map(|p| (p, "minecraft:air")), false);
+        put(&server, &[(spring, "minecraft:water"), (sand, "minecraft:sand")], true);
+        alice.drain(Duration::from_millis(1000));
+        let outcome = (name_at(spring.offset(0, -1, 0)) == "minecraft:water", name_at(sand.offset(0, -1, 0)) == "minecraft:sand", name_at(sand) == "minecraft:sand");
+        assert_eq!(outcome, (happened, happened, !happened), "{mode}");
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        let expected: &[&str] = if happened { &["FLOW WATER DOWN", "CHANGE FALLING_BLOCK SAND -> AIR", "CHANGE FALLING_BLOCK AIR -> SAND"] } else { &["FLOW WATER DOWN", "CHANGE FALLING_BLOCK SAND -> AIR"] };
+        assert!(expected.iter().all(|e| seen.contains(e)), "{mode}: {seen}");
+    }
+    let cleared: Vec<_> = stone.iter().map(|(p, _)| *p).chain([spring, spring.offset(0, -1, 0), sand, sand.offset(0, -1, 0)]).map(|p| (p, "minecraft:air")).collect();
+    put(&server, &cleared, false);
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");
-    let cleared: Vec<_> = basin.iter().map(|(p, _)| (*p, "minecraft:air")).chain([(hot, "minecraft:air")]).collect();
-    put(&server, &cleared, false);
 
     // PlayerChangedWorldEvent on the way to the nether and back.
     alice.command("apitest worldhop");

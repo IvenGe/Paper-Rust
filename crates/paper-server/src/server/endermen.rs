@@ -285,6 +285,9 @@ impl Server {
                     return;
                 }
                 let pos = BlockPos::new(x, y, z);
+                if !crate::plugins::events::on_entity_change_block(self, world, id, pos, blocks::AIR, false) {
+                    return;
+                }
                 self.set_block_and_update(world, pos, blocks::AIR);
                 if let Some(e) = self.worlds[world].entities.get_mut(&id) {
                     if let Some(m) = e.mob_mut() {
@@ -304,6 +307,9 @@ impl Server {
                 let entities_in_way = !w.entities_in(&Aabb::new(Vec3::new(x as f64, y as f64, z as f64), Vec3::new(x as f64 + 1.0, y as f64 + 1.0, z as f64 + 1.0))).into_iter().all(|o| o == id);
                 // `isCollisionShapeFullBlock` below, and the block must be able to stay there.
                 if !blocks::is_air(here) || !paper_data::physics::is_face_sturdy(below, 1) || entities_in_way || !fits_on(carried, below) {
+                    return;
+                }
+                if !crate::plugins::events::on_entity_change_block(self, world, id, BlockPos::new(x, y, z), carried, false) {
                     return;
                 }
                 self.set_block_and_update(world, BlockPos::new(x, y, z), carried);

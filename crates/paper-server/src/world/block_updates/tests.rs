@@ -879,6 +879,24 @@ fn fire_waits_for_plugins() {
 }
 
 #[test]
+fn fluids_wait_for_plugins_to_flow() {
+    let mut w = world();
+    w.updates.vetting.flow = true;
+    // A water source in the air: it flows down first.
+    set(&mut w, p(0, Y + 1, 0), s("water"));
+    let asked = run_asking(&mut w, 20, false);
+    assert!(asked.iter().any(|a| matches!(a, Ask::Flow { from, dir: Dir::Down, .. } if *from == p(0, Y + 1, 0))), "{asked:?}");
+    assert_eq!(name(&w, p(0, Y, 0)), "air", "stopped, nothing flows");
+    // (A stopped source tries again when something next to it changes, as in Paper.)
+    set(&mut w, p(0, Y + 1, 0), blocks::AIR);
+    set(&mut w, p(0, Y + 1, 0), s("water"));
+    let asked = run_asking(&mut w, 40, true);
+    assert_eq!(name(&w, p(0, Y, 0)), "water", "allowed, it falls");
+    assert!(asked.iter().any(|a| matches!(a, Ask::Flow { dir: Dir::North | Dir::South | Dir::East | Dir::West, .. })), "and spreads to the sides, asking each time");
+    assert_eq!(name(&w, p(1, Y, 0)), "water");
+}
+
+#[test]
 fn block_changes_wait_for_plugins() {
     let mut w = world();
     w.updates.vetting = Vetting { grow: true, form: true, decay: true, ..Vetting::default() };
