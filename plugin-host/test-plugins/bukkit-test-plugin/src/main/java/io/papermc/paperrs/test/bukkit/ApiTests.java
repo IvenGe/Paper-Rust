@@ -70,6 +70,9 @@ final class ApiTests implements Listener, CommandExecutor {
     private final java.util.TreeSet<String> watched = new java.util.TreeSet<>();
     private boolean watch;
     private @org.jetbrains.annotations.Nullable ItemStack guardHeld;
+    /** Piston and fire events seen ("apitest blocks record|cancel|off"); cancelled in cancel mode. */
+    private final java.util.TreeSet<String> blockEvents = new java.util.TreeSet<>();
+    private String blockMode = "off";
 
     ApiTests(final JavaPlugin plugin) {
         this.plugin = plugin;
@@ -221,6 +224,12 @@ final class ApiTests implements Listener, CommandExecutor {
                     sender.sendMessage("watch: " + this.watch);
                 }
                 case "watched" -> sender.sendMessage("watched: " + String.join(", ", this.watched));
+                case "blocks" -> {
+                    this.blockMode = args[1];
+                    this.blockEvents.clear();
+                    sender.sendMessage("blocks: " + this.blockMode);
+                }
+                case "blockevents" -> sender.sendMessage("blockevents: " + String.join(", ", this.blockEvents));
                 case "interactions" -> {
                     sender.sendMessage("interactions: " + String.join(", ", this.interactions));
                     this.interactions.clear();
@@ -1380,6 +1389,44 @@ final class ApiTests implements Listener, CommandExecutor {
             this.interactions.add("ENTITY " + event.getRightClicked().getType() + " " + event.getHand());
             event.setCancelled(true);
         }
+    }
+
+    private void blockEvent(final org.bukkit.event.Cancellable event, final String what) {
+        if (!this.blockMode.equals("off")) {
+            this.blockEvents.add(what);
+            event.setCancelled(this.blockMode.equals("cancel"));
+        }
+    }
+
+    private static String types(final List<Block> blocks) {
+        return blocks.stream().map(b -> b.getType().name()).toList().toString();
+    }
+
+    @EventHandler
+    public void onPistonExtend(final org.bukkit.event.block.BlockPistonExtendEvent event) {
+        this.blockEvent(event, "EXTEND " + event.getDirection() + " " + types(event.getBlocks()));
+    }
+
+    @EventHandler
+    public void onPistonRetract(final org.bukkit.event.block.BlockPistonRetractEvent event) {
+        this.blockEvent(event, "RETRACT " + event.getDirection() + " " + types(event.getBlocks()));
+    }
+
+    @EventHandler
+    public void onBurn(final org.bukkit.event.block.BlockBurnEvent event) {
+        this.blockEvent(event, "BURN " + event.getBlock().getType() + " by " + (event.getIgnitingBlock() == null ? "-" : event.getIgnitingBlock().getType()));
+    }
+
+    @EventHandler
+    public void onIgnite(final org.bukkit.event.block.BlockIgniteEvent event) {
+        this.blockEvent(event, "IGNITE " + event.getCause() + " " + (event.getPlayer() != null ? "player"
+            : event.getIgnitingEntity() != null ? event.getIgnitingEntity().getType().name()
+            : event.getIgnitingBlock() == null ? "-" : event.getIgnitingBlock().getType().name()));
+    }
+
+    @EventHandler
+    public void onSpread(final org.bukkit.event.block.BlockSpreadEvent event) {
+        this.blockEvent(event, "SPREAD " + event.getSource().getType() + " -> " + event.getNewState().getType());
     }
 
     @EventHandler

@@ -635,7 +635,9 @@ impl Server {
                     self.prime_tnt(world, front, 80, None);
                 } else if blocks::is_air(in_front) {
                     let fire = crate::world::block_updates::fire::fire_state_for(&self.worlds[world], front);
-                    self.set_block_and_update(world, front, fire);
+                    if crate::plugins::events::on_block_ignite(self, world, front, "FLINT_AND_STEEL", crate::plugins::events::Igniter::Block(pos)) {
+                        self.set_block_and_update(world, front, fire);
+                    }
                 } else {
                     self.broadcast_level_event(world, 1001, pos, 0, false);
                     return Some(stack);

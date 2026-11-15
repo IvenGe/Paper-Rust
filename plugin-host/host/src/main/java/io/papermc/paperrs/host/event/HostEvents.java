@@ -111,6 +111,12 @@ public final class HostEvents {
         GATED.put("PlayerPortalEvent", org.bukkit.event.player.PlayerPortalEvent.class);
         // (EntityTargetLivingEntityEvent shares its handler list.)
         GATED.put("EntityTargetEvent", org.bukkit.event.entity.EntityTargetEvent.class);
+        // Piston moves and fire wait in the block engine while these have listeners.
+        GATED.put("BlockPistonExtendEvent", org.bukkit.event.block.BlockPistonExtendEvent.class);
+        GATED.put("BlockPistonRetractEvent", org.bukkit.event.block.BlockPistonRetractEvent.class);
+        GATED.put("BlockBurnEvent", org.bukkit.event.block.BlockBurnEvent.class);
+        GATED.put("BlockIgniteEvent", org.bukkit.event.block.BlockIgniteEvent.class);
+        GATED.put("BlockSpreadEvent", org.bukkit.event.block.BlockSpreadEvent.class);
     }
 
     private final CraftServer server;
@@ -246,6 +252,12 @@ public final class HostEvents {
 
     private Location location(final World world, final Map<String, Object> loc) {
         return new Location(world, Values.f64(loc, "x", 0), Values.f64(loc, "y", 0), Values.f64(loc, "z", 0), (float) Values.f64(loc, "yaw", 0), (float) Values.f64(loc, "pitch", 0));
+    }
+
+    /** The block at an {@code [x, y, z]} list. */
+    private Block at(final World world, final Object xyz) {
+        final List<Object> at = Values.list(xyz);
+        return world.getBlockAt(((Number) at.get(0)).intValue(), ((Number) at.get(1)).intValue(), ((Number) at.get(2)).intValue());
     }
 
     private Block block(final Map<String, Object> args) {
@@ -390,6 +402,52 @@ public final class HostEvents {
                 event.callEvent();
                 // A listener that changes the target to nothing keeps the mob from targeting.
                 yield Values.of("cancelled", event.isCancelled() || event.getTarget() != living);
+            }
+            case "event.piston" -> {
+                final Block piston = this.block(args);
+                final List<Block> blocks = new ArrayList<>();
+                for (final Object b : Values.list(args.get("blocks"))) {
+                    blocks.add(this.at(piston.getWorld(), b));
+                }
+                final org.bukkit.block.BlockFace direction = org.bukkit.block.BlockFace.valueOf(Values.str(args, "direction"));
+                // Paper's list can be read, not changed.
+                final List<Block> view = java.util.Collections.unmodifiableList(blocks);
+                final org.bukkit.event.block.BlockPistonEvent event = Values.bool(args, "extending", false)
+                    ? new org.bukkit.event.block.BlockPistonExtendEvent(piston, view, direction)
+                    : new org.bukkit.event.block.BlockPistonRetractEvent(piston, view, direction);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.block_burn" -> {
+                final Block block = this.block(args);
+                final org.bukkit.event.block.BlockBurnEvent event = new org.bukkit.event.block.BlockBurnEvent(block, this.at(block.getWorld(), args.get("by")));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.fire_spread" -> {
+                // FireBlock.tick: BlockIgniteEvent (SPREAD), then BlockSpreadEvent with the fire's state.
+                final Block block = this.block(args);
+                final Block from = this.at(block.getWorld(), args.get("from"));
+                final org.bukkit.event.block.BlockIgniteEvent ignite = new org.bukkit.event.block.BlockIgniteEvent(block, org.bukkit.event.block.BlockIgniteEvent.IgniteCause.SPREAD, from);
+                ignite.callEvent();
+                if (ignite.isCancelled()) {
+                    yield Values.of("cancelled", true);
+                }
+                final org.bukkit.block.BlockState state = HostBlockState.of((HostBlock) block, Values.str(args, "state"));
+                final org.bukkit.event.block.BlockSpreadEvent spread = new org.bukkit.event.block.BlockSpreadEvent(block, from, state);
+                spread.callEvent();
+                yield Values.of("cancelled", spread.isCancelled(), "state", state.getBlockData().getAsString());
+            }
+            case "event.block_ignite" -> {
+                // Set by an entity (a player, lightning, a fireball's shooter, an explosion) or a
+                // block (lava, a dispenser).
+                final Block block = this.block(args);
+                final org.bukkit.entity.Entity entity = args.get("entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                final Block from = args.get("from") == null ? null : this.at(block.getWorld(), args.get("from"));
+                final org.bukkit.event.block.BlockIgniteEvent event = new org.bukkit.event.block.BlockIgniteEvent(block,
+                    org.bukkit.event.block.BlockIgniteEvent.IgniteCause.valueOf(Values.str(args, "cause", "FLINT_AND_STEEL")), entity, from);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
             }
             case "event.block_break" -> {
                 final BlockBreakEvent event = new BlockBreakEvent(this.block(args), this.player(args));

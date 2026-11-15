@@ -952,7 +952,10 @@ impl Server {
                 if rng.gen_range(0..3) == 0 && blocks::is_air(here) && solid_below {
                     let pos = BlockPos::new(x, y, z);
                     let state = crate::world::block_updates::fire::fire_state_for(&self.worlds[world], pos);
-                    self.set_block_and_update(world, pos, state);
+                    let by = source.map_or(crate::plugins::events::Igniter::Nothing, crate::plugins::events::Igniter::Entity);
+                    if crate::plugins::events::on_block_ignite(self, world, pos, "EXPLOSION", by) {
+                        self.set_block_and_update(world, pos, state);
+                    }
                 }
             }
         }

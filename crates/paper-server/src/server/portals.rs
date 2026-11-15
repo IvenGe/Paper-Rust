@@ -579,7 +579,8 @@ impl Server {
         let (world, creative) = (p.world, p.game_mode == GameMode::Creative);
         let Some(clicked) = self.worlds[world].block_at(use_on.pos.x, use_on.pos.y, use_on.pos.z) else { return false };
         let face = use_on.face.0 as usize;
-        let mut used = false;
+        let (mut used, mut ignite_cancelled) = (false, false);
+        let cause = if item == "minecraft:fire_charge" { "FIREBALL" } else { "FLINT_AND_STEEL" };
         let sound_at = Vec3::new(use_on.pos.x as f64 + 0.5, use_on.pos.y as f64 + 0.5, use_on.pos.z as f64 + 0.5);
         let clicked_name = blocks::block_of_state(clicked).name;
         if clicked_name == "minecraft:tnt" {
@@ -591,8 +592,12 @@ impl Server {
             }
         } else if (clicked_name.ends_with("campfire") || clicked_name.ends_with("candle") || clicked_name.ends_with("candle_cake")) && blocks::property(clicked, "lit") == Some("false") {
             if let Some(lit) = blocks::with_property(clicked, "lit", "true") {
-                self.set_block_and_update(world, use_on.pos, lit);
-                used = true;
+                if crate::plugins::events::on_block_ignite(self, world, use_on.pos, cause, crate::plugins::events::Igniter::Entity(id)) {
+                    self.set_block_and_update(world, use_on.pos, lit);
+                    used = true;
+                } else {
+                    ignite_cancelled = true;
+                }
             }
         } else if face < 6 {
             let (dx, dy, dz) = [(0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1), (-1, 0, 0), (1, 0, 0)][face];
@@ -608,17 +613,25 @@ impl Server {
                     w.block_at(target.x + fx, target.y + fy, target.z + fz).is_some_and(|s| paper_data::physics::flags(s) & paper_data::physics::BURNABLE != 0)
                 })
             };
-            if empty && (supported || portal_frame) && crate::plugins::events::on_block_ignite(self, id, world, target) {
-                self.set_block_and_update(world, target, fire_state);
-                used = true;
+            if empty && (supported || portal_frame) {
+                if crate::plugins::events::on_block_ignite(self, world, target, cause, crate::plugins::events::Igniter::Entity(id)) {
+                    self.set_block_and_update(world, target, fire_state);
+                    used = true;
+                } else {
+                    ignite_cancelled = true;
+                }
             }
         }
-        if !used {
+        if !used && !ignite_cancelled {
             return false;
         }
-        let pitch = rand::thread_rng().gen::<f32>() * 0.4 + 0.8;
-        let sound = if item == "minecraft:fire_charge" { "minecraft:item.firecharge.use" } else { "minecraft:item.flintandsteel.use" };
-        self.play_sound(world, sound_at, sound, category::BLOCKS, 1.0, pitch, Some(id));
+        if used {
+            let pitch = rand::thread_rng().gen::<f32>() * 0.4 + 0.8;
+            let sound = if item == "minecraft:fire_charge" { "minecraft:item.firecharge.use" } else { "minecraft:item.flintandsteel.use" };
+            self.play_sound(world, sound_at, sound, category::BLOCKS, 1.0, pitch, Some(id));
+        }
+        // A cancelled `BlockIgniteEvent` still wears the flint and steel, or uses up the fire
+        // charge, as in Paper.
         if !creative {
             let p = self.players.get_mut(&id).unwrap();
             if item == "minecraft:fire_charge" {

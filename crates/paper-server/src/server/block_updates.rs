@@ -11,7 +11,8 @@ use super::Server;
 use crate::config::GameMode;
 use crate::world::block_updates::state::kind;
 use crate::world::block_updates::support::{self, PlaceContext};
-use crate::world::block_updates::{self, flags, Dir, Effect, Kind, Level, UseContext};
+use crate::plugins::events;
+use crate::world::block_updates::{self, flags, Ask, Dir, Effect, Kind, Level, UseContext};
 use bytes::Bytes;
 use paper_nbt::Compound;
 use paper_protocol::codec::{BlockPos, VarInt};
@@ -20,6 +21,15 @@ use paper_protocol::packets::{encode_packet, Packet};
 
 /// Players this far from a world or block event see it (vanilla's 64 blocks).
 const EVENT_RANGE: f64 = 64.0;
+
+/// Rounds of plugin answers per tick and world: a piston move plugins allowed can set off
+/// further moves (a chain of pistons) asked about in the next round.
+const MAX_ASK_ROUNDS: usize = 256;
+
+/// Chunks run their block updates while players keep them loaded.
+fn ticking(world: &crate::world::World, chunk: crate::world::chunk::ChunkPos) -> bool {
+    world.has_ticket(chunk) && world.is_ready(chunk)
+}
 
 /// Vanilla's `Direction.orderedByNearest(entity)[0]`: the direction a player looks most.
 pub fn nearest_looking_direction(yaw: f32, pitch: f32) -> Dir {
@@ -103,12 +113,49 @@ impl Server {
     }
 
     /// Runs the scheduled block ticks, fluid ticks and block events of every world for this
-    /// game tick. Chunks run theirs while players keep them loaded.
+    /// game tick. Chunks run theirs while players keep them loaded. Piston moves, fire
+    /// burning and spreading, and lava setting fires wait for plugins listening to their
+    /// events (see [`block_updates::Ask`]); they answer before block entities tick, as Paper
+    /// fires the events during block events and block ticks, and after random ticks.
     pub fn tick_block_updates(&mut self) {
+        let vet_pistons = events::listens(self, "BlockPistonExtendEvent") || events::listens(self, "BlockPistonRetractEvent");
+        let vet_fire = ["BlockBurnEvent", "BlockIgniteEvent", "BlockSpreadEvent"].iter().any(|e| events::listens(self, e));
         for index in 0..self.worlds.len() {
-            block_updates::tick(&mut self.worlds[index], &|w, p| w.has_ticket(p) && w.is_ready(p));
-            block_updates::random_ticks(&mut self.worlds[index], &|w, p| w.has_ticket(p) && w.is_ready(p));
+            let updates = &mut self.worlds[index].updates;
+            (updates.vet_pistons, updates.vet_fire) = (vet_pistons, vet_fire);
+            block_updates::tick_blocks(&mut self.worlds[index], &ticking);
+            self.answer_block_asks(index);
+            block_updates::tick_block_entities(&mut self.worlds[index]);
+            block_updates::random_ticks(&mut self.worlds[index], &ticking);
+            self.answer_block_asks(index);
             self.publish_block_updates(index);
+        }
+    }
+
+    /// Fires the events for what the block engine left to plugins, and carries out their
+    /// answers; moves these set off are asked about in the next round. Asks left after the
+    /// last round wait for the next tick.
+    fn answer_block_asks(&mut self, world: usize) {
+        for _ in 0..MAX_ASK_ROUNDS {
+            let asks = std::mem::take(&mut self.worlds[world].updates.asks);
+            if asks.is_empty() {
+                return;
+            }
+            for mut ask in asks {
+                let allowed = match &mut ask {
+                    Ask::Piston { pos, extending, dir, blocks, .. } => events::on_piston(self, world, *pos, *extending, *dir, blocks),
+                    Ask::Burn { pos, by, .. } => events::on_block_burn(self, world, *pos, *by),
+                    Ask::Spread { pos, from, state } => match events::on_fire_spread(self, world, *pos, *from, *state) {
+                        Some(new) => {
+                            *state = new;
+                            true
+                        }
+                        None => false,
+                    },
+                    Ask::Ignite { pos, from, .. } => events::on_block_ignite(self, world, *pos, "LAVA", events::Igniter::Block(*from)),
+                };
+                block_updates::answer(&mut self.worlds[world], &ask, allowed, &ticking);
+            }
         }
     }
 

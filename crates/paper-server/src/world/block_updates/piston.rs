@@ -514,6 +514,47 @@ pub fn on_place(level: &mut Level, state: u32, pos: BlockPos, old: u32) {
     }
 }
 
+/// The piston event Paper fires for a piston's block event, if it fires one: whether the
+/// piston extends, the direction the blocks move (`BlockPistonEvent.getDirection`) and the
+/// blocks it moves and breaks. Paper fires `BlockPistonExtendEvent` once the structure
+/// resolved, `BlockPistonRetractEvent` with no blocks for a piston that pulls nothing, and
+/// with the pulled blocks once a sticky piston's pull resolved.
+pub fn planned_move(level: &Level, state: u32, pos: BlockPos, action: u8) -> Option<(bool, Dir, Vec<BlockPos>)> {
+    let dir = facing(state);
+    let extend = neighbor_signal(level, pos, dir);
+    if action == 0 {
+        if !extend {
+            return None;
+        }
+        let (mut blocks, to_destroy) = Resolver::new(pos, dir, true).resolve(level)?;
+        blocks.extend(to_destroy);
+        return Some((true, dir, blocks));
+    }
+    if extend {
+        return None;
+    }
+    if !sticky(state) {
+        return Some((false, dir, Vec::new()));
+    }
+    let arm = pos.rel(dir);
+    let two = arm.rel(dir);
+    let two_state = level.state(two);
+    if block_id(two_state) == block!("moving_piston") && moving_block(level.world, two).is_some_and(|m| m.direction == dir && m.extending) {
+        return None;
+    }
+    if action == 1 && pullable(level, two_state, two, dir) {
+        let (mut blocks, to_destroy) = Resolver::new(pos, dir, false).without(arm).resolve(level)?;
+        blocks.extend(to_destroy);
+        return Some((false, dir.opposite(), blocks));
+    }
+    (action == 1 && blocks::is_air(two_state)).then(|| (false, dir, Vec::new()))
+}
+
+/// A sticky piston pulls the block in front of its head back.
+fn pullable(level: &Level, state: u32, pos: BlockPos, dir: Dir) -> bool {
+    !blocks::is_air(state) && is_pushable(level, state, pos, dir.opposite(), false, dir) && (physics::push_reaction(state) == PushReaction::Normal || is_piston_base(state))
+}
+
 /// The piston block event.
 pub fn trigger_event(level: &mut Level, state: u32, pos: BlockPos, action: u8, param: u8) -> bool {
     let dir = facing(state);
@@ -540,6 +581,10 @@ pub fn trigger_event(level: &mut Level, state: u32, pos: BlockPos, action: u8, p
     if moving_block(level.world, arm).is_some() {
         final_tick(level, arm);
     }
+    // A cancelled `BlockPistonRetractEvent` keeps a piston that pulls nothing extended.
+    if !sticky(state) && level.world.updates.piston_denied {
+        return false;
+    }
     let piston_type = if sticky(state) { "sticky" } else { "normal" };
     let moving_piston = with(set_dir(default_state!("moving_piston"), "facing", dir), "type", piston_type);
     level.set_block(pos, moving_piston, flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS | flags::KNOWN_SHAPE | flags::INVISIBLE);
@@ -561,13 +606,15 @@ pub fn trigger_event(level: &mut Level, state: u32, pos: BlockPos, action: u8, p
         }
         if !piston_piece {
             let two_state = level.state(two);
-            let pullable = action == 1
-                && !blocks::is_air(two_state)
-                && is_pushable(level, two_state, two, dir.opposite(), false, dir)
-                && (physics::push_reaction(two_state) == PushReaction::Normal || is_piston_base(two_state));
-            if pullable {
+            if action == 1 && pullable(level, two_state, two, dir) {
                 move_blocks(level, state, pos, dir, false);
             } else {
+                // Paper checks its event for a sticky piston pulling nothing once the base
+                // started moving: cancelled, the base still finishes retracting, and the head
+                // goes once it has.
+                if action == 1 && blocks::is_air(two_state) && level.world.updates.piston_denied {
+                    return false;
+                }
                 level.remove_block(arm, false);
             }
         }
@@ -586,6 +633,15 @@ fn move_blocks(level: &mut Level, piston: u32, pos: BlockPos, dir: Dir, extendin
         level.set_block(arm, blocks::AIR, flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS | flags::KNOWN_SHAPE | flags::INVISIBLE);
     }
     let Some((to_push, to_destroy)) = Resolver::new(pos, dir, extending).resolve(level) else { return false };
+    if level.world.updates.piston_denied {
+        // A cancelled piston event: nothing moves, and clients that animated the move get
+        // the blocks back.
+        let push_dir = if extending { dir } else { dir.opposite() };
+        for p in to_destroy.iter().copied().chain(to_push.iter().flat_map(|p| [*p, p.rel(push_dir)])) {
+            level.resend_block(p);
+        }
+        return false;
+    }
     let mut deleted: Vec<(BlockPos, u32)> = to_push.iter().map(|p| (*p, level.state(*p))).collect();
     let shapes: Vec<u32> = deleted.iter().map(|(_, s)| *s).collect();
     let push_dir = if extending { dir } else { dir.opposite() };
@@ -648,6 +704,8 @@ struct Resolver {
     extending: bool,
     to_push: Vec<BlockPos>,
     to_destroy: Vec<BlockPos>,
+    /// A position read as air: the arm, which a retraction removes before it resolves.
+    air: Option<BlockPos>,
 }
 
 fn is_sticky_block(state: u32) -> bool {
@@ -667,12 +725,26 @@ fn can_stick(a: u32, b: u32) -> bool {
 impl Resolver {
     fn new(piston: BlockPos, piston_dir: Dir, extending: bool) -> Resolver {
         let (push_dir, start) = if extending { (piston_dir, piston.rel(piston_dir)) } else { (piston_dir.opposite(), piston.rel(piston_dir).rel(piston_dir)) };
-        Resolver { piston, piston_dir, push_dir, start, extending, to_push: Vec::new(), to_destroy: Vec::new() }
+        Resolver { piston, piston_dir, push_dir, start, extending, to_push: Vec::new(), to_destroy: Vec::new(), air: None }
+    }
+
+    /// Resolves as if `pos` were air.
+    fn without(mut self, pos: BlockPos) -> Resolver {
+        self.air = Some(pos);
+        self
+    }
+
+    fn at(&self, level: &Level, pos: BlockPos) -> u32 {
+        if self.air == Some(pos) {
+            blocks::AIR
+        } else {
+            level.state(pos)
+        }
     }
 
     /// The blocks to push (in push order) and to destroy, or `None` if the piston is stuck.
     fn resolve(mut self, level: &Level) -> Option<(Vec<BlockPos>, Vec<BlockPos>)> {
-        let state = level.state(self.start);
+        let state = self.at(level, self.start);
         if !is_pushable(level, state, self.start, self.push_dir, false, self.piston_dir) {
             if self.extending && physics::push_reaction(state) == PushReaction::Destroy {
                 self.to_destroy.push(self.start);
@@ -686,7 +758,7 @@ impl Resolver {
         let mut i = 0;
         while i < self.to_push.len() {
             let p = self.to_push[i];
-            if is_sticky_block(level.state(p)) && !self.add_branches(level, p) {
+            if is_sticky_block(self.at(level, p)) && !self.add_branches(level, p) {
                 return None;
             }
             i += 1;
@@ -695,7 +767,7 @@ impl Resolver {
     }
 
     fn add_line(&mut self, level: &Level, start: BlockPos, dir: Dir) -> bool {
-        let mut next = level.state(start);
+        let mut next = self.at(level, start);
         if blocks::is_air(next) || !is_pushable(level, next, start, self.push_dir, false, dir) || start == self.piston || self.to_push.contains(&start) {
             return true;
         }
@@ -708,7 +780,7 @@ impl Resolver {
         while is_sticky_block(next) {
             let p = offset(start, back, count);
             let previous = next;
-            next = level.state(p);
+            next = self.at(level, p);
             if blocks::is_air(next) || !can_stick(previous, next) || !is_pushable(level, next, p, self.push_dir, false, back) || p == self.piston {
                 break;
             }
@@ -729,13 +801,13 @@ impl Resolver {
                 self.reorder_at_collision(added, collision);
                 for j in 0..=collision + added {
                     let q = self.to_push[j];
-                    if is_sticky_block(level.state(q)) && !self.add_branches(level, q) {
+                    if is_sticky_block(self.at(level, q)) && !self.add_branches(level, q) {
                         return false;
                     }
                 }
                 return true;
             }
-            next = level.state(p);
+            next = self.at(level, p);
             if blocks::is_air(next) {
                 return true;
             }
@@ -764,13 +836,13 @@ impl Resolver {
     }
 
     fn add_branches(&mut self, level: &Level, from: BlockPos) -> bool {
-        let from_state = level.state(from);
+        let from_state = self.at(level, from);
         for dir in Dir::ALL {
             if dir.axis() == self.push_dir.axis() {
                 continue;
             }
             let p = from.rel(dir);
-            if can_stick(level.state(p), from_state) && !self.add_line(level, p, dir) {
+            if can_stick(self.at(level, p), from_state) && !self.add_line(level, p, dir) {
                 return false;
             }
         }

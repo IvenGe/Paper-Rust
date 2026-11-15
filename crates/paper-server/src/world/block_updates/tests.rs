@@ -795,6 +795,112 @@ fn sticky_piston_pulls_back() {
     assert_eq!(name(&w, p(0, Y, 0)), "sticky_piston");
 }
 
+/// Game ticks with plugins answering every ask with `allowed`, as the server runs them: block
+/// ticks and events, the answers, then block entities. Returns what was asked.
+fn run_asking(w: &mut World, n: usize, allowed: bool) -> Vec<Ask> {
+    let mut asked = Vec::new();
+    for _ in 0..n {
+        w.tick_time();
+        tick_blocks(w, &|_, _| true);
+        let asks = std::mem::take(&mut w.updates.asks);
+        for ask in &asks {
+            answer(w, ask, allowed, &|_, _| true);
+        }
+        asked.extend(asks);
+        tick_block_entities(w);
+    }
+    asked
+}
+
+#[test]
+fn pistons_wait_for_plugins() {
+    let mut w = world();
+    w.updates.vet_pistons = true;
+    set(&mut w, p(0, Y, 0), s("sticky_piston[facing=east]"));
+    set(&mut w, p(1, Y, 0), s("stone"));
+    set(&mut w, p(0, Y, -1), s("redstone_block"));
+    let asked = run_asking(&mut w, 3, false);
+    assert!(matches!(asked.as_slice(), [Ask::Piston { extending: true, dir: Dir::East, blocks, .. }] if blocks == &[p(1, Y, 0)]), "{asked:?}");
+    assert_eq!(name(&w, p(1, Y, 0)), "stone", "denied, nothing moves");
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "extended"));
+    set(&mut w, p(0, Y, -1), blocks::AIR);
+    set(&mut w, p(0, Y, -1), s("redstone_block"));
+    run_asking(&mut w, 1, true);
+    assert_eq!(name(&w, p(2, Y, 0)), "moving_piston", "allowed, it moves in the same tick as without plugins");
+    run_asking(&mut w, 2, true);
+    assert_eq!(name(&w, p(2, Y, 0)), "stone");
+    // A denied pull: the piston retracts, the stone stays (as in Paper).
+    set(&mut w, p(0, Y, -1), blocks::AIR);
+    let asked = run_asking(&mut w, 4, false);
+    assert!(matches!(asked.as_slice(), [Ask::Piston { extending: false, dir: Dir::West, blocks, .. }] if blocks == &[p(2, Y, 0)]), "{asked:?}");
+    assert_eq!(name(&w, p(0, Y, 0)), "sticky_piston");
+    assert!(!get_bool(get(&w, p(0, Y, 0)), "extended"));
+    assert_eq!(name(&w, p(1, Y, 0)), "air");
+    assert_eq!(name(&w, p(2, Y, 0)), "stone", "not pulled");
+}
+
+#[test]
+fn a_denied_retraction_keeps_a_piston_out() {
+    let mut w = world();
+    w.updates.vet_pistons = true;
+    set(&mut w, p(0, Y, 0), s("piston[facing=east]"));
+    set(&mut w, p(0, Y, -1), s("redstone_block"));
+    let asked = run_asking(&mut w, 3, true);
+    assert!(matches!(asked.as_slice(), [Ask::Piston { extending: true, blocks, .. }] if blocks.is_empty()), "{asked:?}");
+    set(&mut w, p(0, Y, -1), blocks::AIR);
+    let asked = run_asking(&mut w, 3, false);
+    assert!(matches!(asked.as_slice(), [Ask::Piston { extending: false, dir: Dir::East, blocks, .. }] if blocks.is_empty()), "{asked:?}");
+    assert!(get_bool(get(&w, p(0, Y, 0)), "extended"), "stays out");
+    assert_eq!(name(&w, p(1, Y, 0)), "piston_head");
+}
+
+#[test]
+fn fire_waits_for_plugins() {
+    let mut w = world();
+    w.updates.vet_fire = true;
+    for x in -2..=2 {
+        for z in -2..=2 {
+            set(&mut w, p(x, Y, z), s("oak_planks"));
+        }
+    }
+    for x in -1..=1 {
+        for z in -1..=1 {
+            set(&mut w, p(x, Y + 1, z), s("fire"));
+        }
+    }
+    let count = |w: &World, block: &str| (-3..=3).flat_map(|x| (Y..=Y + 3).flat_map(move |y| (-3..=3).map(move |z| p(x, y, z)))).filter(|q| name(w, *q) == block).count();
+    let asked = run_asking(&mut w, 6000, false);
+    let burns = asked.iter().filter(|a| matches!(a, Ask::Burn { .. })).count();
+    let spreads = asked.iter().filter(|a| matches!(a, Ask::Spread { .. })).count();
+    assert!(burns > 0 && spreads > 0, "{burns} burns, {spreads} spreads asked");
+    assert_eq!((count(&w, "oak_planks"), count(&w, "fire")), (25, 9), "denied, nothing burns or catches fire");
+    run_asking(&mut w, 6000, true);
+    assert!(count(&w, "oak_planks") < 25, "allowed, the planks burn");
+}
+
+#[test]
+fn lava_waits_for_plugins_to_set_fires() {
+    let mut w = world();
+    w.updates.vet_fire = true;
+    w.rules.set("random_tick_speed", paper_data::game_rules::Value::Int(4096));
+    // (Chunks take random ticks once lit.)
+    w.chunks.values_mut().for_each(|c| c.lit = true);
+    // Lava under a roof of planks, with air between.
+    set(&mut w, p(0, Y, 0), s("lava"));
+    for x in -1..=1 {
+        for z in -1..=1 {
+            set(&mut w, p(x, Y + 2, z), s("oak_planks"));
+        }
+    }
+    let mut asked = Vec::new();
+    for _ in 0..50 {
+        random_ticks(&mut w, &|_, _| true);
+        asked.extend(std::mem::take(&mut w.updates.asks));
+    }
+    assert!(asked.iter().any(|a| matches!(a, Ask::Ignite { from, .. } if *from == p(0, Y, 0))), "{} asks", asked.len());
+    assert!((-1..=1).all(|x| (-1..=1).all(|z| name(&w, p(x, Y + 1, z)) == "air")), "no fire until plugins answer");
+}
+
 #[test]
 fn piston_push_limit_and_immovable_blocks() {
     let push = |count: i32, last: &str| {

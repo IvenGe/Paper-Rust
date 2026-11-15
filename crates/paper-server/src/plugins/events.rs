@@ -937,17 +937,84 @@ pub fn on_changed_world(server: &mut Server, id: i32, from: usize) {
     fire(server, "PlayerChangedWorldEvent", "event.changed_world", bmap! { "uuid" => uuid, "from" => from });
 }
 
-/// BlockIgniteEvent for a player lighting a fire: returns false if cancelled.
-pub fn on_block_ignite(server: &mut Server, id: i32, world: usize, pos: BlockPos) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("BlockIgniteEvent") {
+/// What sets a fire (`BlockIgniteEvent.getIgnitingEntity` / `getIgnitingBlock`).
+#[derive(Clone, Copy, Debug)]
+pub enum Igniter {
+    /// An entity: a player with flint and steel or a fire charge, a lightning bolt, the
+    /// shooter of a fireball, what exploded.
+    Entity(i32),
+    /// A block: lava, a dispenser.
+    Block(BlockPos),
+    Nothing,
+}
+
+/// `BlockIgniteEvent`: a fire is to start at `pos`, with `cause` (`IgniteCause`: a player's
+/// `FLINT_AND_STEEL` or `FIREBALL`, `LIGHTNING`, `EXPLOSION`, `LAVA`, ...). Returns false if
+/// cancelled.
+pub fn on_block_ignite(server: &mut Server, world: usize, pos: BlockPos, cause: &str, by: Igniter) -> bool {
+    if !listens(server, "BlockIgniteEvent") {
         return true;
     }
-    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
-    let world_name = server.worlds[world].name.clone();
-    let args = bmap! { "uuid" => uuid, "world" => world_name, "x" => pos.x, "y" => pos.y, "z" => pos.z, "cause" => "FLINT_AND_STEEL" };
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "cause" => cause };
+    match by {
+        Igniter::Entity(id) if server.players.contains_key(&id) || server.worlds[world].entities.contains_key(&id) => args.set("entity", super::entity::shallow_ref(server, id)),
+        Igniter::Block(b) => args.set("from", pos_value(b)),
+        _ => {}
+    }
     match fire(server, "BlockIgniteEvent", "event.block_ignite", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
+    }
+}
+
+fn pos_value(pos: BlockPos) -> Value {
+    Value::List(vec![pos.x.into(), pos.y.into(), pos.z.into()])
+}
+
+/// `BlockPistonExtendEvent` / `BlockPistonRetractEvent`: a piston is to move (and break)
+/// `blocks` towards `dir`. Returns whether plugins let it.
+pub fn on_piston(server: &mut Server, world: usize, pos: BlockPos, extending: bool, dir: crate::world::block_updates::Dir, blocks: &[BlockPos]) -> bool {
+    let event = if extending { "BlockPistonExtendEvent" } else { "BlockPistonRetractEvent" };
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "extending" => extending,
+        "direction" => ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"][dir.index()],
+        "blocks" => Value::List(blocks.iter().map(|b| pos_value(*b)).collect()),
+    };
+    match fire(server, event, "event.piston", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `BlockBurnEvent`: fire at `by` is to burn the block at `pos` away. Returns whether plugins
+/// let it.
+pub fn on_block_burn(server: &mut Server, world: usize, pos: BlockPos, by: BlockPos) -> bool {
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "by" => pos_value(by) };
+    match fire(server, "BlockBurnEvent", "event.block_burn", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// Fire at `from` is to spread to `pos` as `state`: `BlockIgniteEvent` (cause `SPREAD`), then
+/// `BlockSpreadEvent`. Returns the state it spreads as (plugins may change it), or `None` if
+/// either was cancelled.
+pub fn on_fire_spread(server: &mut Server, world: usize, pos: BlockPos, from: BlockPos, state: u32) -> Option<u32> {
+    if !listens(server, "BlockIgniteEvent") && !listens(server, "BlockSpreadEvent") {
+        return Some(state);
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "from" => pos_value(from),
+        "state" => paper_data::blocks::state_to_string(state),
+    };
+    match fire(server, "", "event.fire_spread", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.str("state").and_then(paper_data::blocks::parse_state).unwrap_or(state)),
+        None => Some(state),
     }
 }
 

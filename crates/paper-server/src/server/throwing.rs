@@ -205,7 +205,11 @@ impl Server {
                 let pos = BlockPos::new(before.x.floor() as i32, before.y.floor() as i32, before.z.floor() as i32);
                 if self.worlds[world].block_at(pos.x, pos.y, pos.z).is_some_and(blocks::is_air) {
                     let fire = crate::world::block_updates::fire::fire_state_for(&self.worlds[world], pos);
-                    self.set_block_and_update(world, pos, fire);
+                    let shooter = owner.filter(|o| self.players.contains_key(o) || self.worlds[world].entities.contains_key(o));
+                    let by = crate::plugins::events::Igniter::Entity(shooter.unwrap_or(id));
+                    if crate::plugins::events::on_block_ignite(self, world, pos, "FIREBALL", by) {
+                        self.set_block_and_update(world, pos, fire);
+                    }
                 }
             }
         }

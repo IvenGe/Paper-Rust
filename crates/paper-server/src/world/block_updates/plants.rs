@@ -487,7 +487,7 @@ fn lava_ignites(level: &mut Level, pos: BlockPos) {
             if is_air(s) {
                 if Dir::ALL.iter().any(|d| flammable(level.state(at.rel(*d)))) {
                     let f = fire(level, at);
-                    level.set_block_and_update(at, f);
+                    light(level, at, pos, f);
                     return;
                 }
             } else if physics::flags(s) & physics::SOLID != 0 {
@@ -502,9 +502,18 @@ fn lava_ignites(level: &mut Level, pos: BlockPos) {
             }
             if is_air(level.state(at.above())) && flammable(level.state(at)) {
                 let f = fire(level, at.above());
-                level.set_block_and_update(at.above(), f);
+                light(level, at.above(), pos, f);
             }
         }
+    }
+}
+
+/// Lava at `lava` sets fire to `at`, or asks plugins listening first (see `Ask`).
+fn light(level: &mut Level, at: BlockPos, lava: BlockPos, fire: u32) {
+    if level.world.updates.vet_fire {
+        level.world.updates.asks.push(super::Ask::Ignite { pos: at, from: lava, state: fire });
+    } else {
+        level.set_block_and_update(at, fire);
     }
 }
 

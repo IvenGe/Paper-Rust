@@ -271,7 +271,12 @@ What works:
   the teleports the game makes too (`/tp`, ender pearls, chorus fruit, end gateways,
   getting out of bed, dismounting; plugins may stop them or send the player elsewhere, to
   another world as well) and `PlayerPortalEvent` (a trip through a nether or end portal
-  stopped or sent to another world and place, as Multiverse-NetherPortals does). Players,
+  stopped or sent to another world and place, as Multiverse-NetherPortals does),
+  `BlockPistonExtendEvent` and `BlockPistonRetractEvent` (with the blocks a piston moves;
+  as in Paper, a cancelled pull still lets a sticky piston retract), `BlockBurnEvent`,
+  `BlockIgniteEvent` with `BlockSpreadEvent` for fire spreading, and `BlockIgniteEvent` for
+  fires players light with flint and steel or fire charges (campfires and candles too) and
+  fires lightning, lava, small fireballs, dispensers and explosions start. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -430,9 +435,9 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
-  Events not fired yet include fire spreading and burning blocks, pistons, fluids flowing,
-  blocks growing, fading and forming, `EntityChangeBlockEvent`, projectiles being launched
-  and hitting, vehicles, and chunks loading and unloading.
+  Events not fired yet include fluids flowing, blocks growing, fading and forming,
+  `TNTPrimeEvent`, `EntityChangeBlockEvent`, projectiles being launched and hitting,
+  vehicles, and chunks loading and unloading.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

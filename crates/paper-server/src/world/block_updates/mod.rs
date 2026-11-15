@@ -43,7 +43,7 @@ use paper_protocol::codec::BlockPos;
 pub use state::{Axis, Dir, Kind, PosExt};
 use state::{block, block_id, default_state, kind};
 use std::cell::Cell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Vanilla's `Block.UPDATE_*` flags for [`Level::set_block`].
 pub mod flags {
@@ -146,6 +146,23 @@ struct BlockEventData {
     param: u8,
 }
 
+/// Something the block engine leaves to plugins while they listen (Paper's piston and fire
+/// events): the server fires the events once the engine's step has run, and the engine
+/// carries out their answers ([`answer`]).
+#[derive(Clone, Debug)]
+pub enum Ask {
+    /// A piston at `pos` is to move (and break) `blocks` towards `dir`
+    /// (`BlockPistonExtendEvent`, `BlockPistonRetractEvent`); its block event (`block`,
+    /// `action`, `param`) runs once answered.
+    Piston { pos: BlockPos, block: u32, action: u8, param: u8, extending: bool, dir: Dir, blocks: Vec<BlockPos> },
+    /// Fire at `by`, aged `age`, is to burn the block at `pos` away (`BlockBurnEvent`).
+    Burn { pos: BlockPos, by: BlockPos, age: i32 },
+    /// Fire at `from` is to spread to `pos` as `state` (`BlockIgniteEvent`, `BlockSpreadEvent`).
+    Spread { pos: BlockPos, from: BlockPos, state: u32 },
+    /// Lava at `from` is to set fire to `pos` as `state` (`BlockIgniteEvent`, cause `LAVA`).
+    Ignite { pos: BlockPos, from: BlockPos, state: u32 },
+}
+
 /// The block update state a world keeps between ticks.
 pub struct BlockUpdateState {
     pub settings: UpdateSettings,
@@ -166,6 +183,16 @@ pub struct BlockUpdateState {
     pub(crate) crafting: Vec<(BlockPos, i64)>,
     /// Scheduled ticks are running (vanilla's `isHandlingTick`).
     pub(crate) handling_tick: bool,
+    /// Plugins listen for piston moves, or for fire burning and spreading and lava setting
+    /// fires: those wait in `asks` for their say instead of happening at once.
+    pub vet_pistons: bool,
+    pub vet_fire: bool,
+    pub asks: Vec<Ask>,
+    /// Piston moves plugins answered (allowed, and the blocks they were asked about), run
+    /// when their block event comes round again.
+    approved_pistons: HashMap<BlockEventData, (bool, Vec<BlockPos>)>,
+    /// The piston event of the block event running was cancelled.
+    pub(crate) piston_denied: bool,
 }
 
 impl BlockUpdateState {
@@ -182,6 +209,11 @@ impl BlockUpdateState {
             moving_pistons: Vec::new(),
             crafting: Vec::new(),
             handling_tick: false,
+            vet_pistons: false,
+            vet_fire: false,
+            asks: Vec::new(),
+            approved_pistons: HashMap::new(),
+            piston_denied: false,
         }
     }
 
@@ -361,6 +393,12 @@ impl<'w> Level<'w> {
             }
         }
         true
+    }
+
+    /// Sends clients the block at `pos` as it is (`sendBlockUpdated` of an unchanged block).
+    pub fn resend_block(&mut self, pos: BlockPos) {
+        let state = self.state(pos);
+        self.world.updates.effects.push(Effect::Block(BlockChange { pos, old: state, new: state, light: HashSet::new() }));
     }
 
     /// `setBlockAndUpdate`.
@@ -604,11 +642,27 @@ impl<'w> Level<'w> {
             if block_id(state) != event.block {
                 continue;
             }
+            // Plugins have their say about a piston move first; asked again if what it moves
+            // changed since.
+            if self.world.updates.vet_pistons && matches!(kind(state), Kind::Piston { .. }) {
+                let answer = self.world.updates.approved_pistons.remove(&event);
+                if let Some((extending, dir, blocks)) = piston::planned_move(self, state, event.pos, event.action) {
+                    match answer {
+                        Some((allowed, asked)) if asked == blocks => self.world.updates.piston_denied = !allowed,
+                        _ => {
+                            self.world.updates.asks.push(Ask::Piston { pos: event.pos, block: event.block, action: event.action, param: event.param, extending, dir, blocks });
+                            continue;
+                        }
+                    }
+                }
+            }
             // Clients get the event before the block changes it causes (vanilla sends block
             // changes at the end of the tick), so they can animate piston moves.
             let index = self.world.updates.effects.len();
             self.world.updates.effects.push(Effect::BlockEvent { pos: event.pos, block: event.block, action: event.action, param: event.param });
-            if !self.trigger_event(state, event.pos, event.action, event.param) {
+            let ran = self.trigger_event(state, event.pos, event.action, event.param);
+            self.world.updates.piston_denied = false;
+            if !ran {
                 self.world.updates.effects.remove(index);
             }
         }
@@ -950,9 +1004,39 @@ fn in_tag_fire(state: u32) -> bool {
     state::in_tag!(state, "fire")
 }
 
-/// Runs a world's block ticks, fluid ticks and block events for the current game tick
-/// (call after the world's time advanced). `ticking` says which chunks may run theirs.
+/// Carries out plugins' answer to an [`Ask`] (a piston runs its block event either way,
+/// stopping where Paper stops a cancelled move), and runs the block events it sets off.
+pub fn answer(world: &mut World, ask: &Ask, allowed: bool, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
+    match ask {
+        Ask::Piston { pos, block, action, param, blocks, .. } => {
+            let event = BlockEventData { pos: *pos, block: *block, action: *action, param: *param };
+            world.updates.approved_pistons.insert(event, (allowed, blocks.clone()));
+            if world.updates.queued_events.insert(event) {
+                world.updates.block_events.push_front(event);
+            }
+            Level::new(world).run_block_events(ticking);
+            world.updates.approved_pistons.remove(&event);
+        }
+        Ask::Burn { pos, age, .. } if allowed => fire::burn_away(&mut Level::new(world), *pos, *age),
+        Ask::Spread { pos, state, .. } | Ask::Ignite { pos, state, .. } if allowed => fire::set_fire(&mut Level::new(world), *pos, *state),
+        _ => {}
+    }
+    if !world.updates.block_events.is_empty() {
+        Level::new(world).run_block_events(ticking);
+    }
+}
+
+/// Runs a world's block ticks, fluid ticks, block events and block entities for the current
+/// game tick (call after the world's time advanced). `ticking` says which chunks may run
+/// theirs. The server answers plugins' asks between [`tick_blocks`] and
+/// [`tick_block_entities`] instead.
 pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
+    tick_blocks(world, ticking);
+    tick_block_entities(world);
+}
+
+/// The block ticks, fluid ticks and block events of [`tick`].
+pub fn tick_blocks(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
     let now = world.age;
     for (index, kind) in [(0, TickKind::Block), (1, TickKind::Fluid)] {
         // Only chunks with due ticks are asked whether they tick.
@@ -981,7 +1065,12 @@ pub fn tick(world: &mut World, ticking: &dyn Fn(&World, ChunkPos) -> bool) {
     if !world.updates.block_events.is_empty() {
         Level::new(world).run_block_events(ticking);
     }
-    // Block entities tick last: moving pistons, crafters done showing their craft.
+}
+
+/// The block entities of [`tick`], after its block ticks and block events: moving pistons,
+/// crafters done showing their craft.
+pub fn tick_block_entities(world: &mut World) {
+    let now = world.age;
     if !world.updates.moving_pistons.is_empty() {
         piston::tick_moving(&mut Level::new(world));
     }

@@ -209,6 +209,58 @@ fn expect_line(client: &mut Client, wanted: &str) {
     panic!("no {wanted:?} among {seen:?}");
 }
 
+/// Waits for a chat line starting with `prefix`, and returns it.
+fn line_starting(client: &mut Client, prefix: &str) -> String {
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        if let Some(m) = client.try_expect::<play::SystemChat>(Duration::from_millis(100)) {
+            let text = m.content.to_plain();
+            if text.starts_with(prefix) {
+                return text;
+            }
+            seen.push(text);
+        }
+    }
+    panic!("no line starting with {prefix:?} among {seen:?}");
+}
+
+/// Sets blocks in the overworld, with block updates or just storing them.
+fn put(server: &paper_server::RunningServer, blocks: &[(BlockPos, &'static str)], update: bool) {
+    let blocks = blocks.to_vec();
+    server
+        .handle
+        .run(move |s| {
+            for (pos, state) in blocks {
+                let state = paper_data::blocks::parse_state(state).unwrap();
+                if update {
+                    s.set_block_and_update(0, pos, state);
+                } else {
+                    s.worlds[0].set_block(pos.x, pos.y, pos.z, state);
+                }
+            }
+            s.publish_block_updates(0);
+        })
+        .unwrap();
+}
+
+fn block_state(server: &paper_server::RunningServer, pos: BlockPos) -> String {
+    server.handle.run(move |s| s.worlds[0].block_at(pos.x, pos.y, pos.z).map(paper_data::blocks::state_to_string).unwrap_or_default()).unwrap()
+}
+
+/// Runs `n` ticks of the overworld's block updates at once (fire takes its time).
+fn run_block_ticks(server: &paper_server::RunningServer, n: usize) {
+    server
+        .handle
+        .run(move |s| {
+            for _ in 0..n {
+                s.worlds[0].tick_time();
+                s.tick_block_updates();
+            }
+        })
+        .unwrap();
+}
+
 fn component_id(name: &str) -> i32 {
     paper_data::registries::id("minecraft:data_component_type", name).unwrap() as i32
 }
@@ -770,6 +822,150 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     server.handle.run(move |s| s.teleport(alice_id, home)).unwrap();
     alice.command("apitest watch");
     expect_line(&mut alice, "watch: false");
+
+    // --- pistons and fire plugins stop (the test plugin's "blocks") ---------------------------
+    // A sticky piston facing east with stone in front, powered by a redstone block behind it.
+    let piston = feet.offset(10, 3, -10);
+    let (front, two, behind) = (piston.offset(1, 0, 0), piston.offset(2, 0, 0), piston.offset(-1, 0, 0));
+    put(&server, &[(piston, "minecraft:sticky_piston[facing=east,extended=false]"), (front, "minecraft:stone")], false);
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    put(&server, &[(behind, "minecraft:redstone_block")], true);
+    alice.drain(Duration::from_millis(500));
+    assert_eq!(block_state(&server, front), "minecraft:stone", "the push was stopped");
+    assert!(block_state(&server, piston).contains("extended=false"));
+    alice.command("apitest blockevents");
+    expect_line(&mut alice, "blockevents: EXTEND EAST [STONE]");
+    // Allowed, it pushes.
+    put(&server, &[(behind, "minecraft:air")], true);
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    put(&server, &[(behind, "minecraft:redstone_block")], true);
+    alice.drain(Duration::from_millis(500));
+    assert_eq!(block_state(&server, two), "minecraft:stone", "pushed");
+    assert!(block_state(&server, piston).contains("extended=true"));
+    alice.command("apitest blockevents");
+    expect_line(&mut alice, "blockevents: EXTEND EAST [STONE]");
+    // A cancelled pull: the piston still retracts and the stone stays, as in Paper.
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    put(&server, &[(behind, "minecraft:air")], true);
+    alice.drain(Duration::from_millis(500));
+    assert!(block_state(&server, piston).contains("extended=false"), "{}", block_state(&server, piston));
+    assert_eq!(block_state(&server, front), "minecraft:air");
+    assert_eq!(block_state(&server, two), "minecraft:stone", "not pulled");
+    alice.command("apitest blockevents");
+    expect_line(&mut alice, "blockevents: RETRACT WEST [STONE]");
+    // A piston that pulls nothing stays out when its retraction is cancelled.
+    let plain = feet.offset(10, 3, -14);
+    put(&server, &[(plain, "minecraft:piston[facing=east,extended=false]")], false);
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    put(&server, &[(plain.offset(-1, 0, 0), "minecraft:redstone_block")], true);
+    alice.drain(Duration::from_millis(500));
+    assert!(block_state(&server, plain).contains("extended=true"));
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    put(&server, &[(plain.offset(-1, 0, 0), "minecraft:air")], true);
+    alice.drain(Duration::from_millis(500));
+    assert!(block_state(&server, plain).contains("extended=true"), "stays out");
+    assert!(block_state(&server, plain.offset(1, 0, 0)).starts_with("minecraft:piston_head"));
+    alice.command("apitest blockevents");
+    expect_line(&mut alice, "blockevents: RETRACT EAST []");
+
+    // Flint and steel on the ground: the fire is stopped.
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    let held = server.handle.run(move |s| s.players[&alice_id].held_slot as usize).unwrap();
+    let in_hand = server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&alice_id).unwrap();
+            let in_hand = std::mem::replace(&mut p.inventory[36 + held], Slot::of(paper_data::items::id("minecraft:flint_and_steel").unwrap() as i32, 1));
+            s.resync_inventory(alice_id);
+            in_hand
+        })
+        .unwrap();
+    let ground = feet.offset(1, -1, 0);
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: ground, face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(93) });
+    alice.drain(QUIET);
+    assert_eq!(block_state(&server, ground.offset(0, 1, 0)), "minecraft:air", "no fire");
+    alice.command("apitest blockevents");
+    expect_line(&mut alice, "blockevents: IGNITE FLINT_AND_STEEL player");
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = in_hand;
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+
+    // Fire on a floor of planks: plugins stop it burning and spreading, then let it.
+    let floor = feet.offset(-12, 4, 12);
+    let area = move |dy: std::ops::RangeInclusive<i32>, r: i32| (-r..=r).flat_map(move |dx| dy.clone().flat_map(move |y| (-r..=r).map(move |dz| floor.offset(dx, y, dz))));
+    let planks: Vec<_> = area(0..=0, 3).map(|p| (p, "minecraft:oak_planks")).collect();
+    put(&server, &planks, false);
+    alice.command("apitest blocks cancel");
+    expect_line(&mut alice, "blocks: cancel");
+    let fires: Vec<_> = area(1..=1, 1).map(|p| (p, "minecraft:fire")).collect();
+    put(&server, &fires, true);
+    let lit: Vec<BlockPos> = fires.iter().map(|(p, _)| *p).collect();
+    let fire_count = move |s: &mut paper_server::server::Server| {
+        let (mut planks, mut spread) = (0, 0);
+        for p in area(-2..=6, 4) {
+            let name = s.worlds[0].block_at(p.x, p.y, p.z).map_or("", |b| paper_data::blocks::block_of_state(b).name);
+            planks += (name == "minecraft:oak_planks") as usize;
+            spread += (name == "minecraft:fire" && !lit.contains(&p)) as usize;
+        }
+        (planks, spread)
+    };
+    let fire_count2 = fire_count.clone();
+    let mut seen = String::new();
+    for _ in 0..10 {
+        run_block_ticks(&server, 1000);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        if seen.contains("BURN OAK_PLANKS by FIRE") {
+            break;
+        }
+    }
+    // (The spread's BlockIgniteEvent was cancelled, so its BlockSpreadEvent never fired.)
+    assert!(seen.contains("BURN OAK_PLANKS by FIRE") && !seen.contains("SPREAD FIRE ->"), "{seen}");
+    // Lava in a stone basin under the floor, ticking fast: it would set the floor alight.
+    let lava = floor.offset(0, -2, 0);
+    let basin: Vec<_> = [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)].into_iter().map(|(x, y, z)| (lava.offset(x, y, z), "minecraft:stone")).chain([(lava, "minecraft:lava")]).collect();
+    put(&server, &basin, false);
+    let speed = server.handle.run(|s| s.worlds[0].rules.int("random_tick_speed")).unwrap();
+    server.handle.run(|s| s.worlds[0].rules.set("random_tick_speed", paper_data::game_rules::Value::Int(512))).unwrap();
+    for _ in 0..20 {
+        run_block_ticks(&server, 50);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        if seen.contains("IGNITE LAVA LAVA") {
+            break;
+        }
+    }
+    server.handle.run(move |s| s.worlds[0].rules.set("random_tick_speed", paper_data::game_rules::Value::Int(speed))).unwrap();
+    assert!(seen.contains("IGNITE LAVA LAVA"), "{seen}");
+    assert_eq!(server.handle.run(fire_count).unwrap(), (49, 0), "nothing burned or caught fire");
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    for _ in 0..30 {
+        run_block_ticks(&server, 1000);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        if ["BURN OAK_PLANKS by FIRE", "IGNITE SPREAD FIRE", "SPREAD FIRE -> FIRE"].iter().all(|e| seen.contains(e)) {
+            break;
+        }
+    }
+    assert!(["BURN OAK_PLANKS by FIRE", "IGNITE SPREAD FIRE", "SPREAD FIRE -> FIRE"].iter().all(|e| seen.contains(e)), "{seen}");
+    let (planks_left, _) = server.handle.run(fire_count2).unwrap();
+    assert!(planks_left < 49, "planks burned");
+    alice.command("apitest blocks off");
+    expect_line(&mut alice, "blocks: off");
+    let cleared: Vec<_> =
+        area(-2..=6, 4).map(|p| (p, "minecraft:air")).chain([piston, front, two, behind, plain, plain.offset(1, 0, 0), lava.offset(0, -1, 0)].map(|p| (p, "minecraft:air"))).collect();
+    put(&server, &cleared, false);
 
     // Crafting tables and anvils without a block, as Essentials' /craft and /anvil open them.
     alice.command("apitest stations");

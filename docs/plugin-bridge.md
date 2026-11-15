@@ -166,6 +166,10 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.weather_change` | `world`, `thunder`, `to`, `cause` (`NATURAL`, `COMMAND`, `PLUGIN`, `SLEEP`) | `cancelled` (`WeatherChangeEvent`, `ThunderChangeEvent`) |
 | `event.teleport` / `event.portal` | `uuid`, `from`, `to` (`{world, x, y, z, yaw, pitch}`), `cause` (`TeleportCause`), and for a portal `search_radius`, `can_create`, `creation_radius` | `cancelled`, or `to` where the player goes instead, another world too (`PlayerTeleportEvent` for the server's own teleports, `PlayerPortalEvent` as a nether or end portal trip starts) |
 | `event.entity_target` | `entity`, `target`, `reason` | `cancelled` (`EntityTargetLivingEntityEvent`; a listener clearing the target cancels too) |
+| `event.piston` | `world`, `x`, `y`, `z` (the piston), `extending`, `direction` (the `BlockFace` the blocks move towards), `blocks` `[[x, y, z]]` (moved, then broken) | `cancelled` (`BlockPistonExtendEvent`, `BlockPistonRetractEvent`) |
+| `event.block_burn` | `world`, `x`, `y`, `z`, `by` `[x, y, z]` (the fire) | `cancelled` (`BlockBurnEvent`) |
+| `event.fire_spread` | `world`, `x`, `y`, `z`, `from` `[x, y, z]` (the fire), `state` (the new fire) | `cancelled`, `state` (`BlockIgniteEvent` with cause `SPREAD`, then `BlockSpreadEvent` unless that was cancelled; a listener may change the new state) |
+| `event.block_ignite` | `world`, `x`, `y`, `z`, `cause` (`IgniteCause`), and `entity` (a player, a lightning bolt, a fireball's shooter, what exploded) or `from` `[x, y, z]` (lava, a dispenser) | `cancelled` (`BlockIgniteEvent`; flint and steel still wears, a fire charge is still used up) |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
 | `event.chat` (async) | `uuid`, `message`, `default` | `cancelled`, `deliveries`: `[{viewer, message}]` rendered per viewer (`viewer` is a UUID or `console`) |
@@ -177,10 +181,19 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 
 Some events are only fired when a plugin listens to them (the host reports which in
 `events`): command preprocess, server command, block break and place, interactions and
-explosions, move, game mode change, chat, and the inventory, item, damage, death, respawn
-and spawn events. Join, quit,
+explosions, move, game mode change, chat, the inventory, item, damage, death, respawn
+and spawn events, and pistons and fire. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
+
+Piston moves, fire burning or spreading, and lava setting fires happen inside the block
+engine, which has no access to the plugin connection. While plugins listen for their events,
+the engine leaves them as asks (`block_updates::Ask`) instead of carrying them out. The
+server fires the events and has the engine carry out the answers once the tick's block ticks
+and block events have run (before block entities tick, as Paper fires these events during
+those steps), and again after random ticks. A piston runs its block event either way and
+stops where Paper stops a cancelled move; moves that an allowed move sets off are asked
+about in a further round.
 
 `plugins` is a list of `{name, version, enabled, kind}` with `kind` `paper` or `bukkit`.
 `commands` lists every label of every plugin command (with and without the plugin's

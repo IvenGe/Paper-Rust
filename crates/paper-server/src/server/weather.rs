@@ -266,7 +266,7 @@ impl Server {
                     let level = crate::world::block_updates::Level::new(&mut self.worlds[world]);
                     level.can_survive(fire, p)
                 };
-                if fits {
+                if fits && crate::plugins::events::on_block_ignite(self, world, p, "LIGHTNING", crate::plugins::events::Igniter::Entity(bolt)) {
                     self.set_block_and_update(world, p, fire);
                 }
             }
