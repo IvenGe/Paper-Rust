@@ -95,6 +95,10 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("love_cause", m.love_cause.and_then(|p| server.players.get(&p)).map(|p| p.uuid().to_string()));
             out.set("sheared", m.sheared);
             out.set("variant", m.variant);
+            if let Some(registry) = crate::server::variants::registry_of(&e.info.name) {
+                out.set("variant_key", crate::server::variants::key_of(registry, m.variant));
+            }
+            out.set("collar", m.collar);
             out.set("no_action_ticks", m.no_player_ticks);
             out.set("experience_reward", e.info.experience);
             // The player who hurt it in the last five seconds (`lastHurtByPlayer`).
@@ -656,10 +660,22 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                             m.sheared = sheared;
                             e.metadata_dirty = true;
                         }
-                        if let Some(color) = args.i32("variant") {
-                            m.variant = color.clamp(0, 15);
-                            e.metadata_dirty = true;
-                        }
+                    }
+                    // A sheep's colour, a horse's coat and markings, a llama's colour, a
+                    // rabbit's type, ... (as numbers the host checks), or an entry of the
+                    // mob's variant registry (cats, cows, ...).
+                    if let Some(v) = args.i32("variant") {
+                        m.variant = if e.info.name == "minecraft:sheep" { v.clamp(0, 15) } else { v };
+                        e.metadata_dirty = true;
+                    }
+                    if let Some(key) = args.str("variant_key") {
+                        let registry = crate::server::variants::registry_of(&e.info.name).ok_or_else(|| anyhow!("{} has no variant of a registry", e.info.name))?;
+                        m.variant = crate::server::variants::id_of(registry, key).ok_or_else(|| anyhow!("unknown {registry} entry {key}"))?;
+                        e.metadata_dirty = true;
+                    }
+                    if let Some(c) = args.i32("collar") {
+                        m.collar = c.clamp(0, 15);
+                        e.metadata_dirty = true;
                     }
                     if let Some(equipment) = args.list("equipment") {
                         for entry in equipment {

@@ -28,6 +28,7 @@ pub mod entities;
 pub mod loot;
 pub mod menu;
 pub mod mobs;
+pub mod variants;
 pub mod player;
 pub(crate) mod playerdata;
 pub mod portals;

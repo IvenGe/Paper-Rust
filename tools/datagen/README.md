@@ -63,6 +63,7 @@ Inputs used for the committed 26.3 tables:
 | `synced_registries.json` | synchronized registries in vanilla's send order and their entries | order: bytecode; entries: json files in the jar |
 | `tags.json` | tags vanilla sends, as numeric ids | tag files in the jar |
 | `dimension_types.json` | raw `dimension_type/*.json` | jar |
+| `variants.json` | the `spawn_conditions` of `cat_variant`, `chicken_variant`, `cow_variant`, `frog_variant`, `pig_variant`, `wolf_variant` and `zombie_nautilus_variant` entries (checked: the same entries as the synchronised registries) | jar |
 | `feature_flags.json` | flags enabled by default | bytecode |
 
 JSON is compact and deterministic. Floats are written as the shortest decimal

@@ -894,6 +894,17 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
                     m = m.boolean(i, e.flags.age_locked);
                 }
             }
+            // Its variant: an entry of a variant registry (cats, cows, ...), always sent as
+            // the client's default may differ, or a number (rabbits, llamas, ...).
+            if super::variants::registry_of(&info.name).is_some() {
+                if let Some(&(i, serializer)) = info.data.get("DATA_VARIANT_ID") {
+                    m = m.varint_as(i, serializer as i32, mob.variant);
+                }
+            } else if let Some(i) = super::variants::numbered_field(&info.name).and_then(|f| info.data_index(f)) {
+                if mob.variant != 0 || !spawning {
+                    m = m.varint(i, mob.variant);
+                }
+            }
             if let Some(i) = info.data_index("DATA_SWELL_DIR") {
                 m = m.varint(i, if mob.brain.swelling { 1 } else { -1 });
             }
@@ -923,9 +934,7 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
                         m = m.varint(i, mob.collar);
                     }
                 }
-                if let Some(i) = info.data_index("DATA_VARIANT_ID").filter(|_| info.name == "minecraft:parrot") {
-                    m = m.varint(i, mob.variant);
-                }
+
             }
             // Horses: tame flag and coat.
             if super::riding::is_horse(&info.name) {

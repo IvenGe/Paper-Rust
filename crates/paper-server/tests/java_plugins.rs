@@ -607,6 +607,8 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert_eq!(flags.tags, vec!["paper-rs".to_owned()]);
     assert_eq!(flags.spawn_reason.as_deref(), Some("CUSTOM"));
     assert_eq!(age, 0, "ready to breed");
+    let warm = server.handle.run(move |s| s.worlds[0].entities[&cow].mob().unwrap().variant).unwrap();
+    assert_eq!(paper_server::server::variants::key_of("minecraft:cow_variant", warm), Some("minecraft:warm"));
     assert!(sheared && color == 14, "a sheared red sheep: {sheared} {color}");
     assert!(saved.glowing && saved.silent && saved.invulnerable && saved.no_ai && saved.age_locked && saved.tags == flags.tags && saved.spawn_reason == flags.spawn_reason, "saved {saved:?}");
     // Only what bypasses invulnerability hurts it.

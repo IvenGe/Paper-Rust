@@ -13,6 +13,7 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `synced_registries.json` | registries sent to clients during configuration, in send order |
 | `tags.json` | tags sent to clients, resolved to numeric ids |
 | `dimension_types.json` | the vanilla dimension type definitions |
+| `variants.json` | per mob variant registry (cats, chickens, cows, frogs, pigs, wolves, zombie nautiluses): each variant's spawn conditions (biome, structure, moon brightness) and priority |
 | `feature_flags.json` | feature flags enabled by default |
 | `block_behaviour.json` | per block state: sturdy faces, legacy solid, redstone conductor, comparator output, piston reaction, full collision faces, note block instrument |
 | `block_physics.json` | per block state: collision shapes and behaviour flags; per block: loot table, friction, speed and jump factors; block entity types |

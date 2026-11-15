@@ -1712,15 +1712,157 @@ public final class HostEntity implements HostProxies.Backed {
         this.set("sheared", flag);
     }
 
-    public org.bukkit.@Nullable DyeColor getColor() {
-        this.sheepOnly("getColor");
-        return org.bukkit.DyeColor.getByWoolData((byte) Values.i32(this.state(), "variant", 0));
+    /** A sheep's wool (a DyeColor), a llama's coat (Llama.Color) or a horse's (Horse.Color). */
+    public @Nullable Object getColor() {
+        final int variant = this.variantNumber();
+        return switch (this.type) {
+            case SHEEP -> org.bukkit.DyeColor.getByWoolData((byte) variant);
+            case LLAMA, TRADER_LLAMA -> byOrdinal(org.bukkit.entity.Llama.Color.values(), variant);
+            case HORSE -> byOrdinal(org.bukkit.entity.Horse.Color.values(), variant & 0xFF);
+            default -> throw io.papermc.paperrs.host.Unsupported.method(this.type.getEntityClass().getSimpleName() + "#getColor");
+        };
     }
 
     public void setColor(final org.bukkit.@Nullable DyeColor color) {
         this.sheepOnly("setColor");
         com.google.common.base.Preconditions.checkArgument(color != null, "color cannot be null");
         this.set("variant", (int) color.getWoolData());
+    }
+
+    // --- variants (CraftCat, CraftWolf, CraftCow, CraftRabbit, CraftHorse, ...) ------------------
+
+    private int variantNumber() {
+        return Values.i32(this.state(), "variant", 0);
+    }
+
+    private static <E> E byOrdinal(final E[] values, final int i) {
+        return values[i >= 0 && i < values.length ? i : 0];
+    }
+
+    /** An entry of the mob's variant registry (cats, chickens, cows, frogs, pigs, wolves). */
+    private <T extends org.bukkit.Keyed> T registryVariant(final io.papermc.paper.registry.RegistryKey<T> key) {
+        final String name = Values.str(this.state(), "variant_key", null);
+        if (name == null) {
+            throw new IllegalStateException(this.type.getKey() + " has no variant");
+        }
+        return io.papermc.paper.registry.RegistryAccess.registryAccess().getRegistry(key).getOrThrow(org.bukkit.NamespacedKey.fromString(name));
+    }
+
+    private void setRegistryVariant(final org.bukkit.Keyed variant) {
+        com.google.common.base.Preconditions.checkArgument(variant != null, "variant cannot be null");
+        this.set("variant_key", variant.getKey().toString());
+    }
+
+    private void setNumberedVariant(final Enum<?> variant) {
+        com.google.common.base.Preconditions.checkArgument(variant != null, "variant cannot be null");
+        this.set("variant", variant.ordinal());
+    }
+
+    public Object getVariant() {
+        return switch (this.type) {
+            case WOLF -> this.registryVariant(io.papermc.paper.registry.RegistryKey.WOLF_VARIANT);
+            case COW -> this.registryVariant(io.papermc.paper.registry.RegistryKey.COW_VARIANT);
+            case PIG -> this.registryVariant(io.papermc.paper.registry.RegistryKey.PIG_VARIANT);
+            case CHICKEN -> this.registryVariant(io.papermc.paper.registry.RegistryKey.CHICKEN_VARIANT);
+            case FROG -> this.registryVariant(io.papermc.paper.registry.RegistryKey.FROG_VARIANT);
+            case ZOMBIE_NAUTILUS -> this.registryVariant(io.papermc.paper.registry.RegistryKey.ZOMBIE_NAUTILUS_VARIANT);
+            case PARROT -> byOrdinal(org.bukkit.entity.Parrot.Variant.values(), this.variantNumber());
+            case AXOLOTL -> byOrdinal(org.bukkit.entity.Axolotl.Variant.values(), this.variantNumber());
+            case MOOSHROOM -> byOrdinal(org.bukkit.entity.MushroomCow.Variant.values(), this.variantNumber());
+            default -> throw io.papermc.paperrs.host.Unsupported.method(this.type.getEntityClass().getSimpleName() + "#getVariant");
+        };
+    }
+
+    public void setVariant(final org.bukkit.entity.Wolf.Variant variant) {
+        this.setRegistryVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.Cow.Variant variant) {
+        this.setRegistryVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.Pig.Variant variant) {
+        this.setRegistryVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.Chicken.Variant variant) {
+        this.setRegistryVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.Frog.Variant variant) {
+        this.setRegistryVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.ZombieNautilus.Variant variant) {
+        this.setRegistryVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.Parrot.Variant variant) {
+        this.setNumberedVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.Axolotl.Variant variant) {
+        this.setNumberedVariant(variant);
+    }
+
+    public void setVariant(final org.bukkit.entity.MushroomCow.Variant variant) {
+        this.setNumberedVariant(variant);
+    }
+
+    public org.bukkit.entity.Cat.Type getCatType() {
+        return this.registryVariant(io.papermc.paper.registry.RegistryKey.CAT_VARIANT);
+    }
+
+    public void setCatType(final org.bukkit.entity.Cat.Type type) {
+        this.setRegistryVariant(type);
+    }
+
+    /** Vanilla's rabbit types are numbered as Bukkit's, but for the killer bunny (99). */
+    public org.bukkit.entity.Rabbit.Type getRabbitType() {
+        final int type = this.variantNumber();
+        return type == 99 ? org.bukkit.entity.Rabbit.Type.THE_KILLER_BUNNY : byOrdinal(org.bukkit.entity.Rabbit.Type.values(), type);
+    }
+
+    public void setRabbitType(final org.bukkit.entity.Rabbit.Type type) {
+        com.google.common.base.Preconditions.checkArgument(type != null, "type cannot be null");
+        this.set("variant", type == org.bukkit.entity.Rabbit.Type.THE_KILLER_BUNNY ? 99 : type.ordinal());
+    }
+
+    public org.bukkit.entity.Fox.Type getFoxType() {
+        return byOrdinal(org.bukkit.entity.Fox.Type.values(), this.variantNumber());
+    }
+
+    public void setFoxType(final org.bukkit.entity.Fox.Type type) {
+        this.setNumberedVariant(type);
+    }
+
+    public void setColor(final org.bukkit.entity.Llama.Color color) {
+        this.setNumberedVariant(color);
+    }
+
+    /** A horse's coat (the low byte of its variant) and markings (the next). */
+    public void setColor(final org.bukkit.entity.Horse.Color color) {
+        com.google.common.base.Preconditions.checkArgument(color != null, "color cannot be null");
+        this.set("variant", color.ordinal() | this.variantNumber() & 0xFF00);
+    }
+
+    public org.bukkit.entity.Horse.Style getStyle() {
+        return byOrdinal(org.bukkit.entity.Horse.Style.values(), this.variantNumber() >> 8 & 0xFF);
+    }
+
+    public void setStyle(final org.bukkit.entity.Horse.Style style) {
+        com.google.common.base.Preconditions.checkArgument(style != null, "style cannot be null");
+        this.set("variant", this.variantNumber() & 0xFF | style.ordinal() << 8);
+    }
+
+    /** Wolves' and cats' collars. */
+    public org.bukkit.DyeColor getCollarColor() {
+        return org.bukkit.DyeColor.getByWoolData((byte) Values.i32(this.state(), "collar", 14));
+    }
+
+    public void setCollarColor(final org.bukkit.DyeColor color) {
+        com.google.common.base.Preconditions.checkArgument(color != null, "color cannot be null");
+        this.set("collar", (int) color.getWoolData());
     }
 
     public boolean readyToBeSheared() {

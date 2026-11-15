@@ -628,3 +628,105 @@ pub mod effects {
         tables().potions.get(name.as_ref()).map_or(&[], |v| v.as_slice())
     }
 }
+
+/// The variants mobs are given when they spawn (`minecraft:cow_variant`, ...), each with the
+/// conditions under which it may be picked, from the vanilla data pack (`variants.json`, see
+/// `tools/datagen`).
+pub mod variants {
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    /// When a variant may be picked (`SpawnCondition`).
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Condition {
+        Always,
+        /// In one of these biomes: ids, or a `#tag`.
+        Biome(Vec<String>),
+        /// Inside one of these structures: ids, or a `#tag`.
+        Structure(Vec<String>),
+        /// While the moon is at least `min` and at most `max` bright.
+        MoonBrightness { min: Option<f64>, max: Option<f64> },
+        /// A condition this table does not know.
+        Never,
+    }
+
+    /// One way a variant can be picked, and how much it is preferred over others.
+    #[derive(Clone, Debug)]
+    pub struct Selector {
+        pub priority: i32,
+        pub condition: Condition,
+    }
+
+    type Tables = HashMap<String, Vec<(String, Vec<Selector>)>>;
+
+    fn tables() -> &'static Tables {
+        static T: OnceLock<Tables> = OnceLock::new();
+        T.get_or_init(|| {
+            let v: Value = serde_json::from_str(include_str!("../../../data/26.3/variants.json")).expect("variants.json");
+            v.as_object()
+                .expect("variants.json")
+                .iter()
+                .map(|(registry, entries)| {
+                    let entries = entries.as_object().expect("variant entries").iter().map(|(name, s)| (name.clone(), s.as_array().map(|a| a.iter().map(selector).collect()).unwrap_or_default())).collect();
+                    (registry.clone(), entries)
+                })
+                .collect()
+        })
+    }
+
+    /// A biome or structure set: one id or `#tag`, or a list of ids.
+    fn holders(v: &Value) -> Vec<String> {
+        match v {
+            Value::String(s) => vec![s.clone()],
+            Value::Array(a) => a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn selector(v: &Value) -> Selector {
+        let c = &v["condition"];
+        let condition = match c["type"].as_str() {
+            None => Condition::Always,
+            Some("minecraft:biome") => Condition::Biome(holders(&c["biomes"])),
+            Some("minecraft:structure") => Condition::Structure(holders(&c["structures"])),
+            // A range, or a bare number for exactly that brightness.
+            Some("minecraft:moon_brightness") => match c["range"].as_f64() {
+                Some(x) => Condition::MoonBrightness { min: Some(x), max: Some(x) },
+                None => Condition::MoonBrightness { min: c["range"]["min"].as_f64(), max: c["range"]["max"].as_f64() },
+            },
+            Some(_) => Condition::Never,
+        };
+        Selector { priority: v["priority"].as_i64().unwrap_or(0) as i32, condition }
+    }
+
+    /// The variants of a registry with their selectors, in registry order.
+    pub fn of(registry: &str) -> &'static [(String, Vec<Selector>)] {
+        tables().get(registry).map_or(&[], Vec::as_slice)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn cows_by_biome_and_black_cats_by_the_moon() {
+            let cows = of("minecraft:cow_variant");
+            let cold = &cows.iter().find(|(n, _)| n == "minecraft:cold").unwrap().1;
+            assert_eq!(cold[0].priority, 1);
+            assert_eq!(cold[0].condition, Condition::Biome(vec!["#minecraft:spawns_cold_variant_farm_animals".into()]));
+            let temperate = &cows.iter().find(|(n, _)| n == "minecraft:temperate").unwrap().1;
+            assert_eq!(temperate[0].condition, Condition::Always);
+            let black = &of("minecraft:cat_variant").iter().find(|(n, _)| n == "minecraft:all_black").unwrap().1;
+            assert!(black.iter().any(|s| s.condition == Condition::MoonBrightness { min: Some(0.9), max: None }));
+            // The same variants the client is told of.
+            for registry in ["minecraft:cat_variant", "minecraft:cow_variant", "minecraft:wolf_variant", "minecraft:frog_variant"] {
+                let mut names: Vec<&str> = of(registry).iter().map(|(n, _)| n.as_str()).collect();
+                let mut synced = crate::synced::entries(registry).unwrap().to_vec();
+                names.sort();
+                synced.sort();
+                assert_eq!(names, synced, "{registry}");
+            }
+        }
+    }
+}

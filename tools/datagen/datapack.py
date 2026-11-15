@@ -180,6 +180,25 @@ def resolve_tags(raw, valid_elements):
     return done, problems
 
 
+# The registries a mob's variant is picked from when it spawns (``VariantUtils``).
+VARIANT_REGISTRIES = ["minecraft:cat_variant", "minecraft:chicken_variant", "minecraft:cow_variant",
+                      "minecraft:frog_variant", "minecraft:pig_variant", "minecraft:wolf_variant",
+                      "minecraft:zombie_nautilus_variant"]
+
+
+def variant_spawn_conditions(pack):
+    """The ``spawn_conditions`` of every entry of the mob variant registries, by registry."""
+    out = {}
+    for rid in VARIANT_REGISTRIES:
+        path = _path_of(rid)
+        entries = {}
+        for vid in registry_entries(pack, rid):
+            ns, _, p = vid.partition(":")
+            entries[vid] = pack.read_json(ns, "%s/%s.json" % (path, p)).get("spawn_conditions", [])
+        out[rid] = entries
+    return out
+
+
 def dimension_types(pack):
     out = {}
     for did in registry_entries(pack, "minecraft:dimension_type"):

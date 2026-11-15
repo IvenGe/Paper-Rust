@@ -72,6 +72,15 @@ impl Metadata {
         m
     }
 
+    /// A VarInt under another serializer, given by its id: registry entries such as a
+    /// `cat_variant`, by network id.
+    pub fn varint_as(mut self, index: u8, serializer: i32, value: i32) -> Self {
+        self.0.put_u8(index);
+        self.0.put_varint(serializer);
+        self.0.put_varint(value);
+        self
+    }
+
     pub fn varint(self, index: u8, value: i32) -> Self {
         let mut m = self.entry(index, "int");
         m.0.put_varint(value);

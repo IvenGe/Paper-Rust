@@ -116,8 +116,14 @@ What works:
   ground (rabbits on sand and snow, goats on stone, mooshrooms on mycelium, ...) and also when
   a chunk is generated, under the trees too; bats in dark caves, fish and squid near the
   surface of water, glow squid deep down, axolotls in lush caves, slimes in swamps and slime
-  chunks, the nether's own mobs. They despawn far from players, and drop loot (vanilla loot
-  tables) and experience.
+  chunks, the nether's own mobs. Each spawns as the variant of its place, by the spawn
+  conditions of the vanilla data pack: cold cows, pigs and chickens in snowy biomes and
+  warm ones in deserts, savannas and jungles, wolves and frogs of their biomes, cats of any
+  coat (the all-black one only under a full moon), white rabbits and snow foxes in snowy places and gold
+  rabbits in deserts, llamas, parrots and axolotls of any colour; the young take a
+  parent's (horses now and then neither parent's coat or markings, rarely a blue axolotl).
+  Variants are shown to players and saved under vanilla's keys. They despawn far from
+  players, and drop loot (vanilla loot tables) and experience.
   Mob spawners (dungeons) spawn their mob near players; end crystals explode when hit.
   Animals follow players holding their food and breed when fed (babies grow up, faster when
   fed); cows and goats give milk, mooshrooms stew; sheep are sheared and dyed and eat grass
@@ -274,7 +280,9 @@ What works:
     horses (domestication, jump strength), the flags of any entity (glowing, silent,
     invisible, invulnerable, visual fire, freezing, portal cooldown, scoreboard tags) and of
     mobs (`setAI`, `setAware`, left-handed), why a mob was spawned, ages, age locks and love
-    mode (`Ageable`, `Breedable`, `Animals`), sheep (wool colour, `shear`), projectiles
+    mode (`Ageable`, `Breedable`, `Animals`), sheep (wool colour, `shear`), variants (of
+    cats, chickens, cows, frogs, pigs, wolves, parrots, axolotls, mooshrooms, rabbits, foxes,
+    llamas, horses' coats and markings) and collars, projectiles
     launched by players and mobs (`launchProjectile`: arrows, fireballs, snowballs, eggs,
     ender pearls, bottles o' enchanting, potions) or spawned and aimed by plugins
     (`setShooter`, `Fireball.setDirection`), and the

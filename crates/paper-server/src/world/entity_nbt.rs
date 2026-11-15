@@ -191,6 +191,24 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 c.insert("Color", Tag::Byte(mob.variant as i8));
                 c.insert("Sheared", Tag::Byte(mob.sheared as i8));
             }
+            // Variants: an entry of a variant registry by key, or a number (horses and
+            // llamas keep theirs with the rest of their data below).
+            if let Some(key) = crate::server::variants::registry_of(&e.info.name).and_then(|r| crate::server::variants::key_of(r, mob.variant)) {
+                c.insert("variant", Tag::String(key.to_owned()));
+            }
+            match e.info.name.as_str() {
+                "minecraft:rabbit" => {
+                    c.insert("RabbitType", Tag::Int(mob.variant));
+                }
+                "minecraft:parrot" | "minecraft:axolotl" => {
+                    c.insert("Variant", Tag::Int(mob.variant));
+                }
+                name => {
+                    if let Some(t) = crate::server::variants::type_name(name, mob.variant) {
+                        c.insert("Type", Tag::String(t.to_owned()));
+                    }
+                }
+            }
             if let Some(merchant) = &mob.merchant {
                 merchant.save(&mut c, dimension, e.info.name == "minecraft:villager");
             }
@@ -240,6 +258,24 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
 }
 
 /// An entity from its saved form, with a new runtime `id`.
+/// A mob's saved variant: a key of its variant registry (its default if none is saved), a
+/// rabbit's `RabbitType`, a fox's or mooshroom's `Type`; a sheep's colour is its `Color`,
+/// and horses, llamas, parrots and axolotls keep a `Variant`.
+fn saved_variant(name: &str, c: &Compound) -> i32 {
+    use crate::server::variants;
+    if let Some(registry) = variants::registry_of(name) {
+        return c.string("variant").and_then(|k| variants::id_of(registry, k)).unwrap_or_else(|| variants::default_id(registry));
+    }
+    match name {
+        "minecraft:rabbit" => c.i32("RabbitType"),
+        "minecraft:fox" | "minecraft:mooshroom" => c.string("Type").map(|t| variants::type_from_name(name, t)),
+        _ => None,
+    }
+    .or_else(|| c.i32("Color"))
+    .or_else(|| c.i32("Variant"))
+    .unwrap_or(0)
+}
+
 pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
     let info = paper_data::entity_types::by_name(c.string("id")?)?;
     let pos = vec3(c.list("Pos"))?;
@@ -301,8 +337,7 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
                 brain: MobBrain { speed_factor: 1.0, idle_ticks: 60, ..Default::default() },
                 persistent: c.bool("PersistenceRequired").unwrap_or(false),
                 baby,
-                // Sheep keep their colour in `Color`; horses and parrots a `Variant`.
-                variant: c.i32("Color").or_else(|| c.i32("Variant")).unwrap_or(0),
+                variant: saved_variant(&info.name, c),
                 sheared: c.bool("Sheared").unwrap_or(false),
                 no_player_ticks: 0,
                 age,

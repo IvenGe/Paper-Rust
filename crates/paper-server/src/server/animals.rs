@@ -515,12 +515,13 @@ impl Server {
             }
         }
         let Some(baby) = self.spawn_mob(world, &name, pos, SpawnReason::Breeding) else { return };
+        let variant = self.offspring_variant(world, &name, pos, colors.0, colors.1);
         if let Some(e) = self.worlds[world].entities.get_mut(&baby) {
             if let Some(m) = e.mob_mut() {
                 m.baby = true;
                 m.age = -24000;
-                if name == "minecraft:sheep" {
-                    m.variant = if rand::thread_rng().gen::<bool>() { colors.0 } else { colors.1 };
+                if let Some(v) = variant {
+                    m.variant = v;
                 }
             }
             e.metadata_dirty = true;

@@ -38,7 +38,7 @@ SERIALIZER_REGISTRY = "paper-rs:entity_data_serializer"
 
 OUTPUTS = ["version.json", "packets.json", "registries.json", "blocks.json", "block_states.json",
            "items.json", "synced_registries.json", "tags.json", "dimension_types.json",
-           "feature_flags.json"]
+           "feature_flags.json", "variants.json"]
 
 STATES = ["handshake", "status", "login", "configuration", "play"]
 FLOWS = ["serverbound", "clientbound"]
@@ -533,6 +533,17 @@ def run(args):
     rep.section("dimension_types.json", [("dimension types", bool(dims), ", ".join(dims))])
     if dims:
         files["dimension_types.json"] = dims
+    variants = datapack.variant_spawn_conditions(pack)
+    rows = []
+    for rid, entries in variants.items():
+        # The same entries as the synchronised registry the client gets.
+        synced_entries = synced["entries"].get(rid) if van.synced_registries is not None else None
+        same = synced_entries is not None and sorted(synced_entries) == sorted(entries)
+        rows.append((rid, bool(entries) and same, "%d variants, %d spawn conditions%s" % (
+            len(entries), sum(len(c) for c in entries.values()), "" if same else " (entries differ from synced_registries.json)")))
+    rep.section("variants.json (spawn conditions of mob variants)", rows)
+    if all(variants.values()):
+        files["variants.json"] = variants
     rows = [("FeatureFlags", None, n) for n in van.feature_flag_notes]
     if van.default_feature_flags is None:
         rep.fatal.append("default feature flags could not be evaluated")

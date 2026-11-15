@@ -402,6 +402,29 @@ final class ApiTests implements Listener, CommandExecutor {
         check(failures, sheep.getColor() == org.bukkit.DyeColor.RED && sheep.readyToBeSheared(), "a red sheep");
         sheep.shear();
         check(failures, sheep.isSheared() && !sheep.readyToBeSheared(), "sheared");
+        // Variants: an entry of a registry (cows, cats) or a number (horses, rabbits, llamas).
+        check(failures, cow.getVariant().getKey().equals(NamespacedKey.minecraft("temperate")), "a temperate cow " + cow.getVariant().getKey());
+        final org.bukkit.entity.Cow.Variant warm = io.papermc.paper.registry.RegistryAccess.registryAccess()
+            .getRegistry(io.papermc.paper.registry.RegistryKey.COW_VARIANT).getOrThrow(NamespacedKey.minecraft("warm"));
+        cow.setVariant(warm);
+        check(failures, cow.getVariant().equals(warm), "a warm cow");
+        final org.bukkit.entity.Cat cat = world.spawn(at.clone().add(0, 0, -3), org.bukkit.entity.Cat.class);
+        cat.setCatType(org.bukkit.entity.Cat.Type.CALICO);
+        cat.setCollarColor(org.bukkit.DyeColor.BLUE);
+        check(failures, cat.getCatType() == org.bukkit.entity.Cat.Type.CALICO && cat.getCollarColor() == org.bukkit.DyeColor.BLUE, "a calico cat " + cat.getCatType().getKey());
+        final org.bukkit.entity.Horse horse = world.spawn(at.clone().add(-3, 0, 0), org.bukkit.entity.Horse.class);
+        horse.setColor(org.bukkit.entity.Horse.Color.BLACK);
+        horse.setStyle(org.bukkit.entity.Horse.Style.WHITE_DOTS);
+        check(failures, horse.getColor() == org.bukkit.entity.Horse.Color.BLACK && horse.getStyle() == org.bukkit.entity.Horse.Style.WHITE_DOTS, "a black horse with white dots");
+        final org.bukkit.entity.Rabbit rabbit = world.spawn(at.clone().add(-3, 0, -3), org.bukkit.entity.Rabbit.class);
+        rabbit.setRabbitType(org.bukkit.entity.Rabbit.Type.GOLD);
+        final org.bukkit.entity.Llama llama = world.spawn(at.clone().add(-3, 0, 3), org.bukkit.entity.Llama.class);
+        llama.setColor(org.bukkit.entity.Llama.Color.GRAY);
+        check(failures, rabbit.getRabbitType() == org.bukkit.entity.Rabbit.Type.GOLD && llama.getColor() == org.bukkit.entity.Llama.Color.GRAY, "a gold rabbit and a grey llama");
+        cat.remove();
+        horse.remove();
+        rabbit.remove();
+        llama.remove();
         check(failures, !Bukkit.spigot().getConfig().getBoolean("settings.bungeecord", true), "bungeecord");
         check(failures, !Bukkit.spigot().getPaperConfig().getBoolean("proxies.velocity.enabled", true), "velocity");
         player.sendMessage("entityflags ids: " + cow.getEntityId() + " " + sheep.getEntityId());

@@ -466,6 +466,14 @@ impl Server {
         if mob.baby {
             mob.age = -24000;
         }
+        // Its variant, by where it spawns.
+        let variant = match super::variants::registry_of(&name) {
+            Some(registry) => self.pick_variant(world, registry, pos),
+            None => self.pick_numbered_variant(world, &name, pos),
+        };
+        if let Some(v) = variant {
+            mob.variant = v;
+        }
         self.init_merchant(world, &name, pos, &mut mob, reason);
         super::riding::randomize_horse(&name, &mut mob, &mut rng);
         let mut e = Entity::new(if info.name == super::dragon::DRAGON { self.reserve_entity_ids(9) } else { self.next_entity_id() }, info, pos, EntityKind::Mob(Box::new(mob)));
@@ -1561,7 +1569,7 @@ fn block_in_tag(state: u32, tag: &str) -> bool {
 }
 
 /// Whether a biome is in a biome tag.
-fn biome_in_tag(biome: &str, tag: &str) -> bool {
+pub(super) fn biome_in_tag(biome: &str, tag: &str) -> bool {
     let Some(id) = paper_data::synced::id("minecraft:worldgen/biome", biome) else { return false };
     paper_data::synced::tag("minecraft:worldgen/biome", tag).is_some_and(|ids| ids.contains(&id))
 }
@@ -1664,7 +1672,7 @@ fn sees_sky_from_below_water(w: &World, x: i32, y: i32, z: i32, sea: i32) -> boo
 
 /// How bright the moon is tonight (`DimensionType.MOON_BRIGHTNESS_PER_PHASE`): full every
 /// eighth night.
-fn moon_brightness(w: &World) -> f32 {
+pub(super) fn moon_brightness(w: &World) -> f32 {
     const PHASES: [f32; 8] = [1.0, 0.75, 0.5, 0.25, 0.0, 0.25, 0.5, 0.75];
     PHASES[(w.day_time / 24000).rem_euclid(8) as usize]
 }

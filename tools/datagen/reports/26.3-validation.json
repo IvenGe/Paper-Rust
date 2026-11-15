@@ -1416,6 +1416,46 @@
    ]
   },
   {
+   "title": "variants.json (spawn conditions of mob variants)",
+   "checks": [
+    {
+     "name": "minecraft:cat_variant",
+     "status": "ok",
+     "detail": "11 variants, 12 spawn conditions"
+    },
+    {
+     "name": "minecraft:chicken_variant",
+     "status": "ok",
+     "detail": "3 variants, 3 spawn conditions"
+    },
+    {
+     "name": "minecraft:cow_variant",
+     "status": "ok",
+     "detail": "3 variants, 3 spawn conditions"
+    },
+    {
+     "name": "minecraft:frog_variant",
+     "status": "ok",
+     "detail": "3 variants, 3 spawn conditions"
+    },
+    {
+     "name": "minecraft:pig_variant",
+     "status": "ok",
+     "detail": "3 variants, 3 spawn conditions"
+    },
+    {
+     "name": "minecraft:wolf_variant",
+     "status": "ok",
+     "detail": "9 variants, 9 spawn conditions"
+    },
+    {
+     "name": "minecraft:zombie_nautilus_variant",
+     "status": "ok",
+     "detail": "2 variants, 2 spawn conditions"
+    }
+   ]
+  },
+  {
    "title": "feature_flags.json",
    "checks": [
     {
@@ -1436,7 +1476,7 @@
    ]
   },
   {
-   "title": "output (/home/user/paper-rs/data/26.3)",
+   "title": "output (data/26.3)",
    "checks": [
     {
      "name": "version.json",
@@ -1487,6 +1527,11 @@
      "name": "feature_flags.json",
      "status": "info",
      "detail": "22 bytes"
+    },
+    {
+     "name": "variants.json",
+     "status": "info",
+     "detail": "3027 bytes"
     }
    ]
   }
