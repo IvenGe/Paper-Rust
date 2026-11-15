@@ -197,7 +197,7 @@ impl Server {
         let knockback = level("minecraft:knockback") as f64 + if sprint_knockback { 1.0 } else { 0.0 };
         let (sx, cz) = ((yaw as f64).to_radians().sin(), -(yaw as f64).to_radians().cos());
         if knockback > 0.0 {
-            self.knockback_entity(world, target, knockback * 0.5, sx, cz);
+            self.knockback_entity(world, target, knockback * 0.5, sx, cz, Some(id), "ENTITY_ATTACK");
             if let Some(p) = self.players.get_mut(&id) {
                 if p.sprinting {
                     p.sprinting = false;
@@ -215,7 +215,7 @@ impl Server {
                 let pos = self.entity_position(world, v);
                 if pos.is_some_and(|pos| pos.distance_squared(at) < 9.0) {
                     if self.hurt_entity(world, v, Damage::by("minecraft:player_attack", id, at), sweep_damage) {
-                        self.knockback_entity(world, v, 0.4, sx, cz);
+                        self.knockback_entity(world, v, 0.4, sx, cz, Some(id), "SWEEP_ATTACK");
                     }
                 }
             }
@@ -307,13 +307,17 @@ impl Server {
         }
     }
 
-    /// Knockback for a player or mob (`LivingEntity.knockback`).
-    pub fn knockback_entity(&mut self, world: usize, id: i32, strength: f64, dx: f64, dz: f64) {
+    /// Knockback for a player or mob (`LivingEntity.knockback`), by `attacker` for `cause` (a
+    /// knockback `Cause`: `ENTITY_ATTACK`, `SWEEP_ATTACK`, `DAMAGE`, ...). Plugins may change
+    /// or stop it (`EntityKnockbackEvent`); as in Paper they hear of it even when the mob
+    /// resists it completely, which then only slows it down.
+    #[allow(clippy::too_many_arguments)]
+    pub fn knockback_entity(&mut self, world: usize, id: i32, strength: f64, dx: f64, dz: f64, attacker: Option<i32>, cause: &str) {
         if self.players.contains_key(&id) {
-            self.knockback_player(id, strength, dx, dz);
+            self.knockback_player(id, strength, dx, dz, attacker, cause);
             return;
         }
-        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
         if e.info.name == super::dragon::DRAGON {
             return;
         }
@@ -321,10 +325,7 @@ impl Server {
             EntityKind::Mob(mob) => mob.attributes.value("knockback_resistance"),
             _ => e.info.attribute("knockback_resistance").unwrap_or(0.0),
         };
-        let strength = strength * (1.0 - resistance);
-        if strength <= 0.0 {
-            return;
-        }
+        let strength = (strength * (1.0 - resistance)).max(0.0);
         let (mut dx, mut dz) = (dx, dz);
         let mut rng = rand::thread_rng();
         while dx * dx + dz * dz < 1.0e-5 {
@@ -334,7 +335,10 @@ impl Server {
         let len = (dx * dx + dz * dz).sqrt();
         let (nx, nz) = (dx / len * strength, dz / len * strength);
         let v = e.vel;
-        e.vel = Vec3::new(v.x / 2.0 - nx, if e.on_ground { (v.y / 2.0 + strength).min(0.4) } else { v.y }, v.z / 2.0 - nz);
+        let pushed = Vec3::new(v.x / 2.0 - nx, if e.on_ground { (v.y / 2.0 + strength).min(0.4) } else { v.y }, v.z / 2.0 - nz);
+        let Some(knock) = crate::plugins::events::on_knockback(self, world, id, attacker, cause, strength, pushed.sub(v), v) else { return };
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
+        e.vel = v.add(knock);
         e.force_sync = true;
     }
 
@@ -471,7 +475,8 @@ impl Server {
             if !fights_back && (info.category == "CREATURE" || info.category == "WATER_CREATURE" || info.category == "AMBIENT" || merchant) {
                 mob.brain.panic_ticks = 60 + rand::thread_rng().gen_range(0..40);
                 mob.brain.path.clear();
-            } else if !damage.is("no_anger") {
+            } else if !damage.is("no_anger") && info.name != "minecraft:snow_golem" {
+                // (Snow golems only ever go for monsters.)
                 mob.brain.target = Some(attacker);
             }
         }
@@ -482,7 +487,7 @@ impl Server {
             self.broadcast_entity(world, id, Bytes::from(encode_packet(&event)));
             if !damage.is("no_knockback") {
                 if let Some(from) = damage.position {
-                    self.knockback_entity(world, id, 0.4, from.x - pos.x, from.z - pos.z);
+                    self.knockback_entity(world, id, 0.4, from.x - pos.x, from.z - pos.z, damage.direct, if damage.direct.is_some() { "ENTITY_ATTACK" } else { "DAMAGE" });
                 }
             }
             if !dead && !silent {
@@ -965,14 +970,19 @@ impl Server {
             let damage_source = Damage { kind: if attacker.is_some_and(|s| self.players.contains_key(&s)) { "minecraft:player_explosion" } else { "minecraft:explosion" }, attacker, direct: source, position: Some(center) };
             self.hurt_entity(world, id, damage_source, damage);
             let push = dir.scale(impact);
+            // Living things' pushes go by plugins (`EntityKnockbackEvent`, cause `EXPLOSION`).
+            let living = is_player || self.worlds[world].entities.get(&id).is_some_and(|e| e.mob().is_some());
+            let velocity = self.worlds[world].entities.get(&id).map_or(Vec3::new(0.0, 0.0, 0.0), |e| e.vel);
+            let resistance = if is_player { 0.0 } else { self.worlds[world].entities.get(&id).and_then(|e| e.info.attribute("explosion_knockback_resistance")).unwrap_or(0.0) };
+            let push = push.scale(1.0 - resistance);
+            let push = if living { crate::plugins::events::on_knockback(self, world, id, attacker.or(source), "EXPLOSION", impact * (1.0 - resistance), push, velocity).unwrap_or(Vec3::new(0.0, 0.0, 0.0)) } else { push };
             if is_player {
                 let creative_flying = self.players.get(&id).is_some_and(|p| p.game_mode == GameMode::Creative && p.flying);
                 if !creative_flying {
                     player_knockback.push((id, push));
                 }
             } else if let Some(e) = self.worlds[world].entities.get_mut(&id) {
-                let resistance = e.info.attribute("explosion_knockback_resistance").unwrap_or(0.0);
-                e.vel = e.vel.add(push.scale(1.0 - resistance));
+                e.vel = e.vel.add(push);
                 e.force_sync = true;
             }
         }

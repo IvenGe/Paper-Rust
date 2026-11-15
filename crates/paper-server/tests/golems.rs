@@ -59,7 +59,9 @@ fn pumpkins_on_snow_or_iron_make_golems() {
     set(&server, BlockPos::new(10, -58, 8), "minecraft:carved_pumpkin");
     let (_, y, _) = wait_for(&server, "minecraft:snow_golem", BlockPos::new(10, -60, 8));
     assert!((y + 59.95).abs() < 0.1, "standing where the lowest block was: {y}");
-    for y in -60..=-58 {
+    // (Where it stands, it may already have left some snow.)
+    assert!(matches!(block(&server, BlockPos::new(10, -60, 8)), "minecraft:air" | "minecraft:snow"));
+    for y in -59..=-58 {
         assert_eq!(block(&server, BlockPos::new(10, y, 8)), "minecraft:air");
     }
 
@@ -112,5 +114,68 @@ fn dispensers_finish_golems() {
     wait_for(&server, "minecraft:snow_golem", BlockPos::new(10, -60, 2));
     let left = server.handle.run(move |s| s.container_items(0, dispenser)[0].clone()).unwrap();
     assert!(left.is_empty(), "the pumpkin was used");
+    server.stop();
+}
+
+#[test]
+fn snow_golems_leave_snow_melt_in_rain_and_throw_snowballs() {
+    use paper_server::server::mobs::SpawnReason;
+    use paper_server::world::entity::Vec3;
+    let server = start_server(|c| c.properties.difficulty = paper_server::config::Difficulty::Normal);
+    let _alice = join(&server);
+    // Where it stands it leaves snow (with mob griefing), however the snow golem came to be.
+    let golem = server.handle.run(|s| s.spawn_mob(0, "minecraft:snow_golem", Vec3::new(12.5, -60.0, 14.5), SpawnReason::Command).unwrap()).unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while block(&server, BlockPos::new(12, -60, 14)) != "minecraft:snow" {
+        assert!(Instant::now() < deadline, "no snow under the golem");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Without mob griefing, none.
+    server
+        .handle
+        .run(move |s| {
+            s.set_game_rule(0, "mob_griefing", paper_data::game_rules::Value::Bool(false));
+            let e = s.worlds[0].entities.get_mut(&golem).unwrap();
+            e.pos = Vec3::new(16.5, -60.0, 14.5);
+            e.mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+        })
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(block(&server, BlockPos::new(16, -60, 14)), "minecraft:air");
+
+    // A monster in sight gets snowballs thrown at it.
+    let zombie = server
+        .handle
+        .run(|s| {
+            let zombie = s.spawn_mob(0, "minecraft:zombie", Vec3::new(22.5, -60.0, 14.5), SpawnReason::Command).unwrap();
+            let e = s.worlds[0].entities.get_mut(&zombie).unwrap();
+            e.flags.no_ai = true;
+            zombie
+        })
+        .unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let thrown = server
+            .handle
+            .run(move |s| {
+                s.worlds[0].entities.values().any(|e| e.info.name == "minecraft:snowball" && matches!(e.kind, paper_server::world::entity::EntityKind::Thrown { owner: Some(o), .. } if o == golem))
+                    || s.worlds[0].entities.get(&golem).and_then(|e| e.mob()).is_some_and(|m| m.brain.target == Some(zombie) && m.brain.attack_cooldown > 0)
+            })
+            .unwrap();
+        if thrown {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no snowball at the zombie");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Rain hurts it.
+    let health = server.handle.run(move |s| s.worlds[0].entities[&golem].mob().unwrap().living.health).unwrap();
+    server.handle.console_command("weather rain");
+    let deadline = Instant::now() + TIMEOUT;
+    while server.handle.run(move |s| s.worlds[0].entities.get(&golem).and_then(|e| e.mob()).map_or(0.0, |m| m.living.health)).unwrap() >= health {
+        assert!(Instant::now() < deadline, "the rain does not hurt the golem");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     server.stop();
 }

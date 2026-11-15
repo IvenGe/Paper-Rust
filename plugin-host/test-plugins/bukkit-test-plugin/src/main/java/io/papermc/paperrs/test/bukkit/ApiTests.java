@@ -1901,6 +1901,30 @@ final class ApiTests implements Listener, CommandExecutor {
         }
     }
 
+    // Cows only: Paper's knockback events (stopped when "cancelling"), and Bukkit's before them.
+    @EventHandler
+    public void onPaperKnockback(final io.papermc.paper.event.entity.EntityKnockbackEvent event) {
+        if (event.getEntity() instanceof org.bukkit.entity.Cow) {
+            this.blockEvent(event, "KNOCK " + event.getClass().getSimpleName() + " " + event.getCause());
+        }
+    }
+
+    @EventHandler
+    public void onBukkitKnockback(final org.bukkit.event.entity.EntityKnockbackEvent event) {
+        if (event.getEntity() instanceof org.bukkit.entity.Cow) {
+            this.heard("BKNOCK " + event.getClass().getSimpleName() + " " + event.getCause()
+                + " " + (event instanceof org.bukkit.event.entity.EntityKnockbackByEntityEvent by ? by.getSourceEntity().getType() : "-"));
+        }
+    }
+
+    // Snow golems' snow only.
+    @EventHandler
+    public void onEntityBlockForm(final org.bukkit.event.block.EntityBlockFormEvent event) {
+        if (event.getEntity() instanceof org.bukkit.entity.Snowman) {
+            this.blockEvent(event, "SNOWFORM " + event.getNewState().getType());
+        }
+    }
+
     @EventHandler
     public void onWorldUnload(final org.bukkit.event.world.WorldUnloadEvent event) {
         this.unloadedWorlds.add(event.getWorld().getName());

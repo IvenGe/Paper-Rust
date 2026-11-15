@@ -217,6 +217,8 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.entity_interact` | `world`, `entity` (not a player), `x`, `y`, `z` (farmland, a pressure plate or string) | `cancelled` (`EntityInteractEvent`: no trampling; a plate or string pressed only by stopped entities stays up) |
 | `event.chunk_populate` | `world`, `x`, `z` (a newly generated chunk, after its `ChunkLoadEvent`) | nothing (the world's block populators run on it, then `ChunkPopulateEvent`) |
 | `event.pre_creature_spawn` | `world`, `x`, `y`, `z`, `type`, `reason` (`NATURAL`, `SPAWNER`) | `cancelled`, `abort` (Paper's `PreCreatureSpawnEvent`, before anything is made: not this one, or none this time). Paper asks for every spot natural spawning tries; here only spots where the mob would spawn are asked about, as a round trip to the host for every try slowed the server to a third of its speed |
+| `event.knockback` | `entity`, `attacker` (if any), `cause` (`ENTITY_ATTACK`, `SWEEP_ATTACK`, `DAMAGE`, `EXPLOSION`), `force`, `knockback` `[x, y, z]` (the change to its velocity), `velocity` (a player's counts as still) | `cancelled`, `knockback` (Bukkit's `EntityKnockbackEvent` or `EntityKnockbackByEntityEvent`, then Paper's `EntityKnockbackEvent` or `EntityKnockbackByEntityEvent` from what the first left, cancelled if it was; as in Paper even a mob that resists it completely hears of it, and is slowed down) |
+| `event.entity_block_form` | `world`, `x`, `y`, `z`, `entity` (a snow golem), `state` | `cancelled`, `state` (`EntityBlockFormEvent`, which `BlockFormEvent` listeners hear too) |
 | `event.entity_spawn` | `world`, `entity` (in the world but not yet seen) | `cancelled` (plain `EntitySpawnEvent` for entities without a spawn event of their own: primed TNT, falling blocks, experience orbs, clouds, eyes of ender, ...; a refused falling block's block is gone, as in Paper) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
@@ -245,7 +247,7 @@ merging, TNT and explosions, lightning, vehicles, potion effects, bows, items an
 mobs coming into the world, signs opening, unknown commands, clients loading the world, and
 dispensers about to fire or firing empty, hoppers and droppers moving items, entities
 trampling or pressing blocks, new chunks (also while a world has block populators), mobs
-about to spawn, and other entities spawning. Join, quit,
+about to spawn, other entities spawning, knockback, and snow golems' snow. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`). Creature, item and spawner spawns share
 `EntitySpawnEvent`'s handler list (plain `EntitySpawnEvent` too); each counts as listened only when some listener class

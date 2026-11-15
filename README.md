@@ -106,11 +106,13 @@ What works:
   into vanilla's trees (2x2 ones from four saplings, bee nests near flowers), and bone meal
   grows them, azaleas, huge mushrooms and huge fungi; flat worlds take the tree features
   from the vanilla jar too. Hoes till, shovels make paths, axes strip logs and wood, bone
-  meal grows crops; seeds need farmland and jumping on it tramples it.
+  meal grows crops; seeds need farmland and jumping on it tramples it (bigger mobs too,
+  with mob griefing).
 * **Entities**: dropped items (pickup, merging, despawning), experience orbs, arrows, falling
   blocks and primed TNT, and mobs: animals wander, look at players and panic when hurt;
   zombies, spiders and other monsters chase and hit players; skeletons shoot arrows;
-  creepers explode; undead burn in daylight. Mobs use A* pathfinding and vanilla's walking
+  creepers explode; undead burn in daylight; snow golems throw snowballs at monsters, leave
+  snow where they walk and melt in the Nether, hot biomes, water and rain. Mobs use A* pathfinding and vanilla's walking
   physics, spawn naturally from the biomes' spawn lists (26.3 keeps them in the biomes'
   `natural_mob_spawns` attributes), each type by its own vanilla rules: animals on their own
   ground (rabbits on sand and snow, goats on stone, mooshrooms on mycelium, ...) and also when
@@ -336,7 +338,10 @@ What works:
   plates and string), `ChunkPopulateEvent` (plugins' block populators run on new chunks
   first), Paper's `PreCreatureSpawnEvent` (natural spawning and spawners), plain
   `EntitySpawnEvent` (primed TNT, falling blocks, experience orbs, clouds, eyes of ender) and
-  `BlockMultiPlaceEvent` (doors, beds and tall plants). Players,
+  `BlockMultiPlaceEvent` (doors, beds and tall plants). Then Bukkit's `EntityKnockbackEvent`
+  and Paper's after it (hits, sweeps, hurts and explosions; `...ByEntityEvent` when something
+  pushed), and `EntityBlockFormEvent` for snow golems' snow (a snow golem's melting is a
+  `FIRE_TICK` cause, not Paper's `MELTING`). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,

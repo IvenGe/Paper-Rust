@@ -187,6 +187,8 @@ public final class HostEvents {
         GATED.put("ChunkPopulateEvent", org.bukkit.event.world.ChunkPopulateEvent.class);
         GATED.put("PreCreatureSpawnEvent", com.destroystokyo.paper.event.entity.PreCreatureSpawnEvent.class);
         GATED.put("EntitySpawnEvent", org.bukkit.event.entity.EntitySpawnEvent.class);
+        GATED.put("EntityKnockbackEvent", io.papermc.paper.event.entity.EntityKnockbackEvent.class);
+        GATED.put("BukkitEntityKnockbackEvent", org.bukkit.event.entity.EntityKnockbackEvent.class);
     }
 
     private final CraftServer server;
@@ -499,6 +501,47 @@ public final class HostEvents {
     private Block at(final World world, final Object xyz) {
         final List<Object> at = Values.list(xyz);
         return world.getBlockAt(((Number) at.get(0)).intValue(), ((Number) at.get(1)).intValue(), ((Number) at.get(2)).intValue());
+    }
+
+    /**
+     * Paper's {@code CraftEventFactory#callEntityKnockbackEvent}: Bukkit's
+     * {@code EntityKnockbackEvent} ({@code EntityKnockbackByEntityEvent} with an attacker) first,
+     * then Paper's ({@code EntityKnockbackByEntityEvent}) from the push it left, cancelled if it
+     * was. The push as listeners leave it.
+     */
+    private Map<String, Object> knockback(final Map<String, Object> args) {
+        if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.LivingEntity living)) {
+            return Values.of();
+        }
+        final org.bukkit.entity.Entity attacker = args.get("attacker") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+        final String cause = Values.str(args, "cause", "UNKNOWN");
+        final double force = Values.f64(args, "force", 0);
+        final org.bukkit.util.Vector knock = vector(args.get("knockback"));
+        final org.bukkit.util.Vector velocity = vector(args.get("velocity"));
+        org.bukkit.event.entity.EntityKnockbackEvent.KnockbackCause legacyCause;
+        try {
+            legacyCause = org.bukkit.event.entity.EntityKnockbackEvent.KnockbackCause.valueOf(cause);
+        } catch (final IllegalArgumentException e) {
+            legacyCause = org.bukkit.event.entity.EntityKnockbackEvent.KnockbackCause.UNKNOWN;
+        }
+        final org.bukkit.event.entity.EntityKnockbackEvent legacy = attacker != null
+            ? new org.bukkit.event.entity.EntityKnockbackByEntityEvent(living, attacker, legacyCause, force, knock.clone(), velocity.clone().add(knock))
+            : new org.bukkit.event.entity.EntityKnockbackEvent(living, legacyCause, force, knock.clone(), velocity.clone().add(knock));
+        legacy.callEvent();
+        final org.bukkit.util.Vector after = legacy.getFinalKnockback().clone().subtract(velocity);
+        final io.papermc.paper.event.entity.EntityKnockbackEvent.Cause paperCause = io.papermc.paper.event.entity.EntityKnockbackEvent.Cause.valueOf(cause);
+        final io.papermc.paper.event.entity.EntityKnockbackEvent event = attacker != null
+            ? new com.destroystokyo.paper.event.entity.EntityKnockbackByEntityEvent(living, attacker, paperCause, (float) force, after)
+            : new io.papermc.paper.event.entity.EntityKnockbackEvent(living, paperCause, after);
+        event.setCancelled(legacy.isCancelled());
+        event.callEvent();
+        final org.bukkit.util.Vector result = event.getKnockback();
+        return Values.of("cancelled", event.isCancelled(), "knockback", List.of(result.getX(), result.getY(), result.getZ()));
+    }
+
+    private static org.bukkit.util.Vector vector(final Object value) {
+        final List<Object> v = Values.list(value);
+        return v.size() < 3 ? new org.bukkit.util.Vector() : new org.bukkit.util.Vector(((Number) v.get(0)).doubleValue(), ((Number) v.get(1)).doubleValue(), ((Number) v.get(2)).doubleValue());
     }
 
     /** A container the server describes ({@code inventory::container_value}), or null. */
@@ -1011,6 +1054,17 @@ public final class HostEvents {
                 final org.bukkit.event.entity.EntitySpawnEvent event = new org.bukkit.event.entity.EntitySpawnEvent(entity);
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.knockback" -> this.knockback(args);
+            case "event.entity_block_form" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final Block block = this.block(args);
+                final org.bukkit.block.BlockState state = HostBlockState.of((HostBlock) block, Values.str(args, "state", "minecraft:air"));
+                final boolean allowed = new org.bukkit.event.block.EntityBlockFormEvent(entity, block, state).callEvent();
+                yield Values.of("cancelled", !allowed, "state", state.getBlockData().getAsString());
             }
             case "event.item_despawn" -> {
                 if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Item item)) {

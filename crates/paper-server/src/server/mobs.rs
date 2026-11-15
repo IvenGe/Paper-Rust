@@ -40,6 +40,8 @@ pub enum Behavior {
     Flyer,
     /// Stays where it is (armor stands, villagers without work...).
     Still,
+    /// Throws snowballs at monsters (snow golems).
+    Snowman,
 }
 
 pub fn behavior(name: &str, category: &str) -> Behavior {
@@ -50,6 +52,7 @@ pub fn behavior(name: &str, category: &str) -> Behavior {
         "minecraft:enderman" | "minecraft:zombified_piglin" | "minecraft:wolf" | "minecraft:piglin" | "minecraft:iron_golem" | "minecraft:llama" | "minecraft:polar_bear" | "minecraft:panda" | "minecraft:bee" | "minecraft:goat" => Behavior::Neutral,
         "minecraft:bat" | "minecraft:ghast" | "minecraft:phantom" | "minecraft:parrot" | "minecraft:allay" | "minecraft:vex" | "minecraft:blaze" => Behavior::Flyer,
         "minecraft:armor_stand" | "minecraft:mannequin" | "minecraft:shulker" => Behavior::Still,
+        "minecraft:snow_golem" => Behavior::Snowman,
         _ => match category {
             "MONSTER" => Behavior::Melee,
             "WATER_CREATURE" | "WATER_AMBIENT" | "UNDERGROUND_WATER_CREATURE" | "AXOLOTLS" => Behavior::Swimmer,
@@ -517,6 +520,9 @@ impl Server {
         if self.mob_environment(world, id) {
             return;
         }
+        if self.worlds[world].entities.get(&id).is_some_and(|e| e.info.name == "minecraft:snow_golem") {
+            self.snow_golem_step(world, id);
+        }
         self.tick_animal(world, id);
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let (name, riding, sitting) = (e.info.name.clone(), e.vehicle.is_some(), e.mob().is_some_and(|m| m.sitting));
@@ -703,8 +709,28 @@ impl Server {
                 }
             }
         }
+        // Snow golems go for monsters in sight (`NearestAttackableTargetGoal` for `Enemy`).
+        if kind == Behavior::Snowman && brain.target.is_none() && rng.gen_range(0..10) == 0 {
+            let area = Aabb::new(Vec3::new(pos.x - follow, pos.y - 4.0, pos.z - follow), Vec3::new(pos.x + follow, pos.y + 4.0, pos.z + follow));
+            let mut best: Option<(f64, i32)> = None;
+            for other in w.entities_in(&area) {
+                let Some(o) = w.entities.get(&other).filter(|o| other != id && o.is_alive() && o.info.category == "MONSTER" && o.mob().is_some()) else { continue };
+                let d = o.pos.distance_squared(pos);
+                if d > follow * follow || super::combat::clip_blocks(w, eye, o.eye_pos()).is_some() {
+                    continue;
+                }
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, other));
+                }
+            }
+            if let Some((_, t)) = best {
+                brain.target = Some(t);
+                brain.path.clear();
+            }
+        }
         let target_pos = brain.target.and_then(|t| self.entity_position(world, t));
         let mut swing = false;
+        let mut snowball: Option<i32> = None;
         let mut attack: Option<(i32, f32)> = None;
         let mut shoot: Option<(i32, Vec3)> = None;
         // A fireball to shoot (its kind, where from, which way) and a cry to go with it.
@@ -738,6 +764,23 @@ impl Server {
             let dist2 = tp.distance_squared(pos);
             brain.look_at = Some(Vec3::new(tp.x, tp.y + 1.5, tp.z));
             match kind {
+                // `RangedAttackGoal(1.25, 20, 10)`: closes in until it sees the target within
+                // ten blocks, then throws a snowball each second.
+                Behavior::Snowman => {
+                    let visible = super::combat::clip_blocks(w, eye, Vec3::new(tp.x, tp.y + 1.0, tp.z)).is_none();
+                    if dist2 > 100.0 || !visible {
+                        goal = Some(tp);
+                        brain.speed_factor = 1.25;
+                    } else {
+                        brain.path.clear();
+                    }
+                    if brain.attack_cooldown > 0 {
+                        brain.attack_cooldown -= 1;
+                    } else if visible && dist2 <= 100.0 {
+                        brain.attack_cooldown = 20;
+                        snowball = Some(t);
+                    }
+                }
                 Behavior::Archer => {
                     let visible = super::combat::clip_blocks(w, eye, Vec3::new(tp.x, tp.y + 1.5, tp.z)).is_none();
                     if dist2 > 225.0 || !visible {
@@ -852,7 +895,7 @@ impl Server {
                     }
                 }
             }
-        } else if matches!(kind, Behavior::Animal | Behavior::Neutral | Behavior::Melee | Behavior::Archer | Behavior::Creeper) {
+        } else if matches!(kind, Behavior::Animal | Behavior::Neutral | Behavior::Melee | Behavior::Archer | Behavior::Creeper | Behavior::Snowman) {
             // Animals in love look for a partner (`BreedGoal`); their food in a player's hand
             // tempts them (`TemptGoal`).
             let mut busy = false;
@@ -1000,6 +1043,9 @@ impl Server {
         if let Some((_, at)) = shoot {
             self.mob_shoot(world, id, at);
         }
+        if let Some(target) = snowball {
+            self.snow_golem_throw(world, id, target);
+        }
         if let Some((sound, volume)) = cry {
             let pitch = (rand::thread_rng().gen::<f32>() - rand::thread_rng().gen::<f32>()) * 0.2 + 1.0;
             self.play_sound(world, pos, sound, category::HOSTILE, volume, pitch, None);
@@ -1027,7 +1073,7 @@ impl Server {
         if self.hurt_entity(world, target, Damage::by("minecraft:mob_attack", id, pos), amount) {
             if knockback > 0.0 {
                 let (s, c) = ((yaw as f64).to_radians().sin(), -(yaw as f64).to_radians().cos());
-                self.knockback_entity(world, target, knockback * 0.5, s, c);
+                self.knockback_entity(world, target, knockback * 0.5, s, c, Some(id), "ENTITY_ATTACK");
             }
             // Burning zombies set their victims alight.
             if is_zombie && burning && rand::thread_rng().gen::<f32>() < difficulty as f32 * 0.3 {
@@ -1048,6 +1094,63 @@ impl Server {
                 if let Some(e) = super::effects::ActiveEffect::new(effect, ticks, 0) {
                     self.add_effect(world, target, e, "ATTACK");
                 }
+            }
+        }
+    }
+
+    /// A snow golem's snowball (`SnowGolem.performRangedAttack`).
+    fn snow_golem_throw(&mut self, world: usize, id: i32, target: i32) {
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
+        let (pos, eye) = (e.pos, e.eye_pos());
+        let target_eye = match self.players.get(&target) {
+            Some(p) => p.loc.y + p.eye_height(),
+            None => match self.worlds[world].entities.get(&target) {
+                Some(t) => t.eye_pos().y,
+                None => return,
+            },
+        };
+        let Some(at) = self.entity_position(world, target) else { return };
+        let (xd, zd) = (at.x - pos.x, at.z - pos.z);
+        let from = Vec3::new(pos.x, eye.y - 0.1, pos.z);
+        let yd = target_eye - 1.1 + (xd * xd + zd * zd).sqrt() * 0.2 - from.y;
+        let item = items::id("minecraft:snowball").map_or(paper_protocol::types::Slot::EMPTY, |i| paper_protocol::types::Slot::of(i as i32, 1));
+        self.spawn_thrown(world, "minecraft:snowball", from, Vec3::new(xd, yd, zd), 1.6, 12.0, 0.03, item, Some(id));
+        let pitch = 0.4 / (rand::thread_rng().gen::<f32>() * 0.4 + 0.8);
+        self.play_sound(world, pos, "minecraft:entity.snow_golem.shoot", category::NEUTRAL, 1.0, pitch, None);
+    }
+
+    /// A snow golem's own step (`SnowGolem.aiStep`, AI or not): it melts in the Nether and in
+    /// hot biomes (`minecraft:gameplay/snow_golem_melts`), and with mob griefing leaves snow
+    /// where it walks, unless plugins stop it (`EntityBlockFormEvent`).
+    fn snow_golem_step(&mut self, world: usize, id: i32) {
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
+        let pos = e.pos;
+        let (x, y, z) = (pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+        let hot = matches!(
+            self.biome_at(world, x, y, z),
+            "minecraft:badlands" | "minecraft:eroded_badlands" | "minecraft:wooded_badlands" | "minecraft:desert" | "minecraft:savanna" | "minecraft:savanna_plateau" | "minecraft:windswept_savanna"
+        );
+        if hot || self.worlds[world].dimension == "minecraft:the_nether" {
+            self.hurt_entity(world, id, Damage::new("minecraft:on_fire"), 1.0);
+        }
+        // Water and rain hurt it too (`isSensitiveToWater`).
+        let Some(e) = self.worlds[world].entities.get(&id) else { return };
+        let w = &self.worlds[world];
+        if survival::box_in_fluid(w, &e.bounding_box(), Fluid::Water) || w.rain_at(x, e.eye_pos().y.floor() as i32, z) {
+            self.hurt_entity(world, id, Damage::new("minecraft:drown"), 1.0);
+        }
+        if !self.worlds[world].rules.bool("mob_griefing") || self.worlds[world].entities.get(&id).is_none_or(|e| !e.is_alive()) {
+            return;
+        }
+        let Some(snow) = paper_data::blocks::default_state("minecraft:snow") else { return };
+        for i in 0..4 {
+            let at = paper_protocol::codec::BlockPos::new((pos.x + ((i % 2) * 2 - 1) as f64 * 0.25).floor() as i32, y, (pos.z + ((i / 2 % 2) * 2 - 1) as f64 * 0.25).floor() as i32);
+            let here = self.worlds[world].block_at(at.x, at.y, at.z);
+            if !here.is_some_and(paper_data::blocks::is_air) || !crate::world::block_updates::Level::new(&mut self.worlds[world]).can_survive(snow, at) {
+                continue;
+            }
+            if let Some(state) = crate::plugins::events::on_entity_block_form(self, world, id, at, snow) {
+                self.set_block_and_update(world, at, state);
             }
         }
     }

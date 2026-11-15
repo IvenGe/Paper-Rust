@@ -2428,3 +2428,51 @@ pub fn on_entity_spawn(server: &mut Server, world: usize, entity: i32) -> bool {
         None => true,
     }
 }
+
+/// Bukkit's `EntityKnockbackEvent` (`EntityKnockbackByEntityEvent` when `attacker` pushed),
+/// then Paper's (`EntityKnockbackByEntityEvent`), which starts from what the first one left:
+/// `entity`, moving at `velocity`, is about to be pushed by `knock` (the change to its
+/// velocity) with `force`, for `cause` (`ENTITY_ATTACK`, `SWEEP_ATTACK`, `DAMAGE`,
+/// `EXPLOSION`, ...). `None` if plugins stopped it, else the push as they left it.
+#[allow(clippy::too_many_arguments)]
+pub fn on_knockback(server: &mut Server, world: usize, entity: i32, attacker: Option<i32>, cause: &str, force: f64, knock: crate::world::entity::Vec3, velocity: crate::world::entity::Vec3) -> Option<crate::world::entity::Vec3> {
+    if !listens(server, "EntityKnockbackEvent") && !listens(server, "BukkitEntityKnockbackEvent") {
+        return Some(knock);
+    }
+    if !(server.players.contains_key(&entity) || server.worlds[world].entities.contains_key(&entity)) {
+        return Some(knock);
+    }
+    let vec = |v: crate::world::entity::Vec3| Value::List(vec![v.x.into(), v.y.into(), v.z.into()]);
+    let mut args = bmap! { "entity" => actor_value(server, world, entity), "cause" => cause, "force" => force, "knockback" => vec(knock), "velocity" => vec(velocity) };
+    if let Some(a) = attacker.filter(|a| server.players.contains_key(a) || server.worlds[world].entities.contains_key(a)) {
+        args.set("attacker", actor_value(server, world, a));
+    }
+    match fire(server, "", "event.knockback", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => match result.list("knockback") {
+            Some([x, y, z]) => Some(crate::world::entity::Vec3::new(x.as_f64().unwrap_or(knock.x), y.as_f64().unwrap_or(knock.y), z.as_f64().unwrap_or(knock.z))),
+            _ => Some(knock),
+        },
+        None => Some(knock),
+    }
+}
+
+/// `EntityBlockFormEvent` (which `BlockFormEvent` listeners hear too): the entity `entity`
+/// (a snow golem) is about to form `state` at `pos`. `None` if plugins stopped it, else the
+/// state as they left it.
+pub fn on_entity_block_form(server: &mut Server, world: usize, entity: i32, pos: BlockPos, state: u32) -> Option<u32> {
+    if !listens(server, "BlockFormEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return Some(state);
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => pos.x, "y" => pos.y, "z" => pos.z,
+        "entity" => actor_value(server, world, entity),
+        "state" => paper_data::blocks::state_to_string(state),
+    };
+    match fire(server, "BlockFormEvent", "event.entity_block_form", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.str("state").and_then(paper_data::blocks::parse_state).unwrap_or(state)),
+        None => Some(state),
+    }
+}

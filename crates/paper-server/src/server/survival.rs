@@ -957,7 +957,7 @@ impl Server {
             if !damage.is("no_knockback") {
                 if let Some(from) = damage.position {
                     let (kx, kz) = (from.x - loc.x, from.z - loc.z);
-                    self.knockback_player(id, 0.4, kx, kz);
+                    self.knockback_player(id, 0.4, kx, kz, damage.direct, if damage.direct.is_some() { "ENTITY_ATTACK" } else { "DAMAGE" });
                     let yaw = (kz.atan2(kx).to_degrees() as f32) - 90.0 - loc.yaw;
                     self.send(id, &play::HurtAnimation { entity_id: VarInt(id), yaw });
                 }
@@ -988,17 +988,25 @@ impl Server {
     }
 
     /// Pushes a player away (`LivingEntity.knockback`); the client applies the motion.
-    pub fn knockback_player(&mut self, id: i32, strength: f64, dx: f64, dz: f64) {
+    /// A player's knockback (see `knockback_entity`), sent for its client to carry out. The
+    /// server does not know how fast the client moves, so plugins see it as standing still.
+    pub fn knockback_player(&mut self, id: i32, strength: f64, dx: f64, dz: f64, attacker: Option<i32>, cause: &str) {
         let Some(p) = self.players.get(&id) else { return };
         let resistance = p.attributes.value("knockback_resistance");
         let strength = strength * (1.0 - resistance.clamp(0.0, 1.0));
-        if strength <= 0.0 || dx * dx + dz * dz < 1.0e-5 {
+        if dx * dx + dz * dz < 1.0e-5 {
             return;
         }
         let len = (dx * dx + dz * dz).sqrt();
         let (nx, nz) = (dx / len * strength, dz / len * strength);
         let vy = if p.on_ground { 0.4f64.min(strength) } else { 0.0 };
-        self.send(id, &play::SetEntityMotion { entity_id: VarInt(id), velocity: LpVec3(-nx, vy, -nz) });
+        let world = p.world;
+        let pushed = Vec3::new(-nx, vy, -nz);
+        let Some(knock) = crate::plugins::events::on_knockback(self, world, id, attacker, cause, strength, pushed, Vec3::new(0.0, 0.0, 0.0)) else { return };
+        if knock.x == 0.0 && knock.y == 0.0 && knock.z == 0.0 {
+            return;
+        }
+        self.send(id, &play::SetEntityMotion { entity_id: VarInt(id), velocity: LpVec3(knock.x, knock.y, knock.z) });
     }
 
     // --- death and respawn -----------------------------------------------------------------

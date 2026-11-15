@@ -2230,6 +2230,60 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     server.handle.run(move |s| s.teleport(alice_id, home)).unwrap();
     pause(&mut alice, Duration::from_millis(300));
 
+    // Knockback (Bukkit's EntityKnockbackEvent, then Paper's): a cow Alice hits, and a push
+    // the server gives it, stopped and then let be.
+    let cow = server
+        .handle
+        .run(move |s| {
+            let at = paper_server::world::entity::Vec3::new(home.x + 2.0, home.y, home.z);
+            let cow = s.spawn_mob(0, "minecraft:cow", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+            s.worlds[0].entities.get_mut(&cow).unwrap().mob_mut().unwrap().brain.idle_ticks = 1_000_000;
+            cow
+        })
+        .unwrap();
+    alice.command("apitest blocks record");
+    expect_line(&mut alice, "blocks: record");
+    pause(&mut alice, Duration::from_millis(100));
+    alice.send(&play::Attack { entity_id: VarInt(cow) });
+    seen = poll(&mut alice, "KNOCK EntityKnockbackByEntityEvent");
+    assert!(seen.contains("KNOCK EntityKnockbackByEntityEvent ENTITY_ATTACK") && seen.contains("BKNOCK EntityKnockbackByEntityEvent ENTITY_ATTACK PLAYER"), "{seen}");
+    for (mode, pushed) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let vel = server
+            .handle
+            .run(move |s| {
+                s.worlds[0].entities.get_mut(&cow).unwrap().vel = paper_server::world::entity::Vec3::new(0.0, 0.0, 0.0);
+                s.knockback_entity(0, cow, 0.4, 1.0, 0.0, Some(alice_id), "ENTITY_ATTACK");
+                s.worlds[0].entities[&cow].vel
+            })
+            .unwrap();
+        assert_eq!(vel.x < -0.3, pushed, "{mode}: {vel:?}");
+    }
+    server.handle.run(move |s| s.worlds[0].entities.get_mut(&cow).unwrap().removed = true).unwrap();
+
+    // A snow golem's snow (EntityBlockFormEvent): stopped, then let be.
+    let spot = feet.offset(-6, 0, 8);
+    for (mode, snows) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        let golem = server
+            .handle
+            .run(move |s| {
+                let at = paper_server::world::entity::Vec3::new(spot.x as f64 + 0.5, spot.y as f64, spot.z as f64 + 0.5);
+                let golem = s.spawn_mob(0, "minecraft:snow_golem", at, paper_server::server::mobs::SpawnReason::Command).unwrap();
+                s.worlds[0].entities.get_mut(&golem).unwrap().flags.no_ai = true;
+                golem
+            })
+            .unwrap();
+        seen = poll(&mut alice, "SNOWFORM SNOW");
+        assert!(seen.contains("SNOWFORM SNOW"), "{mode}: {seen}");
+        server.handle.run(move |s| s.worlds[0].entities.get_mut(&golem).unwrap().removed = true).unwrap();
+        pause(&mut alice, Duration::from_millis(100));
+        assert_eq!(block_state(&server, spot).starts_with("minecraft:snow"), snows, "{mode}: {}", block_state(&server, spot));
+        put(&server, &[(spot, "minecraft:air")], true);
+    }
+
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");
