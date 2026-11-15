@@ -78,24 +78,37 @@ nothing but its own entity. The server state is `Sync` for this (checked at comp
 
 * **Moving mobs.** Every mob first has its turn in order: fire, drowning, AI, attacks. Then
   all of them move at once, each among the blocks around it (`mobs::travel`), with the
-  world's entities taken out of it meanwhile. The blocks they land on and the falls that hurt
-  are then applied in order. A mob therefore sees where the others stood at the start of the
-  tick.
+  world's entities taken out of it meanwhile. A path the AI asked for is found there, just
+  before the mob follows it, so pathfinding (the costliest part of a mob's tick) is shared out
+  too. The blocks they land on and the falls that hurt are then applied in order. A mob
+  therefore sees where the others stood at the start of the tick.
 * **Natural spawning.** The chunks around players are searched for spawn spots in parallel
   (`find_spawns`). The mobs are then spawned in order, with `PreCreatureSpawnEvent` and
   `CreatureSpawnEvent`, until the category's cap is reached.
 * **Entity tracking.** Who sees each entity, and what its viewers must be told of its
-  movement, metadata and equipment, is worked out per entity in parallel. The packets are
-  then sent from the main thread.
+  movement, metadata and equipment, is worked out per entity in parallel, and so are the
+  spawn packets for players who start to see it. The packets are then sent from the main
+  thread.
+* **Saving.** Chunk snapshots, the structure starts of a vanilla world, unfinished chunks
+  made whole and the entities' NBT are made in parallel; the chunk I/O thread encodes,
+  compresses and writes them.
 
 The maps looked up for nearly every block and entity access (chunks by position, entities
 and players by id, the data tables by name) are hashed with `foldhash` instead of SipHash.
+What fluids and the pathfinder need to know of a block state is looked up in tables made
+once for every state.
+
+What the main thread sends a player is held back until it runs out of tasks or ends a tick
+(`net::Outgoing`), then handed to the player's writer in one go, so a player's packets of a
+tick cost one wakeup of the writer and one write, not one per packet.
 
 ### Measuring
 
 `Server::profile` (`TickProfile`) adds up the time each phase of the tick and each kind of
-main-thread task takes. `tests/load.rs` is a load benchmark, ignored by default: it joins
-bots that walk about, spawns mobs around them and prints the time per phase.
+main-thread task takes, and keeps the parts of the slowest tick. `tests/load.rs` is a load
+benchmark, ignored by default: it joins bots that walk about, spawns mobs around them and
+prints the time per phase, the slowest tick, what a full save costs the main thread and the
+CPU the process used.
 
 ```bash
 cargo test --release -p paper-server --test load -- --ignored --nocapture

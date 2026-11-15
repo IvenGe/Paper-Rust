@@ -665,10 +665,7 @@ impl World {
     /// Queues an unfinished chunk for saving.
     fn save_proto(&self, entry: &ProtoEntry) {
         let Some(storage) = &self.storage else { return };
-        let status = if entry.decorated { GenStatus::Decorated } else { GenStatus::Terrain };
-        let chunk = entry.to_chunk(self.min_y, self.height, status);
-        let structures = structures_to_save(&self.generator, chunk.pos);
-        storage.save_chunk(SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight: self.has_skylight, ticks: Default::default(), status, proto: chunk.proto, structures });
+        storage.save_chunk(proto_save_chunk(entry, self.min_y, self.height, self.has_skylight, &self.generator));
     }
 
     fn spawn_light_job(&mut self, pos: ChunkPos, ctx: &WorkerContext) {
@@ -995,29 +992,57 @@ impl World {
 
     /// Queues every changed chunk for saving. Returns how many were queued.
     pub fn save_chunks(&mut self) -> usize {
+        self.save_chunks_in(None)
+    }
+
+    /// [`World::save_chunks`], turning the entities into NBT in parallel on `pool` if given.
+    pub fn save_chunks_in(&mut self, pool: Option<&rayon::ThreadPool>) -> usize {
         let Some(storage) = &self.storage else { return 0 };
-        let mut saved = 0;
-        for chunk in self.chunks.values_mut().filter(|c| c.dirty) {
-            storage.save_chunk(SaveChunk { structures: structures_to_save(&self.generator, chunk.pos), ..SaveChunk::full(chunk, self.has_skylight, self.age) });
-            chunk.dirty = false;
-            saved += 1;
-        }
-        // Unfinished chunks too; those a decoration job holds are saved when it is done.
-        let dirty: Vec<ChunkPos> = self.proto.iter().filter(|(_, e)| e.dirty).map(|(p, _)| *p).collect();
-        for pos in dirty {
-            if let Some(entry) = self.proto.get(&pos) {
-                self.save_proto(entry);
+        // What is written of the changed chunks, unfinished ones too (those a decoration job
+        // holds are saved when it is done): snapshots, the structure starts of a vanilla world
+        // (slow to write) and an unfinished chunk made whole. Making them changes nothing, so
+        // with a pool they are made in parallel; the I/O thread encodes and writes them.
+        let (generator, has_skylight, age, min_y, height) = (&self.generator, self.has_skylight, self.age, self.min_y, self.height);
+        let full = |chunk: &Chunk| SaveChunk { structures: structures_to_save(generator, chunk.pos), ..SaveChunk::full(chunk, has_skylight, age) };
+        let unfinished = |entry: &ProtoEntry| proto_save_chunk(entry, min_y, height, has_skylight, generator);
+        let (chunks, protos): (Vec<SaveChunk>, Vec<SaveChunk>) = match pool {
+            Some(pool) => pool.install(|| {
+                use rayon::prelude::*;
+                let chunks = self.chunks.par_iter().filter(|(_, c)| c.dirty).map(|(_, c)| full(c)).collect();
+                let protos = self.proto.par_iter().filter(|(_, e)| e.dirty).map(|(_, e)| unfinished(e)).collect();
+                (chunks, protos)
+            }),
+            None => (self.chunks.values().filter(|c| c.dirty).map(full).collect(), self.proto.values().filter(|e| e.dirty).map(unfinished).collect()),
+        };
+        let saved = chunks.len() + protos.len();
+        for save in chunks {
+            if let Some(chunk) = self.chunks.get_mut(&save.snapshot.pos) {
+                chunk.dirty = false;
             }
-            if let Some(entry) = self.proto.get_mut(&pos) {
+            storage.save_chunk(save);
+        }
+        for save in protos {
+            if let Some(entry) = self.proto.get_mut(&save.snapshot.pos) {
                 entry.dirty = false;
             }
-            saved += 1;
+            storage.save_chunk(save);
         }
         self.save_on_return.extend(self.locked.iter().copied());
         let Some(storage) = &self.storage else { return saved };
         // Entities move all the time: every loaded chunk that has (or had) some is written.
+        // Turning them into NBT is the costly part and changes nothing, so with a pool the
+        // chunks' entities are done in parallel.
+        let (entities, dimension, chunks) = (&self.entities, &self.dimension, &self.chunks);
+        let to_nbt = |(pos, ids): (&ChunkPos, &FastSet<i32>)| -> (ChunkPos, Vec<paper_nbt::Compound>) { (*pos, ids.iter().filter_map(|id| entities.get(id)).filter_map(|e| entity_nbt::entity_to_nbt_in(e, dimension)).collect()) };
+        let mut lists: FastMap<ChunkPos, Vec<paper_nbt::Compound>> = match pool {
+            Some(pool) => pool.install(|| {
+                use rayon::prelude::*;
+                self.entity_chunks.par_iter().filter(|(pos, _)| chunks.contains_key(*pos)).map(to_nbt).collect()
+            }),
+            None => self.entity_chunks.iter().filter(|(pos, _)| chunks.contains_key(*pos)).map(to_nbt).collect(),
+        };
         for (pos, chunk) in self.chunks.iter_mut() {
-            let list: Vec<paper_nbt::Compound> = self.entity_chunks.get(pos).map(|ids| ids.iter().filter_map(|id| self.entities.get(id)).filter_map(|e| entity_nbt::entity_to_nbt_in(e, &self.dimension)).collect()).unwrap_or_default();
+            let list = lists.remove(pos).unwrap_or_default();
             if list.is_empty() && !chunk.entities_saved {
                 continue;
             }
@@ -1120,6 +1145,14 @@ impl World {
 }
 
 /// The structure starts and references to save with a chunk (vanilla generation).
+/// What is written of an unfinished chunk: the chunk it would be, at its stage.
+fn proto_save_chunk(entry: &ProtoEntry, min_y: i32, height: i32, has_skylight: bool, generator: &Arc<dyn Generator>) -> SaveChunk {
+    let status = if entry.decorated { GenStatus::Decorated } else { GenStatus::Terrain };
+    let chunk = entry.to_chunk(min_y, height, status);
+    let structures = structures_to_save(generator, chunk.pos);
+    SaveChunk { snapshot: chunk.snapshot(), lit: false, has_skylight, ticks: Default::default(), status, proto: chunk.proto, structures }
+}
+
 fn structures_to_save(generator: &Arc<dyn Generator>, pos: ChunkPos) -> Option<paper_nbt::Compound> {
     generator.staged().map(|g| g.inner.save_structures(pos.x, pos.z))
 }

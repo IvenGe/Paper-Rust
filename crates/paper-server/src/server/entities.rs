@@ -301,16 +301,27 @@ impl Server {
                 ids.sort_unstable();
                 ids
             };
+            // The parts, timed on their own too (see `TickProfile`).
+            let mut started = std::time::Instant::now();
+            let mut part = |s: &mut Self, name: &'static str| {
+                let now = std::time::Instant::now();
+                s.profile.add_to_tick(name, now - started);
+                started = now;
+            };
             for id in ticking {
                 self.tick_entity(world, id);
             }
+            part(self, "entities/turns");
             self.move_mobs(world);
+            part(self, "entities/moving");
             if self.tick % 2 == 0 {
                 self.merge_items(world);
             }
             self.pickup_items(world);
             self.remove_dead_entities(world);
+            part(self, "entities/items");
             self.track_entities(world);
+            part(self, "entities/tracking");
         }
     }
 
@@ -799,9 +810,17 @@ impl Server {
                 })
                 .collect()
         });
-        for Tracked { id, appeared, vanished, updates } in tracked {
-            if !appeared.is_empty() {
-                let spawn = self.spawn_packets(world, id);
+        // What new viewers are sent of each entity, made in parallel too (it only reads; many
+        // entities appear at once when a player comes into a new area).
+        let spawns: Vec<Option<Vec<Bytes>>> = {
+            let this = &*self;
+            this.tick_pool.install(|| {
+                use rayon::prelude::*;
+                tracked.par_iter().map(|t| (!t.appeared.is_empty()).then(|| this.spawn_packets(world, t.id))).collect()
+            })
+        };
+        for (Tracked { id, appeared, vanished, updates }, spawn) in tracked.into_iter().zip(spawns) {
+            if let Some(spawn) = spawn {
                 for pid in &appeared {
                     if let Some(p) = self.players.get(pid) {
                         for payload in &spawn {

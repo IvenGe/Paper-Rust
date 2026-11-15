@@ -361,6 +361,18 @@ pub struct MobBrain {
     pub stare_time: i32,
     pub teleport_time: i32,
     pub target_changed: i64,
+    /// A path its AI asked for this tick, found when it moves (see `mobs::travel`).
+    pub path_request: Option<PathRequest>,
+}
+
+/// A path to find: from where to where, for a mob how many blocks tall, searching at most
+/// so many nodes.
+#[derive(Clone, Copy, Debug)]
+pub struct PathRequest {
+    pub from: (i32, i32, i32),
+    pub to: (i32, i32, i32),
+    pub height: i32,
+    pub max_nodes: usize,
 }
 
 /// A mob.

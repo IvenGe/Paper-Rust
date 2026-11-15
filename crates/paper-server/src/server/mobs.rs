@@ -149,8 +149,24 @@ pub fn raw_brightness(world: &World, x: i32, y: i32, z: i32) -> i32 {
 
 // --- pathfinding -----------------------------------------------------------------------------
 
-fn passable(world: &World, x: i32, y: i32, z: i32) -> bool {
-    let Some(state) = world.block_at(x, y, z) else { return false };
+/// What the pathfinder knows of a block state, worked out once for every state: whether a
+/// mob may be in it ([`PASSABLE`]) and stand on it ([`STANDABLE`]).
+fn path_flags(state: u32) -> u8 {
+    static TABLE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| (0..blocks::STATE_COUNT).map(|s| (passable_state(s) as u8 * PASSABLE) | (standable_state(s) as u8 * STANDABLE)).collect());
+    table.get(state as usize).copied().unwrap_or(0)
+}
+
+/// Works out the block state tables now rather than in the middle of a tick.
+pub(crate) fn warm_tables() {
+    path_flags(0);
+    survival::fluid_of(0);
+}
+
+const PASSABLE: u8 = 1;
+const STANDABLE: u8 = 2;
+
+fn passable_state(state: u32) -> bool {
     if survival::fluid_of(state).is_some_and(|(f, _)| f == Fluid::Lava) {
         return false;
     }
@@ -161,8 +177,7 @@ fn passable(world: &World, x: i32, y: i32, z: i32) -> bool {
     paper_data::physics::collision_boxes(state).iter().all(|b| b.max[1] <= 0.0 || b.min[1] >= 1.0)
 }
 
-fn standable(world: &World, x: i32, y: i32, z: i32) -> bool {
-    let Some(state) = world.block_at(x, y - 1, z) else { return false };
+fn standable_state(state: u32) -> bool {
     if survival::fluid_of(state).is_some() && paper_data::physics::collision_boxes(state).is_empty() {
         // Swimming across water is allowed.
         return survival::fluid_of(state).is_some_and(|(f, _)| f == Fluid::Water);
@@ -170,6 +185,14 @@ fn standable(world: &World, x: i32, y: i32, z: i32) -> bool {
     let boxes = paper_data::physics::collision_boxes(state);
     !boxes.is_empty() && boxes.iter().any(|b| b.max[1] >= 0.5) && !boxes.iter().any(|b| b.max[1] > 1.0)
         && !matches!(blocks::block_of_state(state).name, "minecraft:magma_block" | "minecraft:cactus" | "minecraft:campfire" | "minecraft:soul_campfire")
+}
+
+fn passable(world: &World, x: i32, y: i32, z: i32) -> bool {
+    world.block_at(x, y, z).is_some_and(|state| path_flags(state) & PASSABLE != 0)
+}
+
+fn standable(world: &World, x: i32, y: i32, z: i32) -> bool {
+    world.block_at(x, y - 1, z).is_some_and(|state| path_flags(state) & STANDABLE != 0)
 }
 
 pub(super) fn walkable(world: &World, x: i32, y: i32, z: i32, height: i32) -> bool {
@@ -203,8 +226,8 @@ pub fn find_path(world: &World, start: (i32, i32, i32), goal: (i32, i32, i32), h
         (dx * dx + dy * dy + dz * dz).sqrt()
     };
     let mut open = BinaryHeap::new();
-    let mut came: HashMap<(i32, i32, i32), (i32, i32, i32)> = HashMap::new();
-    let mut best: HashMap<(i32, i32, i32), f64> = HashMap::new();
+    let mut came: crate::world::FastMap<(i32, i32, i32), (i32, i32, i32)> = Default::default();
+    let mut best: crate::world::FastMap<(i32, i32, i32), f64> = Default::default();
     best.insert(start, 0.0);
     open.push(Open { cost: h(start), node: start });
     let mut closest = (h(start), start);
@@ -567,6 +590,7 @@ impl Server {
         if sitting || unaware {
             if let Some(m) = self.worlds[world].entities.get_mut(&id).and_then(|e| e.mob_mut()) {
                 m.brain.path.clear();
+                m.brain.path_request = None;
             }
         } else {
             self.mob_ai(world, id);
@@ -712,6 +736,7 @@ impl Server {
         let follow = mob.attributes.value("follow_range");
         let height = (info.height.ceil() as i32).max(1);
         let mut brain = mob.brain.clone();
+        brain.path_request = None;
         let mut rng = rand::thread_rng();
 
         let mut found_target: Option<i32> = None;
@@ -1052,8 +1077,10 @@ impl Server {
                         }
                     }
                 }
+                // Found as it moves, in parallel with the other mobs (`travel`).
                 let budget = (follow * 16.0).clamp(64.0, 600.0) as usize;
-                brain.path = find_path(w, start, end, height, budget).unwrap_or_default();
+                brain.path_request = Some(crate::world::entity::PathRequest { from: start, to: end, height, max_nodes: budget });
+                brain.path.clear();
                 brain.path_ticks = 0;
             }
         }
@@ -1816,6 +1843,12 @@ pub(super) struct Moved {
 /// Walking physics (`LivingEntity.travel` with the mob's move control). A mob moves by
 /// itself among the blocks around it, so mobs can be moved in parallel.
 pub(super) fn travel(w: &World, e: &mut Entity) -> Moved {
+    // The path its AI asked for this tick (the costliest part of a mob's tick).
+    if let EntityKind::Mob(mob) = &mut e.kind {
+        if let Some(r) = mob.brain.path_request.take() {
+            mob.brain.path = find_path(w, r.from, r.to, r.height, r.max_nodes).unwrap_or_default();
+        }
+    }
     let info = e.info;
     let kind = behavior(&info.name, &info.category);
     let (speed_attr, step) = match e.mob() {

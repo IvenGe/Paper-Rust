@@ -26,7 +26,7 @@ pub(super) async fn run(conn: Connection, login: LoginResult, shared: Arc<Shared
         settings: login.settings,
         brand: login.brand,
         virtual_host: login.virtual_host,
-        conn: PlayerConn::new(tx, addr, queued.clone()),
+        conn: PlayerConn::new(tx, addr, queued.clone(), shared.outgoing.clone()),
     };
     if shared.to_main.send(MainTask::Join(Box::new(request))).is_err() {
         return;
@@ -91,28 +91,44 @@ async fn write_loop(
     queued: Arc<AtomicUsize>,
     closed: Arc<Notify>,
 ) {
+    /// Frames one message into `out`; returns whether it closes the connection.
+    fn encode(message: Outbound, enc: &mut FrameEncoder, out: &mut Vec<u8>, queued: &AtomicUsize) -> bool {
+        match message {
+            Outbound::Packet(payload) => {
+                queued.fetch_sub(payload.len().min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
+                if let Err(e) = enc.encode(&payload, out) {
+                    log::warn!("Dropping an unsendable packet: {e}");
+                }
+                false
+            }
+            Outbound::Framed(frame) => {
+                queued.fetch_sub(frame.len().min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
+                enc.encode_framed(&frame, out);
+                false
+            }
+            Outbound::Close(last) => {
+                if let Some(payload) = last {
+                    let _ = enc.encode(&payload, out);
+                }
+                true
+            }
+            Outbound::Batch(messages) => {
+                for message in messages {
+                    if encode(message, enc, out, queued) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
     let mut closing = false;
     'outer: while let Some(first) = rx.recv().await {
         let mut next = Some(first);
         while let Some(message) = next {
-            match message {
-                Outbound::Packet(payload) => {
-                    queued.fetch_sub(payload.len().min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
-                    if let Err(e) = enc.encode(&payload, &mut out) {
-                        log::warn!("Dropping an unsendable packet: {e}");
-                    }
-                }
-                Outbound::Framed(frame) => {
-                    queued.fetch_sub(frame.len().min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
-                    enc.encode_framed(&frame, &mut out);
-                }
-                Outbound::Close(last) => {
-                    if let Some(payload) = last {
-                        let _ = enc.encode(&payload, &mut out);
-                    }
-                    closing = true;
-                    break;
-                }
+            if encode(message, &mut enc, &mut out, &queued) {
+                closing = true;
+                break;
             }
             // Keep batching while more is immediately available, within reason.
             next = if out.len() < 1 << 20 { rx.try_recv().ok() } else { None };

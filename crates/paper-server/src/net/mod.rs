@@ -127,6 +127,27 @@ pub struct Shared {
     pub bound_port: AtomicI32,
     /// The plugin host, for events fired from network threads (status ping, pre-login).
     pub plugin_host: RwLock<Option<Arc<crate::plugins::HostConnection>>>,
+    /// Players' packets held back until the main thread next flushes.
+    pub outgoing: Arc<Outgoing>,
+}
+
+/// What the main thread sends players is held back until it flushes (at the end of a tick,
+/// and whenever it runs out of tasks to handle), so that a player's packets of a tick go out
+/// together: one wakeup of the player's writer and one write instead of one per packet.
+#[derive(Default)]
+pub struct Outgoing {
+    /// Connections holding messages, each listed once until flushed.
+    waiting: parking_lot::Mutex<Vec<PlayerConn>>,
+}
+
+impl Outgoing {
+    /// Hands every held message to the writers.
+    pub fn flush(&self) {
+        let waiting = std::mem::take(&mut *self.waiting.lock());
+        for conn in waiting {
+            conn.flush();
+        }
+    }
 }
 
 /// A message for a player's writer task.
@@ -137,6 +158,8 @@ pub enum Outbound {
     Framed(Arc<Vec<u8>>),
     /// Optionally send a final payload (a disconnect packet), then close the connection.
     Close(Option<Bytes>),
+    /// Messages held back until a flush, in order.
+    Batch(Vec<Outbound>),
 }
 
 /// The main thread's handle to a player's connection.
@@ -146,20 +169,23 @@ pub struct PlayerConn {
     pub addr: SocketAddr,
     /// Bytes queued but not yet written, to detect clients that cannot keep up.
     queued: Arc<AtomicUsize>,
+    /// Messages held back until a flush, and where to say that there are some (see
+    /// [`Outgoing`]); without them messages go to the writer at once.
+    held: Option<(Arc<parking_lot::Mutex<Vec<Outbound>>>, Arc<Outgoing>)>,
 }
 
 /// A connection is dropped once this much data is waiting to be written to it.
 const MAX_QUEUED_BYTES: usize = 256 * 1024 * 1024;
 
 impl PlayerConn {
-    pub(crate) fn new(tx: mpsc::UnboundedSender<Outbound>, addr: SocketAddr, queued: Arc<AtomicUsize>) -> Self {
-        Self { tx, addr, queued }
+    pub(crate) fn new(tx: mpsc::UnboundedSender<Outbound>, addr: SocketAddr, queued: Arc<AtomicUsize>, outgoing: Arc<Outgoing>) -> Self {
+        Self { tx, addr, queued, held: Some((Default::default(), outgoing)) }
     }
 
     /// A connection that discards everything, for tests of main-thread logic.
     pub fn detached() -> (Self, mpsc::UnboundedReceiver<Outbound>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self { tx, addr: SocketAddr::from(([127, 0, 0, 1], 0)), queued: Arc::new(AtomicUsize::new(0)) }, rx)
+        (Self { tx, addr: SocketAddr::from(([127, 0, 0, 1], 0)), queued: Arc::new(AtomicUsize::new(0)), held: None }, rx)
     }
 
     fn push(&self, message: Outbound, size: usize) {
@@ -168,7 +194,28 @@ impl PlayerConn {
             let _ = self.tx.send(Outbound::Close(None));
             return;
         }
-        let _ = self.tx.send(message);
+        match &self.held {
+            Some((held, outgoing)) => {
+                let mut held = held.lock();
+                if held.is_empty() {
+                    outgoing.waiting.lock().push(self.clone());
+                }
+                held.push(message);
+            }
+            None => {
+                let _ = self.tx.send(message);
+            }
+        }
+    }
+
+    /// Hands the messages held for this player to its writer.
+    pub fn flush(&self) {
+        if let Some((held, _)) = &self.held {
+            let messages = std::mem::take(&mut *held.lock());
+            if !messages.is_empty() {
+                let _ = self.tx.send(Outbound::Batch(messages));
+            }
+        }
     }
 
     /// Queues a packet.
@@ -193,6 +240,8 @@ impl PlayerConn {
     /// Sends a disconnect packet with `reason` and closes the connection.
     pub fn disconnect(&self, reason: &Component) {
         let payload = encode_packet(&paper_protocol::packets::play::Disconnect { reason: reason.clone() });
+        // What was held for the player goes first.
+        self.flush();
         let _ = self.tx.send(Outbound::Close(Some(payload.into())));
     }
 

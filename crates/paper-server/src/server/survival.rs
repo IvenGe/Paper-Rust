@@ -119,8 +119,28 @@ pub enum Fluid {
     Lava,
 }
 
-/// The fluid in a block state and its amount (1-8, 8 for a source or falling fluid).
+/// The fluid in a block state and its amount (1-8, 8 for a source or falling fluid). Looked up
+/// in a table worked out once for every state, as it is asked all the time (mobs in water,
+/// paths, fluid flow).
 pub fn fluid_of(state: u32) -> Option<(Fluid, u8)> {
+    static TABLE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..blocks::STATE_COUNT)
+            .map(|s| match work_out_fluid(s) {
+                Some((Fluid::Water, amount)) => 0x10 | amount,
+                Some((Fluid::Lava, amount)) => 0x20 | amount,
+                None => 0,
+            })
+            .collect()
+    });
+    match table.get(state as usize).copied().unwrap_or(0) {
+        0 => None,
+        v if v & 0x20 != 0 => Some((Fluid::Lava, v & 0x0F)),
+        v => Some((Fluid::Water, v & 0x0F)),
+    }
+}
+
+fn work_out_fluid(state: u32) -> Option<(Fluid, u8)> {
     let name = blocks::block_of_state(state).name;
     let level = || blocks::property(state, "level").and_then(|l| l.parse::<u8>().ok()).unwrap_or(0);
     let amount = |l: u8| if l == 0 || l >= 8 { 8 } else { 8 - l };

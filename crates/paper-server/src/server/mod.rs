@@ -81,7 +81,7 @@ use crate::world::storage::{ChunkIo, WorldStorage};
 use crate::world::{FastMap, WorkerContext, World, WorldEvent};
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use crossbeam_channel::{Receiver, RecvTimeoutError};
+use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use paper_protocol::codec::Encode;
 use paper_protocol::packets::common::ClientSettings;
 use paper_protocol::packets::{encode_packet, play, Packet};
@@ -203,6 +203,10 @@ impl TickStats {
 pub struct TickProfile {
     pub ticks: u64,
     pub phases: Vec<(&'static str, Duration)>,
+    /// The slowest tick: how long it took, and its parts that took a millisecond or more.
+    pub worst: Option<(Duration, Vec<(&'static str, Duration)>)>,
+    /// The parts of the tick under way.
+    current: Vec<(&'static str, Duration)>,
 }
 
 impl TickProfile {
@@ -210,6 +214,22 @@ impl TickProfile {
         match self.phases.iter_mut().find(|(name, _)| *name == phase) {
             Some((_, total)) => *total += took,
             None => self.phases.push((phase, took)),
+        }
+    }
+
+    /// A part of the tick under way. Parts of parts are named `part/subpart`.
+    pub(crate) fn add_to_tick(&mut self, phase: &'static str, took: Duration) {
+        self.add(phase, took);
+        if took >= Duration::from_millis(1) {
+            self.current.push((phase, took));
+        }
+    }
+
+    /// The tick is over: it took `took`.
+    fn end_tick(&mut self, took: Duration) {
+        let parts = std::mem::take(&mut self.current);
+        if self.worst.as_ref().is_none_or(|(worst, _)| took > *worst) {
+            self.worst = Some((took, parts));
         }
     }
 
@@ -352,6 +372,7 @@ impl Server {
             stopping: AtomicBool::new(false),
             bound_port: AtomicI32::new(0),
             plugin_host: RwLock::new(None),
+            outgoing: Default::default(),
         });
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -359,6 +380,9 @@ impl Server {
             .thread_name(|i| format!("Worker-{i}"))
             .build()
             .context("creating the worker pool")?;
+        // The block state tables mobs and fluids look things up in, made on another thread
+        // while the server starts.
+        std::thread::spawn(mobs::warm_tables);
         let tick_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
                 .num_threads(config.tick_threads())
@@ -644,9 +668,18 @@ impl Server {
             while let Some(task) = self.deferred.get_mut().pop_front() {
                 self.handle_task(task);
             }
-            // Until the next tick is due, handle tasks the moment they arrive.
+            // Until the next tick is due, handle tasks the moment they arrive. What they send
+            // players goes out whenever there is no task left to handle.
             loop {
-                match self.tasks.recv_deadline(next_tick) {
+                let task = match self.tasks.try_recv() {
+                    Ok(task) => Ok(task),
+                    Err(TryRecvError::Empty) => {
+                        self.shared.outgoing.flush();
+                        self.tasks.recv_deadline(next_tick)
+                    }
+                    Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+                };
+                match task {
                     Ok(task) => {
                         let started = Instant::now();
                         let kind = task.kind();
@@ -668,6 +701,8 @@ impl Server {
             }
             let start = Instant::now();
             self.tick();
+            self.shared.outgoing.flush();
+            self.profile.end_tick(start.elapsed());
             self.stats.record(start, start.elapsed());
 
             next_tick += TICK;
@@ -748,7 +783,7 @@ impl Server {
             ($name:literal, $body:expr) => {{
                 let started = Instant::now();
                 $body;
-                self.profile.add($name, started.elapsed());
+                self.profile.add_to_tick($name, started.elapsed());
             }};
         }
         // Plugin scheduler tasks run at the start of the tick, as in Paper.
@@ -923,6 +958,7 @@ impl Server {
         let workers = self.workers.clone();
         while !self.worlds[world].is_ready(pos) && Instant::now() < deadline {
             self.worlds[world].pump(&workers);
+            self.shared.outgoing.flush();
             match self.tasks.recv_timeout(Duration::from_millis(2)) {
                 Ok(task @ MainTask::World { .. }) => self.handle_task(task),
                 Ok(other) => self.deferred.get_mut().push_back(other),
@@ -985,7 +1021,7 @@ impl Server {
             }
         }
         for world in &mut self.worlds {
-            save_world_files(world, game_type, hardcore);
+            save_world_files(world, game_type, hardcore, &self.tick_pool);
         }
         if flush {
             if let Some(io) = &self.io {
@@ -1005,7 +1041,7 @@ impl Server {
             return false;
         }
         let (game_type, hardcore) = (self.default_game_mode.id(), self.config.properties.hardcore);
-        save_world_files(&mut self.worlds[world], game_type, hardcore);
+        save_world_files(&mut self.worlds[world], game_type, hardcore, &self.tick_pool);
         if flush {
             if let Some(io) = &self.io {
                 io.flush();
@@ -1093,8 +1129,8 @@ impl Server {
 }
 
 /// Queues a world's chunks, `level.dat`, game rules and plugin data for writing.
-fn save_world_files(world: &mut World, game_type: i32, hardcore: bool) {
-    let chunks = world.save_chunks();
+fn save_world_files(world: &mut World, game_type: i32, hardcore: bool, pool: &rayon::ThreadPool) {
+    let chunks = world.save_chunks_in(Some(pool));
     if let Some(storage) = &world.storage {
         if let Err(e) = storage.save_level(&world.level_data(game_type, hardcore)) {
             log::error!("Could not save level.dat of {}: {e:#}", world.name);
