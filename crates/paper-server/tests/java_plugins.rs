@@ -771,6 +771,14 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     alice.command("apitest watch");
     expect_line(&mut alice, "watch: false");
 
+    // Crafting tables and anvils without a block, as Essentials' /craft and /anvil open them.
+    alice.command("apitest stations");
+    expect_line(&mut alice, "stations: true WORKBENCH ANVIL");
+
+    // Reading many blocks: a section at a time.
+    alice.command("apitest scan");
+    expect_line(&mut alice, "scan: 16384 true true true true");
+
     // The host's main thread waiting for one of its async threads, which calls the server.
     alice.command("apitest asyncwait");
     expect_line(&mut alice, "asyncwait: ok");

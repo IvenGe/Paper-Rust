@@ -53,7 +53,7 @@ public final class HostBlock extends AbstractBlock {
     /** The block state as {@code minecraft:name[property=value,...]}. */
     public String stateString() {
         final String state = this.pending;
-        return state != null ? state : Values.str(this.query(), "state", "minecraft:air");
+        return state != null ? state : this.world.blockState(this.x, this.y, this.z);
     }
 
     /** Shows {@code state} instead of the world's block until {@link #settle()} or a change. */

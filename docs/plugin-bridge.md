@@ -221,6 +221,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.stop_sound` | `uuid`, and optionally `sound` and `category` (none: all sounds) |
 | `player.inventory` / `player.set_slot` / `player.set_held_slot` | `uuid` / `slot`, `item` (window slot numbers) / `slot` |
 | `player.open_inventory` | `uuid`, `inventory` (descriptor), `title` (answers `opened`, `window`) |
+| `player.open_station` | `uuid`, `kind` (`crafting`, `anvil`, `enchanting`), optional `x`, `y`, `z` (else where the player stands), `force` (else the block must be one) (answers `opened`, `window`: `openWorkbench`, `openAnvil`, `openEnchanting`) |
 | `player.close_inventory` | `uuid`, `reason` |
 | `player.cursor` / `player.set_cursor` | `uuid` / `item` |
 | `player.set_scoreboard` | `uuid`, `board` |
@@ -271,6 +272,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `offline.set_op` / `set_whitelisted` / `ban` / `pardon` | `uuid`, `name`, `op` / `value` / `reason`, `source` / |
 | `world.info` | `world` |
 | `world.get_block` / `world.set_block` | `world`, `x`, `y`, `z` / `state` (`minecraft:name[property=value,...]`), `physics` (default true) |
+| `world.section` | `world`, `x`, `y`, `z` (answers the 16×16×16 section holding that block: `palette` of states and, unless they are all the same, `indices`, two bytes little-endian per block in `y << 8 \| z << 4 \| x` order). The host reads blocks through it and keeps a section until anything else crosses the bridge, so scanning an area costs a call per section |
 | `world.highest_block_y` | `world`, `x`, `z` |
 | `world.set_time` | `world`, `time`, `daylight_cycle` |
 | `world.set_spawn` | `world`, `x`, `y`, `z`, `yaw` |
@@ -292,7 +294,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `server.clear_recipes` / `reset_recipes` / `recipes` | (`recipes` answers every recipe as `add_recipe` takes them) |
 | `server.craft` | `grid` (4 or 9 items) (answers the recipe's `key` and the `result`, or null) |
 | `server.difficulty` / `set_difficulty` | / `difficulty` |
-| `server.create_world` | `name`, `environment` (`NORMAL`, `NETHER`, `THE_END`), `seed`, `type` (`NORMAL`, `FLAT`), `structures` (answers the world, like `worlds` in the welcome) |
+| `server.create_world` | `name`, `environment` (`NORMAL`, `NETHER`, `THE_END`), `seed`, `type` (`NORMAL`, `FLAT`), `structures`, `key` (the world's own key, `minecraft:<name>` by default) (answers the world, like `worlds` in the welcome) |
 | `server.dispatch_command` | `sender`, `command` (built-in commands; answers whether one ran) |
 | `server.broadcast` | `message` |
 | `server.status` | (answers `tps`, `mspt`, `tick`, `online`) |

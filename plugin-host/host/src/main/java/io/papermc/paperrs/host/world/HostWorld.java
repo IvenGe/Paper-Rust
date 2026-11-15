@@ -34,6 +34,16 @@ import org.bukkit.entity.Player;
 public final class HostWorld extends AbstractWorld {
     private final CraftServer server;
     private final String name;
+
+    /**
+     * Sections of blocks read at once (`world.section`): reading block after block, as
+     * plugins scanning an area do, costs one call per section instead of one per block. A
+     * section is good while nothing crosses the bridge (see {@code CraftServer#epoch}).
+     */
+    private final Map<Long, CachedSection> sections = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record CachedSection(long epoch, String[] palette, byte @Nullable [] indices) {
+    }
     private final UUID uid;
     private final NamespacedKey key;
     private final Environment environment;
@@ -48,7 +58,8 @@ public final class HostWorld extends AbstractWorld {
         this.server = server;
         this.name = Values.str(info, "name");
         this.uid = UUID.nameUUIDFromBytes(("paper-rs:world:" + this.name).getBytes(StandardCharsets.UTF_8));
-        this.key = NamespacedKey.fromString(Values.str(info, "dimension", "minecraft:overworld"));
+        // Its own key (Paper's level key): the dimension's for the server's own worlds.
+        this.key = NamespacedKey.fromString(Values.str(info, "key", Values.str(info, "dimension", "minecraft:overworld")));
         this.environment = switch (Values.str(info, "environment", "NORMAL")) {
             case "NETHER" -> Environment.NETHER;
             case "THE_END" -> Environment.THE_END;
@@ -115,6 +126,32 @@ public final class HostWorld extends AbstractWorld {
 
     private Map<String, Object> info() {
         return Values.map(this.server.call("world.info", Values.of("world", this.name)));
+    }
+
+    /** The state of a block, as {@code minecraft:name[property=value,...]}, through the section cache. */
+    public String blockState(final int x, final int y, final int z) {
+        final long key = ((long) (x >> 4) & 0x3FFFFFL) << 42 | ((long) (z >> 4) & 0x3FFFFFL) << 20 | ((long) (y >> 4) & 0xFFFFFL);
+        final long epoch = this.server.epoch();
+        CachedSection section = this.sections.get(key);
+        if (section == null || section.epoch() != epoch) {
+            final Map<String, Object> read = Values.map(this.server.read("world.section", Values.of("world", this.name, "x", x, "y", y, "z", z)));
+            final List<Object> palette = Values.list(read.get("palette"));
+            final String[] states = new String[palette.size()];
+            for (int i = 0; i < states.length; i++) {
+                states[i] = String.valueOf(palette.get(i));
+            }
+            section = new CachedSection(epoch, states, read.get("indices") instanceof byte[] bytes ? bytes : null);
+            if (this.sections.size() >= 256) {
+                this.sections.clear();
+            }
+            this.sections.put(key, section);
+        }
+        final byte[] indices = section.indices();
+        if (indices == null) {
+            return section.palette()[0];
+        }
+        final int i = ((y & 15) << 8 | (z & 15) << 4 | (x & 15)) * 2;
+        return section.palette()[(indices[i] & 0xFF) | (indices[i + 1] & 0xFF) << 8];
     }
 
     @Override

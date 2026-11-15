@@ -1206,6 +1206,39 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
     }
 
     /**
+     * The menu of a crafting table, anvil or enchanting table at a location (where the player
+     * stands if none): {@code null} unless that block is one, or {@code force} is set.
+     */
+    private org.bukkit.inventory.@Nullable InventoryView openStation(final String kind, final @Nullable Location location, final boolean force) {
+        final Map<String, Object> args = this.args("kind", kind, "force", force);
+        if (location != null) {
+            args.put("x", location.getBlockX());
+            args.put("y", location.getBlockY());
+            args.put("z", location.getBlockZ());
+        } else if (!force) {
+            return null;
+        }
+        final Map<String, Object> result = Values.map(this.server.call("player.open_station", args));
+        this.refresh(this.server.call("player.state", this.args()));
+        return Values.bool(result, "opened", false) ? this.getOpenInventory() : null;
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openWorkbench(final @Nullable Location location, final boolean force) {
+        return this.openStation("crafting", location, force);
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openEnchanting(final @Nullable Location location, final boolean force) {
+        return this.openStation("enchanting", location, force);
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openAnvil(final @Nullable Location location, final boolean force) {
+        return this.openStation("anvil", location, force);
+    }
+
+    /**
      * {@code HumanEntity#openMerchant}: trading with a villager, wandering trader or a merchant
      * a plugin made. Without {@code force}, a merchant already trading with someone stays
      * with them ({@code null} is returned); with it, their window closes.

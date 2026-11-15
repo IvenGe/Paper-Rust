@@ -111,6 +111,13 @@ public final class Inventories {
                     // A trading window: payment, payment, result.
                     yield proxy(new HostInventory(server, ref, InventoryType.MERCHANT, 3, null, null), org.bukkit.inventory.MerchantInventory.class);
                 }
+                // An anvil's two inputs and result; an enchanting table's item and lapis.
+                if (player != null && type == InventoryType.ANVIL) {
+                    yield proxy(new HostInventory(server, ref, InventoryType.ANVIL, 3, null, null), org.bukkit.inventory.AnvilInventory.class);
+                }
+                if (player != null && type == InventoryType.ENCHANTING) {
+                    yield proxy(new HostInventory(server, ref, InventoryType.ENCHANTING, 2, null, null), org.bukkit.inventory.EnchantingInventory.class);
+                }
                 yield player == null ? null : crafting(server, player, type == InventoryType.WORKBENCH);
             }
             case "custom" -> {

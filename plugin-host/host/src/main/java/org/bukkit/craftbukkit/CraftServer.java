@@ -213,6 +213,14 @@ public final class CraftServer extends AbstractServer {
         return true;
     }
 
+    /**
+     * Calls the Rust server for something it only reads (a section of blocks), without
+     * counting it as a crossing: what is cached stays good, as the call changes nothing.
+     */
+    public Object read(final String method, final Map<String, Object> args) {
+        return this.bridge().call(method, args);
+    }
+
     public Object call(final String method, final Map<String, Object> args) {
         this.epoch++;
         try {
@@ -612,7 +620,7 @@ public final class CraftServer extends AbstractServer {
             throw io.papermc.paperrs.host.Unsupported.method("WorldCreator#biomeProvider");
         }
         final Map<String, Object> info = Values.map(this.call("server.create_world", Values.of("name", creator.name(), "environment", creator.environment().name(),
-            "seed", creator.seed(), "type", creator.type().name(), "structures", creator.generateStructures())));
+            "seed", creator.seed(), "type", creator.type().name(), "structures", creator.generateStructures(), "key", creator.key().toString())));
         final World world = new HostWorld(this, info);
         this.worlds.add(world);
         new org.bukkit.event.world.WorldInitEvent(world).callEvent();

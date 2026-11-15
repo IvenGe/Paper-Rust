@@ -82,6 +82,9 @@ pub struct World {
     pub name: String,
     /// Dimension key, e.g. `minecraft:overworld`.
     pub dimension: String,
+    /// The world's own key (Bukkit's `World.getKey`): the dimension's for the server's own
+    /// worlds, `minecraft:<name>` (or what its creator asked for) for those plugins make.
+    pub key: String,
     /// Network id of the dimension type.
     pub dimension_type: i32,
     pub min_y: i32,
@@ -292,6 +295,7 @@ impl World {
             index,
             name: name.to_owned(),
             dimension: dimension.to_owned(),
+            key: dimension.to_owned(),
             dimension_type,
             min_y: dim.min_y,
             height: dim.height,

@@ -106,6 +106,7 @@ fn world_info(w: &crate::world::World) -> Value {
     bmap! {
         "name" => w.name.clone(),
         "dimension" => w.dimension.clone(),
+        "key" => w.key.clone(),
         "environment" => match w.dimension.as_str() {
             "minecraft:the_nether" => "NETHER",
             "minecraft:the_end" => "THE_END",
@@ -856,6 +857,36 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let opened = super::inventory::open(server, id, &inv, component_from(args.get("title")))?;
             Ok(bmap! { "opened" => opened, "window" => super::inventory::window_value(server, id) })
         }
+        // `HumanEntity.openWorkbench`, `openAnvil`, `openEnchanting`: the menu of a crafting
+        // table, anvil or enchanting table at a block (which must be one, unless forced), or
+        // where the player stands.
+        "player.open_station" => {
+            use crate::server::containers::MenuKind;
+            let id = player_id(server, args)?;
+            let (world, loc) = (server.players[&id].world, server.players[&id].loc);
+            let pos = match (args.i32("x"), args.i32("y"), args.i32("z")) {
+                (Some(x), Some(y), Some(z)) => paper_protocol::codec::BlockPos::new(x, y, z),
+                _ => paper_protocol::codec::BlockPos::new(loc.x.floor() as i32, loc.y.floor() as i32, loc.z.floor() as i32),
+            };
+            let kind = args.str("kind").unwrap_or("");
+            let (block, menu, title) = match kind {
+                "crafting" => ("crafting_table", "minecraft:crafting", "container.crafting"),
+                "anvil" => ("anvil", "minecraft:anvil", "container.repair"),
+                "enchanting" => ("enchanting_table", "minecraft:enchantment", "container.enchant"),
+                other => bail!("no {other} menu"),
+            };
+            let there = server.worlds[world].block_at(pos.x, pos.y, pos.z).map_or("", |s| blocks::block_of_state(s).name);
+            if args.bool("force") != Some(true) && !there.ends_with(block) {
+                return Ok(bmap! { "opened" => false });
+            }
+            let menu_kind = match kind {
+                "crafting" => MenuKind::CraftingTable,
+                "anvil" => MenuKind::Anvil { world, pos },
+                _ => MenuKind::Enchanting { world, pos },
+            };
+            let opened = server.open_menu(id, menu_kind, menu, paper_protocol::text::Component::translatable(title, vec![]));
+            Ok(bmap! { "opened" => opened, "window" => super::inventory::window_value(server, id) })
+        }
         "player.close_inventory" => {
             let id = player_id(server, args)?;
             let reason = args.str("reason").unwrap_or("PLUGIN").to_owned();
@@ -901,6 +932,41 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let (x, y, z) = block_xyz(args)?;
             ensure_chunk(server, world, x, z);
             Ok(state_value(server, world, x, y, z))
+        }
+        // A whole section of blocks at once, for the host's block cache: their states as a
+        // palette and, unless they are all the same, an index per block (two bytes,
+        // little-endian) in `y << 8 | z << 4 | x` order. Loads the chunk as a block read does.
+        "world.section" => {
+            let world = world_index(server, args)?;
+            let (x, y, z) = block_xyz(args)?;
+            ensure_chunk(server, world, x, z);
+            let w = &server.worlds[world];
+            let rel = y - w.min_y;
+            let section = (0..w.height).contains(&rel).then(|| w.chunks.get(&crate::world::chunk::ChunkPos::of_block(x, z))).flatten().and_then(|c| c.sections.get((rel >> 4) as usize));
+            let Some(section) = section else {
+                // Outside the world: what reading a block there answers.
+                let state = state_value(server, world, x, y, z).str("state").unwrap_or("minecraft:void_air").to_owned();
+                return Ok(bmap! { "palette" => Value::List(vec![Value::Str(state)]) });
+            };
+            match &section.blocks {
+                crate::world::chunk::BlockStorage::Uniform(state) => Ok(bmap! { "palette" => Value::List(vec![Value::Str(blocks::state_to_string(*state as u32))]) }),
+                crate::world::chunk::BlockStorage::Dense(data) => {
+                    let mut palette: Vec<u16> = Vec::new();
+                    let mut index: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
+                    let mut indices = Vec::with_capacity(8192);
+                    for state in data.iter() {
+                        let i = *index.entry(*state).or_insert_with(|| {
+                            palette.push(*state);
+                            (palette.len() - 1) as u16
+                        });
+                        indices.extend_from_slice(&i.to_le_bytes());
+                    }
+                    Ok(bmap! {
+                        "palette" => Value::List(palette.iter().map(|s| Value::Str(blocks::state_to_string(*s as u32))).collect()),
+                        "indices" => Value::Bytes(indices),
+                    })
+                }
+            }
         }
         "world.block_entity" => {
             // A block entity as saved (named NBT, with its id and position), or null.
@@ -1330,7 +1396,7 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         // `Bukkit.createWorld`: the world of that name, opened or made.
         "server.create_world" => {
             let name = args.str("name").ok_or_else(|| anyhow!("missing name"))?;
-            let index = server.create_world(name, args.str("environment").unwrap_or("NORMAL"), args.i64("seed"), args.str("type").unwrap_or("NORMAL"), args.bool("structures").unwrap_or(true))?;
+            let index = server.create_world(name, args.str("environment").unwrap_or("NORMAL"), args.i64("seed"), args.str("type").unwrap_or("NORMAL"), args.bool("structures").unwrap_or(true), args.str("key"))?;
             Ok(world_info(&server.worlds[index]))
         }
         "server.dispatch_command" => {

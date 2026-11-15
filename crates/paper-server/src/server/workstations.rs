@@ -467,7 +467,9 @@ impl Server {
         // A 12% chance to damage the anvil (`AnvilBlock.damage`).
         let mut destroyed = false;
         if !creative && rand::thread_rng().gen::<f32>() < 0.12 {
-            if let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) {
+            // (Only a real anvil: one a plugin opened without a block has none to damage.)
+            let anvil = self.worlds[world].block_at(pos.x, pos.y, pos.z).filter(|s| blocks::block_of_state(*s).name.ends_with("anvil"));
+            if let Some(state) = anvil {
                 let next = match blocks::block_of_state(state).name {
                     "minecraft:anvil" => Some("minecraft:chipped_anvil"),
                     "minecraft:chipped_anvil" => Some("minecraft:damaged_anvil"),

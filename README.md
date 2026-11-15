@@ -395,7 +395,8 @@ What works:
     Multiverse, GriefPrevention, BlueMap, DiscordSRV, TAB, PlaceholderAPI, Plan, DeluxeMenus,
     LifeStealZ, Chunky, ...); the others use Minecraft's internal classes (dynmap, squaremap,
     InvSee++, DecentHolograms, Simple Voice Chat, LagFixer) or refuse the version
-    (CoreProtect 24.1);
+    (CoreProtect 24.1). With a player clicking, WorldEdit's wand selects and `//set` fills
+    the selection, and GriefPrevention's golden shovel marks the corners of claims;
   * `/reload`, which restarts the plugin host (see [the plugin bridge](docs/plugin-bridge.md#reload));
   * Paper's class rewriting as plugins load (Commodore): fields and enum constants renamed
     since a plugin's api-version, enums that became registries, and `Material.values()`
@@ -429,6 +430,9 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
+  Events not fired yet include fire spreading and burning blocks, pistons, fluids flowing,
+  blocks growing, fading and forming, `EntityChangeBlockEvent`, projectiles being launched
+  and hitting, vehicles, and chunks loading and unloading.
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

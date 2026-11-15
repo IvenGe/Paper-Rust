@@ -152,6 +152,47 @@ final class ApiTests implements Listener, CommandExecutor {
                     }
                     sender.sendMessage("guard: " + this.guard);
                 }
+                case "scan" -> {
+                    // Reading an area block by block, as plugins scanning for something do; a
+                    // change shows at once.
+                    final Player player = (Player) sender;
+                    final World world = player.getWorld();
+                    final Location at = player.getLocation();
+                    final long start = System.nanoTime();
+                    int blocks = 0;
+                    int solid = 0;
+                    for (int dx = -16; dx < 16; dx++) {
+                        for (int dy = -8; dy < 8; dy++) {
+                            for (int dz = -16; dz < 16; dz++) {
+                                blocks++;
+                                if (!world.getBlockAt(at.getBlockX() + dx, at.getBlockY() + dy, at.getBlockZ() + dz).getType().isAir()) {
+                                    solid++;
+                                }
+                            }
+                        }
+                    }
+                    final long millis = (System.nanoTime() - start) / 1_000_000;
+                    final Block block = world.getBlockAt(at.getBlockX() + 20, at.getBlockY() + 3, at.getBlockZ());
+                    final Material before = block.getType();
+                    block.setType(Material.GOLD_BLOCK);
+                    final boolean seen = block.getType() == Material.GOLD_BLOCK;
+                    block.setType(before);
+                    this.plugin.getLogger().info("scanned " + blocks + " blocks in " + millis + " ms");
+                    sender.sendMessage("scan: " + blocks + " " + (solid > 0) + " " + seen + " " + (block.getType() == before) + " " + (millis < 3000));
+                }
+                case "stations" -> {
+                    // A crafting table's menu from nowhere (Essentials' /craft); without force,
+                    // only at a crafting table.
+                    final Player player = (Player) sender;
+                    final boolean none = player.openWorkbench(player.getLocation(), false) == null;
+                    final org.bukkit.inventory.InventoryView view = player.openWorkbench(null, true);
+                    final String type = view == null ? "none" : view.getTopInventory().getType().name();
+                    player.closeInventory();
+                    final org.bukkit.inventory.InventoryView anvil = player.openAnvil(null, true);
+                    final String anvilType = anvil == null ? "none" : anvil.getTopInventory().getType().name();
+                    player.closeInventory();
+                    sender.sendMessage("stations: " + none + " " + type + " " + anvilType);
+                }
                 case "asyncwait" -> {
                     // The main thread waits for an async thread that uses the API, as BlueMap's
                     // loader does: the server answers it while it waits for the main thread.

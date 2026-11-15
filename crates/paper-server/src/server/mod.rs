@@ -487,7 +487,7 @@ impl Server {
     /// world in that folder under the server directory (with the seed and generator it was
     /// made with), or a new one. `environment` is Bukkit's (`NORMAL`, `NETHER`, `THE_END`),
     /// `kind` its world type (`NORMAL` or `FLAT`). Answers the world's index.
-    pub fn create_world(&mut self, name: &str, environment: &str, seed: Option<i64>, kind: &str, structures: bool) -> Result<usize> {
+    pub fn create_world(&mut self, name: &str, environment: &str, seed: Option<i64>, kind: &str, structures: bool, key: Option<&str>) -> Result<usize> {
         if let Some(index) = self.worlds.iter().position(|w| w.name == name) {
             return Ok(index);
         }
@@ -538,6 +538,7 @@ impl Server {
                 _ => {}
             }
         }
+        world.key = key.map_or_else(|| format!("minecraft:{}", name.to_lowercase()), str::to_owned);
         log::info!("Opened world '{name}' ({environment}, seed {seed}, {} terrain) for a plugin", world.generator.name());
         self.worlds.push(world);
         Ok(index)
