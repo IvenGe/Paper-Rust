@@ -161,6 +161,11 @@ final class EntityEvents {
         if (rider == null || mount == null) {
             return Values.of("cancelled", false);
         }
+        // A living rider getting into a vehicle hears of it first (VehicleEnterEvent).
+        if (mount instanceof org.bukkit.entity.Vehicle vehicle && rider instanceof LivingEntity
+            && !new org.bukkit.event.vehicle.VehicleEnterEvent(vehicle, rider).callEvent()) {
+            return Values.of("cancelled", true);
+        }
         final org.bukkit.event.entity.EntityMountEvent event = new org.bukkit.event.entity.EntityMountEvent(rider, mount);
         event.callEvent();
         return Values.of("cancelled", event.isCancelled());
@@ -173,9 +178,37 @@ final class EntityEvents {
         if (rider == null || mount == null) {
             return Values.of("cancelled", false);
         }
+        // A living rider getting out of a vehicle hears of it first (VehicleExitEvent).
+        if (mount instanceof org.bukkit.entity.Vehicle vehicle && rider instanceof LivingEntity living
+            && !new org.bukkit.event.vehicle.VehicleExitEvent(vehicle, living, true).callEvent()) {
+            return Values.of("cancelled", true);
+        }
         final org.bukkit.event.entity.EntityDismountEvent event = new org.bukkit.event.entity.EntityDismountEvent(rider, mount, true);
         event.callEvent();
         return Values.of("cancelled", event.isCancelled());
+    }
+
+    /** {@code VehicleDamageEvent}, or with {@code destroy} {@code VehicleDestroyEvent}, for what hurts a vehicle. */
+    Object vehicleDamage(final Map<String, Object> args, final boolean destroy) {
+        if (!(this.entity(args.get("target")) instanceof org.bukkit.entity.Vehicle vehicle)) {
+            return Values.of();
+        }
+        final Entity attacker = this.entity(args.get("attacker"));
+        final Entity direct = this.entity(args.get("direct"));
+        final List<Object> position = Values.list(args.get("source_position"));
+        final Location at = position.size() == 3
+            ? new Location(vehicle.getWorld(), ((Number) position.get(0)).doubleValue(), ((Number) position.get(1)).doubleValue(), ((Number) position.get(2)).doubleValue())
+            : null;
+        final DamageSource source = this.source(Values.str(args, "cause", "minecraft:generic"), attacker, direct, at);
+        final Entity damager = direct != null ? direct : attacker;
+        if (destroy) {
+            final org.bukkit.event.vehicle.VehicleDestroyEvent event = new org.bukkit.event.vehicle.VehicleDestroyEvent(vehicle, source, damager);
+            event.callEvent();
+            return Values.of("cancelled", event.isCancelled());
+        }
+        final org.bukkit.event.vehicle.VehicleDamageEvent event = new org.bukkit.event.vehicle.VehicleDamageEvent(vehicle, source, damager, Values.f64(args, "amount", 0));
+        event.callEvent();
+        return Values.of("cancelled", event.isCancelled(), "amount", event.getDamage());
     }
 
     /** {@code EntityTameEvent}. */

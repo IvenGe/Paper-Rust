@@ -32,7 +32,7 @@ fn seats(name: &str) -> usize {
 /// A new boat of type `name`: undamaged, with an empty chest if it is a chest boat.
 pub fn boat_kind(name: &str) -> EntityKind {
     let chest = name.contains("_chest_").then(|| Box::new(EntityChest { items: vec![Slot::EMPTY; 27], ..Default::default() }));
-    EntityKind::Boat { damage: 0.0, hurt_time: 0, hurt_dir: 1, paddles: (false, false), chest }
+    EntityKind::Boat { damage: 0.0, hurt_time: 0, hurt_dir: 1, paddles: (false, false), chest, last: None }
 }
 
 /// Where riders' feet are, above the boat's base: its seat (`getPassengerAttachmentPoint`)
@@ -127,7 +127,23 @@ impl Server {
         if collides(&self.worlds[world], &e.bounding_box()) {
             return false;
         }
-        self.spawn_entity(world, e);
+        let boat = self.spawn_entity(world, e);
+        // Plugins may take it back (`EntityPlaceEvent`, `VehicleCreateEvent`): the item stays.
+        let side = match face {
+            (0, -1, 0) => 0,
+            (0, 1, 0) => 1,
+            (0, 0, -1) => 2,
+            (0, 0, 1) => 3,
+            (-1, 0, 0) => 4,
+            _ => 5,
+        };
+        if !crate::plugins::events::on_entity_place(self, world, boat, id, hit, side, hand) || !crate::plugins::events::on_vehicle_create(self, world, boat) {
+            if let Some(e) = self.worlds[world].entities.get_mut(&boat) {
+                e.removed = true;
+            }
+            self.resync_inventory(id);
+            return true;
+        }
         if !creative {
             let rest = if stack.count > 1 { Slot(Some(stack.with_count(stack.count - 1))) } else { Slot::EMPTY };
             self.set_inventory_slot(id, slot, rest);
@@ -222,10 +238,12 @@ impl Server {
     /// creative). Its riders get off.
     pub(super) fn hurt_boat(&mut self, world: usize, id: i32, damage: &Damage, amount: f32) -> bool {
         let creative = damage.attacker.and_then(|a| self.players.get(&a)).is_some_and(|p| p.game_mode == GameMode::Creative);
-        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return false };
-        if e.removed {
+        if self.worlds[world].entities.get(&id).is_none_or(|e| e.removed) {
             return false;
         }
+        // Plugins may stop it, or change it (`VehicleDamageEvent`).
+        let Some(amount) = crate::plugins::events::on_vehicle_damage(self, world, id, damage, amount) else { return false };
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return false };
         let EntityKind::Boat { damage: taken, hurt_time, hurt_dir, .. } = &mut e.kind else { return false };
         *hurt_dir = -*hurt_dir;
         *hurt_time = 10;
@@ -235,6 +253,15 @@ impl Server {
         if !broken {
             return true;
         }
+        // Plugins may keep it whole (`VehicleDestroyEvent`), at its most damaged so it does not
+        // come straight back.
+        if !crate::plugins::events::on_vehicle_destroy(self, world, id, damage) {
+            if let Some(EntityKind::Boat { damage: taken, .. }) = self.worlds[world].entities.get_mut(&id).map(|e| &mut e.kind) {
+                *taken = 40.0;
+            }
+            return true;
+        }
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return false };
         e.removed = true;
         let (name, pos, riders, label) = (e.info.name.clone(), e.pos, e.passengers.clone(), e.custom_name.clone());
         for rider in riders {

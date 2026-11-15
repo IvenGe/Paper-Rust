@@ -695,7 +695,14 @@ impl Server {
                     _ => 270.0,
                 };
                 e.custom_name = super::workstations::custom_name_of(&stack);
-                self.spawn_entity(world, e);
+                let boat = self.spawn_entity(world, e);
+                // Plugins may take it back (`VehicleCreateEvent`): the boat stays in the dispenser.
+                if !crate::plugins::events::on_vehicle_create(self, world, boat) {
+                    if let Some(e) = self.worlds[world].entities.get_mut(&boat) {
+                        e.removed = true;
+                    }
+                    return Some(stack);
+                }
                 self.dispensed(world, pos, facing, 1000);
                 Some(stack.with_count(stack.count - 1))
             }

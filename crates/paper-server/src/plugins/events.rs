@@ -749,8 +749,24 @@ pub fn on_entity_damage(server: &mut Server, id: i32, damage: &crate::server::su
     if server.plugins.is_none() || !listened {
         return true;
     }
-    let target = entity_ref(server, id);
-    let mut args = bmap! { "target" => target, "cause" => damage.kind, "amount" => *amount as f64 };
+    let args = damage_args(server, id, damage, *amount);
+    match fire(server, "", "event.entity_damage", args) {
+        Some(result) => {
+            if result.bool("cancelled") == Some(true) {
+                return false;
+            }
+            if let Some(a) = result.f64("amount") {
+                *amount = a as f32;
+            }
+            true
+        }
+        None => true,
+    }
+}
+
+/// What hurts `target` by `amount`, as the damage events describe it.
+fn damage_args(server: &Server, target: i32, damage: &crate::server::survival::Damage, amount: f32) -> Value {
+    let mut args = bmap! { "target" => entity_ref(server, target), "cause" => damage.kind, "amount" => amount as f64 };
     if let Some(attacker) = damage.attacker {
         match server.players.get(&attacker) {
             Some(p) => args.set("attacker_player", p.uuid().to_string()),
@@ -765,18 +781,7 @@ pub fn on_entity_damage(server: &mut Server, id: i32, damage: &crate::server::su
     if let Some(pos) = damage.position {
         args.set("source_position", Value::List(vec![pos.x.into(), pos.y.into(), pos.z.into()]));
     }
-    match fire(server, "", "event.entity_damage", args) {
-        Some(result) => {
-            if result.bool("cancelled") == Some(true) {
-                return false;
-            }
-            if let Some(a) = result.f64("amount") {
-                *amount = a as f32;
-            }
-            true
-        }
-        None => true,
-    }
+    args
 }
 
 /// A player or another entity as events name it: `{player: uuid}`, or `{entity: id, value:
@@ -1557,11 +1562,12 @@ fn actor_value(server: &Server, world: usize, id: i32) -> Value {
 
 /// A player or entity gets on another (`EntityMountEvent`). Returns whether it may.
 pub fn on_mount(server: &mut Server, world: usize, rider: i32, vehicle: i32) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("EntityMountEvent") {
+    if !listens(server, "EntityMountEvent") && !listens(server, "VehicleEnterEvent") {
         return true;
     }
+    // (`VehicleEnterEvent` first, for a vehicle: the host knows which are.)
     let args = bmap! { "entity" => actor_value(server, world, rider), "mount" => actor_value(server, world, vehicle) };
-    match fire(server, "EntityMountEvent", "event.mount", args) {
+    match fire(server, "", "event.mount", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
     }
@@ -1569,11 +1575,12 @@ pub fn on_mount(server: &mut Server, world: usize, rider: i32, vehicle: i32) -> 
 
 /// A rider gets off (`EntityDismountEvent`). Returns whether it may.
 pub fn on_dismount(server: &mut Server, world: usize, rider: i32, vehicle: i32) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("EntityDismountEvent") {
+    if !listens(server, "EntityDismountEvent") && !listens(server, "VehicleExitEvent") {
         return true;
     }
+    // (`VehicleExitEvent` first, for a vehicle.)
     let args = bmap! { "entity" => actor_value(server, world, rider), "dismounted" => actor_value(server, world, vehicle) };
-    match fire(server, "EntityDismountEvent", "event.dismount", args) {
+    match fire(server, "", "event.dismount", args) {
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
     }
@@ -2072,4 +2079,80 @@ pub fn on_zap(server: &mut Server, world: usize, entity: i32, bolt: i32, into: i
         Some(result) => result.bool("cancelled") != Some(true),
         None => true,
     }
+}
+
+/// `VehicleDamageEvent`: the vehicle `vehicle` (a boat) is to take `amount` from `damage`. The
+/// amount plugins leave, or `None` if they cancelled it.
+pub fn on_vehicle_damage(server: &mut Server, world: usize, vehicle: i32, damage: &crate::server::survival::Damage, amount: f32) -> Option<f32> {
+    if !listens(server, "VehicleDamageEvent") || !server.worlds[world].entities.contains_key(&vehicle) {
+        return Some(amount);
+    }
+    let args = damage_args(server, vehicle, damage, amount);
+    match fire(server, "VehicleDamageEvent", "event.vehicle_damage", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.f64("amount").map_or(amount, |a| a as f32)),
+        None => Some(amount),
+    }
+}
+
+/// `VehicleDestroyEvent`: the vehicle `vehicle` is to break from `damage`. Returns whether
+/// plugins let it.
+pub fn on_vehicle_destroy(server: &mut Server, world: usize, vehicle: i32, damage: &crate::server::survival::Damage) -> bool {
+    if !listens(server, "VehicleDestroyEvent") || !server.worlds[world].entities.contains_key(&vehicle) {
+        return true;
+    }
+    let args = damage_args(server, vehicle, damage, 0.0);
+    match fire(server, "VehicleDestroyEvent", "event.vehicle_destroy", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `VehicleCreateEvent`: the vehicle `vehicle` (a boat) has just come into the world. Returns
+/// whether plugins let it stay.
+pub fn on_vehicle_create(server: &mut Server, world: usize, vehicle: i32) -> bool {
+    if !listens(server, "VehicleCreateEvent") || !server.worlds[world].entities.contains_key(&vehicle) {
+        return true;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "entity" => actor_value(server, world, vehicle) };
+    match fire(server, "VehicleCreateEvent", "event.vehicle_create", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `EntityPlaceEvent`: the player placed `entity` (a boat) against side `face` (0 down to 5
+/// east) of `block`, with the item in `hand`. Returns whether plugins let it stay.
+#[allow(clippy::too_many_arguments)]
+pub fn on_entity_place(server: &mut Server, world: usize, entity: i32, player: i32, block: BlockPos, face: usize, hand: i32) -> bool {
+    if !listens(server, "EntityPlaceEvent") || !server.worlds[world].entities.contains_key(&entity) {
+        return true;
+    }
+    let Some(p) = server.players.get(&player) else { return true };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(),
+        "world" => server.worlds[world].name.clone(),
+        "entity" => actor_value(server, world, entity),
+        "x" => block.x, "y" => block.y, "z" => block.z,
+        "face" => ["DOWN", "UP", "NORTH", "SOUTH", "WEST", "EAST"][face.min(5)],
+        "hand" => hand,
+    };
+    match fire(server, "EntityPlaceEvent", "event.entity_place", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// `VehicleMoveEvent`: the vehicle `vehicle` moved (or turned) from `from` (x, y, z, yaw,
+/// pitch) to where it is.
+pub fn on_vehicle_move(server: &mut Server, world: usize, vehicle: i32, from: (f64, f64, f64, f32, f32)) {
+    if !listens(server, "VehicleMoveEvent") || !server.worlds[world].entities.contains_key(&vehicle) {
+        return;
+    }
+    let args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "entity" => actor_value(server, world, vehicle),
+        "from" => Value::List(vec![from.0.into(), from.1.into(), from.2.into(), (from.3 as f64).into(), (from.4 as f64).into()]),
+    };
+    fire(server, "VehicleMoveEvent", "event.vehicle_move", args);
 }

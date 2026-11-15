@@ -147,6 +147,13 @@ public final class HostEvents {
         GATED.put("PigZapEvent", org.bukkit.event.entity.PigZapEvent.class);
         GATED.put("EntityZapEvent", com.destroystokyo.paper.event.entity.EntityZapEvent.class);
         GATED.put("EntityTransformEvent", org.bukkit.event.entity.EntityTransformEvent.class);
+        GATED.put("VehicleEnterEvent", org.bukkit.event.vehicle.VehicleEnterEvent.class);
+        GATED.put("VehicleExitEvent", org.bukkit.event.vehicle.VehicleExitEvent.class);
+        GATED.put("VehicleDamageEvent", org.bukkit.event.vehicle.VehicleDamageEvent.class);
+        GATED.put("VehicleDestroyEvent", org.bukkit.event.vehicle.VehicleDestroyEvent.class);
+        GATED.put("VehicleCreateEvent", org.bukkit.event.vehicle.VehicleCreateEvent.class);
+        GATED.put("VehicleMoveEvent", org.bukkit.event.vehicle.VehicleMoveEvent.class);
+        GATED.put("EntityPlaceEvent", org.bukkit.event.entity.EntityPlaceEvent.class);
         GATED.put("ProjectileLaunchEvent", org.bukkit.event.entity.ProjectileLaunchEvent.class);
         GATED.put("ProjectileHitEvent", org.bukkit.event.entity.ProjectileHitEvent.class);
         GATED.put("BlockDispenseEvent", org.bukkit.event.block.BlockDispenseEvent.class);
@@ -816,6 +823,36 @@ public final class HostEvents {
                     org.bukkit.event.entity.EntityTransformEvent.TransformReason.LIGHTNING);
                 event.callEvent();
                 yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.vehicle_damage" -> this.entities.vehicleDamage(args, false);
+            case "event.vehicle_destroy" -> this.entities.vehicleDamage(args, true);
+            case "event.vehicle_create" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Vehicle vehicle)) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.vehicle.VehicleCreateEvent event = new org.bukkit.event.vehicle.VehicleCreateEvent(vehicle);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.entity_place" -> {
+                final org.bukkit.entity.Entity entity = io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity")));
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.entity.EntityPlaceEvent event = new org.bukkit.event.entity.EntityPlaceEvent(entity, this.player(args), this.block(args),
+                    org.bukkit.block.BlockFace.valueOf(Values.str(args, "face", "UP")), Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.vehicle_move" -> {
+                if (!(io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(args.get("entity"))) instanceof org.bukkit.entity.Vehicle vehicle)) {
+                    yield Values.of();
+                }
+                final List<Object> from = Values.list(args.get("from"));
+                final Location before = new Location(vehicle.getWorld(), ((Number) from.get(0)).doubleValue(), ((Number) from.get(1)).doubleValue(), ((Number) from.get(2)).doubleValue(),
+                    ((Number) from.get(3)).floatValue(), ((Number) from.get(4)).floatValue());
+                new org.bukkit.event.vehicle.VehicleMoveEvent(vehicle, before, vehicle.getLocation()).callEvent();
+                yield Values.of();
             }
             case "event.projectile_launch" -> {
                 final org.bukkit.event.entity.ProjectileLaunchEvent event = new org.bukkit.event.entity.ProjectileLaunchEvent(

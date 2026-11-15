@@ -146,7 +146,7 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.trade_select` | `uuid`, `index` | `cancelled` (`TradeSelectEvent`) |
 | `event.villager_acquire_trade` / `event.villager_replenish_trade` | `entity`, `value` (state), `recipe` | `cancelled`, `recipe` (`VillagerAcquireTradeEvent`, `VillagerReplenishTradeEvent`; one per trade) |
 | `event.villager_career_change` | `entity`, `value`, `profession`, `reason` (`EMPLOYED`, `LOSING_JOB`) | `cancelled`, `profession` (`VillagerCareerChangeEvent`) |
-| `event.mount` / `event.dismount` | `entity` (the rider), `mount` / `dismounted` (the vehicle) | `cancelled` (`EntityMountEvent`, `EntityDismountEvent`) |
+| `event.mount` / `event.dismount` | `entity` (the rider), `mount` / `dismounted` (the vehicle) | `cancelled` (`VehicleEnterEvent` / `VehicleExitEvent` first for a living rider of a Bukkit vehicle, then `EntityMountEvent`, `EntityDismountEvent`) |
 | `event.tame` | `entity` (the animal), `owner` (the player) | `cancelled` (`EntityTameEvent`) |
 | `event.statistic_increment` | `uuid`, `type` (stat type), `key`, `old`, `new` | `cancelled` (`PlayerStatisticIncrementEvent`; as in CraftBukkit, not fired for statistics counted every tick or by the centimetre) |
 | `event.command_preprocess` | `uuid`, `message` (with `/`) | `cancelled`, `message` |
@@ -198,6 +198,10 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.explosion_prime` | `world`, `entity` (primed TNT, a creeper, a fireball, an end crystal), `radius`, `fire` | `cancelled`, `radius`, `fire` (`ExplosionPrimeEvent`; a stopped creeper calms down, a crystal stays whole) |
 | `event.lightning` | `world`, `entity` (the bolt; its state has `effect`), `cause` | `cancelled` (`LightningStrikeEvent`: the bolt goes) |
 | `event.creeper_power` | `world`, `entity`, `cause` (`PowerCause`), `bolt` | `cancelled` (`CreeperPowerEvent`) |
+| `event.vehicle_damage` / `event.vehicle_destroy` | as `event.entity_damage`, `target` being the vehicle | `cancelled`, and for damage `amount` (`VehicleDamageEvent`, `VehicleDestroyEvent`) |
+| `event.vehicle_create` | `world`, `entity` (a boat just put in the world) | `cancelled` (`VehicleCreateEvent`: it goes again) |
+| `event.entity_place` | `uuid`, `world`, `x`, `y`, `z` (the block it was put against), `face`, `hand`, `entity` | `cancelled` (`EntityPlaceEvent`) |
+| `event.vehicle_move` | `world`, `entity`, `from` `[x, y, z, yaw, pitch]` (where it was after its last tick) | nothing (`VehicleMoveEvent`) |
 | `event.zap` | `world`, `entity`, `bolt`, `into` (the new mob, already there), `pig` | `cancelled` (`PigZapEvent`, or Paper's `EntityZapEvent` then `EntityTransformEvent`; the new mob goes) |
 | `event.block_damage` | `uuid`, `world`, `x`, `y`, `z`, `face`, `insta` (it breaks at once) | `cancelled`, `insta` (`BlockDamageEvent` as a survival player starts breaking a block) |
 | `event.kick` | `uuid`, `reason`, `leave` (the message others see), `cause` (`PlayerKickEvent.Cause`) | `cancelled`, `reason`, `leave` (`PlayerKickEvent`, for the server's own kicks and plugins') |
@@ -222,7 +226,7 @@ explosions, move, game mode change, chat, the inventory, item, damage, death, re
 and spawn events, pistons and fire, login, changing worlds, chunks loading and
 unloading, portals being made, potions splashing, items wearing, shearing, beds, client
 settings, arrows picked up, eggs hatching, bottles o' enchanting, dropped items going or
-merging, TNT and explosions, and lightning. Join, quit,
+merging, TNT and explosions, lightning, and vehicles. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 

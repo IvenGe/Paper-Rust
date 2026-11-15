@@ -432,7 +432,8 @@ pub enum EntityKind {
     Item { stack: Slot, pickup_delay: i32, thrower: Option<Uuid>, owner: Option<Uuid> },
     /// A boat or raft: the damage it has taken (it breaks past 40), its wobble, the paddles
     /// its driver moves, and a chest boat's chest.
-    Boat { damage: f32, hurt_time: i32, hurt_dir: i32, paddles: (bool, bool), chest: Option<Box<EntityChest>> },
+    /// `last`: where it was after its last tick (x, y, z, yaw, pitch), for `VehicleMoveEvent`.
+    Boat { damage: f32, hurt_time: i32, hurt_dir: i32, paddles: (bool, bool), chest: Option<Box<EntityChest>>, last: Option<(f64, f64, f64, f32, f32)> },
     Mob(Box<Mob>),
     Arrow { damage: f64, owner: Option<i32>, in_ground: bool, life: i32, pickup: bool, critical: bool },
     /// A falling block: the block, ticks fallen, and how far (anvils hurt by it).

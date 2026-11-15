@@ -1591,6 +1591,54 @@ final class ApiTests implements Listener, CommandExecutor {
         this.blockEvent(event, "TRANSFORM " + event.getEntityType() + " " + event.getTransformedEntity().getType() + " " + event.getTransformReason());
     }
 
+    // Vehicles: boats only (horses and pigs are ridden in other steps).
+    @EventHandler
+    public void onVehicleEnter(final org.bukkit.event.vehicle.VehicleEnterEvent event) {
+        if (event.getVehicle() instanceof org.bukkit.entity.Boat) {
+            this.blockEvent(event, "ENTER " + event.getVehicle().getType() + " " + event.getEntered().getType());
+        }
+    }
+
+    @EventHandler
+    public void onVehicleExit(final org.bukkit.event.vehicle.VehicleExitEvent event) {
+        if (event.getVehicle() instanceof org.bukkit.entity.Boat) {
+            this.blockEvent(event, "EXIT " + event.getVehicle().getType() + " " + event.getExited().getType());
+        }
+    }
+
+    @EventHandler
+    public void onVehicleDamage(final org.bukkit.event.vehicle.VehicleDamageEvent event) {
+        if (event.getVehicle() instanceof org.bukkit.entity.Boat) {
+            this.blockEvent(event, "VDAMAGE " + event.getVehicle().getType() + " " + (event.getAttacker() == null ? "-" : event.getAttacker().getType()));
+        }
+    }
+
+    @EventHandler
+    public void onVehicleDestroy(final org.bukkit.event.vehicle.VehicleDestroyEvent event) {
+        if (event.getVehicle() instanceof org.bukkit.entity.Boat) {
+            this.blockEvent(event, "VDESTROY " + event.getVehicle().getType() + " " + (event.getAttacker() == null ? "-" : event.getAttacker().getType()));
+        }
+    }
+
+    @EventHandler
+    public void onVehicleCreate(final org.bukkit.event.vehicle.VehicleCreateEvent event) {
+        if (event.getVehicle() instanceof org.bukkit.entity.Boat) {
+            this.blockEvent(event, "VCREATE " + event.getVehicle().getType());
+        }
+    }
+
+    @EventHandler
+    public void onVehicleMove(final org.bukkit.event.vehicle.VehicleMoveEvent event) {
+        if (event.getVehicle() instanceof org.bukkit.entity.Boat && !event.getFrom().equals(event.getTo())) {
+            this.heard("VMOVE " + event.getVehicle().getType());
+        }
+    }
+
+    @EventHandler
+    public void onEntityPlace(final org.bukkit.event.entity.EntityPlaceEvent event) {
+        this.blockEvent(event, "PLACE " + event.getEntityType() + " " + event.getBlockFace() + " " + event.getHand() + " " + (event.getPlayer() != null));
+    }
+
     // (Shears only: other tools wear in other steps.)
     @EventHandler
     public void onItemDamage(final org.bukkit.event.player.PlayerItemDamageEvent event) {

@@ -321,7 +321,11 @@ What works:
   `PigZapEvent` and Paper's `EntityZapEvent` with `EntityTransformEvent` (lightning turns pigs
   into zombified piglins and villagers into witches now), and `EntityCombustEvent` for mobs
   burning in daylight and lava. TNT and fireballs are the entities of their
-  `EntityExplodeEvent`, as in Paper. Players,
+  `EntityExplodeEvent`, as in Paper. Vehicles: `VehicleEnterEvent` and `VehicleExitEvent`
+  (boats, horses, pigs, striders and the other Bukkit vehicles, before `EntityMountEvent` and
+  `EntityDismountEvent`), and for boats `VehicleDamageEvent`, `VehicleDestroyEvent` (a boat
+  kept whole stays at its most damaged), `VehicleCreateEvent`, `EntityPlaceEvent` and
+  `VehicleMoveEvent`. Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,
@@ -481,7 +485,8 @@ Not yet:
   ...) are not answered yet.
   Chunk snapshots, chunk persistent data, borders of one player's own (`Player.setWorldBorder`)
   and `/worldborder` are not there yet.
-  Events not fired yet include mobs catching fire in fire blocks, and vehicles.
+  Events not fired yet include mobs catching fire in fire blocks, `VehicleUpdateEvent`,
+  vehicle collisions, and minecarts' own events (minecarts do nothing yet).
   Methods that are not implemented throw an `UnsupportedOperationException` that names
   them. Plugins without an api-version (written for 1.12 or older) are loaded without
   Paper's legacy conversion.

@@ -419,6 +419,19 @@ impl Server {
             EntityKind::Boat { .. } => {
                 let steered = e.passengers.first().is_some_and(|p| self.players.contains_key(p));
                 super::boats::tick_boat(&self.worlds[world], &mut e, steered);
+                // Plugins hear where it went since its last tick, as it moved or as its rider
+                // steered it (`VehicleMoveEvent`), once it is back in the world.
+                let now = (e.pos.x, e.pos.y, e.pos.z, e.yaw, e.pitch);
+                let last = match &mut e.kind {
+                    EntityKind::Boat { last, .. } => last.replace(now),
+                    _ => None,
+                };
+                if let Some(from) = last.filter(|l| *l != now && crate::plugins::events::listens(self, "VehicleMoveEvent")) {
+                    self.worlds[world].entities.insert(id, e);
+                    self.worlds[world].reindex_entity(id);
+                    crate::plugins::events::on_vehicle_move(self, world, id, from);
+                    return;
+                }
             }
             EntityKind::Tnt { fuse } => {
                 *fuse -= 1;

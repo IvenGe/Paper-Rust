@@ -1709,6 +1709,82 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
         server.handle.run(move |s| s.worlds[0].entities.get_mut(&zombie).unwrap().removed = true).unwrap();
     }
 
+    // A boat Alice puts down (EntityPlaceEvent, VehicleCreateEvent): taken back, then let be.
+    // She gets in and out (VehicleEnterEvent, VehicleExitEvent), steers it along
+    // (VehicleMoveEvent), and breaks it (VehicleDamageEvent, VehicleDestroyEvent): each
+    // stopped first.
+    let held = server.handle.run(move |s| s.players[&alice_id].held_slot as usize).unwrap();
+    server
+        .handle
+        .run(move |s| {
+            s.teleport(alice_id, paper_server::server::player::Location { yaw: 0.0, pitch: 50.0, ..home });
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::of(paper_data::items::id("minecraft:oak_boat").unwrap() as i32, 1);
+            s.resync_inventory(alice_id);
+        })
+        .unwrap();
+    let boats = move |s: &paper_server::server::Server| -> Vec<i32> {
+        let at = paper_server::world::entity::Vec3::new(home.x, home.y, home.z);
+        s.worlds[0].entities.values().filter(|e| !e.removed && e.info.name == "minecraft:oak_boat" && e.pos.distance_squared(at) < 36.0).map(|e| e.id).collect()
+    };
+    pause(&mut alice, Duration::from_millis(150));
+    for (mode, placed) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(160), yaw: 0.0, pitch: 50.0 });
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("PLACE OAK_BOAT UP HAND true") && seen.contains("VCREATE OAK_BOAT") == placed, "{mode}: {seen}");
+        assert_eq!(server.handle.run(move |s| boats(s).len()).unwrap(), usize::from(placed), "{mode}: boats");
+    }
+    let boat = server.handle.run(move |s| boats(s)[0]).unwrap();
+    for (mode, rides) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        alice.send(&play::Interact { entity_id: VarInt(boat), hand: VarInt(0), target: paper_protocol::types::LpVec3(0.0, 0.3, 0.0), sneaking: false });
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("ENTER OAK_BOAT PLAYER"), "{mode}: {seen}");
+        assert_eq!(server.handle.run(move |s| s.players[&alice_id].vehicle).unwrap() == Some(boat), rides, "{mode}: in the boat");
+    }
+    let at = server.handle.run(move |s| s.worlds[0].entities[&boat].pos).unwrap();
+    alice.send(&play::MoveVehicle { x: at.x, y: at.y, z: at.z + 0.5, yaw: 0.0, pitch: 0.0, on_ground: true });
+    pause(&mut alice, QUIET);
+    alice.command("apitest blockevents");
+    seen = line_starting(&mut alice, "blockevents: ");
+    assert!(seen.contains("VMOVE OAK_BOAT"), "{seen}");
+    for (mode, out) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        alice.send(&play::PlayerInput { flags: play::input_flags::SNEAK });
+        pause(&mut alice, QUIET);
+        alice.send(&play::PlayerInput { flags: 0 });
+        pause(&mut alice, Duration::from_millis(150));
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("EXIT OAK_BOAT PLAYER"), "{mode}: {seen}");
+        assert_eq!(server.handle.run(move |s| s.players[&alice_id].vehicle.is_none()).unwrap(), out, "{mode}: out of the boat");
+    }
+    for (mode, broken) in [("cancel", false), ("record", true)] {
+        alice.command(&format!("apitest blocks {mode}"));
+        expect_line(&mut alice, &format!("blocks: {mode}"));
+        alice.send(&play::Attack { entity_id: VarInt(boat) });
+        pause(&mut alice, QUIET);
+        alice.command("apitest blockevents");
+        seen = line_starting(&mut alice, "blockevents: ");
+        assert!(seen.contains("VDAMAGE OAK_BOAT PLAYER") && seen.contains("VDESTROY OAK_BOAT PLAYER") == broken, "{mode}: {seen}");
+        assert_eq!(server.handle.run(move |s| s.worlds[0].entities.get(&boat).is_none_or(|e| e.removed)).unwrap(), broken, "{mode}: broken");
+    }
+    server
+        .handle
+        .run(move |s| {
+            s.players.get_mut(&alice_id).unwrap().inventory[36 + held] = Slot::EMPTY;
+            s.resync_inventory(alice_id);
+            s.teleport(alice_id, home);
+        })
+        .unwrap();
+
     random_tick_speed(&server, normal_speed);
     alice.command("apitest blocks off");
     expect_line(&mut alice, "blocks: off");
