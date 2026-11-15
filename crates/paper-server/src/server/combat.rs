@@ -906,18 +906,23 @@ impl Server {
             }
         }
 
-        // Blocks: drop their loot (some of it) and vanish; TNT is set off.
+        // Blocks: drop their loot (some of it) and vanish; TNT is set off. Plugins may spare
+        // some, or all (`EntityExplodeEvent`, `BlockExplodeEvent`).
         let mut broken = 0;
-        if destroy_blocks && !affected.is_empty() {
+        let mut list: Vec<(i32, i32, i32)> = affected.into_iter().collect();
+        list.sort_unstable();
+        if destroy_blocks && !list.is_empty() {
             let decay = match source.and_then(|s| self.worlds[world].entities.get(&s)).map(|e| e.info.name.as_str()) {
                 Some("minecraft:tnt") => self.worlds[world].rules.bool("tnt_explosion_drop_decay"),
                 Some(_) => self.worlds[world].rules.bool("mob_explosion_drop_decay"),
                 None => self.worlds[world].rules.bool("block_explosion_drop_decay"),
             };
             let drops = self.worlds[world].rules.bool("block_drops");
-            let mut list: Vec<(i32, i32, i32)> = affected.iter().copied().collect();
-            list.sort_unstable();
-            for (x, y, z) in list {
+            let left = crate::plugins::events::on_explode(self, world, source, center, list.clone(), decay);
+            let cancelled = left.is_none();
+            // (Fire can still only catch where blocks were broken.)
+            list = left.unwrap_or(list);
+            for &(x, y, z) in list.iter().filter(|_| !cancelled) {
                 let Some(state) = self.worlds[world].block_at(x, y, z) else { continue };
                 if blocks::is_air(state) {
                     continue;
@@ -941,8 +946,6 @@ impl Server {
         }
 
         if fire {
-            let mut list: Vec<(i32, i32, i32)> = affected.into_iter().collect();
-            list.sort_unstable();
             for (x, y, z) in list {
                 let (Some(here), Some(below)) = (self.worlds[world].block_at(x, y, z), self.worlds[world].block_at(x, y - 1, z)) else { continue };
                 let solid_below = blocks::flags(below) & blocks::FLAG_FULL_CUBE != 0 && blocks::opacity(below) >= 15;

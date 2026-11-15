@@ -91,6 +91,10 @@ public final class HostEvents {
         GATED.put("EntityTameEvent", org.bukkit.event.entity.EntityTameEvent.class);
         GATED.put("PlayerStatisticIncrementEvent", org.bukkit.event.player.PlayerStatisticIncrementEvent.class);
         GATED.put("SignChangeEvent", org.bukkit.event.block.SignChangeEvent.class);
+        GATED.put("PlayerInteractEvent", org.bukkit.event.player.PlayerInteractEvent.class);
+        GATED.put("PlayerInteractEntityEvent", org.bukkit.event.player.PlayerInteractEntityEvent.class);
+        GATED.put("EntityExplodeEvent", org.bukkit.event.entity.EntityExplodeEvent.class);
+        GATED.put("BlockExplodeEvent", org.bukkit.event.block.BlockExplodeEvent.class);
     }
 
     private final CraftServer server;
@@ -122,6 +126,71 @@ public final class HostEvents {
             }
         });
         return out;
+    }
+
+    /** The faces of the protocol's directions, 0 down to 5 east. */
+    private static final org.bukkit.block.BlockFace[] FACES = {
+        org.bukkit.block.BlockFace.DOWN, org.bukkit.block.BlockFace.UP, org.bukkit.block.BlockFace.NORTH,
+        org.bukkit.block.BlockFace.SOUTH, org.bukkit.block.BlockFace.WEST, org.bukkit.block.BlockFace.EAST
+    };
+
+    /**
+     * {@code PlayerInteractEvent}, as CraftEventFactory makes it: no item for an empty hand, no
+     * hand for a physical interaction, the clicked face ({@code SELF} for none) and where on
+     * the block. Clicks in the air start out with the block's use denied (so cancelled).
+     */
+    private Map<String, Object> interact(final Map<String, Object> args) {
+        final HostPlayer player = this.player(args);
+        final org.bukkit.event.block.Action action = org.bukkit.event.block.Action.valueOf(Values.str(args, "action"));
+        final EquipmentSlot hand = action == org.bukkit.event.block.Action.PHYSICAL ? null : Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND;
+        final org.bukkit.inventory.ItemStack held = hand == null ? null : player.getInventory().getItem(hand);
+        final Block block = args.containsKey("x") ? this.block(args) : null;
+        final int face = Values.i32(args, "face", -1);
+        final List<Object> cursor = Values.list(args.get("cursor"));
+        final org.bukkit.util.Vector clicked = cursor.size() == 3
+            ? new org.bukkit.util.Vector(((Number) cursor.get(0)).doubleValue(), ((Number) cursor.get(1)).doubleValue(), ((Number) cursor.get(2)).doubleValue()) : null;
+        final org.bukkit.event.player.PlayerInteractEvent event = new org.bukkit.event.player.PlayerInteractEvent(player, action,
+            held == null || held.isEmpty() ? null : held, block, face >= 0 && face < FACES.length ? FACES[face] : org.bukkit.block.BlockFace.SELF, hand, clicked);
+        event.callEvent();
+        return Values.of("use_block", event.useInteractedBlock().name(), "use_item", event.useItemInHand().name());
+    }
+
+    /**
+     * {@code EntityExplodeEvent}, or {@code BlockExplodeEvent} for an explosion no entity
+     * caused: the blocks it is to break, as plugins leave them.
+     */
+    private Map<String, Object> explode(final Map<String, Object> args) {
+        final World world = this.server.getWorld(Values.str(args, "world"));
+        final Location at = new Location(world, Values.f64(args, "x", 0), Values.f64(args, "y", 0), Values.f64(args, "z", 0));
+        final List<Block> blocks = new ArrayList<>();
+        for (final Object b : Values.list(args.get("blocks"))) {
+            final List<Object> xyz = Values.list(b);
+            blocks.add(world.getBlockAt(((Number) xyz.get(0)).intValue(), ((Number) xyz.get(1)).intValue(), ((Number) xyz.get(2)).intValue()));
+        }
+        final org.bukkit.ExplosionResult result = org.bukkit.ExplosionResult.valueOf(Values.str(args, "result", "DESTROY"));
+        final Object source = args.get("entity");
+        final org.bukkit.entity.Entity entity = source instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+        final boolean cancelled;
+        final List<Block> left;
+        if (entity != null) {
+            final org.bukkit.event.entity.EntityExplodeEvent event = new org.bukkit.event.entity.EntityExplodeEvent(entity, at, blocks, 1.0f, result);
+            event.callEvent();
+            cancelled = event.isCancelled();
+            left = event.blockList();
+        } else {
+            final Block block = at.getBlock();
+            final org.bukkit.event.block.BlockExplodeEvent event = new org.bukkit.event.block.BlockExplodeEvent(block, block.getState(), blocks, 1.0f, result);
+            event.callEvent();
+            cancelled = event.isCancelled();
+            left = event.blockList();
+        }
+        final List<Object> out = new ArrayList<>();
+        for (final Block b : left) {
+            if (b.getWorld().equals(world)) {
+                out.add(List.of((long) b.getX(), (long) b.getY(), (long) b.getZ()));
+            }
+        }
+        return Values.of("cancelled", cancelled, "blocks", out);
     }
 
     private HostPlayer player(final Map<String, Object> args) {
@@ -178,6 +247,19 @@ public final class HostEvents {
                 }
                 yield Values.of("cancelled", event.isCancelled(), "lines", out);
             }
+            case "event.interact" -> this.interact(args);
+            case "event.interact_entity" -> {
+                final Object target = args.get("entity");
+                final org.bukkit.entity.Entity entity = target instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                if (entity == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.event.player.PlayerInteractEntityEvent event = new org.bukkit.event.player.PlayerInteractEntityEvent(this.player(args), entity,
+                    Values.i32(args, "hand", 0) == 1 ? EquipmentSlot.OFF_HAND : EquipmentSlot.HAND);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.entity_explode", "event.block_explode" -> this.explode(args);
             case "event.block_break" -> {
                 final BlockBreakEvent event = new BlockBreakEvent(this.block(args), this.player(args));
                 event.callEvent();

@@ -836,7 +836,13 @@ impl Server {
         let touch = Aabb::new(Vec3::new(pos.x as f64 + 0.0625, pos.y as f64, pos.z as f64 + 0.0625), Vec3::new(pos.x as f64 + 0.9375, pos.y as f64 + 0.25, pos.z as f64 + 0.9375));
         // Stone plates only feel living things; wooden and weighted plates everything.
         let mobs_only = matches!(name, "minecraft:stone_pressure_plate" | "minecraft:polished_blackstone_pressure_plate");
-        let mut count = self.players.values().filter(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&touch)).count();
+        let players_on: Vec<i32> = self.players.values().filter(|p| p.world == world && !p.dead && p.game_mode != GameMode::Spectator && Aabb::of_entity(Vec3::new(p.loc.x, p.loc.y, p.loc.z), 0.6, 1.8).intersects(&touch)).map(|p| p.entity_id).collect();
+        let mut count = players_on.len();
+        // A plate that is up goes down under a player only if plugins let them step on it
+        // (`PlayerInteractEvent`, PHYSICAL).
+        if plate_signal(state) == 0 && count > 0 && crate::plugins::events::listens(self, "PlayerInteractEvent") {
+            count = players_on.iter().filter(|p| crate::plugins::events::on_interact(self, **p, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block != crate::plugins::events::Use::Deny).count();
+        }
         count += self.worlds[world].entities_in(&touch).into_iter().filter_map(|id| self.worlds[world].entities.get(&id)).filter(|e| e.is_alive() && e.bounding_box().intersects(&touch) && (!mobs_only || e.mob().is_some())).count();
         let signal = match name {
             "minecraft:light_weighted_pressure_plate" => ((count.min(15) as f32 / 15.0) * 15.0).ceil() as i32,

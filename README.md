@@ -259,7 +259,11 @@ What works:
   `CraftItemEvent`, `PlayerAttemptPickupItemEvent`, `EntityPickupItemEvent`,
   `PlayerDropItemEvent`, `EntityDamageEvent` (and its `ByEntity`/`ByBlock` forms),
   `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`,
-  `PlayerStatisticIncrementEvent`, `SignChangeEvent`. Players,
+  `PlayerStatisticIncrementEvent`, `SignChangeEvent`, `PlayerInteractEvent` (clicks on
+  blocks and in the air, stepping on pressure plates and trampling farmland; a denied
+  block or item is not used, as in CraftBukkit), `PlayerInteractEntityEvent`,
+  `EntityExplodeEvent` and `BlockExplodeEvent` (only the blocks plugins leave are
+  broken). Players,
   worlds and blocks can be read and changed through the API (messages, titles, sounds,
   teleporting, health, flight, blocks, time, spawn, ...), and so can:
   * item stacks and metas (names, lore, enchantments, damage, unbreakable, custom model data,

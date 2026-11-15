@@ -146,12 +146,24 @@ impl Server {
 
     /// A player or mob landed on `pos` after falling `distance` blocks: farmland may be
     /// trampled (`FarmBlock.fallOn`; players always may, mobs only with mob griefing).
-    pub(super) fn landed_on(&mut self, world: usize, pos: BlockPos, distance: f64, player: bool) {
+    pub(super) fn landed_on(&mut self, world: usize, pos: BlockPos, distance: f64, player: Option<i32>) {
         let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return };
         if blocks::block_of_state(state).name != "minecraft:farmland" {
             return;
         }
-        let griefing = player || self.worlds[world].rules.bool("mob_griefing");
+        let griefing = player.is_some() || self.worlds[world].rules.bool("mob_griefing");
+        // A player about to trample it asks plugins first (`PlayerInteractEvent`, PHYSICAL).
+        let mut distance = distance;
+        if let Some(id) = player.filter(|_| crate::plugins::events::listens(self, "PlayerInteractEvent")) {
+            use rand::Rng;
+            if (rand::thread_rng().gen::<f32>() as f64) >= distance - 0.5 {
+                return;
+            }
+            if crate::plugins::events::on_interact(self, id, crate::plugins::events::Click::Physical, Some((pos, -1, None)), 0).block == crate::plugins::events::Use::Deny {
+                return;
+            }
+            distance = f64::INFINITY;
+        }
         {
             let mut level = Level::new(&mut self.worlds[world]);
             plants::trample(&mut level, pos, distance, griefing);

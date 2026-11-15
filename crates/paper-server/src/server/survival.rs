@@ -681,7 +681,7 @@ impl Server {
             }
             // Jumping on farmland tramples it.
             let world = self.players[&id].world;
-            self.landed_on(world, below_pos, distance, true);
+            self.landed_on(world, below_pos, distance, Some(id));
         }
         // Statistics: jumps and how far it went (`checkMovementStatistics`).
         if was_on_ground && !on_ground && dy > 0.0 {
@@ -1137,6 +1137,16 @@ impl Server {
     /// Right-click with an item in the air.
     pub(super) fn handle_use_item(&mut self, id: i32, hand: i32, sequence: i32, yaw: f32, pitch: f32) {
         self.send(id, &play::BlockChangedAck { sequence: VarInt(sequence) });
+        // Plugins may deny the use of the item (`PlayerInteractEvent`): as they decided for
+        // the block click this follows, or for a click in the air.
+        let denied = match self.last_interact.remove(&id) {
+            Some((h, tick, denied)) if h == hand && self.tick.saturating_sub(tick) <= 1 => denied,
+            _ => self.players.get(&id).is_some_and(|p| !p.dead && p.game_mode != GameMode::Spectator) && crate::plugins::events::on_interact(self, id, crate::plugins::events::Click::RightAir, None, hand).item == crate::plugins::events::Use::Deny,
+        };
+        if denied {
+            self.resync_inventory(id);
+            return;
+        }
         if self.players.get(&id).is_some_and(|p| p.dead) || self.use_bucket(id, hand, yaw, pitch) || self.use_bottle(id, hand, yaw, pitch) {
             return;
         }

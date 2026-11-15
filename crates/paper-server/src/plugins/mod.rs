@@ -16,7 +16,10 @@
 //! inside the wait, with full access to the server. Calls therefore nest across the two
 //! processes like ordinary function calls, and only one side runs game logic at a time.
 //! Calls from the host's other threads (async tasks, async events) arrive without the flag;
-//! they are queued as [`MainTask`]s and run between ticks.
+//! they run between ticks, and also while the main thread waits for the host: plugin code
+//! on the host's main thread may be waiting for one of its own async threads, which waits
+//! for its call (as when an async task holds a lock the main thread wants), and in Paper
+//! such calls never needed the main thread at all.
 
 pub mod api;
 pub mod attributes;
@@ -104,6 +107,8 @@ pub struct HostConnection {
     next_id: AtomicU64,
     /// Answers and sync calls for the main thread while it waits.
     main_rx: Receiver<Inbound>,
+    /// Calls from the host's other threads: `(id, method, args)`.
+    async_rx: Receiver<(u64, String, Value)>,
     /// Ids of sync calls the main thread is waiting for.
     main_calls: Mutex<HashSet<u64>>,
     pending: Mutex<HashMap<u64, Pending>>,
@@ -152,18 +157,22 @@ impl HostConnection {
         // Loading and enabling plugins legitimately takes a while.
         let slow_call = if method == "host.load" || method == "host.post_world" { self.slow_call.max(Duration::from_secs(30)) } else { self.slow_call };
         loop {
-            match self.main_rx.recv_timeout(Duration::from_millis(250)) {
+            let inbound = crossbeam_channel::select! {
+                recv(self.main_rx) -> item => item.map_err(|_| RecvTimeoutError::Disconnected),
+                recv(self.async_rx) -> call => {
+                    if let Ok((cid, m, args)) = call {
+                        self.serve(server, cid, &m, &args);
+                    }
+                    continue;
+                }
+                default(Duration::from_millis(250)) => Err(RecvTimeoutError::Timeout),
+            };
+            match inbound {
                 Ok(Inbound::Return { id: rid, ok, value }) if rid == id => {
                     return if ok { Ok(value) } else { Err(CallError::Remote(value.as_str().unwrap_or("error").to_owned())) };
                 }
                 Ok(Inbound::Return { id: rid, .. }) => log::warn!("Plugin host answered call {rid} out of order; ignoring it"),
-                Ok(Inbound::Call { id: cid, method: m, args }) => {
-                    let (ok, value) = match api::handle(server, &m, &args) {
-                        Ok(v) => (true, v),
-                        Err(e) => (false, Value::Str(format!("{e:#}"))),
-                    };
-                    let _ = self.send(&Frame::Return { id: cid, ok, value });
-                }
+                Ok(Inbound::Call { id: cid, method: m, args }) => self.serve(server, cid, &m, &args),
                 Ok(Inbound::Closed(reason)) => {
                     log::debug!("Plugin host closed during {method}: {reason}");
                     return Err(CallError::Disconnected);
@@ -180,6 +189,22 @@ impl HostConnection {
                 Err(RecvTimeoutError::Disconnected) => return Err(CallError::Disconnected),
             }
         }
+    }
+
+    /// Runs the calls the host's async threads have made so far.
+    fn serve_async(&self, server: &mut Server) {
+        while let Ok((id, method, args)) = self.async_rx.try_recv() {
+            self.serve(server, id, &method, &args);
+        }
+    }
+
+    /// Runs one of the host's calls into the API and answers it.
+    fn serve(&self, server: &mut Server, id: u64, method: &str, args: &Value) {
+        let (ok, value) = match api::handle(server, method, args) {
+            Ok(v) => (true, v),
+            Err(e) => (false, Value::Str(format!("{e:#}"))),
+        };
+        let _ = self.send(&Frame::Return { id, ok, value });
     }
 
     /// Calls the host without blocking; `then` runs on the main thread with the answer.
@@ -229,7 +254,7 @@ impl HostConnection {
 }
 
 /// Reads frames from the host and routes them.
-fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inbound>, to_main: Sender<MainTask>) {
+fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inbound>, async_tx: Sender<(u64, String, Value)>, to_main: Sender<MainTask>) {
     let mut reader = BufReader::with_capacity(64 * 1024, stream);
     let reason = loop {
         match read_frame(&mut reader) {
@@ -256,14 +281,11 @@ fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inb
                     let _ = main_tx.send(Inbound::Call { id, method, args });
                     let _ = to_main.send(MainTask::PluginWake);
                 } else {
+                    // Served between ticks, or by the main thread while it waits (whichever
+                    // comes first; this host's, even once another has replaced it).
+                    let _ = async_tx.send((id, method, args));
                     let conn = conn.clone();
-                    let _ = to_main.send(MainTask::Run(Box::new(move |server| {
-                        let (ok, value) = match api::handle(server, &method, &args) {
-                            Ok(v) => (true, v),
-                            Err(e) => (false, Value::Str(format!("{e:#}"))),
-                        };
-                        let _ = conn.send(&Frame::Return { id, ok, value });
-                    })));
+                    let _ = to_main.send(MainTask::Run(Box::new(move |server| conn.serve_async(server))));
                 }
             }
             Ok(Some(Frame::Notify { method, args })) => {
@@ -299,9 +321,11 @@ fn reader_loop(conn: Arc<HostConnection>, stream: TcpStream, main_tx: Sender<Inb
     }
 }
 
-/// Drains sync calls that arrived while the main thread was not waiting.
+/// Runs the calls that arrived while the main thread was not waiting: sync ones, and the
+/// host's async threads' calls.
 pub fn service_idle(server: &mut Server) {
     let Some(conn) = server.plugins.clone() else { return };
+    conn.serve_async(server);
     while let Ok(item) = conn.main_rx.try_recv() {
         match item {
             Inbound::Call { id, method, args } => {
@@ -456,10 +480,12 @@ fn start_with(server: &mut Server, launcher: &Launcher) -> Result<()> {
     writer.flush()?;
 
     let (main_tx, main_rx) = crossbeam_channel::unbounded();
+    let (async_tx, async_rx) = crossbeam_channel::unbounded();
     let conn = Arc::new(HostConnection {
         writer: Mutex::new(writer),
         next_id: AtomicU64::new(1),
         main_rx,
+        async_rx,
         main_calls: Mutex::new(HashSet::new()),
         pending: Mutex::new(HashMap::new()),
         closed: AtomicBool::new(false),
@@ -470,7 +496,7 @@ fn start_with(server: &mut Server, launcher: &Launcher) -> Result<()> {
     });
     let to_main = server.shared.to_main.clone();
     let reader_conn = conn.clone();
-    std::thread::Builder::new().name("Plugin Bridge Reader".into()).spawn(move || reader_loop(reader_conn, reader, main_tx, to_main))?;
+    std::thread::Builder::new().name("Plugin Bridge Reader".into()).spawn(move || reader_loop(reader_conn, reader, main_tx, async_tx, to_main))?;
     server.plugins = Some(conn.clone());
 
     // The host knows the players handed over in WELCOME (after `/reload`).

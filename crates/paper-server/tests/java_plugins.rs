@@ -640,6 +640,61 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     let (owner, vy) = shots.expect("the fireball flies");
     assert!(owner == Some(alice_id) && vy > 0.0, "{owner:?} {vy}");
 
+    // --- clicks and explosions plugins stop (the test plugin's guard) ------------------------
+    let (feet, chest, poppy) = server
+        .handle
+        .run(move |s| {
+            let p = s.players.get_mut(&alice_id).unwrap();
+            p.loc.pitch = -90.0;
+            let feet = BlockPos::new(p.loc.x.floor() as i32, p.loc.y.floor() as i32, p.loc.z.floor() as i32);
+            let (chest, poppy) = (feet.offset(-2, 0, 0), feet.offset(0, 0, -2));
+            s.worlds[0].set_block(chest.x, chest.y, chest.z, paper_data::blocks::default_state("minecraft:chest").unwrap());
+            s.worlds[0].set_block(poppy.x, poppy.y, poppy.z, paper_data::blocks::default_state("minecraft:poppy").unwrap());
+            (feet, chest, poppy)
+        })
+        .unwrap();
+    alice.command("apitest guard");
+    expect_line(&mut alice, "guard: true");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    // Opening the chest, picking the poppy, a swing at the sky, throwing a snowball, a right
+    // click on the cow: all stopped.
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: chest, face: VarInt(1), cursor_x: 0.5, cursor_y: 1.0, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(90) });
+    alice.send(&play::PlayerAction { status: VarInt(play::player_action::START_DESTROY_BLOCK), pos: poppy, face: 1, sequence: VarInt(91) });
+    alice.send(&play::Punch {});
+    // (Some ticks later, or it would count as the item's use after the click on the chest.)
+    alice.drain(Duration::from_millis(250));
+    alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(92), yaw: 0.0, pitch: -90.0 });
+    alice.send(&play::Interact { entity_id: VarInt(cow), hand: VarInt(0), target: paper_protocol::types::LpVec3(0.0, 0.5, 0.0), sneaking: false });
+    alice.command("apitest interactions");
+    expect_line(&mut alice, "interactions: RIGHT_CLICK_BLOCK CHEST UP HAND SNOWBALL, LEFT_CLICK_BLOCK POPPY UP HAND SNOWBALL, LEFT_CLICK_AIR - SELF HAND SNOWBALL, RIGHT_CLICK_AIR - SELF HAND SNOWBALL, ENTITY COW HAND");
+    let (shut, poppy_left, snowballs) = server
+        .handle
+        .run(move |s| {
+            let shut = s.players[&alice_id].open_menu.is_none();
+            let poppy_left = s.worlds[0].block_at(poppy.x, poppy.y, poppy.z).map(|b| paper_data::blocks::block_of_state(b).name);
+            let snowballs = s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:snowball" && matches!(e.kind, EntityKind::Thrown { owner: Some(o), .. } if o == alice_id)).count();
+            (shut, poppy_left, snowballs)
+        })
+        .unwrap();
+    assert!(shut, "the chest stays shut");
+    assert_eq!(poppy_left, Some("minecraft:poppy"));
+    assert_eq!(snowballs, 0, "no snowball thrown");
+    // A blast the cow sets off breaks nothing.
+    let blast = feet.offset(8, -1, 8);
+    server.handle.run(move |s| s.explode_with(0, paper_server::world::entity::Vec3::new(blast.x as f64 + 0.5, blast.y as f64 + 0.5, blast.z as f64 + 0.5), 2.0, true, false, Some(cow))).unwrap();
+    alice.command("apitest interactions");
+    expect_line(&mut alice, "interactions: EXPLODE COW true");
+    let ground = server.handle.run(move |s| s.worlds[0].block_at(blast.x, blast.y, blast.z).map(paper_data::blocks::is_air)).unwrap();
+    assert_eq!(ground, Some(false), "the ground is spared");
+    alice.command("apitest guard");
+    expect_line(&mut alice, "guard: false");
+    server.handle.run(move |s| s.players.get_mut(&alice_id).unwrap().loc.pitch = 0.0).unwrap();
+
+    // The host's main thread waiting for one of its async threads, which calls the server.
+    alice.command("apitest asyncwait");
+    expect_line(&mut alice, "asyncwait: ok");
+
     alice.command("apitest attrmods");
     expect_line(&mut alice, "attrmods: true bonus 10.0 mainhand 1 0");
     // Statistics: read and written by plugins, online and offline; the plugin cancels the

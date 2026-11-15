@@ -46,6 +46,132 @@ fn fire(server: &mut Server, event: &str, method: &str, args: Value) -> Option<V
     }
 }
 
+/// Whether a plugin listens for an event (so the server need not prepare it otherwise).
+pub fn listens(server: &Server, event: &str) -> bool {
+    server.plugins.is_some() && server.plugin_events.contains(event)
+}
+
+/// What plugins decided about a click (`Event.Result`): whether the clicked block and the
+/// item in hand are used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Use {
+    Default,
+    Allow,
+    Deny,
+}
+
+impl Use {
+    fn from(value: Option<&str>) -> Use {
+        match value {
+            Some("ALLOW") => Use::Allow,
+            Some("DENY") => Use::Deny,
+            _ => Use::Default,
+        }
+    }
+}
+
+/// The outcome of a `PlayerInteractEvent`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Interaction {
+    pub block: Use,
+    pub item: Use,
+}
+
+impl Interaction {
+    pub const UNTOUCHED: Interaction = Interaction { block: Use::Default, item: Use::Default };
+}
+
+/// The kind of click (`Action`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Click {
+    LeftBlock,
+    RightBlock,
+    LeftAir,
+    RightAir,
+    /// Stepping on a pressure plate, trampling farmland.
+    Physical,
+}
+
+/// A player clicked a block or the air, or stepped on something (`PlayerInteractEvent`):
+/// `block` with the face clicked (0 down to 5 east) and where on it, `hand` 0 main, 1 off.
+pub fn on_interact(server: &mut Server, id: i32, click: Click, block: Option<(BlockPos, i32, Option<(f32, f32, f32)>)>, hand: i32) -> Interaction {
+    if !listens(server, "PlayerInteractEvent") {
+        return Interaction::UNTOUCHED;
+    }
+    let Some(player) = server.players.get(&id) else { return Interaction::UNTOUCHED };
+    let mut args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "world" => server.worlds[player.world].name.clone(),
+        "action" => match click {
+            Click::LeftBlock => "LEFT_CLICK_BLOCK",
+            Click::RightBlock => "RIGHT_CLICK_BLOCK",
+            Click::LeftAir => "LEFT_CLICK_AIR",
+            Click::RightAir => "RIGHT_CLICK_AIR",
+            Click::Physical => "PHYSICAL",
+        },
+        "hand" => hand,
+    };
+    if let Some((pos, face, cursor)) = block {
+        args.set("x", pos.x);
+        args.set("y", pos.y);
+        args.set("z", pos.z);
+        args.set("face", face);
+        if let Some((cx, cy, cz)) = cursor {
+            args.set("cursor", Value::List(vec![(cx as f64).into(), (cy as f64).into(), (cz as f64).into()]));
+        }
+    }
+    match fire(server, "PlayerInteractEvent", "event.interact", args) {
+        Some(result) => Interaction { block: Use::from(result.str("use_block")), item: Use::from(result.str("use_item")) },
+        None => Interaction::UNTOUCHED,
+    }
+}
+
+/// A player right-clicked an entity (`PlayerInteractEntityEvent`). Returns whether the
+/// interaction goes ahead.
+pub fn on_interact_entity(server: &mut Server, id: i32, target: i32, hand: i32) -> bool {
+    if !listens(server, "PlayerInteractEntityEvent") {
+        return true;
+    }
+    let Some(player) = server.players.get(&id) else { return true };
+    let args = bmap! {
+        "uuid" => player.uuid().to_string(),
+        "entity" => super::entity::shallow_ref(server, target),
+        "hand" => hand,
+    };
+    match fire(server, "PlayerInteractEntityEvent", "event.interact_entity", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => true,
+    }
+}
+
+/// An explosion is about to break blocks (`EntityExplodeEvent`, or `BlockExplodeEvent` when
+/// no entity caused it): the blocks plugins leave it, or `None` if they cancelled it.
+pub fn on_explode(server: &mut Server, world: usize, source: Option<i32>, center: crate::world::entity::Vec3, blocks: Vec<(i32, i32, i32)>, decay: bool) -> Option<Vec<(i32, i32, i32)>> {
+    let source = source.filter(|s| server.players.contains_key(s) || server.worlds[world].entities.contains_key(s));
+    let event = if source.is_some() { "EntityExplodeEvent" } else { "BlockExplodeEvent" };
+    if !listens(server, event) {
+        return Some(blocks);
+    }
+    let mut args = bmap! {
+        "world" => server.worlds[world].name.clone(),
+        "x" => center.x, "y" => center.y, "z" => center.z,
+        "blocks" => Value::List(blocks.iter().map(|(x, y, z)| Value::List(vec![(*x).into(), (*y).into(), (*z).into()])).collect()),
+        "result" => if decay { "DESTROY_WITH_DECAY" } else { "DESTROY" },
+    };
+    if let Some(s) = source {
+        args.set("entity", super::entity::shallow_ref(server, s));
+    }
+    let method = if source.is_some() { "event.entity_explode" } else { "event.block_explode" };
+    match fire(server, event, method, args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => match result.list("blocks") {
+            Some(left) => Some(left.iter().filter_map(|b| Some((b.at(0).as_i64()? as i32, b.at(1).as_i64()? as i32, b.at(2).as_i64()? as i32))).collect()),
+            None => Some(blocks),
+        },
+        None => Some(blocks),
+    }
+}
+
 /// Runs the plugin scheduler and the tick events once per server tick.
 pub fn tick(server: &mut Server) {
     // Scores of criteria that follow player values (health, food, ...), twice a second.

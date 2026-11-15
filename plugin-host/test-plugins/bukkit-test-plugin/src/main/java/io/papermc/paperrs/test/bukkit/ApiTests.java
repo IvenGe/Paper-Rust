@@ -63,6 +63,10 @@ final class ApiTests implements Listener, CommandExecutor {
 
     /** Jumps the server counted, as PlayerStatisticIncrementEvent reported them (and cancelled). */
     private final List<String> jumps = new ArrayList<>();
+    /** Interactions and explosions seen, and whether the plugin stops them ("apitest guard"). */
+    private final List<String> interactions = new ArrayList<>();
+    private boolean guard;
+    private @org.jetbrains.annotations.Nullable ItemStack guardHeld;
 
     ApiTests(final JavaPlugin plugin) {
         this.plugin = plugin;
@@ -132,6 +136,36 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "signs" -> this.signs((Player) sender);
                 case "worldapi" -> this.worldApi((Player) sender);
                 case "entityflags" -> this.entityFlags((Player) sender);
+                case "guard" -> {
+                    // Stops interactions and explosions while on, with a snowball to throw.
+                    final Player player = (Player) sender;
+                    this.guard = !this.guard;
+                    if (this.guard) {
+                        this.interactions.clear();
+                        this.guardHeld = player.getInventory().getItemInMainHand();
+                        player.getInventory().setItemInMainHand(new ItemStack(Material.SNOWBALL, 4));
+                    } else {
+                        player.getInventory().setItemInMainHand(this.guardHeld);
+                    }
+                    sender.sendMessage("guard: " + this.guard);
+                }
+                case "asyncwait" -> {
+                    // The main thread waits for an async thread that uses the API, as BlueMap's
+                    // loader does: the server answers it while it waits for the main thread.
+                    String outcome;
+                    try {
+                        final int entities = java.util.concurrent.CompletableFuture.supplyAsync(() -> Bukkit.getWorlds().getFirst().getEntities().size())
+                            .get(10, java.util.concurrent.TimeUnit.SECONDS);
+                        outcome = entities >= 0 ? "ok" : "no entities";
+                    } catch (final Exception e) {
+                        outcome = e.toString();
+                    }
+                    sender.sendMessage("asyncwait: " + outcome);
+                }
+                case "interactions" -> {
+                    sender.sendMessage("interactions: " + String.join(", ", this.interactions));
+                    this.interactions.clear();
+                }
                 case "projectiles" -> {
                     // Launched by a player, spawned and aimed by the plugin.
                     final Player player = (Player) sender;
@@ -1204,6 +1238,33 @@ final class ApiTests implements Listener, CommandExecutor {
         item.remove();
         check(failures, !item.isValid(), "remove");
         report(player, "entities", failures);
+    }
+
+    @EventHandler
+    public void onInteract(final org.bukkit.event.player.PlayerInteractEvent event) {
+        if (!this.guard) {
+            return;
+        }
+        final Block block = event.getClickedBlock();
+        this.interactions.add(event.getAction() + " " + (block == null ? "-" : block.getType()) + " " + event.getBlockFace() + " " + event.getHand()
+            + " " + (event.getItem() == null ? "-" : event.getItem().getType()));
+        event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onInteractEntity(final org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        if (this.guard) {
+            this.interactions.add("ENTITY " + event.getRightClicked().getType() + " " + event.getHand());
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onExplode(final org.bukkit.event.entity.EntityExplodeEvent event) {
+        if (this.guard) {
+            this.interactions.add("EXPLODE " + event.getEntityType() + " " + !event.blockList().isEmpty());
+            event.blockList().clear();
+        }
     }
 
     @EventHandler

@@ -4,6 +4,7 @@ use super::commands::CommandSource;
 use super::player::{Location, HOTBAR_START, INVENTORY_SLOTS, OFFHAND_SLOT};
 use super::Server;
 use crate::config::GameMode;
+use crate::plugins::events;
 use paper_data::{blocks, items};
 use paper_protocol::codec::{BlockPos, Reader, VarInt};
 use paper_protocol::packets::play::{self, Serverbound};
@@ -213,10 +214,15 @@ impl Server {
             }
             Serverbound::Punch => {
                 // Sent every tick while breaking a block, too.
+                let digging = player.dig_effects.is_some();
                 if let Some(effects) = player.dig_effects.as_mut() {
                     effects.punched = true;
                 }
                 self.broadcast_to_viewers(id, &play::SwingAnimation { entity_id: VarInt(id), hand: VarInt(0), animation_type: VarInt(1), duration: VarInt(6) });
+                // A swing at nothing within reach is a left click in the air.
+                if !digging && events::listens(self, "PlayerInteractEvent") && !self.swing_hits_something(id) {
+                    events::on_interact(self, id, events::Click::LeftAir, None, 0);
+                }
             }
             Serverbound::ClientTickEnd => self.dig_effects_tick(id),
             Serverbound::SignUpdate(p) => self.handle_sign_update(id, p),
@@ -314,6 +320,26 @@ impl Server {
         }
     }
 
+    /// Whether a swing of the arm reaches a block or an entity (CraftBukkit's ray trace for
+    /// "rogue arm swings"): as far as the player reaches blocks or entities, whichever is
+    /// further.
+    fn swing_hits_something(&self, id: i32) -> bool {
+        use crate::world::entity::{Aabb, Vec3};
+        let Some(p) = self.players.get(&id) else { return true };
+        let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height(), p.loc.z);
+        let (yaw, pitch) = ((p.loc.yaw as f64).to_radians(), (p.loc.pitch as f64).to_radians());
+        let look = Vec3::new(-yaw.sin() * pitch.cos(), -pitch.sin(), yaw.cos() * pitch.cos());
+        let reach = p.attributes.value("block_interaction_range").max(p.attributes.value("entity_interaction_range"));
+        let to = eye.add(look.scale(reach));
+        let w = &self.worlds[p.world];
+        if super::combat::clip_blocks(w, eye, to).is_some() {
+            return true;
+        }
+        let ray = Aabb::new(eye, eye).expand_towards(look.scale(reach)).inflate(1.0, 1.0, 1.0);
+        let player_hit = self.players.values().any(|o| o.entity_id != id && o.world == p.world && !o.dead && Aabb::of_entity(Vec3::new(o.loc.x, o.loc.y, o.loc.z), 0.6, 1.8).clip_ray(eye, to).is_some());
+        player_hit || w.entities_in(&ray).into_iter().filter_map(|e| w.entities.get(&e)).any(|e| e.bounding_box().clip_ray(eye, to).is_some())
+    }
+
     /// Whether `pos` is close enough for the player to act on.
     fn within_reach(&self, id: i32, pos: BlockPos) -> bool {
         let Some(player) = self.players.get(&id) else { return false };
@@ -368,6 +394,20 @@ impl Server {
                 }
             }
             START_DESTROY_BLOCK | STOP_DESTROY_BLOCK => {
+                // Plugins see the left click first (`PlayerInteractEvent`): a cancelled one
+                // breaks nothing, and in survival nor does one that denies the item's use.
+                if action.status.0 == START_DESTROY_BLOCK {
+                    let interaction = events::on_interact(self, id, events::Click::LeftBlock, Some((action.pos, action.face as i32, None)), 0);
+                    if interaction.block == events::Use::Deny || interaction.item == events::Use::Deny && mode != GameMode::Creative {
+                        if let Some(p) = self.players.get_mut(&id) {
+                            p.dig_effects = None;
+                        }
+                        self.resend_block(id, action.pos);
+                        self.send(id, &play::BlockChangedAck { sequence: action.sequence });
+                        return;
+                    }
+                }
+                let Some(player) = self.players.get_mut(&id) else { return };
                 let world = player.world;
                 // `ServerboundPlayerActionPacket`: 26.3 clients only show breaking
                 // particles the server sends (see `tick_end`).
@@ -446,6 +486,26 @@ impl Server {
             self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
             return;
         }
+        // Plugins see the click first (`PlayerInteractEvent`): they may keep the block from
+        // being used (and then nothing happens here), or the item in hand.
+        let cursor = Some((use_on.cursor_x, use_on.cursor_y, use_on.cursor_z));
+        let interaction = events::on_interact(self, id, events::Click::RightBlock, Some((use_on.pos, use_on.face.0, cursor)), use_on.hand.0);
+        let item_allowed = interaction.item != events::Use::Deny;
+        if events::listens(self, "PlayerInteractEvent") {
+            self.last_interact.insert(id, (use_on.hand.0, self.tick, !item_allowed));
+        }
+        if interaction.block == events::Use::Deny {
+            // Undo what the client predicted: an opened door (both halves), a placed block.
+            for dy in -1..=1 {
+                self.resend_block(id, use_on.pos.offset(0, dy, 0));
+            }
+            if let Some((dx, dy, dz)) = FACE_OFFSETS.get(use_on.face.0 as usize) {
+                self.resend_block(id, use_on.pos.offset(*dx, *dy, *dz));
+            }
+            self.resync_inventory(id);
+            self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
+            return;
+        }
         // Using a block (opening a chest, ...) comes first, unless sneaking with an item.
         if let Some(player) = self.players.get(&id) {
             let world = player.world;
@@ -457,15 +517,18 @@ impl Server {
             }
         }
         // Flint and steel, fire charges and eyes of ender act on the block they are used on.
-        if self.within_reach(id, use_on.pos) && (self.use_igniter(id, &use_on) || self.use_ender_eye(id, &use_on)) {
+        if item_allowed && self.within_reach(id, use_on.pos) && (self.use_igniter(id, &use_on) || self.use_ender_eye(id, &use_on)) {
             self.send(id, &play::BlockChangedAck { sequence: use_on.sequence });
             return;
         }
         // Levers, buttons, doors, repeaters... react to the click instead of a block being placed.
         let used = self.within_reach(id, use_on.pos) && self.use_block(id, &use_on);
         // Hoes, shovels, axes and bone meal work on the block.
-        let used = used || self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_tool_on_block(id, &use_on));
-        let placed = used || self.try_place_block(id, &use_on);
+        let used = used || item_allowed && self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_tool_on_block(id, &use_on));
+        let placed = used || item_allowed && self.try_place_block(id, &use_on);
+        if !item_allowed {
+            self.resync_inventory(id);
+        }
         if !placed {
             // Undo whatever the client predicted at the clicked block and beside it.
             self.resend_block(id, use_on.pos);

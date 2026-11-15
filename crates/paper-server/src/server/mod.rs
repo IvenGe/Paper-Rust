@@ -192,6 +192,10 @@ pub struct Server {
     pub plugin_commands: HashSet<String>,
     /// Bukkit event classes (simple names) that have plugin listeners.
     pub plugin_events: HashSet<String>,
+    /// Per player, the last right click on a block plugins saw (`PlayerInteractEvent`): the
+    /// hand, the tick and whether they denied the item's use, for the use of the item that
+    /// follows the click (CraftBukkit's `firedInteract`).
+    pub(crate) last_interact: HashMap<i32, (i32, u64, bool)>,
     pub plugin_list: Vec<crate::plugins::PluginInfo>,
     /// The last player state sent to the plugin host, per entity id.
     pub plugin_state_cache: HashMap<i32, paper_bridge::Value>,
@@ -396,6 +400,7 @@ impl Server {
             plugins: None,
             plugin_commands: HashSet::new(),
             plugin_events: HashSet::new(),
+            last_interact: HashMap::new(),
             plugin_list: Vec::new(),
             plugin_state_cache: HashMap::new(),
             // Plugin API state, scoreboards and the name cache (see the struct fields).

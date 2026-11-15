@@ -56,7 +56,11 @@ on what `Bukkit.isPrimaryThread()` reports as the main thread.
 Calls without the `SYNC` flag are asynchronous. The server uses them for events Paper fires
 off the main thread (chat, the server list ping, pre-login), which the host runs on worker
 threads. The host uses them for API calls from its other threads (async tasks, async event
-handlers); the server queues those and runs them on its main thread between ticks.
+handlers); the server queues those and runs them on its main thread between ticks, and
+also while that thread waits for the host to answer a call: plugin code on the host's main
+thread may be waiting for one of its async threads (BlueMap's join handler waits for a
+cache its async loader is filling through the API), which in Paper would never need the
+main thread.
 
 The host keeps a copy of each player's state (position, game mode, health, permissions
 level, ...). Before every sync call and every tick the server sends the states that changed
@@ -150,6 +154,9 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.block_break` | `uuid`, `world`, `x`, `y`, `z`, `state` | `cancelled` |
 | `event.resource_pack_status` | `uuid`, `id` (the pack), `status` (0 loaded ... 7 discarded) | nothing |
 | `event.block_place` | the same, `replaced`, `against` `[x, y, z]`, `offhand` | `cancelled`; the server places the block after the event, unless a listener has set that block itself |
+| `event.interact` | `uuid`, `world`, `action` (`LEFT_CLICK_BLOCK`, `RIGHT_CLICK_BLOCK`, `LEFT_CLICK_AIR`, `RIGHT_CLICK_AIR`, `PHYSICAL`), `hand` (0 main, 1 off), and for a block `x`, `y`, `z`, `face` (0 down to 5 east, -1 none) and `cursor` `[x, y, z]` on it | `use_block`, `use_item` (`DEFAULT`, `ALLOW`, `DENY`; `PlayerInteractEvent`): a denied block is not used (no door, chest, lever, plate or trampled farmland), a denied item not used on it or in the air; a cancelled left click breaks nothing |
+| `event.interact_entity` | `uuid`, `entity`, `hand` | `cancelled` (`PlayerInteractEntityEvent`: no riding, trading, taming, ...) |
+| `event.entity_explode` / `event.block_explode` | `world`, `x`, `y`, `z` (the centre), `blocks` `[[x, y, z]]`, `result` (`DESTROY`, `DESTROY_WITH_DECAY`), and `entity` for the first | `cancelled`, `blocks` (`EntityExplodeEvent`, `BlockExplodeEvent`): only the blocks left are broken |
 | `event.move` | `uuid`, `from`, `to` (`x y z yaw pitch`) | `cancelled`, or a changed `to` |
 | `event.game_mode_change` | `uuid`, `mode` | `cancelled` |
 | `event.chat` (async) | `uuid`, `message`, `default` | `cancelled`, `deliveries`: `[{viewer, message}]` rendered per viewer (`viewer` is a UUID or `console`) |
@@ -160,8 +167,9 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `command.visible` | `uuid` | `labels`: the plugin commands this player may see |
 
 Some events are only fired when a plugin listens to them (the host reports which in
-`events`): command preprocess, server command, block break and place, move, game mode
-change, chat, and the inventory, item, damage, death, respawn and spawn events. Join, quit,
+`events`): command preprocess, server command, block break and place, interactions and
+explosions, move, game mode change, chat, and the inventory, item, damage, death, respawn
+and spawn events. Join, quit,
 the ping and pre-login are always fired. Entities in events are `{player: uuid}` or
 `{entity: id, value: <state>}` (see `entity.state`).
 

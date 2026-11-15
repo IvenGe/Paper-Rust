@@ -241,6 +241,12 @@ impl Server {
         if e.pos.distance_squared(at) > 64.0 {
             return;
         }
+        // Plugins may stop it (`PlayerInteractEntityEvent`): no riding, trading, taming, ...
+        if !crate::plugins::events::on_interact_entity(self, id, target, hand) {
+            self.resync_inventory(id);
+            return;
+        }
+        let Some(e) = self.worlds[world].entities.get(&target) else { return };
         if super::boats::is_boat(&e.info.name) {
             self.board_boat(id, world, target);
             return;
