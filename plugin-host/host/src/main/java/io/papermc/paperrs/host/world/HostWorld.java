@@ -38,11 +38,98 @@ public final class HostWorld extends AbstractWorld {
     /**
      * Sections of blocks read at once (`world.section`): reading block after block, as
      * plugins scanning an area do, costs one call per section instead of one per block. A
-     * section is good while nothing crosses the bridge (see {@code CraftServer#epoch}).
+     * section is good while nothing crosses the bridge (see {@code CraftServer#epoch}); the
+     * changes the main thread queues without waiting ({@link BlockEdits}) are made to it too.
      */
     private final Map<Long, CachedSection> sections = new java.util.concurrent.ConcurrentHashMap<>();
 
-    private record CachedSection(long epoch, String[] palette, byte @Nullable [] indices) {
+    /** Sections kept at most (about 8 KB each). */
+    private static final int MAX_SECTIONS = 1024;
+
+    /**
+     * Chunks known to be loaded, with the epoch they were known at: nothing unloads a chunk
+     * while nothing crosses the bridge, so {@code getChunkAt} and {@code isChunkLoaded} (which
+     * WorldEdit asks before every change) need not ask the server again meanwhile.
+     */
+    private final Map<Long, Long> loadedAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static long chunkKey(final int x, final int z) {
+        return (long) x << 32 | (z & 0xFFFFFFFFL);
+    }
+
+    private boolean knownLoaded(final int x, final int z) {
+        final Long epoch = this.loadedAt.get(chunkKey(x, z));
+        return epoch != null && epoch == this.server.epoch();
+    }
+
+    private void knowLoaded(final int x, final int z, final long epoch) {
+        if (this.loadedAt.size() >= 4096) {
+            this.loadedAt.clear();
+        }
+        this.loadedAt.put(chunkKey(x, z), epoch);
+    }
+
+    /**
+     * A section as read: a palette of state ids (and their names, once asked for), two bytes
+     * of palette index per block (y, z, x) unless it is uniform, and which blocks hold block
+     * entities. Changed only on the main thread.
+     */
+    private static final class CachedSection {
+        final long epoch;
+        int[] ids;
+        @Nullable String[] names;
+        byte @Nullable [] indices;
+        /** Blocks (y << 8 | z << 4 | x) with a block entity, or changed since, which may have one now. */
+        final java.util.BitSet blockEntities = new java.util.BitSet();
+
+        CachedSection(final long epoch, final int[] ids, final @Nullable String[] names, final byte @Nullable [] indices) {
+            this.epoch = epoch;
+            this.ids = ids;
+            this.names = names;
+            this.indices = indices;
+        }
+
+        int paletteIndex(final int i) {
+            final byte[] indices = this.indices;
+            return indices == null ? 0 : (indices[i * 2] & 0xFF) | (indices[i * 2 + 1] & 0xFF) << 8;
+        }
+
+        int state(final int i) {
+            return this.ids[this.paletteIndex(i)];
+        }
+
+        String name(final int i) {
+            final int p = this.paletteIndex(i);
+            String name = this.names[p];
+            if (name == null) {
+                name = io.papermc.paperrs.host.data.HostData.get().stateToString(this.ids[p]);
+                this.names[p] = name;
+            }
+            return name;
+        }
+
+        void set(final int i, final int state) {
+            int p = -1;
+            for (int k = 0; k < this.ids.length; k++) {
+                if (this.ids[k] == state) {
+                    p = k;
+                    break;
+                }
+            }
+            if (p < 0) {
+                p = this.ids.length;
+                this.ids = java.util.Arrays.copyOf(this.ids, p + 1);
+                this.names = java.util.Arrays.copyOf(this.names, p + 1);
+                this.ids[p] = state;
+            }
+            if (this.indices == null) {
+                // Every block was palette entry 0.
+                this.indices = new byte[4096 * 2];
+            }
+            this.indices[i * 2] = (byte) p;
+            this.indices[i * 2 + 1] = (byte) (p >> 8);
+            this.blockEntities.set(i);
+        }
     }
     private final UUID uid;
     private final NamespacedKey key;
@@ -128,30 +215,78 @@ public final class HostWorld extends AbstractWorld {
         return Values.map(this.server.call("world.info", Values.of("world", this.name)));
     }
 
+    /** The section of a block as the server has it now, read again if anything happened since. */
+    private CachedSection section(final int x, final int y, final int z) {
+        final long key = ((long) (x >> 4) & 0x3FFFFFL) << 42 | ((long) (z >> 4) & 0x3FFFFFL) << 20 | ((long) (y >> 4) & 0xFFFFFL);
+        CachedSection section = this.sections.get(key);
+        if (section != null && section.epoch == this.server.epoch()) {
+            return section;
+        }
+        // Queued changes go out first, so the section read has them (and if side effects must
+        // go with them, the epoch moves on before this read is taken).
+        if (this.server.isPrimaryThread()) {
+            this.server.blockEdits().flushForRead();
+        }
+        final long epoch = this.server.epoch();
+        final Map<String, Object> read = Values.map(this.server.read("world.section", Values.of("world", this.name, "x", x, "y", y, "z", z)));
+        final List<Object> palette = Values.list(read.get("palette"));
+        final List<Object> idList = Values.list(read.get("ids"));
+        final int[] ids = new int[palette.size()];
+        final String[] names = new String[palette.size()];
+        for (int i = 0; i < ids.length; i++) {
+            names[i] = String.valueOf(palette.get(i));
+            ids[i] = i < idList.size() ? ((Number) idList.get(i)).intValue() : io.papermc.paperrs.host.data.HostData.get().parseState(names[i]);
+        }
+        section = new CachedSection(epoch, ids, names, read.get("indices") instanceof byte[] bytes ? bytes : null);
+        for (final Object at : Values.list(read.get("block_entities"))) {
+            section.blockEntities.set(((Number) at).intValue());
+        }
+        if (this.sections.size() >= MAX_SECTIONS) {
+            this.sections.clear();
+        }
+        this.sections.put(key, section);
+        // Reading a section loads its chunk.
+        this.knowLoaded(x >> 4, z >> 4, epoch);
+        return section;
+    }
+
+    private static int indexOf(final int x, final int y, final int z) {
+        return (y & 15) << 8 | (z & 15) << 4 | (x & 15);
+    }
+
     /** The state of a block, as {@code minecraft:name[property=value,...]}, through the section cache. */
     public String blockState(final int x, final int y, final int z) {
-        final long key = ((long) (x >> 4) & 0x3FFFFFL) << 42 | ((long) (z >> 4) & 0x3FFFFFL) << 20 | ((long) (y >> 4) & 0xFFFFFL);
-        final long epoch = this.server.epoch();
-        CachedSection section = this.sections.get(key);
-        if (section == null || section.epoch() != epoch) {
-            final Map<String, Object> read = Values.map(this.server.read("world.section", Values.of("world", this.name, "x", x, "y", y, "z", z)));
-            final List<Object> palette = Values.list(read.get("palette"));
-            final String[] states = new String[palette.size()];
-            for (int i = 0; i < states.length; i++) {
-                states[i] = String.valueOf(palette.get(i));
-            }
-            section = new CachedSection(epoch, states, read.get("indices") instanceof byte[] bytes ? bytes : null);
-            if (this.sections.size() >= 256) {
-                this.sections.clear();
-            }
-            this.sections.put(key, section);
+        return this.section(x, y, z).name(indexOf(x, y, z));
+    }
+
+    /** The state id of a block, through the section cache. */
+    public int stateId(final int x, final int y, final int z) {
+        return this.section(x, y, z).state(indexOf(x, y, z));
+    }
+
+    /** Whether a block may hold a block entity (it did when read, or changed since). */
+    public boolean mayHaveBlockEntity(final int x, final int y, final int z) {
+        return this.section(x, y, z).blockEntities.get(indexOf(x, y, z));
+    }
+
+    /**
+     * Sets a block without physics and without waiting for the server (see
+     * {@link BlockEdits}): the state it had, or -1 if nothing changed. Main thread only; the
+     * server changes nothing outside the world's height either.
+     */
+    public int setBlockQuietly(final int x, final int y, final int z, final int state) {
+        if (y < this.minY || y >= this.minY + this.height) {
+            return -1;
         }
-        final byte[] indices = section.indices();
-        if (indices == null) {
-            return section.palette()[0];
+        final CachedSection section = this.section(x, y, z);
+        final int i = indexOf(x, y, z);
+        final int old = section.state(i);
+        if (old == state) {
+            return -1;
         }
-        final int i = ((y & 15) << 8 | (z & 15) << 4 | (x & 15)) * 2;
-        return section.palette()[(indices[i] & 0xFF) | (indices[i + 1] & 0xFF) << 8];
+        this.server.blockEdits().set(this.name, x, y, z, state);
+        section.set(i, state);
+        return old;
     }
 
     @Override
@@ -278,7 +413,15 @@ public final class HostWorld extends AbstractWorld {
 
     @Override
     public boolean isChunkLoaded(final int x, final int z) {
-        return Boolean.TRUE.equals(this.server.call("world.is_chunk_loaded", Values.of("world", this.name, "x", x, "z", z)));
+        if (this.knownLoaded(x, z)) {
+            return true;
+        }
+        final long epoch = this.server.epoch();
+        final boolean loaded = Boolean.TRUE.equals(this.server.read("world.is_chunk_loaded", Values.of("world", this.name, "x", x, "z", z)));
+        if (loaded) {
+            this.knowLoaded(x, z, epoch);
+        }
+        return loaded;
     }
 
     @Override
@@ -596,7 +739,11 @@ public final class HostWorld extends AbstractWorld {
     /** Loads (or generates) the chunk now, as {@code CraftWorld.getChunkAt}. */
     @Override
     public org.bukkit.Chunk getChunkAt(final int x, final int z) {
-        this.server.call("world.load_chunk", this.chunkArgs(x, z, "generate", true));
+        // Only loading changes anything (and may tell plugins): a loaded chunk is just a read.
+        if (!this.isChunkLoaded(x, z)) {
+            this.server.call("world.load_chunk", this.chunkArgs(x, z, "generate", true));
+            this.knowLoaded(x, z, this.server.epoch());
+        }
         return new HostChunk(this, x, z);
     }
 

@@ -1005,6 +1005,53 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         return this.getHealth() <= 0;
     }
 
+    // where it is, as the server works it out for other entities too
+
+    @Override
+    public boolean isInWater() {
+        return Values.bool(this.state, "in_water", false);
+    }
+
+    @Override
+    public boolean isUnderWater() {
+        return Values.bool(this.state, "under_water", false);
+    }
+
+    @Override
+    public boolean isInLava() {
+        return Values.bool(this.state, "in_lava", false);
+    }
+
+    @Override
+    public boolean isInRain() {
+        return Values.bool(this.state, "in_rain", false);
+    }
+
+    @Override
+    public boolean isInBubbleColumn() {
+        return Values.bool(this.state, "in_bubble_column", false);
+    }
+
+    @Override
+    public boolean isInWaterOrRain() {
+        return this.isInWater() || this.isInRain();
+    }
+
+    @Override
+    public boolean isInWaterOrBubbleColumn() {
+        return this.isInWater() || this.isInBubbleColumn();
+    }
+
+    @Override
+    public boolean isInWaterOrRainOrBubbleColumn() {
+        return this.isInWater() || this.isInRain() || this.isInBubbleColumn();
+    }
+
+    @Override
+    public boolean isInPowderedSnow() {
+        return Values.bool(this.state, "in_powder_snow", false);
+    }
+
     @Override
     public int getFoodLevel() {
         return Values.i32(this.state, "food", 20);

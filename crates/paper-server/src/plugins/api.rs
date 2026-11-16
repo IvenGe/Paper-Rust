@@ -204,6 +204,27 @@ pub(super) fn change_border(b: &mut crate::world::Border, args: &Value) -> Vec<b
 
 /// The state of a player the host caches. The host refreshes its copy whenever this changes.
 pub fn player_state(server: &Server, p: &Player) -> Value {
+    let mut out = player_state_fields(server, p);
+    // Where it is, as for other entities: in water, lava, rain, a bubble column, powder snow.
+    if let Some(w) = server.worlds.get(p.world) {
+        use crate::server::survival::{box_in_fluid, point_in_fluid, Fluid};
+        use crate::world::entity::{Aabb, Vec3};
+        let height = if p.gliding { 0.6 } else if p.sneaking { 1.5 } else { 1.8 };
+        let area = Aabb::new(Vec3::new(p.loc.x - 0.3, p.loc.y, p.loc.z - 0.3), Vec3::new(p.loc.x + 0.3, p.loc.y + height, p.loc.z + 0.3));
+        let (x, y, z) = (p.loc.x.floor() as i32, p.loc.y.floor() as i32, p.loc.z.floor() as i32);
+        let at_feet = w.block_at(x, y, z).map_or("minecraft:air", |s| blocks::block_of_state(s).name);
+        let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height() - 0.11111111, p.loc.z);
+        out.set("in_water", box_in_fluid(w, &area, Fluid::Water));
+        out.set("under_water", point_in_fluid(w, eye, Fluid::Water));
+        out.set("in_lava", box_in_fluid(w, &area, Fluid::Lava));
+        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (p.loc.y + height).ceil() as i32, z));
+        out.set("in_bubble_column", at_feet == "minecraft:bubble_column");
+        out.set("in_powder_snow", at_feet == "minecraft:powder_snow");
+    }
+    out
+}
+
+fn player_state_fields(server: &Server, p: &Player) -> Value {
     bmap! {
         "uuid" => p.uuid().to_string(),
         "name" => p.name(),
@@ -470,7 +491,10 @@ fn player_id(server: &Server, args: &Value) -> Result<i32> {
 /// states and, unless uniform, two little-endian bytes of palette index per block (y, z, x).
 fn section_value(section: &crate::world::chunk::Section) -> Value {
     match &section.blocks {
-        crate::world::chunk::BlockStorage::Uniform(state) => bmap! { "palette" => Value::List(vec![Value::Str(blocks::state_to_string(*state as u32))]) },
+        crate::world::chunk::BlockStorage::Uniform(state) => bmap! {
+            "palette" => Value::List(vec![Value::Str(blocks::state_to_string(*state as u32))]),
+            "ids" => Value::List(vec![Value::Int(*state as i64)]),
+        },
         crate::world::chunk::BlockStorage::Dense(data) => {
             let mut palette: Vec<u16> = Vec::new();
             let mut index: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
@@ -484,10 +508,62 @@ fn section_value(section: &crate::world::chunk::Section) -> Value {
             }
             bmap! {
                 "palette" => Value::List(palette.iter().map(|s| Value::Str(blocks::state_to_string(*s as u32))).collect()),
+                "ids" => Value::List(palette.iter().map(|s| Value::Int(*s as i64)).collect()),
                 "indices" => Value::Bytes(indices),
             }
         }
     }
+}
+
+/// Applies `world.edit_batch` entries in order; how many there were.
+fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<usize> {
+    use crate::world::block_updates::{flags, Level};
+    const SET: i32 = 0;
+    const EFFECTS: i32 = 1;
+    let int = |e: &[u8], i: usize| i32::from_le_bytes(e[i * 4..i * 4 + 4].try_into().unwrap());
+    let mut last_chunk = None;
+    let mut n = 0;
+    for e in edits.chunks_exact(28) {
+        let (kind, x, y, z, state) = (int(e, 0), int(e, 1), int(e, 2), int(e, 3), int(e, 4) as u32);
+        let (old, effects) = (int(e, 5) as u32, int(e, 6));
+        if !blocks::is_valid_state(state) || kind == EFFECTS && !blocks::is_valid_state(old) {
+            bail!("invalid block state in edit {n}");
+        }
+        let chunk = crate::world::chunk::ChunkPos::of_block(x, z);
+        if last_chunk != Some(chunk) {
+            ensure_chunk(server, world, x, z);
+            last_chunk = Some(chunk);
+        }
+        let pos = paper_protocol::codec::BlockPos::new(x, y, z);
+        let mut level = Level::new(&mut server.worlds[world]);
+        match kind {
+            SET => {
+                level.set_block(pos, state, flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE);
+            }
+            EFFECTS if level.state(pos) == state => {
+                if effects & 1 != 0 {
+                    level.on_place(state, pos, old, false);
+                }
+                if effects & 2 != 0 {
+                    level.update_neighbors_at(pos, blocks::block_id_of_state(old));
+                    if paper_data::physics::has_analog_output(state) {
+                        level.update_neighbour_for_output_signal(pos, blocks::block_id_of_state(state));
+                    }
+                }
+                if effects & 4 != 0 {
+                    let limit = crate::world::block_updates::UPDATE_LIMIT - 1;
+                    level.update_indirect_neighbour_shapes(old, pos, flags::CLIENTS, limit);
+                    level.update_neighbour_shapes(state, pos, flags::CLIENTS, limit);
+                    level.update_indirect_neighbour_shapes(state, pos, flags::CLIENTS, limit);
+                }
+            }
+            EFFECTS => {}
+            other => bail!("unknown edit kind {other}"),
+        }
+        n += 1;
+    }
+    server.publish_block_updates(world);
+    Ok(n)
 }
 
 fn world_index(server: &Server, args: &Value) -> Result<usize> {
@@ -1037,10 +1113,48 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let section = (0..w.height).contains(&rel).then(|| w.chunks.get(&crate::world::chunk::ChunkPos::of_block(x, z))).flatten().and_then(|c| c.sections.get((rel >> 4) as usize));
             let Some(section) = section else {
                 // Outside the world: what reading a block there answers.
-                let state = state_value(server, world, x, y, z).str("state").unwrap_or("minecraft:void_air").to_owned();
-                return Ok(bmap! { "palette" => Value::List(vec![Value::Str(state)]) });
+                let value = state_value(server, world, x, y, z);
+                let state = value.str("state").unwrap_or("minecraft:void_air").to_owned();
+                let id = blocks::parse_state(&state).unwrap_or(0);
+                return Ok(bmap! { "palette" => Value::List(vec![Value::Str(state)]), "ids" => Value::List(vec![Value::Int(id as i64)]) });
             };
-            Ok(section_value(section))
+            let mut value = section_value(section);
+            // Where the section has block entities (as y << 8 | z << 4 | x), so a reader asks
+            // for those only.
+            let base = w.min_y + (rel & !15);
+            let chunk = w.chunks.get(&crate::world::chunk::ChunkPos::of_block(x, z));
+            let entities: Vec<Value> = chunk
+                .into_iter()
+                .flat_map(|c| c.block_entities.keys())
+                .filter(|(by, _, _)| (base..base + 16).contains(by))
+                .map(|(by, bz, bx)| Value::Int((((by - base) << 8) | ((*bz as i32) << 4) | *bx as i32) as i64))
+                .collect();
+            if let Value::Map(m) = &mut value {
+                m.insert("block_entities".into(), Value::List(entities));
+            }
+            Ok(value)
+        }
+        // Block changes the host made without waiting (WorldEdit's edits, Bukkit's changes
+        // without physics), packed as seven little-endian ints each: kind, x, y, z, state,
+        // old state, flags. Kind 0 sets a block without physics; kind 1 runs the side effects
+        // WorldEdit applies after an edit (`WorldNativeAccess.applySideEffects`): the block's
+        // `onPlace` (flag 1), its neighbours' updates (2) and their shapes (4), if the block is
+        // still what the edit left. Plugins hear no events meanwhile unless `events` is set.
+        "world.edit_batch" => {
+            let world = world_index(server, args)?;
+            let Value::Bytes(edits) = args.get("edits") else { bail!("missing edits") };
+            if edits.len() % 28 != 0 {
+                bail!("edits are 28 bytes each, not {} in all", edits.len());
+            }
+            let events = args.bool("events") == Some(true);
+            if !events {
+                server.events_suppressed += 1;
+            }
+            let applied = apply_edit_batch(server, world, edits);
+            if !events {
+                server.events_suppressed -= 1;
+            }
+            applied.map(|n| Value::Int(n as i64))
         }
         "world.block_entity" => {
             // A block entity as saved (named NBT, with its id and position), or null.

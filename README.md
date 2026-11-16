@@ -604,8 +604,11 @@ What works:
     use Minecraft's internal classes, so the plugin host gives it its own
     (`plugin-host/host/src/main/java/io/papermc/paperrs/host/compat`), defined in WorldEdit's
     class loader when WorldEdit is enabled. Selections, `//set`, `//replace`, `//copy`,
-    `//paste`, shapes and `//undo` work, block entities included; regeneration, trees and
-    features from WorldEdit are not supported;
+    `//paste`, shapes and `//undo` work, block entities included, with the side effects
+    WorldEdit applies after an edit (water flows, sand falls, fences connect); edits go to the
+    server in batches, so a `//set` of 27,000 blocks takes about a fifth of a second and one
+    of half a million about half a second (see [the bridge](docs/plugin-bridge.md));
+    regeneration, trees and features from WorldEdit are not supported;
   * Paper's start-up order: STARTUP plugins are enabled before the worlds load, then each
     world loads with `WorldInitEvent` and `WorldLoadEvent`, then the POSTWORLD plugins.
     Libraries bundled in plugins recognise the server as Paper (PaperLib), and reading or

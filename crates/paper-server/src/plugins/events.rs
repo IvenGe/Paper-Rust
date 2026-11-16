@@ -65,6 +65,9 @@ fn state_mark(p: &crate::server::player::Player) -> u64 {
 /// and the event has listeners there), then the Rust plugins that listen to it, which have
 /// the last word (`plugins::native::fire`). `None` if no plugin heard of it.
 fn fire(server: &mut Server, event: &str, method: &str, args: Value) -> Option<Value> {
+    if server.events_suppressed > 0 {
+        return None;
+    }
     let java = match server.plugins.clone() {
         Some(conn) if event.is_empty() || server.java_events.contains(event) => {
             flush_states(server);
@@ -86,7 +89,7 @@ fn fire(server: &mut Server, event: &str, method: &str, args: Value) -> Option<V
 
 /// Whether a plugin listens for an event (so the server need not prepare it otherwise).
 pub fn listens(server: &Server, event: &str) -> bool {
-    server.plugin_events.contains(event)
+    server.events_suppressed == 0 && server.plugin_events.contains(event)
 }
 
 /// The events plugins listen to: Java plugins' and Rust plugins'.

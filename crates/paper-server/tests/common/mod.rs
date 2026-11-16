@@ -294,6 +294,59 @@ impl Client {
         }
     }
 
+    /// Waits for the state `pos` is sent as, matching `pred`, whether in a block update or in
+    /// a section's (a burst of changes goes per section, as vanilla sends a tick's). Only that
+    /// block is taken out of a section's packet; the rest of it, and other packets, are kept
+    /// in order for later calls.
+    pub fn find_block_update(&mut self, timeout: Duration, pos: paper_protocol::codec::BlockPos, pred: impl Fn(i32) -> bool) -> Option<i32> {
+        // The state, and what is left of the packet (None: the whole packet is used up).
+        let take = |id: i32, frame: &[u8]| -> Option<(i32, Option<Vec<u8>>)> {
+            if id == play::BlockUpdate::ID {
+                let u: play::BlockUpdate = decode(frame);
+                return (u.pos == pos && pred(u.state.0)).then_some((u.state.0, None));
+            }
+            if id != play::SectionBlocksUpdate::ID {
+                return None;
+            }
+            let mut s: play::SectionBlocksUpdate = decode(frame);
+            if (s.section_x, s.section_y, s.section_z) != (pos.x >> 4, pos.y >> 4, pos.z >> 4) {
+                return None;
+            }
+            let local = ((pos.x & 15) as u8, (pos.y & 15) as u8, (pos.z & 15) as u8);
+            let i = s.blocks.iter().position(|&(x, y, z, state)| (x, y, z) == local && pred(state as i32))?;
+            let state = s.blocks.remove(i).3 as i32;
+            Some((state, (!s.blocks.is_empty()).then(|| paper_protocol::packets::encode_packet(&s))))
+        };
+        let mut i = 0;
+        while i < self.backlog.len() {
+            if let Some((state, rest)) = take(self.backlog[i].0, &self.backlog[i].1) {
+                match rest {
+                    Some(rest) => self.backlog[i].1 = rest,
+                    None => {
+                        self.backlog.remove(i);
+                    }
+                }
+                return Some(state);
+            }
+            i += 1;
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            let frame = self.read_frame(deadline)?;
+            let id = packet_id(&frame);
+            if self.auto_handle(id, &frame) {
+                continue;
+            }
+            if let Some((state, rest)) = take(id, &frame) {
+                if let Some(rest) = rest {
+                    self.backlog.push_back((id, rest));
+                }
+                return Some(state);
+            }
+            self.backlog.push_back((id, frame));
+        }
+    }
+
     /// Reads until the server has been quiet for `quiet` (or for at most ten times that,
     /// since some packets, like the time update, arrive periodically), keeping everything
     /// in the backlog.

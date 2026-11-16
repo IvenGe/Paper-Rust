@@ -140,6 +140,7 @@ public final class Bridge {
         while (true) {
             Item item;
             try {
+                this.runBeforeMainWrite();
                 this.flushHeld();
                 item = this.spinFor();
                 if (item == null) {
@@ -217,6 +218,7 @@ public final class Bridge {
         if (this.closed) {
             throw new DisconnectedException("plugin bridge closed: " + this.closeReason);
         }
+        this.runBeforeMainWrite();
         long id = this.nextId.getAndIncrement();
         try {
             // Written out with the next frame that is waited for, or before the main thread
@@ -249,6 +251,56 @@ public final class Bridge {
             Thread.onSpinWait();
         } while (System.nanoTime() < until);
         return null;
+    }
+
+    /** Runs on the main thread before anything it sends (see {@link #beforeMainWrite}). */
+    private volatile Runnable beforeMainWrite;
+    /** Whether the main thread is running {@link #beforeMainWrite}, which sends too. */
+    private boolean inBeforeMainWrite;
+
+    /**
+     * Sets what runs on the main thread before each frame it writes and before it waits for
+     * work: the host's queued block edits go out first, so the server sees everything the main
+     * thread does in the order it did it.
+     */
+    public void beforeMainWrite(final Runnable hook) {
+        this.beforeMainWrite = hook;
+    }
+
+    /** The next frame the main thread writes skips the hook (see {@link #callAsRead}). */
+    private boolean skipBeforeMainWriteOnce;
+
+    /**
+     * {@link #call} for a read the caller has prepared for itself: its frame does not run the
+     * {@link #beforeMainWrite} hook (frames written while it waits do).
+     */
+    public Object callAsRead(final String method, final Map<String, Object> args) {
+        if (!this.isMainThread()) {
+            return this.call(method, args);
+        }
+        this.skipBeforeMainWriteOnce = true;
+        try {
+            return this.call(method, args);
+        } finally {
+            this.skipBeforeMainWriteOnce = false;
+        }
+    }
+
+    private void runBeforeMainWrite() {
+        final Runnable hook = this.beforeMainWrite;
+        if (hook == null || this.inBeforeMainWrite || !this.isMainThread()) {
+            return;
+        }
+        if (this.skipBeforeMainWriteOnce) {
+            this.skipBeforeMainWriteOnce = false;
+            return;
+        }
+        this.inBeforeMainWrite = true;
+        try {
+            hook.run();
+        } finally {
+            this.inBeforeMainWrite = false;
+        }
     }
 
     /** Writes out what {@link #send} left in the buffer. */
@@ -448,6 +500,7 @@ public final class Bridge {
     }
 
     private void write(Codec.Frame frame) throws IOException {
+        this.runBeforeMainWrite();
         byte[] bytes = Codec.encode(frame);
         synchronized (this.writeLock) {
             this.out.write(bytes);

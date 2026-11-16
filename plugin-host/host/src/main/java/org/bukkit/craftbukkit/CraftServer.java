@@ -220,6 +220,12 @@ public final class CraftServer extends AbstractServer {
      * counting it as a crossing: what is cached stays good, as the call changes nothing.
      */
     public Object read(final String method, final Map<String, Object> args) {
+        if (this.bridge().isMainThread()) {
+            // What the read must see goes out first; side effects queued after an edit may
+            // wait (see BlockEdits#flushForRead).
+            this.blockEdits.flushForRead();
+            return this.bridge().callAsRead(method, args);
+        }
         return this.bridge().call(method, args);
     }
 
@@ -238,6 +244,27 @@ public final class CraftServer extends AbstractServer {
      * commands during which the server tells plugins nothing (no events): plugin code goes on
      * meanwhile, so the host could not answer the server's calls in order.
      */
+    /**
+     * Sends from the main thread without waiting and without moving the epoch on, for calls
+     * whose effect the host knows already: the block changes its section cache holds (see
+     * {@link io.papermc.paperrs.host.world.BlockEdits}).
+     */
+    public void sendKnown(final String method, final Map<String, Object> args) {
+        this.bridge().send(method, args);
+    }
+
+    private final io.papermc.paperrs.host.world.BlockEdits blockEdits = new io.papermc.paperrs.host.world.BlockEdits(this);
+
+    /** Block changes the main thread queued for the server. */
+    public io.papermc.paperrs.host.world.BlockEdits blockEdits() {
+        return this.blockEdits;
+    }
+
+    /** Has the bridge send the queued block changes before anything else the main thread sends. */
+    public void flushBlockEditsFirst() {
+        this.bridge().beforeMainWrite(this.blockEdits::flush);
+    }
+
     public void send(final String method, final Map<String, Object> args) {
         this.epoch++;
         if (this.bridge().isMainThread()) {

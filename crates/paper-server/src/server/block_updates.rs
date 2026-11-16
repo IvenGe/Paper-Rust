@@ -56,6 +56,9 @@ pub fn nearest_looking_direction(yaw: f32, pitch: f32) -> Dir {
     }
 }
 
+
+/// How many block changes at once go out grouped (see `Server::publish_block_changes`).
+const BLOCK_BURST: usize = 16;
 impl Server {
     /// Changes a block the way vanilla's `Level.setBlock(pos, state, UPDATE_ALL)` does:
     /// clients are told (with the light changes), the old block reacts to its removal, the
@@ -327,7 +330,21 @@ impl Server {
             return;
         }
         let effects = std::mem::take(&mut w.updates.effects);
+        // A burst of block changes goes out per section, with its light per chunk; a few go
+        // out one by one. Other effects keep their place after the changes before them.
+        let burst = effects.iter().filter(|e| matches!(e, Effect::Block(_))).count() >= BLOCK_BURST;
+        let mut changes = Vec::new();
         for effect in effects {
+            let effect = match effect {
+                Effect::Block(change) if burst => {
+                    changes.push(change);
+                    continue;
+                }
+                other => other,
+            };
+            if !changes.is_empty() {
+                self.publish_block_changes(world, std::mem::take(&mut changes));
+            }
             match effect {
                 Effect::Block(change) => self.publish_block_change(world, &change),
                 Effect::LevelEvent { event, pos, data } => {
@@ -358,6 +375,9 @@ impl Server {
                 Effect::Craft { pos } => self.crafter_craft(world, pos),
                 Effect::CrafterPowered { pos } => self.send_crafter_data(world, pos),
             }
+        }
+        if !changes.is_empty() {
+            self.publish_block_changes(world, changes);
         }
     }
 

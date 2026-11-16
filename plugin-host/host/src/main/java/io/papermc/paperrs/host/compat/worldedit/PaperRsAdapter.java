@@ -81,21 +81,43 @@ public final class PaperRsAdapter implements BukkitImplAdapter {
         return null;
     }
 
+    /** WorldEdit's block state for each state id of the server, made once. */
+    private static final BlockState[] STATES = new BlockState[io.papermc.paperrs.host.data.HostData.get().stateCount()];
+
+    private static BlockState state(final int id) {
+        BlockState state = STATES[id];
+        if (state == null) {
+            state = BukkitAdapter.adapt(io.papermc.paperrs.host.world.HostBlockData.ofState(io.papermc.paperrs.host.data.HostData.get().stateToString(id)));
+            STATES[id] = state;
+        }
+        return state;
+    }
+
     @Override
     public BlockState getBlock(final Location location) {
+        if (location.getWorld() instanceof io.papermc.paperrs.host.world.HostWorld world) {
+            return state(world.stateId(location.getBlockX(), location.getBlockY(), location.getBlockZ()));
+        }
         return BukkitAdapter.adapt(location.getBlock().getBlockData());
     }
 
     @Override
     public BaseBlock getFullBlock(final Location location) {
         final BlockState state = this.getBlock(location);
-        final LinCompoundTag nbt = blockEntity(location.getWorld(), location.getBlockX(), location.getBlockY(), location.getBlockZ());
+        final World world = location.getWorld();
+        final int x = location.getBlockX(), y = location.getBlockY(), z = location.getBlockZ();
+        // Most blocks have no block entity: only ask where there may be one.
+        if (world instanceof io.papermc.paperrs.host.world.HostWorld host && !host.mayHaveBlockEntity(x, y, z)) {
+            return state.toBaseBlock();
+        }
+        final LinCompoundTag nbt = blockEntity(world, x, y, z);
         return nbt == null ? state.toBaseBlock() : state.toBaseBlock(nbt);
     }
 
     /** The block entity at a block as saved, or null. */
     static @Nullable LinCompoundTag blockEntity(final World world, final int x, final int y, final int z) {
-        final Object bytes = server().call("world.block_entity", args(world, x, y, z));
+        // A read: it changes nothing, so the host's caches stay good.
+        final Object bytes = server().read("world.block_entity", args(world, x, y, z));
         if (!(bytes instanceof byte[] data)) {
             return null;
         }
@@ -242,6 +264,11 @@ public final class PaperRsAdapter implements BukkitImplAdapter {
 
     @Override
     public boolean clearContainerBlockContents(final World world, final BlockVector3 pt) {
+        // WorldEdit asks before every change; containers are block entities, and most blocks
+        // have none.
+        if (world instanceof io.papermc.paperrs.host.world.HostWorld host && !host.mayHaveBlockEntity(pt.x(), pt.y(), pt.z())) {
+            return false;
+        }
         final org.bukkit.block.BlockState state = world.getBlockAt(pt.x(), pt.y(), pt.z()).getState();
         if (!(state instanceof org.bukkit.inventory.InventoryHolder holder)) {
             return false;

@@ -35,7 +35,7 @@ fn use_on(client: &mut Client, pos: BlockPos, face: i32, sequence: i32) {
 }
 
 fn update_at(client: &mut Client, pos: BlockPos, pred: impl Fn(i32) -> bool) -> i32 {
-    client.find(TIMEOUT, |u: &play::BlockUpdate| u.pos == pos && pred(u.state.0)).unwrap_or_else(|| panic!("no matching block update at {pos:?}")).state.0
+    client.find_block_update(TIMEOUT, pos, pred).unwrap_or_else(|| panic!("no matching block update at {pos:?}"))
 }
 
 #[test]

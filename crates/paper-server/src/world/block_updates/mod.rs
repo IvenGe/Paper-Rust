@@ -918,7 +918,7 @@ impl<'w> Level<'w> {
     // --- block behaviour dispatch --------------------------------------------------------
 
     /// `onPlace`.
-    fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, moved: bool) {
+    pub fn on_place(&mut self, state: u32, pos: BlockPos, old: u32, moved: bool) {
         if matches!(state::block_name(state), "minecraft:carved_pumpkin" | "minecraft:jack_o_lantern") && state::block_name(old) != state::block_name(state) {
             self.world.updates.effects.push(Effect::Golem { pos });
         }
@@ -1066,7 +1066,7 @@ impl<'w> Level<'w> {
     }
 
     /// `updateIndirectNeighbourShapes`: only redstone wire looks diagonally.
-    fn update_indirect_neighbour_shapes(&mut self, state: u32, pos: BlockPos, flags: u32, limit: i32) {
+    pub fn update_indirect_neighbour_shapes(&mut self, state: u32, pos: BlockPos, flags: u32, limit: i32) {
         if kind(state) == Kind::RedstoneWire {
             redstone::wire_update_indirect_shapes(self, state, pos, flags, limit);
         }

@@ -41,7 +41,8 @@ public final class HostBlock extends AbstractBlock {
     }
 
     private Map<String, Object> query() {
-        return Values.map(this.world.server().call("world.get_block", Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z)));
+        // A read: it changes nothing, so the host's caches stay good.
+        return Values.map(this.world.server().read("world.get_block", Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z)));
     }
 
     /** The block's state and whether it has a block entity, as {@code world.get_block} tells. */
@@ -69,6 +70,15 @@ public final class HostBlock extends AbstractBlock {
     /** Sets the block state ({@code minecraft:name[property=value,...]}). */
     public void setState(final String state, final boolean applyPhysics) {
         this.pending = null;
+        if (!applyPhysics && this.world.server().isPrimaryThread()) {
+            // Without physics only this block changes and nothing fires events: the change
+            // goes out with the next batch rather than as a call there and back.
+            final int id = io.papermc.paperrs.host.data.HostData.get().parseState(state);
+            if (id >= 0) {
+                this.world.setBlockQuietly(this.x, this.y, this.z, id);
+                return;
+            }
+        }
         this.world.server().call("world.set_block",
             Values.of("world", this.world.getName(), "x", this.x, "y", this.y, "z", this.z, "state", state, "physics", applyPhysics));
     }

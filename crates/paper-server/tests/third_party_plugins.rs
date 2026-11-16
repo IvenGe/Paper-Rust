@@ -40,8 +40,9 @@ fn jars(prefixes: &[&str]) -> Option<Vec<PathBuf>> {
     Some(out)
 }
 
-fn start(jars: &[PathBuf]) -> (paper_server::RunningServer, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("paper-rs-third-party-{}-{}", std::process::id(), jars.len()));
+/// A server with the plugins in a folder of its own (`name`: tests run side by side).
+fn start(name: &str, jars: &[PathBuf]) -> (paper_server::RunningServer, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("paper-rs-third-party-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let plugins_dir = dir.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
@@ -85,7 +86,7 @@ fn block_name(server: &paper_server::RunningServer, x: i32, y: i32, z: i32) -> &
 #[test]
 fn worldedit_edits_the_world_through_the_paper_rs_adapter() {
     let Some(jars) = jars(&["worldedit"]) else { return };
-    let (server, _dir) = start(&jars);
+    let (server, _dir) = start("worldedit", &jars);
     let mut alice = Client::join(server.port(), "Alice");
     alice.expect::<play::PlayerPosition>();
     server.handle.console_command("op Alice");
@@ -107,10 +108,57 @@ fn worldedit_edits_the_world_through_the_paper_rs_adapter() {
     server.stop();
 }
 
+/// What a command answers, waiting up to `limit` for a message with `done` in it.
+fn run_until(client: &mut Client, command: &str, done: &str, limit: Duration) -> (Duration, Option<String>) {
+    client.clear_backlog();
+    let start = Instant::now();
+    client.command(command);
+    let answer = client.find(limit, |c: &play::SystemChat| c.content.to_plain().contains(done)).map(|c| c.content.to_plain());
+    (start.elapsed(), answer)
+}
+
+#[test]
+fn worldedit_large_edits_are_quick_and_apply_their_side_effects() {
+    let Some(jars) = jars(&["worldedit"]) else { return };
+    let (server, _dir) = start("worldedit-large", &jars);
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    server.handle.console_command("op Alice");
+    alice.drain(Duration::from_millis(500));
+
+    // 30 x 30 x 30 blocks: each change once crossed the plugin bridge on its own (17 seconds
+    // of a frozen server); now they go in batches.
+    run(&mut alice, "/pos1 0,-61,0");
+    run(&mut alice, "/pos2 29,-32,29");
+    let (took, answer) = run_until(&mut alice, "/set tnt", "Operation completed", Duration::from_secs(60));
+    assert_eq!(answer.as_deref(), Some("Operation completed (27000 blocks affected)."));
+    assert!(took < Duration::from_secs(5), "the edit took {took:?}");
+    let tnt = blocks::default_state("minecraft:tnt").unwrap();
+    let left = server.handle.run(move |s| (0..30).flat_map(|x| (0..30).flat_map(move |z| (-61..-31).map(move |y| (x, y, z)))).filter(|&(x, y, z)| s.worlds[0].block_at(x, y, z) != Some(tnt)).count()).unwrap();
+    assert_eq!(left, 0, "every block is TNT");
+
+    let (took, answer) = run_until(&mut alice, "/undo", "Undid", Duration::from_secs(60));
+    assert_eq!(answer.as_deref(), Some("Undid 1 available edits."));
+    assert!(took < Duration::from_secs(5), "the undo took {took:?}");
+    assert_eq!((block_name(&server, 29, -61, 29), block_name(&server, 29, -32, 29)), ("minecraft:grass_block", "minecraft:air"));
+
+    // Water set in the air flows once the edit is done, as WorldEdit applies the side effects
+    // (here the water's onPlace and its neighbours' updates) after the edit.
+    run(&mut alice, "/pos1 40,-55,40");
+    run(&mut alice, "/pos2 40,-55,40");
+    run(&mut alice, "/set water");
+    let deadline = Instant::now() + TIMEOUT;
+    while block_name(&server, 40, -56, 40) != "minecraft:water" {
+        assert!(Instant::now() < deadline, "the water flows down");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    server.stop();
+}
+
 #[test]
 fn essentials_teleports_heals_and_sets_homes() {
     let Some(jars) = jars(&["essentialsx"]) else { return };
-    let (server, _dir) = start(&jars);
+    let (server, _dir) = start("essentials", &jars);
     let mut alice = Client::join(server.port(), "Alice");
     alice.expect::<play::PlayerPosition>();
     server.handle.console_command("op Alice");

@@ -143,7 +143,10 @@ impl Translation {
     /// Translates a payload of the server and frames what the client gets.
     fn encode(&self, payload: &[u8], enc: &mut FrameEncoder, out: &mut Vec<u8>) {
         let mut outcome = paper_compat::Outcome::default();
-        if let Err(e) = self.translator.lock().clientbound(payload, &mut outcome) {
+        // (The lock is let go before the message below takes it again: held through the
+        // `if let`, the connection would wait on itself for good.)
+        let translated = self.translator.lock().clientbound(payload, &mut outcome);
+        if let Err(e) = translated {
             let id = paper_protocol::codec::Reader::new(payload).varint().unwrap_or(-1);
             log::warn!("Could not translate packet {id} for a {} client: {e:#}", self.translator.lock().version().name);
             return;

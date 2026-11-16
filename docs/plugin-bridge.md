@@ -79,6 +79,24 @@ of them costs one write. While the server runs such a call it cannot call the ho
 whose main thread is busy with plugin code and would answer out of order: it refuses to (an
 event then sees no listeners), and calls that fire events (`player.kick`) are waited for.
 
+Blocks are read a section at a time (`world.section`: its palette of states, two bytes of
+palette index per block and where it has block entities), kept until something crosses the
+bridge (the host's epoch: every waited call, and every call of the server into the host).
+Changes the host's main thread makes without physics (all of WorldEdit's edits in its usual
+mode, and Bukkit's `setType(type, false)`) change only their own block and fire no events,
+so they are not sent one by one: the host makes them in its cached section and queues them
+(`BlockEdits`), and the queue goes out as one `world.edit_batch` call (`NO_REPLY`, 28 bytes a
+change) before anything else the main thread sends, before it answers the server or waits
+for work, or when it holds 8192 changes, so the server sees everything in the order the
+host did it. The side effects WorldEdit applies after an edit (a block's `onPlace`, its
+neighbours' updates and shapes) go in the same queue; as they can change any block, sending
+them moves the epoch on, and a read only sends the changes before them, so WorldEdit, which
+reads block after block while it asks for them, keeps its cache. The server runs a batch
+with plugins hearing no events (WorldEdit's `EVENTS` side effect is off unless set; with it
+on, the side effects are a waited call), and tells players per section with the light per
+chunk. A 27,000-block `//set` takes about a fifth of a second this way; one call per block
+took 17 seconds, during which the server could not tick.
+
 Both main threads look busily for an answer (or the other side's next call) for 150
 microseconds before they sleep: waking a sleeping thread takes about as long as a round trip,
 and the server's calls come in bursts. After each call the host checks whether listeners

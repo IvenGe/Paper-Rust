@@ -227,6 +227,35 @@ impl Server {
         }
     }
 
+    /// Many block changes at once (an edit, an explosion), as vanilla sends a tick's
+    /// (`ChunkHolder.broadcastChanges`): per section one packet with each block's last state,
+    /// and the light that changed once per chunk, rather than a packet and a light update for
+    /// every block.
+    pub fn publish_block_changes(&mut self, world: usize, changes: Vec<BlockChange>) {
+        let mut sections: HashMap<(i32, i32, i32), HashMap<(u8, u8, u8), u32>> = HashMap::new();
+        let mut light: HashSet<ChangedSection> = HashSet::new();
+        for change in &changes {
+            let p = change.pos;
+            sections.entry((p.x >> 4, p.y >> 4, p.z >> 4)).or_default().insert(((p.x & 15) as u8, (p.y & 15) as u8, (p.z & 15) as u8), change.new);
+            light.extend(change.light.iter().copied());
+        }
+        for ((sx, sy, sz), blocks) in sections {
+            let chunk = ChunkPos { x: sx, z: sz };
+            if blocks.len() == 1 {
+                let ((x, y, z), state) = blocks.into_iter().next().unwrap();
+                let pos = paper_protocol::codec::BlockPos::new(sx * 16 + x as i32, sy * 16 + y as i32, sz * 16 + z as i32);
+                self.broadcast_to_chunk_viewers(world, chunk, &play::BlockUpdate { pos, state: VarInt(state as i32) });
+            } else {
+                let blocks = blocks.into_iter().map(|((x, y, z), state)| (x, y, z, state)).collect();
+                self.broadcast_to_chunk_viewers(world, chunk, &play::SectionBlocksUpdate { section_x: sx, section_y: sy, section_z: sz, blocks });
+            }
+        }
+        self.publish_light_changes(world, &light);
+        if !self.worlds[world].removed_block_entities.is_empty() {
+            self.process_removed_block_entities(world);
+        }
+    }
+
     fn publish_light_changes(&mut self, world: usize, changed: &HashSet<ChangedSection>) {
         if changed.is_empty() {
             return;

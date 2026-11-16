@@ -269,6 +269,9 @@ pub struct Server {
     pub plugin_events: HashSet<String>,
     /// The events Java plugins listen to (`plugin_events` adds the Rust plugins' ones).
     pub java_events: HashSet<String>,
+    /// While above zero, plugins hear no events: changes a plugin asked for without them
+    /// (WorldEdit's edits, whose side effects fire no events unless it is told to).
+    pub events_suppressed: u32,
     /// Plugins written in Rust (see `plugins::native`).
     pub native: crate::plugins::native::NativePlugins,
     /// Per player, the last right click on a block plugins saw (`PlayerInteractEvent`): the
@@ -505,6 +508,7 @@ impl Server {
             plugin_commands: HashSet::new(),
             plugin_events: HashSet::new(),
             java_events: HashSet::new(),
+            events_suppressed: 0,
             native: Default::default(),
             last_interact: HashMap::new(),
             plugin_list: Vec::new(),
