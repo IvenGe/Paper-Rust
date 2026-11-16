@@ -21,6 +21,8 @@ pub mod legacy;
 pub mod modern;
 pub mod particles;
 
+pub use legacy::prenetty;
+
 use anyhow::Result;
 
 /// The version the server speaks.
@@ -33,6 +35,10 @@ pub enum Family {
     Modern,
     /// 1.8: from before the flattening (`legacy`).
     Legacy18,
+    /// From before Netty (`legacy::prenetty`), through the 1.8 translator. Such clients are
+    /// told apart by their first bytes, not by a handshake's protocol number (whose numbers
+    /// Netty's restarted).
+    PreNetty,
 }
 
 /// A client version the server can translate for.
@@ -52,11 +58,12 @@ pub const VERSIONS: &[Version] = &[
     Version { protocol: 776, name: "26.2", family: Family::Modern, data: "26.2" },
     Version { protocol: 775, name: "26.1", family: Family::Modern, data: "26.1" },
     Version { protocol: 47, name: "1.8.x", family: Family::Legacy18, data: "" },
+    Version { protocol: legacy::prenetty::PROTOCOL as i32, name: "1.4.6-1.4.7", family: Family::PreNetty, data: "" },
 ];
 
-/// The version of a client's handshake, if it can join.
+/// The version of a client's (Netty) handshake, if it can join.
 pub fn version(protocol: i32) -> Option<&'static Version> {
-    VERSIONS.iter().find(|v| v.protocol == protocol)
+    VERSIONS.iter().find(|v| v.protocol == protocol && v.family != Family::PreNetty)
 }
 
 /// Whether clients of `protocol` can join (26.3 itself included).
@@ -74,7 +81,7 @@ pub fn status_protocol(protocol: i32) -> i32 {
     }
 }
 
-/// The versions that can join, for the server list and messages: `1.8.x, 26.1-26.3`.
+/// The versions that can join, for the server list and messages: `1.4.6-1.4.7, 1.8.x, 26.1-26.3`.
 pub fn version_range() -> String {
     let modern = VERSIONS.iter().rfind(|v| v.family == Family::Modern);
     let mut parts: Vec<String> = VERSIONS.iter().filter(|v| v.family != Family::Modern).rev().map(|v| v.name.to_owned()).collect();
@@ -122,5 +129,14 @@ pub fn translator(protocol: i32) -> Option<Box<dyn Translator>> {
     Some(match version.family {
         Family::Modern => Box::new(modern::Modern::new(version, data::load(version.data))),
         Family::Legacy18 => Box::new(legacy::Legacy18::new(version)),
+        // Found by their first bytes: see `pre_netty_translator`.
+        Family::PreNetty => return None,
     })
+}
+
+/// A translator for a client from before Netty whose handshake carried `protocol`, logging in
+/// as `name`; `None` if it cannot join.
+pub fn pre_netty_translator(protocol: u8, name: &str) -> Option<Box<dyn Translator>> {
+    let version = VERSIONS.iter().find(|v| v.family == Family::PreNetty && v.protocol == protocol as i32)?;
+    Some(Box::new(legacy::prenetty::PreNetty::new(version, name)))
 }

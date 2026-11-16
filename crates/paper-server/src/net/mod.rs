@@ -117,6 +117,9 @@ pub struct Shared {
     pub next_entity_id: AtomicI32,
     /// Present in online mode.
     pub keys: Option<auth::ServerKeys>,
+    /// The key pair for clients from before 1.7, who encrypt even offline: made the first
+    /// time one comes.
+    pub legacy_keys: std::sync::OnceLock<auth::ServerKeys>,
     pub config_packets: ConfigPackets,
     pub access: RwLock<AccessLists>,
     pub player_count: AtomicUsize,

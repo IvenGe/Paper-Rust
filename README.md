@@ -75,15 +75,20 @@ What works:
 
 * **Networking**: server list ping, online (Mojang authentication, encryption) and offline
   login, compression, the configuration phase, keep-alive.
-* **Older clients**: 26.2, 26.1 and 1.8.x clients join too. Their packets are translated on
-  the network threads (`crates/paper-compat`, with ViaVersion, ViaBackwards and ViaRewind's
-  mapping data): ids of blocks, items, entities, sounds and particles, registries they lack,
-  packets that changed. 1.8 clients get the world in legacy block and item ids (between y 0
-  and 255, the height they know), entities in their old kinds, chat as JSON text, and the
-  translator does for them what 1.8 never did (the configuration phase, teleport and chunk
-  confirmations). The server list shows these clients the server as compatible. Not yet for
-  1.8: villager trades, boss bars, and windows of blocks it does not have (smithing tables,
-  looms, ...).
+* **Older clients**: 26.2, 26.1, 1.8.x and 1.4.6/1.4.7 clients join too. Their packets are
+  translated on the network threads (`crates/paper-compat`, with ViaVersion, ViaBackwards and
+  ViaRewind's mapping data and ViaLegacy's knowledge of the protocols from before Netty): ids
+  of blocks, items, entities, sounds and particles, registries they lack, packets that
+  changed. 1.8 clients get the world in legacy block and item ids (between y 0 and 255, the
+  height they know), entities in their old kinds, chat as JSON text, and the translator does
+  for them what 1.8 never did (the configuration phase, teleport and chunk confirmations).
+  1.4.6 clients go through the 1.8 translator and one more step: their own login (a
+  handshake, then an encryption exchange even offline), packets without lengths, UTF-16
+  text, and blocks, items and mobs that came later shown as ones they have (a hay bale as
+  yellow wool, a rabbit as a chicken). The server list shows these clients the server as
+  compatible, old-style pings included. Not yet: villager trades and boss bars on 1.8 and
+  1.4.6, windows of blocks they do not have (smithing tables, looms, hoppers on 1.4.6, ...),
+  and 1.4.6 on an online-mode server (the session servers it signed in with are gone).
 * **Worlds**: vanilla world generation for the overworld, the Nether and the End, ported
   from 26.3 and driven by the vanilla jar's worldgen data (`crates/paper-worldgen`): biomes,
   terrain with aquifers and ore veins, surface rules, caves and canyons, and the features

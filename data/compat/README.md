@@ -19,7 +19,9 @@ flattening. For each such version (now 1.8) it holds, base64-encoded as little-e
 the legacy block (`id << 4 | meta`) of every 26.3 block state, the legacy item (`id << 16 |
 damage`) of every 26.3 item, and the index in `sound_names` of the legacy sound of every 26.3
 sound event. Entities, biomes, enchantments, effects and particles are small tables in
-`crates/paper-compat/src/legacy/tables.rs`.
+`crates/paper-compat/src/legacy/tables.rs`. Clients older than 1.8 (1.4.6) get 1.8's ids with
+what 1.5 to 1.8 added replaced by blocks, items and mobs they have; that table is
+`crates/paper-compat/src/legacy/prenetty/ids.rs`.
 
 ## Sources
 
@@ -33,6 +35,9 @@ sound event. Entities, biomes, enchantments, effects and particles are small tab
   table (1.13 to 1.12), then the replacements ViaBackwards and
   [ViaRewind](https://github.com/ViaVersion/ViaRewind) (GPL-3.0 or later) give blocks and items
   each older version lacks; the 1.8 sound names are ViaVersion's.
+* The protocols from before Netty (1.4.6's packet layouts, its strings, items and entity data)
+  follow [ViaLegacy](https://github.com/ViaVersion/ViaLegacy) (GPL-3.0 or later), written anew
+  in Rust.
 * The packet orders come from ViaVersion's packet enums, checked against
   [minecraft-data](https://github.com/PrismarineJS/minecraft-data) (MIT) in
   `crates/paper-server/tests/compat.rs`.

@@ -11,6 +11,7 @@ mod chunk;
 mod entities;
 mod inventory;
 mod play;
+pub mod prenetty;
 mod serverbound;
 mod tables;
 pub mod text;

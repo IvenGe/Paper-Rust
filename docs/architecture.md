@@ -286,7 +286,7 @@ change it. Their calls into the server go to the same API as the host's (`plugin
 
 A client whose handshake carries another protocol than 26.3's gets a translator
 (`paper-compat`) if its version is one the server knows (`paper_compat::VERSIONS`), and is
-refused otherwise. The translator sits on the connection's I/O threads, so the game never sees
+refused otherwise (clients from before Netty are found differently, see below). The translator sits on the connection's I/O threads, so the game never sees
 the difference:
 
 * Before play, the connection task passes every payload it sends through the translator and
@@ -313,6 +313,20 @@ enchantments as NBT, text as 1.8 JSON. 1.8 has no configuration phase: after log
 translator answers the server's configuration in the client's place, and holds what the client
 sends meanwhile until the server plays. It also confirms teleports and chunk batches, which 1.8
 clients never do.
+
+Clients from before 1.7 (`paper_compat::prenetty`, now 1.4.6 and 1.4.7) predate Netty: they send
+no length in front of a packet and no Netty handshake. The connection tells them apart by their
+first byte (`0x02`, a handshake of theirs, which no Netty frame can start with; `0xFE`, an
+old-style server list ping, answered in the form the client reads). For such a client the frame
+decoder finds where each packet ends from its layout (`FrameDecoder::set_splitter`) and the
+encoder writes packets as they are (`FrameEncoder::set_raw`). The connection reads the handshake,
+runs the encryption exchange these versions do even with an offline server (with a key pair made
+the first time one comes; online mode refuses them, as their session servers are gone), and
+continues with the usual login through the translator. That translator wraps the 1.8 one:
+26.3 packets become 1.8 packets there and 1.4.6 packets in a second step (UTF-16 strings,
+gzipped item NBT, chunks as separate id and metadata arrays, the blocks, items and mobs 1.5 to
+1.8 added replaced by ones 1.4.6 has), and the client's packets go the other way. The client's
+"initial spawn" packet stands for 1.8's login start.
 
 ## Version data
 

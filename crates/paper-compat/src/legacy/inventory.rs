@@ -368,7 +368,7 @@ pub fn item_from_1_8(tables: &Tables, r: &mut Reader<'_>, w: &mut Vec<u8>) -> Re
 }
 
 /// A named root NBT compound as 1.8 sends it (0 for none).
-fn read_named_nbt(r: &mut Reader<'_>) -> Result<Option<Tag>> {
+pub(super) fn read_named_nbt(r: &mut Reader<'_>) -> Result<Option<Tag>> {
     let ty = r.u8()?;
     if ty == 0 {
         return Ok(None);

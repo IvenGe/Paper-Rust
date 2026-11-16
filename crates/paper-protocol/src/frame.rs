@@ -8,6 +8,10 @@
 //! ```
 //!
 //! and, once encryption is enabled, the whole byte stream is passed through AES/CFB8.
+//!
+//! Clients from before 1.7 put nothing in front of a packet: one ends where its layout does.
+//! For those the decoder finds packets with a [`Splitter`] and the encoder writes payloads as
+//! they are ([`FrameEncoder::set_raw`]).
 
 use crate::codec::{varint_len, WriteExt};
 use crate::crypto::Cfb8;
@@ -35,7 +39,13 @@ pub enum FrameError {
     SizeMismatch { declared: usize, actual: usize },
     #[error("badly compressed packet - {0}")]
     Zlib(String),
+    #[error("unreadable packet - {0}")]
+    Unreadable(String),
 }
+
+/// Finds where the first packet at the front of a stream without length prefixes ends:
+/// `Ok(None)` while not all of it has arrived.
+pub type Splitter = fn(&[u8]) -> Result<Option<usize>, String>;
 
 /// Reads a VarInt of at most 3 bytes from the front of `buf` without consuming it.
 /// Returns `(value, encoded length)`, or `None` if more bytes are needed.
@@ -57,6 +67,7 @@ pub struct FrameDecoder {
     threshold: Option<u32>,
     cipher: Option<Cfb8>,
     inflater: Decompress,
+    splitter: Option<Splitter>,
 }
 
 impl Default for FrameDecoder {
@@ -67,7 +78,13 @@ impl Default for FrameDecoder {
 
 impl FrameDecoder {
     pub fn new() -> Self {
-        Self { buf: BytesMut::with_capacity(4096), threshold: None, cipher: None, inflater: Decompress::new(true) }
+        Self { buf: BytesMut::with_capacity(4096), threshold: None, cipher: None, inflater: Decompress::new(true), splitter: None }
+    }
+
+    /// Reads packets without length prefixes from now on, finding their ends with
+    /// `splitter` (compression does not apply to them).
+    pub fn set_splitter(&mut self, splitter: Splitter) {
+        self.splitter = Some(splitter);
     }
 
     /// Enables (`Some(threshold)`) or disables (`None`) the compressed packet format.
@@ -97,8 +114,20 @@ impl FrameDecoder {
         self.buf.len()
     }
 
+    /// The buffered bytes not yet returned as frames (decrypted).
+    pub fn peek(&self) -> &[u8] {
+        &self.buf
+    }
+
     /// Returns the next complete payload (packet id + body), or `None` if more bytes are needed.
     pub fn next_frame(&mut self) -> Result<Option<Vec<u8>>, FrameError> {
+        if let Some(split) = self.splitter {
+            return match split(&self.buf) {
+                Ok(Some(len)) => Ok(Some(self.buf.split_to(len).to_vec())),
+                Ok(None) => Ok(None),
+                Err(why) => Err(FrameError::Unreadable(why)),
+            };
+        }
         let Some((len, prefix)) = peek_frame_len(&self.buf)? else { return Ok(None) };
         if len == 0 {
             return Err(FrameError::Empty);
@@ -235,12 +264,25 @@ pub struct FrameEncoder {
     threshold: Option<u32>,
     cipher: Option<Cfb8>,
     deflater: Compress,
+    raw: bool,
 }
 
 impl FrameEncoder {
     /// `level` is the zlib compression level (0-9).
     pub fn new(level: u32) -> Self {
-        Self { threshold: None, cipher: None, deflater: Compress::new(Compression::new(level), true) }
+        Self { threshold: None, cipher: None, deflater: Compress::new(Compression::new(level), true), raw: false }
+    }
+
+    /// Writes payloads as they are from now on: no length prefix, no compression (clients
+    /// from before 1.7). The threshold is still remembered, as the one shared frames are
+    /// made with ([`FrameEncoder::compression`]).
+    pub fn set_raw(&mut self) {
+        self.raw = true;
+    }
+
+    /// Whether payloads are written without length prefixes.
+    pub fn is_raw(&self) -> bool {
+        self.raw
     }
 
     pub fn set_compression(&mut self, threshold: Option<u32>) {
@@ -258,7 +300,11 @@ impl FrameEncoder {
     /// Frames (and encrypts) `payload`, appending the wire bytes to `out`.
     pub fn encode(&mut self, payload: &[u8], out: &mut Vec<u8>) -> Result<(), FrameError> {
         let start = out.len();
-        write_frame(&mut self.deflater, self.threshold, payload, out)?;
+        if self.raw {
+            out.extend_from_slice(payload);
+        } else {
+            write_frame(&mut self.deflater, self.threshold, payload, out)?;
+        }
         if let Some(cipher) = &mut self.cipher {
             cipher.encrypt(&mut out[start..]);
         }

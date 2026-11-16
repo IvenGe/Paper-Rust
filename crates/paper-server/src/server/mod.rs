@@ -374,6 +374,7 @@ impl Server {
             status: RwLock::new(Arc::new(status)),
             next_entity_id: AtomicI32::new(1),
             keys,
+            legacy_keys: Default::default(),
             config_packets: ConfigPackets::build(),
             access: RwLock::new(access),
             player_count: AtomicUsize::new(0),
