@@ -302,14 +302,18 @@ async fn status_flow(conn: &mut Connection, shared: &Arc<Shared>, protocol: i32)
 
 /// Answers the server list ping of a client from before 1.7, then closes.
 async fn legacy_ping(conn: &mut Connection, shared: &Arc<Shared>, modern: bool) -> Result<()> {
-    // 1.6 sends more after `0xFE 0x01 0xFA` (its address); read it, so closing with it unread
-    // does not reset the connection before the client reads the answer.
+    // 1.6 sends more after `0xFE 0x01 0xFA` (its protocol and address); read it, so closing
+    // with it unread does not reset the connection before the client reads the answer.
     conn.fill(usize::MAX, Some(Duration::from_millis(50))).await?;
     if shared.config.properties.enable_status {
         let status = shared.status.read().clone();
         let motd = paper_compat::legacy::text::legacy_string(&status.motd.0);
         let version = format!("Paper-RS {}", paper_compat::version_range());
-        conn.stream.write_all(&paper_compat::prenetty::ping_answer(modern, &version, &motd, status.online, status.max)).await?;
+        // A 1.6 client says its protocol (after "MC|PingHost" and a length): shown as
+        // compatible if it can join. 1.4 and 1.5 do not say; 1.4.6's is shown.
+        let said = conn.dec.peek().get(3 + 2 + 22 + 2).copied().filter(|p| paper_compat::pre_netty_translator(*p, "").is_some());
+        let protocol = said.unwrap_or(paper_compat::prenetty::PROTOCOL);
+        conn.stream.write_all(&paper_compat::prenetty::ping_answer(modern, protocol, &version, &motd, status.online, status.max)).await?;
     }
     let _ = conn.stream.shutdown().await;
     Ok(())
@@ -320,13 +324,14 @@ async fn legacy_ping(conn: &mut Connection, shared: &Arc<Shared>, modern: bool) 
 /// have them: the session servers they knew are gone.
 async fn pre_netty_login(conn: &mut Connection, shared: &Arc<Shared>) -> Result<Option<LoginResult>> {
     use paper_compat::prenetty;
-    conn.dec.set_splitter(prenetty::split_serverbound);
     conn.enc.set_raw();
     // The protocol is the byte after 0x02 (from 1.3 on; older clients send a string there).
     conn.fill(2, Some(Duration::from_secs(5))).await?;
     let protocol = conn.dec.peek().get(1).copied().unwrap_or(0);
-    if paper_compat::pre_netty_translator(protocol, "").is_none() {
-        let which = if protocol > prenetty::PROTOCOL { "server" } else { "client" };
+    let era = prenetty::Era::of(protocol).filter(|_| paper_compat::pre_netty_translator(protocol, "").is_some());
+    conn.dec.set_splitter(era.unwrap_or(prenetty::Era::V1_4).split_serverbound());
+    if era.is_none() {
+        let which = if protocol > 78 { "server" } else { "client" };
         conn.login_disconnect(Component::text(format!("Outdated {which}! This server takes {}", paper_compat::version_range()))).await?;
         return Ok(None);
     }

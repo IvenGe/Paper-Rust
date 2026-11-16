@@ -1,11 +1,11 @@
-//! A 1.4.6 client joins through the translators: a login from before Netty (its handshake,
-//! the encryption exchange it does even offline, packets without lengths), UTF-16 strings and
-//! 1.4.6's own block and item ids.
+//! Clients from before Netty (1.4.6, 1.5.2, 1.6.4) join through the translators: their own
+//! login (a handshake, the encryption exchange they do even offline, packets without lengths),
+//! UTF-16 strings and each version's own block and item ids.
 
 mod common;
 
 use common::*;
-use paper_compat::prenetty::{self, wire};
+use paper_compat::prenetty::{self, wire, Era};
 use paper_protocol::codec::{BlockPos, Reader, WriteExt};
 use paper_protocol::crypto::Cfb8;
 use rsa::pkcs8::DecodePublicKey;
@@ -16,6 +16,7 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 struct Client146 {
+    era: Era,
     stream: TcpStream,
     /// Decrypted bytes not yet split into packets.
     buf: Vec<u8>,
@@ -28,10 +29,14 @@ struct Client146 {
 
 impl Client146 {
     fn connect(port: u16) -> Client146 {
+        Client146::connect_as(port, Era::V1_4)
+    }
+
+    fn connect_as(port: u16, era: Era) -> Client146 {
         let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
         stream.set_nodelay(true).unwrap();
         stream.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
-        Client146 { stream, buf: Vec::new(), enc: None, dec: None, backlog: VecDeque::new(), position: (0.0, 0.0, 0.0) }
+        Client146 { era, stream, buf: Vec::new(), enc: None, dec: None, backlog: VecDeque::new(), position: (0.0, 0.0, 0.0) }
     }
 
     fn send(&mut self, packet: &[u8]) {
@@ -46,7 +51,7 @@ impl Client146 {
     fn read(&mut self, deadline: Instant) -> Option<Vec<u8>> {
         let mut chunk = [0u8; 16384];
         loop {
-            match prenetty::split_clientbound(&self.buf) {
+            match self.era.split_clientbound()(&self.buf) {
                 Ok(Some(len)) => return Some(self.buf.drain(..len).collect()),
                 Ok(None) => {}
                 Err(e) => panic!("a packet 1.4.6 could not read: {e} ({:02x?})", &self.buf[..self.buf.len().min(24)]),
@@ -77,10 +82,10 @@ impl Client146 {
         hs
     }
 
-    /// Logs in as 1.4.6 does; returns once the login packet (0x01) arrived, with it.
-    fn join(port: u16, name: &str) -> (Client146, Vec<u8>) {
-        let mut c = Client146::connect(port);
-        c.send(&Client146::handshake(name, prenetty::PROTOCOL));
+    /// Logs in as these versions do; returns once the login packet (0x01) arrived, with it.
+    fn join(port: u16, name: &str, protocol: u8) -> (Client146, Vec<u8>) {
+        let mut c = Client146::connect_as(port, Era::of(protocol).unwrap());
+        c.send(&Client146::handshake(name, protocol));
         let deadline = Instant::now() + TIMEOUT;
         let auth = c.read(deadline).expect("the encryption request");
         assert_eq!(auth[0], 0xFD, "{auth:02x?}");
@@ -202,6 +207,17 @@ fn old_server_list_pings_are_answered() {
     assert_eq!(fields[1], "51", "1.4.6's protocol, so its list shows the server as compatible");
     assert!(fields[2].contains("1.4.6"), "{fields:?}");
     assert_eq!((fields[4].as_str(), fields[5].as_str()), ("0", "7"));
+    // 1.6 says its protocol: shown as compatible.
+    let mut c = Client146::connect(server.port());
+    let mut ping = vec![0xFE, 0x01, 0xFA];
+    wire::put_string(&mut ping, "MC|PingHost", 32);
+    let mut data = vec![78];
+    wire::put_string(&mut data, "localhost", 255);
+    data.put_i32(25565);
+    wire::put_array(&mut ping, &data);
+    c.send(&ping);
+    let answer = c.read(Instant::now() + TIMEOUT).expect("an answer");
+    assert_eq!(text(&answer).split('\0').nth(1), Some("78"));
     // Older ones: the message and counts.
     let mut c = Client146::connect(server.port());
     c.send(&[0xFE]);
@@ -214,11 +230,12 @@ fn old_server_list_pings_are_answered() {
 fn other_versions_from_before_netty_are_told_why() {
     let server = start_server(|_| {});
     // 1.5.2 (protocol 61).
+    // 1.6.1 (protocol 73) is not taken; 1.6.4 is.
     let mut c = Client146::connect(server.port());
-    c.send(&Client146::handshake("Newer", 61));
+    c.send(&Client146::handshake("Newer", 73));
     let kick = c.read(Instant::now() + TIMEOUT).expect("a refusal");
     assert_eq!(kick[0], 0xFF);
-    assert!(text(&kick).starts_with("Outdated server!"), "{}", text(&kick));
+    assert!(text(&kick).starts_with("Outdated client!"), "{}", text(&kick));
     assert!(text(&kick).contains("1.4.6-1.4.7"), "{}", text(&kick));
     server.stop();
 
@@ -234,6 +251,21 @@ fn other_versions_from_before_netty_are_told_why() {
 
 #[test]
 fn a_1_4_6_client_joins_and_plays() {
+    joins_and_plays(prenetty::PROTOCOL);
+}
+
+#[test]
+fn a_1_5_2_client_joins_and_plays() {
+    joins_and_plays(61);
+}
+
+#[test]
+fn a_1_6_4_client_joins_and_plays() {
+    joins_and_plays(78);
+}
+
+fn joins_and_plays(protocol: u8) {
+    let era = Era::of(protocol).unwrap();
     let server = start_server(|c| c.properties.gamemode = paper_server::config::GameMode::Creative);
     // Blocks where 1.4.6 can see them (its world starts at y 0): a diamond block, a block 1.4.6
     // has (granite, which it shows as stone) and one it does not (a hay bale: yellow wool).
@@ -248,7 +280,7 @@ fn a_1_4_6_client_joins_and_plays() {
             assert!(s.set_block_and_update(0, BlockPos::new(3, 72, 3), hay));
         })
         .unwrap();
-    let (mut client, login) = Client146::join(server.port(), "Old146");
+    let (mut client, login) = Client146::join(server.port(), "Old", protocol);
     let mut r = Reader::new(&login[1..]);
     let entity = r.i32().unwrap();
     assert!(entity > 0);
@@ -269,7 +301,8 @@ fn a_1_4_6_client_joins_and_plays() {
         .expect("the spawn chunk");
     assert_eq!(block_in_chunk(&chunk, 3, 70, 3), Some((57, 0)), "a diamond block");
     assert_eq!(block_in_chunk(&chunk, 3, 71, 3), Some((1, 0)), "granite as stone");
-    assert_eq!(block_in_chunk(&chunk, 3, 72, 3), Some((35, 4)), "a hay bale as yellow wool");
+    let hay_bale = if era == Era::V1_6 { (170, 0) } else { (35, 4) };
+    assert_eq!(block_in_chunk(&chunk, 3, 72, 3), Some(hay_bale), "a hay bale (yellow wool before 1.6)");
 
     // Block changes.
     client.find(TIMEOUT, 0x0D, |_| true).expect("the spawn position");
@@ -287,9 +320,11 @@ fn a_1_4_6_client_joins_and_plays() {
 
     // Chat both ways: a command, then its output in § text.
     let mut chat = vec![0x03];
-    wire::put_string(&mut chat, "/say hello from 1.4.6", 100);
+    wire::put_string(&mut chat, "/say hello from the past", 100);
     client.send(&chat);
-    client.find(TIMEOUT, 0x03, |b| wire::read_string(&mut Reader::new(b), 119).unwrap().contains("hello from 1.4.6")).expect("the /say message");
+    let said = client.find(TIMEOUT, 0x03, |b| wire::read_string(&mut Reader::new(b), 32767).unwrap().contains("hello from the past")).expect("the /say message");
+    // 1.6 has JSON chat, older versions § text.
+    assert_eq!(text(&said).starts_with('{'), era == Era::V1_6, "{}", text(&said));
 
     // Mobs as 1.4.6 mobs: a zombie is 54, a rabbit (which came later) a chicken.
     let spawn_mob = |kind: &'static str| {
@@ -304,8 +339,9 @@ fn a_1_4_6_client_joins_and_plays() {
         assert_eq!(spawn[5], legacy, "{kind}");
     }
 
-    // Items as 1.4.6 items: a diamond is 264, a name tag (1.6) paper.
-    for (item, legacy) in [("minecraft:diamond", 264), ("minecraft:name_tag", 339)] {
+    // Items as the version's: a diamond is 264, a name tag (1.6) paper before 1.6.
+    let name_tag = if era == Era::V1_6 { 421 } else { 339 };
+    for (item, legacy) in [("minecraft:diamond", 264), ("minecraft:name_tag", name_tag)] {
         let id = paper_data::items::id(item).unwrap() as i32;
         server
             .handle

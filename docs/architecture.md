@@ -321,7 +321,8 @@ items and mobs 1.8 added replaced by ones 1.7 has. 1.7 knows no compression, so 
 does not turn it on (`Translator::compression`); the writer unpacks shared frames with the
 server's threshold rather than the connection's for that reason.
 
-Clients from before 1.7 (`paper_compat::prenetty`, now 1.4.6 and 1.4.7) predate Netty: they send
+Clients from before 1.7 (`paper_compat::prenetty`: 1.4.6 to 1.4.7, 1.5 to 1.5.2, 1.6.2 to 1.6.4)
+predate Netty: they send
 no length in front of a packet and no Netty handshake. The connection tells them apart by their
 first byte (`0x02`, a handshake of theirs, which no Netty frame can start with; `0xFE`, an
 old-style server list ping, answered in the form the client reads). For such a client the frame
@@ -333,7 +334,10 @@ continues with the usual login through the translator. That translator wraps the
 26.3 packets become 1.8 packets there and 1.4.6 packets in a second step (UTF-16 strings,
 gzipped item NBT, chunks as separate id and metadata arrays, the blocks, items and mobs 1.5 to
 1.8 added replaced by ones 1.4.6 has), and the client's packets go the other way. The client's
-"initial spawn" packet stands for 1.8's login start.
+"initial spawn" packet stands for 1.8's login start. The three versions differ in a few
+packets and in what they have (`prenetty::Era`): 1.5 added scoreboards, particles and its
+blocks, 1.6 JSON chat, horses and leads, health and abilities as floats, and moved living
+things' entity data to where 1.7 has it.
 
 ## Version data
 

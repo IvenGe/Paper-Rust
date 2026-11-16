@@ -1,7 +1,7 @@
 //! What a 1.4.6 client sends, as 1.8 packets (for the 1.8 translator).
 
 use super::wire::{self, read_string};
-use super::PreNetty;
+use super::{Era, PreNetty};
 use crate::io::Result;
 use crate::legacy::ids::sb;
 use crate::legacy::pos18;
@@ -61,12 +61,16 @@ impl PreNetty {
                 let (yaw, pitch) = (r.f32()?, r.f32()?);
                 let on_ground = r.bool()?;
                 if y == -999.0 && eyes == -999.0 {
-                    // A rider: 1.4.6 sends its motion where the position goes; 1.8 its look
-                    // and its keys.
+                    // A rider: it sends its motion where the position goes; 1.8 its look and its
+                    // keys (which 1.6 sends apart).
                     w.put_varint(sb::LOOK);
                     w.put_f32(yaw);
                     w.put_f32(pitch);
                     w.put_bool(on_ground);
+                    if self.era == Era::V1_6 {
+                        out.push(w);
+                        return Ok(());
+                    }
                     out.push(std::mem::take(&mut w));
                     let (forward, sideways) = steering(x, z, yaw);
                     w.put_varint(sb::STEER_VEHICLE);
@@ -115,15 +119,23 @@ impl PreNetty {
             }
             0x13 => {
                 let entity = r.i32()?;
-                // Sneak, unsneak, leave bed, sprint, stop: 1.8 counts from 0.
+                // Sneak, unsneak, leave bed, sprint, stop (1.6: a horse's jump, its inventory):
+                // 1.8 counts from 0.
                 let action = r.i8()?;
-                if !(1..=5).contains(&action) {
+                if !(1..=7).contains(&action) {
                     return Ok(());
                 }
+                let jump = if self.era == Era::V1_6 { r.i32()? } else { 0 };
                 w.put_varint(sb::ENTITY_ACTION);
                 w.put_varint(entity);
                 w.put_varint(action as i32 - 1);
-                w.put_varint(0);
+                w.put_varint(jump);
+            }
+            0x1B if self.era == Era::V1_6 => {
+                w.put_varint(sb::STEER_VEHICLE);
+                w.put_slice(r.take(8)?);
+                let (jump, unmount) = (r.bool()?, r.bool()?);
+                w.put_u8(jump as u8 | (unmount as u8) << 1);
             }
             0x65 => {
                 w.put_varint(sb::CLOSE_WINDOW);
@@ -164,8 +176,12 @@ impl PreNetty {
             0xCA => {
                 w.put_varint(sb::ABILITIES);
                 w.put_i8(r.i8()?);
-                w.put_f32(r.u8()? as f32 / 255.0);
-                w.put_f32(r.u8()? as f32 / 255.0);
+                if self.era == Era::V1_6 {
+                    w.put_slice(r.take(8)?);
+                } else {
+                    w.put_f32(r.u8()? as f32 / 255.0);
+                    w.put_f32(r.u8()? as f32 / 255.0);
+                }
             }
             0xCB => {
                 w.put_varint(sb::TAB_COMPLETE);

@@ -62,6 +62,10 @@ pub const VERSIONS: &[Version] = &[
     Version { protocol: 47, name: "1.8.x", family: Family::Legacy18, data: "" },
     Version { protocol: 5, name: "1.7.x", family: Family::Legacy17, data: "" },
     Version { protocol: 4, name: "1.7.x", family: Family::Legacy17, data: "" },
+    Version { protocol: 78, name: "1.6.2-1.6.4", family: Family::PreNetty, data: "" },
+    Version { protocol: 74, name: "1.6.2-1.6.4", family: Family::PreNetty, data: "" },
+    Version { protocol: 61, name: "1.5.x", family: Family::PreNetty, data: "" },
+    Version { protocol: 60, name: "1.5.x", family: Family::PreNetty, data: "" },
     Version { protocol: legacy::prenetty::PROTOCOL as i32, name: "1.4.6-1.4.7", family: Family::PreNetty, data: "" },
 ];
 
@@ -85,8 +89,8 @@ pub fn status_protocol(protocol: i32) -> i32 {
     }
 }
 
-/// The versions that can join, for the server list and messages: `1.4.6-1.4.7, 1.7.x, 1.8.x,
-/// 26.1-26.3`.
+/// The versions that can join, for the server list and messages: `1.4.6-1.4.7, 1.5.x,
+/// 1.6.2-1.6.4, 1.7.x, 1.8.x, 26.1-26.3`.
 pub fn version_range() -> String {
     let modern = VERSIONS.iter().rfind(|v| v.family == Family::Modern);
     let mut parts: Vec<String> = VERSIONS.iter().filter(|v| v.family != Family::Modern).rev().map(|v| v.name.to_owned()).collect();

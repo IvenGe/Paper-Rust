@@ -53,10 +53,14 @@ fn a_bobber_in_open_water_catches_a_fish() {
     server
         .handle
         .run(move |s| {
+            // Its chunks loaded first: they may still be on their way to Alice.
+            for (cx, cz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                assert!(s.load_chunk_now(0, paper_server::world::chunk::ChunkPos { x: cx, z: cz }));
+            }
             for x in 2..=16 {
                 for z in 11..=25 {
                     for y in -63..=-61 {
-                        s.worlds[0].set_block(x, y, z, water);
+                        assert!(s.worlds[0].set_block(x, y, z, water).is_some() || s.worlds[0].block_at(x, y, z) == Some(water));
                     }
                 }
             }

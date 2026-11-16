@@ -75,7 +75,8 @@ What works:
 
 * **Networking**: server list ping, online (Mojang authentication, encryption) and offline
   login, compression, the configuration phase, keep-alive.
-* **Older clients**: 26.2, 26.1, 1.8.x, 1.7.x and 1.4.6/1.4.7 clients join too. Their packets are
+* **Older clients**: 26.2, 26.1, 1.8.x, 1.7.x, 1.6.2-1.6.4, 1.5.x and 1.4.6/1.4.7 clients
+  join too. Their packets are
   translated on the network threads (`crates/paper-compat`, with ViaVersion, ViaBackwards and
   ViaRewind's mapping data and ViaLegacy's knowledge of the protocols from before Netty): ids
   of blocks, items, entities, sounds and particles, registries they lack, packets that
@@ -83,13 +84,15 @@ What works:
   height they know), entities in their old kinds, chat as JSON text, and the translator does
   for them what 1.8 never did (the configuration phase, teleport and chunk confirmations).
   1.7 clients go through the 1.8 translator and one more step (no compression, the blocks,
-  items and mobs 1.8 added shown as ones 1.7 has). So do 1.4.6 clients, with a step of
-  their own: their own login (a handshake, then an encryption exchange even offline),
-  packets without lengths, UTF-16 text, and blocks, items and mobs that came later shown as
-  ones they have (a hay bale as yellow wool, a rabbit as a chicken). The server list shows these clients the server as
+  items and mobs 1.8 added shown as ones 1.7 has). So do clients from before Netty (1.4.6
+  to 1.6.4), with a step of their own: their own login (a handshake, then an encryption
+  exchange even offline), packets without lengths, UTF-16 text, and blocks, items and mobs
+  that came later shown as ones they have (a hay bale as yellow wool on 1.5, a rabbit as a
+  chicken). The server list shows these clients the server as
   compatible, old-style pings included. Not yet: villager trades and boss bars on 1.8 and
   older, windows of blocks they do not have (smithing tables, looms, hoppers on 1.4.6, ...),
-  and 1.4.6 on an online-mode server (the session servers it signed in with are gone).
+  and clients from before Netty on an online-mode server (the session servers they signed
+  in with are gone).
 * **Worlds**: vanilla world generation for the overworld, the Nether and the End, ported
   from 26.3 and driven by the vanilla jar's worldgen data (`crates/paper-worldgen`): biomes,
   terrain with aquifers and ore veins, surface rules, caves and canyons, and the features

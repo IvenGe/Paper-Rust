@@ -3,7 +3,7 @@
 //!
 //! The packet layouts are the ones ViaLegacy (GPL-3.0 or later) reads 1.4.6 with.
 
-use super::ids;
+use super::{ids, Era};
 use crate::io::Result;
 use anyhow::bail;
 use flate2::read::{GzDecoder, GzEncoder, ZlibEncoder};
@@ -113,10 +113,23 @@ fn measure(buf: &[u8], fields: impl FnOnce(&mut Walk<'_>, u8) -> Step) -> std::r
     }
 }
 
-/// The length of the packet a 1.4.6 client sent at the front of `buf`; `None` while not all
-/// of it has arrived.
+/// The length of the packet a 1.4.6 or 1.5 client sent at the front of `buf`; `None` while
+/// not all of it has arrived.
 pub fn split_serverbound(buf: &[u8]) -> std::result::Result<Option<usize>, String> {
+    serverbound(buf, Era::V1_4)
+}
+
+/// The same for a 1.6 client.
+pub fn split_serverbound_1_6(buf: &[u8]) -> std::result::Result<Option<usize>, String> {
+    serverbound(buf, Era::V1_6)
+}
+
+fn serverbound(buf: &[u8], era: Era) -> std::result::Result<Option<usize>, String> {
     measure(buf, |w, id| match id {
+        // 1.6: an action's parameter (a horse's jump), keys of riders, speeds as floats.
+        0x13 if era == Era::V1_6 => w.skip(9),
+        0x1B if era == Era::V1_6 => w.skip(10),
+        0xCA if era == Era::V1_6 => w.skip(9),
         0x00 => w.skip(4),
         0x02 => {
             w.skip(1)?;
@@ -170,7 +183,78 @@ pub fn split_serverbound(buf: &[u8]) -> std::result::Result<Option<usize>, Strin
 /// The length of the packet a server sent a 1.4.6 client at the front of `buf`; `None`
 /// while not all of it has arrived.
 pub fn split_clientbound(buf: &[u8]) -> std::result::Result<Option<usize>, String> {
+    clientbound(buf, Era::V1_4)
+}
+
+/// The same for a 1.5 client.
+pub fn split_clientbound_1_5(buf: &[u8]) -> std::result::Result<Option<usize>, String> {
+    clientbound(buf, Era::V1_5)
+}
+
+/// The same for a 1.6 client.
+pub fn split_clientbound_1_6(buf: &[u8]) -> std::result::Result<Option<usize>, String> {
+    clientbound(buf, Era::V1_6)
+}
+
+fn clientbound(buf: &[u8], era: Era) -> std::result::Result<Option<usize>, String> {
+    let v1_5 = era >= Era::V1_5;
+    let v1_6 = era == Era::V1_6;
     measure(buf, |w, id| match id {
+        // Health as a float, leads, speeds as floats (1.6).
+        0x08 if v1_6 => w.skip(10),
+        0x27 if v1_6 => w.skip(9),
+        0xCA if v1_6 => w.skip(9),
+        // Windows say whether to show their title (1.5), horses' their horse (1.6).
+        0x64 if v1_5 => {
+            w.skip(1)?;
+            let [kind] = w.read::<1>()?;
+            w.string()?;
+            w.skip(2)?;
+            if kind == 11 {
+                w.skip(4)?;
+            }
+            Ok(())
+        }
+        // Particles and scoreboards (1.5).
+        0x3F if v1_5 => {
+            w.string()?;
+            w.skip(32)
+        }
+        0xCE if v1_5 => {
+            w.string()?;
+            w.string()?;
+            w.skip(1)
+        }
+        0xCF if v1_5 => {
+            w.string()?;
+            let [action] = w.read::<1>()?;
+            if action != 1 {
+                w.string()?;
+                w.skip(4)?;
+            }
+            Ok(())
+        }
+        0xD0 if v1_5 => {
+            w.skip(1)?;
+            w.string()
+        }
+        0xD1 if v1_5 => {
+            w.string()?;
+            let [mode] = w.read::<1>()?;
+            if mode == 0 || mode == 2 {
+                w.string()?;
+                w.string()?;
+                w.string()?;
+                w.skip(1)?;
+            }
+            if mode == 0 || mode == 3 || mode == 4 {
+                let members = w.short()?;
+                (0..members.max(0)).try_for_each(|_| w.string())?;
+            }
+            Ok(())
+        }
+        // The sign editor (1.6).
+        0x85 if v1_6 => w.skip(13),
         0x00 | 0x1E => w.skip(4),
         0x01 => {
             w.skip(4)?;
@@ -376,8 +460,9 @@ pub fn put_nbt(w: &mut Vec<u8>, tag: Option<&Tag>) {
     put_array(w, &gzip(&named));
 }
 
-/// A 1.8 slot (id, count, damage, named NBT or 0) as 1.4.6's: ids it has, NBT gzipped.
-pub fn slot_to_1_4(r: &mut Reader<'_>, w: &mut Vec<u8>) -> Result<()> {
+/// A 1.8 slot (id, count, damage, named NBT or 0) as one from before Netty: ids `era` has,
+/// NBT gzipped.
+pub fn slot_to_old(era: Era, r: &mut Reader<'_>, w: &mut Vec<u8>) -> Result<()> {
     let id = r.i16()?;
     if id < 0 {
         w.put_i16(-1);
@@ -386,7 +471,7 @@ pub fn slot_to_1_4(r: &mut Reader<'_>, w: &mut Vec<u8>) -> Result<()> {
     let count = r.i8()?;
     let damage = r.i16()?;
     let nbt = crate::legacy::inventory::read_named_nbt(r)?;
-    let (id, damage) = ids::item(id, damage);
+    let (id, damage) = ids::item(era, id, damage);
     w.put_i16(id);
     w.put_i8(count);
     w.put_i16(damage);
@@ -461,12 +546,14 @@ impl Value {
 
 /// Animals and villagers: their age is an int at 12 (1.8: a byte).
 fn ageable(mob: u8) -> bool {
-    matches!(mob, 90..=93 | 95 | 96 | 98 | 120)
+    matches!(mob, 90..=93 | 95 | 96 | 98 | 100 | 120)
 }
 
-/// 1.8 entity data as 1.4.6's: only what 1.4.6 has, at its index and of its type (a value of
-/// another type where the client expects one would break it).
-pub fn entity_data(r: &mut Reader<'_>, w: &mut Vec<u8>, shape: Shape) -> Result<()> {
+/// 1.8 entity data as `era`'s: only what it has, at its index and of its type (a value of
+/// another type where the client expects one would break it). Living things' values moved in
+/// 1.6 (health came in, names went from 5 and 6 to 10 and 11); 1.8 gave every entity a name,
+/// at 2 and 3.
+pub fn entity_data(era: Era, r: &mut Reader<'_>, w: &mut Vec<u8>, shape: Shape) -> Result<()> {
     let living = matches!(shape, Shape::Player | Shape::Mob(_));
     loop {
         let header = r.u8()?;
@@ -482,7 +569,7 @@ pub fn entity_data(r: &mut Reader<'_>, w: &mut Vec<u8>, shape: Shape) -> Result<
             4 => Value::Text(r.string(32767)?),
             5 => {
                 let mut slot = Vec::new();
-                slot_to_1_4(r, &mut slot)?;
+                slot_to_old(era, r, &mut slot)?;
                 Value::Item(slot)
             }
             6 | 7 => {
@@ -491,16 +578,24 @@ pub fn entity_data(r: &mut Reader<'_>, w: &mut Vec<u8>, shape: Shape) -> Result<
             }
             other => bail!("entity data of type {other}"),
         };
+        let v1_6 = era == Era::V1_6;
         let (index, value) = match (index, value, shape) {
             (0, v @ Value::Byte(_), _) | (1, v @ Value::Short(_), _) => (index, v),
-            // Bosses show their health at 16 (their bar).
+            // Names of mobs (1.5 on).
+            (2, v @ Value::Text(_), Shape::Mob(_)) if era >= Era::V1_5 => (if v1_6 { 10 } else { 5 }, v),
+            (3, v @ Value::Byte(_), Shape::Mob(_)) if era >= Era::V1_5 => (if v1_6 { 11 } else { 6 }, v),
+            // Health (1.6 on); before, bosses showed theirs at 16 (their bar).
+            (6, v @ Value::Float(_), _) if living && v1_6 => (6, v),
             (6, Value::Float(health), Shape::Mob(63 | 64)) => (16, Value::Int(health.ceil() as i32)),
-            (7, v @ Value::Int(_), _) if living => (8, v),
+            (7, v @ Value::Int(_), _) if living => (if v1_6 { 7 } else { 8 }, v),
+            (8 | 9, v @ Value::Byte(_), _) if living && v1_6 => (index, v),
+            // Horses (1.6): their flags and kind.
+            (16, v @ Value::Int(_), Shape::Mob(100)) | (19, v @ Value::Byte(_), Shape::Mob(100)) if v1_6 => (index, v),
             (12, Value::Byte(baby), Shape::Mob(54 | 57)) => (12, Value::Byte((baby != 0) as i8)),
             (12, Value::Byte(baby), Shape::Mob(mob)) if ageable(mob) => (12, Value::Int(if baby != 0 { -1 } else { 0 })),
             (13, v @ Value::Byte(_), Shape::Mob(51 | 54 | 57)) => (13, v),
             (16, v @ Value::Byte(_), Shape::Mob(50 | 52 | 55 | 56 | 61 | 62 | 65 | 90 | 91 | 99)) => (16, v),
-            (16, Value::Short(block), Shape::Mob(58)) => (16, Value::Byte((ids::block((block as u16) << 4) >> 4) as i8)),
+            (16, Value::Short(block), Shape::Mob(58)) => (16, Value::Byte((ids::block(era, (block as u16) << 4) >> 4) as i8)),
             (17 | 18, v @ Value::Byte(_), Shape::Mob(58)) | (17, v @ Value::Byte(_), Shape::Mob(50)) => (index, v),
             (16, v @ Value::Int(_), Shape::Mob(120)) => (16, v),
             (10, v @ Value::Item(_), Shape::Object(2)) | (8, v @ Value::Item(_), Shape::Object(76)) => (index, v),
@@ -566,7 +661,7 @@ mod tests {
         slot18.extend_from_slice(&net[1..]);
 
         let mut slot14 = Vec::new();
-        slot_to_1_4(&mut Reader::new(&slot18), &mut slot14).unwrap();
+        slot_to_old(Era::V1_4, &mut Reader::new(&slot18), &mut slot14).unwrap();
         let mut back = Vec::new();
         slot_to_1_8(&mut Reader::new(&slot14), &mut back).unwrap();
         assert_eq!(back, slot18);

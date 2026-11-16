@@ -2,7 +2,7 @@
 //! has no packet for (scoreboards, titles, particles, the world border, ...) is left out.
 
 use super::wire::{self, put_string, Shape};
-use super::{ids, PreNetty};
+use super::{ids, Era, PreNetty};
 use crate::io::Result;
 use crate::legacy::ids::{cb, login};
 use crate::legacy::{from_pos18, text};
@@ -96,8 +96,9 @@ pub(crate) fn facing_offset(facing: i32) -> (i32, i32) {
 }
 
 /// A 1.8 chunk as 1.4.6's: block ids and their metadata apart, the whole zlib-compressed.
+#[cfg(test)]
 fn chunk(x: i32, z: i32, full: bool, mask: u16, data: &[u8], sky: bool) -> Result<Vec<u8>> {
-    chunk_with(0x33, x, z, full, mask, data, sky, ids::block)
+    chunk_with(0x33, x, z, full, mask, data, sky, ids::block_1_4)
 }
 
 /// A 1.8 chunk in the form 1.4.6 to 1.7 share (packet `id`), its blocks through `block`.
@@ -188,8 +189,15 @@ impl PreNetty {
             }
             cb::CHAT => {
                 let json = r.string(1 << 18)?;
-                // Above the hotbar: 1.4.6 has no such place.
+                // Above the hotbar: these versions have no such place.
                 if r.i8()? == 2 {
+                    return Ok(());
+                }
+                if self.era == Era::V1_6 {
+                    // JSON, in 1.6's own form: the text with its codes.
+                    w = packet(0x03);
+                    put_string(&mut w, &serde_json::json!({ "text": legacy_text(&json) }).to_string(), 32767);
+                    out.push(w);
                     return Ok(());
                 }
                 for line in chat_lines(&legacy_text(&json)) {
@@ -208,7 +216,7 @@ impl PreNetty {
                 w = packet(0x05);
                 w.put_i32(r.varint()?);
                 w.put_i16(r.i16()?);
-                wire::slot_to_1_4(&mut r, &mut w)?;
+                wire::slot_to_old(self.era, &mut r, &mut w)?;
             }
             cb::SPAWN_POSITION => {
                 let pos = from_pos18(r.i64()?);
@@ -222,8 +230,12 @@ impl PreNetty {
                 let food = r.varint()?;
                 let saturation = r.f32()?;
                 w = packet(0x08);
-                // Whole half hearts: rounded up, so a living player is not shown dead.
-                w.put_i16(health.ceil().clamp(-32768.0, 32767.0) as i16);
+                if self.era == Era::V1_6 {
+                    w.put_f32(health);
+                } else {
+                    // Whole half hearts: rounded up, so a living player is not shown dead.
+                    w.put_i16(health.ceil().clamp(-32768.0, 32767.0) as i16);
+                }
                 w.put_i16(food.clamp(0, 32767) as i16);
                 w.put_f32(saturation);
             }
@@ -288,8 +300,8 @@ impl PreNetty {
                 w.put_i32(z);
                 w.put_u8(yaw);
                 w.put_u8(pitch);
-                w.put_i16(if held > 0 { ids::item(held, 0).0 } else { 0 });
-                wire::entity_data(&mut r, &mut w, Shape::Player)?;
+                w.put_i16(if held > 0 { ids::item(self.era, held, 0).0 } else { 0 });
+                wire::entity_data(self.era, &mut r, &mut w, Shape::Player)?;
             }
             cb::COLLECT => {
                 w = packet(0x16);
@@ -303,7 +315,7 @@ impl PreNetty {
                 let (pitch, yaw) = (r.u8()?, r.u8()?);
                 let data = r.i32()?;
                 let velocity = if data != 0 { (r.i16()?, r.i16()?, r.i16()?) } else { (0, 0, 0) };
-                let Some((kind, data)) = ids::object(kind, data) else { return Ok(()) };
+                let Some((kind, data)) = ids::object(self.era, kind, data) else { return Ok(()) };
                 if kind == 71 {
                     let (dx, dz) = facing_offset(data);
                     x = ((x >> 5) - dx) << 5;
@@ -328,13 +340,13 @@ impl PreNetty {
             cb::SPAWN_ENTITY_LIVING => {
                 let entity = r.varint()?;
                 let kind = r.u8()?;
-                let Some(mob) = ids::mob(kind) else { return Ok(()) };
+                let Some(mob) = ids::mob(self.era, kind) else { return Ok(()) };
                 w = packet(0x18);
                 w.put_i32(entity);
                 w.put_u8(mob);
                 // Position, rotations, head and velocity are the same.
                 w.put_slice(r.take(12 + 3 + 6)?);
-                wire::entity_data(&mut r, &mut w, Shape::Mob(kind))?;
+                wire::entity_data(self.era, &mut r, &mut w, Shape::Mob(kind))?;
             }
             cb::SPAWN_ENTITY_PAINTING => {
                 let entity = r.varint()?;
@@ -413,17 +425,21 @@ impl PreNetty {
                 let rider = r.i32()?;
                 let vehicle = r.i32()?;
                 // Leads came in 1.6.
-                if r.bool()? {
+                let leash = r.bool()?;
+                if leash && self.era < Era::V1_6 {
                     return Ok(());
                 }
                 w = packet(0x27);
                 w.put_i32(rider);
                 w.put_i32(vehicle);
+                if self.era == Era::V1_6 {
+                    w.put_u8(leash as u8);
+                }
             }
             cb::ENTITY_METADATA => {
                 let entity = r.varint()?;
                 let mut data = Vec::new();
-                wire::entity_data(&mut r, &mut data, self.shape(entity))?;
+                wire::entity_data(self.era, &mut r, &mut data, self.shape(entity))?;
                 if data.len() == 1 {
                     return Ok(());
                 }
@@ -467,7 +483,7 @@ impl PreNetty {
                 let full = r.bool()?;
                 let mask = r.u16()?;
                 let data = r.byte_array(1 << 22)?;
-                w = chunk(x, z, full, mask, data, self.inner.world.has_sky)?;
+                w = chunk_with(0x33, x, z, full, mask, data, self.inner.world.has_sky, self.era.blocks())?;
             }
             cb::MULTI_BLOCK_CHANGE => {
                 let (x, z) = (r.i32()?, r.i32()?);
@@ -475,7 +491,7 @@ impl PreNetty {
                 let mut records = Vec::with_capacity(count.clamp(0, 4096) as usize * 4);
                 for _ in 0..count {
                     let (xz, y) = (r.u8()?, r.u8()?);
-                    let block = ids::block(r.varint()? as u16);
+                    let block = ids::block(self.era, r.varint()? as u16);
                     records.put_u16((xz as u16) << 8 | y as u16);
                     records.put_u16(block);
                 }
@@ -488,7 +504,7 @@ impl PreNetty {
             }
             cb::BLOCK_CHANGE => {
                 let pos = from_pos18(r.i64()?);
-                let block = ids::block(r.varint()? as u16);
+                let block = ids::block(self.era, r.varint()? as u16);
                 w = packet(0x35);
                 w.put_i32(pos.x);
                 w.put_u8(pos.y as u8);
@@ -499,7 +515,7 @@ impl PreNetty {
             cb::BLOCK_ACTION => {
                 let pos = from_pos18(r.i64()?);
                 let (a, b) = (r.u8()?, r.u8()?);
-                let block = ids::block((r.varint()? as u16) << 4) >> 4;
+                let block = ids::block(self.era, (r.varint()? as u16) << 4) >> 4;
                 w = packet(0x36);
                 w.put_i32(pos.x);
                 w.put_i16(pos.y as i16);
@@ -539,7 +555,7 @@ impl PreNetty {
                     return Ok(());
                 }
                 if event == 2001 {
-                    let block = ids::block(((data & 0xFFF) as u16) << 4 | ((data >> 12) & 15) as u16);
+                    let block = ids::block(self.era, ((data & 0xFFF) as u16) << 4 | ((data >> 12) & 15) as u16);
                     data = (block >> 4) as i32 | ((block & 15) as i32) << 12;
                 }
                 w = packet(0x3D);
@@ -551,9 +567,23 @@ impl PreNetty {
                 w.put_bool(global);
             }
             cb::NAMED_SOUND_EFFECT => {
-                let name = r.string(256)?;
+                let mut name = r.string(256)?;
                 if name.len() > 32 {
                     return Ok(());
+                }
+                if self.era < Era::V1_6 {
+                    // The few 1.6 renamed.
+                    let old = match name.as_str() {
+                        "mob.ghast.affectionate_scream" => "mob.ghast.affectionate scream",
+                        "mob.villager.idle" => "mob.villager.default",
+                        "mob.villager.hit" => "mob.villager.defaulthurt",
+                        "mob.villager.death" => "mob.villager.defaultdeath",
+                        "random.wood_click" => "random.wood click",
+                        _ => "",
+                    };
+                    if !old.is_empty() {
+                        name = old.to_owned();
+                    }
                 }
                 w = packet(0x3E);
                 put_string(&mut w, &name, 32);
@@ -584,13 +614,16 @@ impl PreNetty {
                     "minecraft:chest" | "minecraft:container" => 0,
                     "minecraft:crafting_table" => 1,
                     "minecraft:furnace" => 2,
-                    "minecraft:dispenser" | "minecraft:dropper" => 3,
+                    "minecraft:dispenser" => 3,
+                    "minecraft:dropper" if self.era == Era::V1_4 => 3,
                     "minecraft:enchanting_table" => 4,
                     "minecraft:brewing_stand" => 5,
                     "minecraft:villager" => 6,
                     "minecraft:beacon" => 7,
                     "minecraft:anvil" => 8,
-                    // Hoppers and horses: no window 1.4.6 could number the same way.
+                    "minecraft:hopper" if self.era >= Era::V1_5 => 9,
+                    "minecraft:dropper" if self.era >= Era::V1_5 => 10,
+                    // Hoppers before 1.5: no window the client could number the same way.
                     _ => return Ok(()),
                 };
                 self.windows.insert(window, kind);
@@ -599,6 +632,10 @@ impl PreNetty {
                 w.put_u8(kind);
                 put_string(&mut w, &legacy_text(&title), 32);
                 w.put_u8(slots);
+                if self.era >= Era::V1_5 {
+                    // Use the title given.
+                    w.put_bool(true);
+                }
             }
             cb::CLOSE_WINDOW => {
                 let window = r.u8()?;
@@ -610,7 +647,7 @@ impl PreNetty {
                 w = packet(0x67);
                 w.put_i8(r.i8()?);
                 w.put_i16(r.i16()?);
-                wire::slot_to_1_4(&mut r, &mut w)?;
+                wire::slot_to_old(self.era, &mut r, &mut w)?;
             }
             cb::WINDOW_ITEMS => {
                 w = packet(0x68);
@@ -618,7 +655,7 @@ impl PreNetty {
                 let slots = r.i16()?;
                 w.put_i16(slots);
                 for _ in 0..slots {
-                    wire::slot_to_1_4(&mut r, &mut w)?;
+                    wire::slot_to_old(self.era, &mut r, &mut w)?;
                 }
             }
             cb::CRAFT_PROGRESS_BAR => {
@@ -661,8 +698,12 @@ impl PreNetty {
             cb::ABILITIES => {
                 w = packet(0xCA);
                 w.put_i8(r.i8()?);
-                w.put_u8((r.f32()? * 255.0).clamp(0.0, 255.0) as u8);
-                w.put_u8((r.f32()? * 255.0).clamp(0.0, 255.0) as u8);
+                if self.era == Era::V1_6 {
+                    w.put_slice(r.take(8)?);
+                } else {
+                    w.put_u8((r.f32()? * 255.0).clamp(0.0, 255.0) as u8);
+                    w.put_u8((r.f32()? * 255.0).clamp(0.0, 255.0) as u8);
+                }
             }
             cb::TAB_COMPLETE => {
                 let matches = r.list(1 << 12, |r| r.string(32767))?;
@@ -672,6 +713,78 @@ impl PreNetty {
             cb::KICK_DISCONNECT => {
                 w = packet(0xFF);
                 put_string(&mut w, &legacy_text(&r.string(1 << 18)?), 256);
+            }
+            // Particles and scoreboards came in 1.5.
+            cb::WORLD_PARTICLES if self.era >= Era::V1_5 => {
+                let particle = r.i32()?;
+                let _far = r.bool()?;
+                let floats = r.take(7 * 4)?;
+                let count = r.i32()?;
+                let mut data = Vec::new();
+                while !r.is_empty() {
+                    data.push(r.varint()?);
+                }
+                let Some(name) = crate::legacy::v1_7::ids::particle(particle, &data) else { return Ok(()) };
+                w = packet(0x3F);
+                put_string(&mut w, &name, 64);
+                w.put_slice(floats);
+                w.put_i32(count);
+            }
+            cb::SCOREBOARD_OBJECTIVE if self.era >= Era::V1_5 => {
+                let name = r.string(16)?;
+                let mode = r.i8()?;
+                let value = if mode == 1 { String::new() } else { r.string(32)? };
+                w = packet(0xCE);
+                put_string(&mut w, &name, 16);
+                put_string(&mut w, &value, 32);
+                w.put_i8(mode);
+            }
+            cb::SCOREBOARD_SCORE if self.era >= Era::V1_5 => {
+                let name = r.string(40)?;
+                let action = r.i8()?;
+                let objective = r.string(16)?;
+                w = packet(0xCF);
+                put_string(&mut w, &name, 16);
+                w.put_i8(action);
+                if action != 1 {
+                    put_string(&mut w, &objective, 16);
+                    w.put_i32(r.varint()?);
+                }
+            }
+            cb::SCOREBOARD_DISPLAY_OBJECTIVE if self.era >= Era::V1_5 => {
+                w = packet(0xD0);
+                w.put_i8(r.i8()?);
+                put_string(&mut w, &r.string(16)?, 16);
+            }
+            cb::SCOREBOARD_TEAM if self.era >= Era::V1_5 => {
+                w = packet(0xD1);
+                put_string(&mut w, &r.string(16)?, 16);
+                let mode = r.i8()?;
+                w.put_i8(mode);
+                if mode == 0 || mode == 2 {
+                    for max in [32, 16, 16] {
+                        put_string(&mut w, &r.string(32)?, max);
+                    }
+                    w.put_i8(r.i8()?);
+                    r.string(32)?;
+                    r.i8()?;
+                }
+                if mode == 0 || mode == 3 || mode == 4 {
+                    let members = r.list(1 << 16, |r| r.string(40))?;
+                    w.put_i16(members.len() as i16);
+                    for member in members {
+                        put_string(&mut w, &member, 16);
+                    }
+                }
+            }
+            // From 1.6.2 on, the server opens the sign editor.
+            cb::OPEN_SIGN_ENTITY if self.era == Era::V1_6 => {
+                let pos = from_pos18(r.i64()?);
+                w = packet(0x85);
+                w.put_u8(0);
+                w.put_i32(pos.x);
+                w.put_i32(pos.y);
+                w.put_i32(pos.z);
             }
             _ => return Ok(()),
         }
