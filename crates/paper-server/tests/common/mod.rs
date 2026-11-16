@@ -30,6 +30,11 @@ pub fn start_server_with_host(tweak: impl FnOnce(&mut Config), launcher: paper_s
     paper_server::start_with_plugin_launcher(config, launcher).expect("server starts")
 }
 
+/// Starts a server with Rust plugins linked into the test (no Java plugin host).
+pub fn start_server_with_natives(tweak: impl FnOnce(&mut Config), linked: Vec<paper_plugin::Entry>) -> RunningServer {
+    paper_server::start_with_native_plugins(test_config(tweak), paper_server::plugins::java_launcher(), linked).expect("server starts")
+}
+
 fn test_config(tweak: impl FnOnce(&mut Config)) -> Config {
     // Server logs go to the real stdout, which the test harness cannot capture; keep them
     // quiet unless asked for with PAPER_TEST_LOG=info (or debug, warn, ...).

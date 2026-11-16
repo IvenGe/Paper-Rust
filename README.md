@@ -8,6 +8,8 @@ bootstrappers and Brigadier commands.
 
 The game server is Rust. Java plugins run in a separate JVM, the *plugin host*, which talks
 to the server over a local socket ("separate mode"). Without plugins no JVM is started.
+Plugins can also be written in Rust: they load into the server process from the same
+`plugins` folder and use the same API (see [Rust plugins](docs/rust-plugins.md)).
 
 > This is an early port. The protocol, worlds, players, survival gameplay (mobs, damage,
 > hunger, containers, crafting, redstone, fluids) and the plugin bridge work end to end (see
@@ -50,6 +52,21 @@ host-dir = "plugin-host"
 jvm-args = ["-Xmx1G"]
 on-host-crash = "shutdown"   # or "continue" to keep running without plugins
 ```
+
+### Rust plugins
+
+A Rust plugin is a `cdylib` crate that depends on `crates/paper-plugin`, implements its
+`Plugin` trait and exports itself with `export_plugin!`. Copy the built library
+(`libmy_plugin.so`, `my_plugin.dll` or `libmy_plugin.dylib`) into `my-server/plugins/`.
+Rust plugins need no JVM: the plugin host starts only if there are jars. An example:
+
+```bash
+cargo build --release -p paper-plugin --example hello_plugin
+cp target/release/examples/libhello_plugin.so my-server/plugins/
+```
+
+[Rust plugins](docs/rust-plugins.md) covers events, commands, the API, threads and the
+plugin interface.
 
 Status
 ------
@@ -284,6 +301,10 @@ What works:
   kick ban pardon ban-ip pardon-ip banlist op deop whitelist save-all stop version plugins
   reload`. The main scoreboard (objectives, scores, display slots and teams) is saved with the
   main world as vanilla's `data/minecraft/scoreboard.dat`.
+* **Rust plugins** (`crates/paper-plugin`): libraries loaded from the plugins folder or
+  linked into the server, which hear events after Java plugins (and may change their
+  outcome), add commands with aliases, operator levels and completions, run every tick and
+  call the whole plugin API of the bridge; see [Rust plugins](docs/rust-plugins.md).
 * **Java plugins**: loading and enabling, `onLoad`/`onEnable`/`onDisable`, Paper
   bootstrappers and the `COMMANDS` lifecycle event, plugin commands (`plugin.yml` commands with
   permissions, aliases and tab completion; Brigadier commands and `BasicCommand`), the
@@ -579,10 +600,11 @@ Layout
 | `crates/paper-bridge` | the wire format shared with the plugin host |
 | `crates/paper-worldgen` | vanilla world generation (terrain, biomes, carvers, features, structures, spawn search) |
 | `crates/paper-server` | the server: networking, tick loop, players, worlds, storage, plugin bridge |
+| `crates/paper-plugin` | writing plugins in Rust: the plugin trait, events, commands, the server API |
 | `plugin-host/` | the plugin host (Java), plus two small test plugins |
 | `data/26.3` | the version data tables, see its README |
 | `tools/datagen` | the tools that extract those tables from the vanilla jar without running it |
-| `docs/` | [architecture](docs/architecture.md) and the [plugin bridge](docs/plugin-bridge.md) |
+| `docs/` | [architecture](docs/architecture.md), the [plugin bridge](docs/plugin-bridge.md) and [Rust plugins](docs/rust-plugins.md) |
 
 The server is Rust only. The one Java part is the plugin host: Bukkit and Paper plugins are
 Java bytecode written against Java interfaces, so they run in a JVM next to the server. The

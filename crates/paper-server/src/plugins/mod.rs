@@ -28,6 +28,7 @@ pub mod entity;
 pub mod events;
 pub mod inventory;
 pub mod merchant;
+pub mod native;
 pub mod offline;
 pub mod player;
 pub mod scoreboard;
@@ -650,7 +651,8 @@ pub fn reload(server: &mut Server) -> Result<()> {
     server.plugins = None;
     *server.shared.plugin_host.write() = None;
     server.plugin_commands.clear();
-    server.plugin_events.clear();
+    server.java_events.clear();
+    events::refresh_listened(server);
     server.plugin_state_cache.clear();
     server.plugin_state_marks.clear();
     server.plugin_list.clear();
@@ -702,7 +704,8 @@ pub fn host_died(server: &mut Server, reason: &str) {
     server.plugins = None;
     *server.shared.plugin_host.write() = None;
     server.plugin_commands.clear();
-    server.plugin_events.clear();
+    server.java_events.clear();
+    events::refresh_listened(server);
     server.plugin_state_cache.clear();
     server.plugin_state_marks.clear();
     for plugin in &mut server.plugin_list {

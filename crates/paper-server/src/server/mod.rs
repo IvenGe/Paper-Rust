@@ -265,6 +265,10 @@ pub struct Server {
     pub plugin_commands: HashSet<String>,
     /// Bukkit event classes (simple names) that have plugin listeners.
     pub plugin_events: HashSet<String>,
+    /// The events Java plugins listen to (`plugin_events` adds the Rust plugins' ones).
+    pub java_events: HashSet<String>,
+    /// Plugins written in Rust (see `plugins::native`).
+    pub native: crate::plugins::native::NativePlugins,
     /// Per player, the last right click on a block plugins saw (`PlayerInteractEvent`): the
     /// hand, the tick and whether they denied the item's use, for the use of the item that
     /// follows the click (CraftBukkit's `firedInteract`).
@@ -496,6 +500,8 @@ impl Server {
             plugins: None,
             plugin_commands: HashSet::new(),
             plugin_events: HashSet::new(),
+            java_events: HashSet::new(),
+            native: Default::default(),
             last_interact: HashMap::new(),
             plugin_list: Vec::new(),
             plugin_state_cache: HashMap::new(),
@@ -1109,6 +1115,7 @@ impl Server {
         // Plugins are disabled before players are disconnected, as in Paper.
         *self.shared.plugin_host.write() = None;
         crate::plugins::shutdown(self);
+        crate::plugins::native::shutdown(self);
         let reason = Component::translatable("multiplayer.disconnect.server_shutdown", vec![]);
         let ids: Vec<i32> = self.player_order.clone();
         for id in ids {

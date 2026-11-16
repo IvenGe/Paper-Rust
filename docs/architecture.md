@@ -13,6 +13,7 @@ paper-protocol   codec, framing, zlib compression, AES/CFB8, text components, pa
 paper-bridge     the plugin bridge wire format (frames and dynamically typed values)
 paper-worldgen   vanilla world generation, built from the vanilla jar's worldgen data
 paper-server     the server itself, and the `paper` binary
+paper-plugin     the crate Rust plugins are written with (the plugin trait and its C interface)
 ```
 
 `paper-server` is split into:
@@ -22,7 +23,7 @@ paper-server     the server itself, and the `paper` binary
 | `net` | the listener and one task per connection: handshake, status, login (authentication, encryption, compression), configuration; then a reader and a writer per player |
 | `server` | the main thread: the tick loop, players (`join`, `handlers`, `view`, `player`), chat, commands, player data, scoreboards (`scoreboard`), the name cache (`usercache`) |
 | `world` | chunk storage, the chunk pipeline, generators, lighting, Anvil storage, block updates (fluids, redstone, block physics) and scheduled ticks |
-| `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use (`api`, and `inventory`, `entity`, `scoreboard`, `offline` for those areas), `/reload` |
+| `plugins` | the plugin host process and the bridge: calls, events, the server API plugins use (`api`, and `inventory`, `entity`, `scoreboard`, `offline` for those areas), `/reload`; Rust plugins (`native`) |
 | `config`, `access`, `logging` | `server.properties` and `config/paper-rs.toml`, ops/whitelist/bans, the console log |
 
 ## Threads
@@ -273,6 +274,12 @@ Java plugins run in the plugin host JVM. The server starts it before it accepts 
 calls it to fire events and run plugin commands, and drives the plugin scheduler once per
 tick. Calls nest across the two processes so plugin code always sees one main thread; see
 [the plugin bridge](plugin-bridge.md).
+
+Rust plugins (`plugins::native`) are libraries in the server's process, called on the main
+thread through a small C interface that carries the bridge's calls and values. An event goes
+to Java plugins first, then to Rust plugins, each of which sees the outcome so far and may
+change it. Their calls into the server go to the same API as the host's (`plugins::api`). See
+[Rust plugins](rust-plugins.md).
 
 ## Version data
 

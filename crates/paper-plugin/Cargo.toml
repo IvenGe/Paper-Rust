@@ -1,0 +1,15 @@
+[package]
+name = "paper-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Writing Paper-RS plugins in Rust: the plugin trait, events, commands and the server API"
+
+[dependencies]
+paper-bridge.workspace = true
+
+[[example]]
+name = "hello_plugin"
+crate-type = ["cdylib"]

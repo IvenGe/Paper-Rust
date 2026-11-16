@@ -21,6 +21,7 @@ paper-data.workspace = true
 paper-protocol.workspace = true
 paper-bridge.workspace = true
 paper-worldgen.workspace = true
+paper-plugin.workspace = true
 
 anyhow.workspace = true
 base64.workspace = true
@@ -28,6 +29,7 @@ bytes.workspace = true
 chrono.workspace = true
 crossbeam-channel.workspace = true
 flate2.workspace = true
+libloading.workspace = true
 foldhash.workspace = true
 log.workspace = true
 md-5.workspace = true

@@ -61,25 +61,39 @@ fn state_mark(p: &crate::server::player::Player) -> u64 {
     h.finish()
 }
 
-/// Calls the host synchronously if it is connected and the event has listeners.
+/// Fires an event at plugins: the Java plugins' host first (synchronously, if it is connected
+/// and the event has listeners there), then the Rust plugins that listen to it, which have
+/// the last word (`plugins::native::fire`). `None` if no plugin heard of it.
 fn fire(server: &mut Server, event: &str, method: &str, args: Value) -> Option<Value> {
-    let conn = server.plugins.clone()?;
-    if !event.is_empty() && !server.plugin_events.contains(event) {
-        return None;
-    }
-    flush_states(server);
-    match conn.call(server, method, args) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            log::error!("Firing {method} at plugins failed: {e}");
-            None
+    let java = match server.plugins.clone() {
+        Some(conn) if event.is_empty() || server.java_events.contains(event) => {
+            flush_states(server);
+            match conn.call(server, method, args.clone()) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::error!("Firing {method} at plugins failed: {e}");
+                    None
+                }
+            }
         }
+        _ => None,
+    };
+    if server.native.is_empty() {
+        return java;
     }
+    super::native::fire(server, event, method, &args, java)
 }
 
 /// Whether a plugin listens for an event (so the server need not prepare it otherwise).
 pub fn listens(server: &Server, event: &str) -> bool {
-    server.plugins.is_some() && server.plugin_events.contains(event)
+    server.plugin_events.contains(event)
+}
+
+/// The events plugins listen to: Java plugins' and Rust plugins'.
+pub fn refresh_listened(server: &mut Server) {
+    let mut all: HashSet<String> = if server.plugins.is_some() { server.java_events.clone() } else { HashSet::new() };
+    all.extend(server.native.listened().cloned());
+    server.plugin_events = all;
 }
 
 /// What plugins decided about a click (`Event.Result`): whether the clicked block and the
@@ -396,6 +410,9 @@ pub fn tick(server: &mut Server) {
     if server.tick.is_multiple_of(200) {
         super::inventory::collect_released(server);
     }
+    if !server.native.is_empty() {
+        super::native::tick(server);
+    }
     let Some(conn) = server.plugins.clone() else { return };
     flush_states_of(server, true);
     let tick = server.tick as i64;
@@ -475,11 +492,14 @@ fn source_value(server: &Server, source: &CommandSource) -> Value {
 
 /// Whether `label` (as typed, possibly namespaced) belongs to a plugin command.
 pub fn is_plugin_command(server: &Server, label: &str) -> bool {
-    server.plugins.is_some() && server.plugin_commands.contains(&label.to_ascii_lowercase())
+    (server.plugins.is_some() && server.plugin_commands.contains(&label.to_ascii_lowercase())) || server.native.command(label).is_some()
 }
 
 /// Runs a plugin command. Returns `false` if no plugin command handled the input.
 pub fn run_plugin_command(server: &mut Server, source: &CommandSource, command: &str) -> bool {
+    if let Some(handled) = super::native::run_command(server, source, command) {
+        return handled;
+    }
     let sender = source_value(server, source);
     match fire(server, "", "command.execute", bmap! { "sender" => sender, "command" => command }) {
         Some(result) => result.bool("handled").unwrap_or(false),
@@ -489,6 +509,11 @@ pub fn run_plugin_command(server: &mut Server, source: &CommandSource, command: 
 
 /// Tab completion for a plugin command: `(start, length, matches)`.
 pub fn plugin_suggestions(server: &mut Server, source: &CommandSource, text: &str) -> Option<(i32, i32, Vec<(String, Option<Component>)>)> {
+    let label = text.strip_prefix('/').unwrap_or(text).split_whitespace().next().unwrap_or("");
+    if server.native.command(label).is_some() {
+        let (start, length, matches) = super::native::suggestions(server, source, text)?;
+        return Some((start, length, matches.into_iter().map(|m| (m, None)).collect()));
+    }
     let sender = source_value(server, source);
     let result = fire(server, "", "command.suggest", bmap! { "sender" => sender, "text" => text })?;
     let matches = result
@@ -502,14 +527,19 @@ pub fn plugin_suggestions(server: &mut Server, source: &CommandSource, text: &st
 
 /// The plugin command labels a player may see in the command tree.
 pub fn visible_plugin_commands(server: &mut Server, id: i32) -> Vec<String> {
+    let op_level = server.players.get(&id).map_or(0, |p| p.op_level);
+    let mut labels = server.native.labels(op_level);
     if server.plugins.is_none() || server.plugin_commands.is_empty() {
-        return Vec::new();
+        return labels;
     }
-    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return Vec::new() };
-    match fire(server, "", "command.visible", bmap! { "uuid" => uuid }) {
-        Some(result) => result.list("labels").unwrap_or(&[]).iter().filter_map(|l| l.as_str().map(str::to_owned)).collect(),
-        None => Vec::new(),
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return labels };
+    if let Some(conn) = server.plugins.clone() {
+        flush_states(server);
+        if let Ok(result) = conn.call(server, "command.visible", bmap! { "uuid" => uuid }) {
+            labels.extend(result.list("labels").unwrap_or(&[]).iter().filter_map(|l| l.as_str().map(str::to_owned)));
+        }
     }
+    labels
 }
 
 /// The client answered a resource pack offer (`PlayerResourcePackStatusEvent`).
@@ -689,7 +719,7 @@ pub fn on_pickup_item(server: &mut Server, player: i32, _world: usize, item: i32
 /// `PlayerDropItemEvent`: the item entity exists already; returns false if a plugin cancelled
 /// the drop (the caller then takes the item back).
 pub fn on_drop_item(server: &mut Server, player: i32, item: i32, stack: &paper_protocol::types::Slot) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerDropItemEvent") {
+    if !listens(server, "PlayerDropItemEvent") {
         return true;
     }
     let Some(uuid) = server.players.get(&player).map(|p| p.uuid().to_string()) else { return true };
@@ -702,7 +732,7 @@ pub fn on_drop_item(server: &mut Server, player: i32, item: i32, stack: &paper_p
 
 /// InventoryOpenEvent: returns false if a plugin cancelled it.
 pub fn on_inventory_open(server: &mut Server, id: i32, kind: &crate::server::containers::MenuKind) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("InventoryOpenEvent") {
+    if !listens(server, "InventoryOpenEvent") {
         return true;
     }
     let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return true };
@@ -716,7 +746,7 @@ pub fn on_inventory_open(server: &mut Server, id: i32, kind: &crate::server::con
 /// InventoryCloseEvent for the window a player has open (or their own inventory), with a
 /// Bukkit close `reason` (`PLAYER`, `OPEN_NEW`, `DISCONNECT`, ...).
 pub fn on_inventory_close(server: &mut Server, id: i32, reason: &str) {
-    if server.plugins.is_none() || !server.plugin_events.contains("InventoryCloseEvent") {
+    if !listens(server, "InventoryCloseEvent") {
         return;
     }
     // A listener that opens a window from the close event must not close it again (Bukkit
@@ -749,7 +779,7 @@ pub fn on_inventory_click(
     let event = if craft_result.is_some() { "CraftItemEvent" } else if drag { "InventoryDragEvent" } else { "InventoryClickEvent" };
     // CraftItemEvent is an InventoryClickEvent: listeners of either see it.
     let listened = server.plugin_events.contains(event) || craft_result.is_some() && server.plugin_events.contains("InventoryClickEvent");
-    if server.plugins.is_none() || !listened {
+    if !listened {
         return true;
     }
     let Some(player) = server.players.get(&id) else { return true };
@@ -786,7 +816,7 @@ pub fn on_inventory_click(
 /// change the amount.
 pub fn on_entity_damage(server: &mut Server, id: i32, damage: &crate::server::survival::Damage, amount: &mut f32) -> bool {
     let listened = ["EntityDamageEvent", "EntityDamageByEntityEvent", "EntityDamageByBlockEvent"].iter().any(|e| server.plugin_events.contains(*e));
-    if server.plugins.is_none() || !listened {
+    if !listened {
         return true;
     }
     let args = damage_args(server, id, damage, *amount);
@@ -862,7 +892,7 @@ pub fn on_player_death(server: &mut Server, id: i32, damage: &crate::server::sur
         drops: if keep { Vec::new() } else { p.inventory.iter().filter(|s| !s.is_empty()).cloned().collect() },
         xp: if keep { 0 } else { (p.xp_level * 7).min(100) },
     };
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerDeathEvent") {
+    if !listens(server, "PlayerDeathEvent") {
         return Some(death);
     }
     let uuid = p.uuid().to_string();
@@ -904,7 +934,7 @@ pub fn on_player_death(server: &mut Server, id: i32, damage: &crate::server::sur
 /// EntityDeathEvent for mobs, with the loot and experience the mob drops. Returns the drops
 /// and experience plugins left, or `None` if a plugin cancelled the death.
 pub fn on_entity_death(server: &mut Server, world: usize, id: i32, damage: &crate::server::survival::Damage, drops: Vec<paper_protocol::types::Slot>, xp: i32) -> Option<(Vec<paper_protocol::types::Slot>, i32)> {
-    if server.plugins.is_none() || !server.plugin_events.contains("EntityDeathEvent") {
+    if !listens(server, "EntityDeathEvent") {
         return Some((drops, xp));
     }
     let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return Some((drops, xp)) };
@@ -933,7 +963,7 @@ pub fn on_entity_death(server: &mut Server, world: usize, id: i32, damage: &crat
 
 /// PlayerRespawnEvent: plugins may change where the player respawns.
 pub fn on_respawn(server: &mut Server, id: i32, world: usize, target: crate::server::player::Location) -> crate::server::player::Location {
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerRespawnEvent") {
+    if !listens(server, "PlayerRespawnEvent") {
         return target;
     }
     let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return target };
@@ -953,7 +983,7 @@ pub fn on_respawn(server: &mut Server, id: i32, world: usize, target: crate::ser
 
 /// CreatureSpawnEvent, after the fact: a cancelled spawn is removed again.
 pub fn on_creature_spawn(server: &mut Server, world: usize, id: i32, reason: crate::server::mobs::SpawnReason) {
-    if server.plugins.is_none() || !server.plugin_events.contains("CreatureSpawnEvent") {
+    if !listens(server, "CreatureSpawnEvent") {
         return;
     }
     let Some(e) = server.worlds.get(world).and_then(|w| w.entities.get(&id)) else { return };
@@ -1029,7 +1059,7 @@ pub fn on_chunk_unload(server: &mut Server, world: usize, pos: crate::world::chu
 
 /// PlayerChangedWorldEvent, after a player moved to another world.
 pub fn on_changed_world(server: &mut Server, id: i32, from: usize) {
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerChangedWorldEvent") {
+    if !listens(server, "PlayerChangedWorldEvent") {
         return;
     }
     let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return };
@@ -1403,7 +1433,8 @@ pub fn apply_plugin_list(server: &mut Server, value: &Value) {
         server.resend_command_trees();
     }
     if let Some(events) = value.list("events") {
-        server.plugin_events = events.iter().filter_map(|e| e.as_str().map(str::to_owned)).collect();
+        server.java_events = events.iter().filter_map(|e| e.as_str().map(str::to_owned)).collect();
+        refresh_listened(server);
     }
 }
 
@@ -1493,7 +1524,7 @@ pub fn on_trade(server: &mut Server, player: i32, merchant: crate::server::conta
     // with it off.
     let default = (offer.clone(), !custom, true);
     // `PlayerTradeEvent` shares `PlayerPurchaseEvent`'s handler list.
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerPurchaseEvent") {
+    if !listens(server, "PlayerPurchaseEvent") {
         return Some(default);
     }
     let Some(p) = server.players.get(&player) else { return Some(default) };
@@ -1584,7 +1615,7 @@ pub fn on_trade_select(server: &mut Server, player: i32, index: i32) -> bool {
 /// A villager or wandering trader gets new trades (`VillagerAcquireTradeEvent`, one per
 /// trade). Returns the trades it keeps, as plugins left them.
 pub fn on_acquire_trades(server: &mut Server, world: usize, id: i32, offers: Vec<crate::world::merchant::Offer>) -> Vec<crate::world::merchant::Offer> {
-    if server.plugins.is_none() || !server.plugin_events.contains("VillagerAcquireTradeEvent") {
+    if !listens(server, "VillagerAcquireTradeEvent") {
         return offers;
     }
     let mut out = Vec::new();
@@ -1615,7 +1646,7 @@ pub fn on_career_change(server: &mut Server, world: usize, id: i32, profession: 
 /// A villager restocks (`VillagerReplenishTradeEvent`, one per trade). Returns each trade as
 /// plugins left it and whether it is replenished.
 pub fn on_replenish(server: &mut Server, world: usize, id: i32, offers: Vec<crate::world::merchant::Offer>) -> Vec<(crate::world::merchant::Offer, bool)> {
-    if server.plugins.is_none() || !server.plugin_events.contains("VillagerReplenishTradeEvent") {
+    if !listens(server, "VillagerReplenishTradeEvent") {
         return offers.into_iter().map(|o| (o, true)).collect();
     }
     let mut out = Vec::new();
@@ -1704,7 +1735,7 @@ const FREQUENT_STATISTICS: &[&str] = &[
 
 /// `PlayerStatisticIncrementEvent`: whether a statistic may go up from `old` to `new`.
 pub fn on_statistic_increment(server: &mut Server, id: i32, kind: &str, key: &str, old: i32, new: i32) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("PlayerStatisticIncrementEvent") {
+    if !listens(server, "PlayerStatisticIncrementEvent") {
         return true;
     }
     if kind == crate::server::stats::CUSTOM && FREQUENT_STATISTICS.contains(&key) {
@@ -1719,7 +1750,7 @@ pub fn on_statistic_increment(server: &mut Server, id: i32, kind: &str, key: &st
 }
 
 pub fn on_tame(server: &mut Server, world: usize, animal: i32, player: i32) -> bool {
-    if server.plugins.is_none() || !server.plugin_events.contains("EntityTameEvent") {
+    if !listens(server, "EntityTameEvent") {
         return true;
     }
     let args = bmap! { "entity" => actor_value(server, world, animal), "owner" => actor_value(server, world, player) };

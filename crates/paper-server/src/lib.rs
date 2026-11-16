@@ -67,6 +67,12 @@ pub fn start(mut config: Config) -> Result<RunningServer> {
 /// Starts a server whose plugin host is started by `launcher` instead of the standard
 /// `java -jar` command (used by tests and by setups that run the host elsewhere).
 pub fn start_with_plugin_launcher(config: Config, launcher: plugins::Launcher) -> Result<RunningServer> {
+    start_with_native_plugins(config, launcher, Vec::new())
+}
+
+/// Starts a server with Rust plugins linked into this binary (`paper_plugin::entry::<P>()`
+/// for each plugin type `P`), besides those of the plugins folder.
+pub fn start_with_native_plugins(config: Config, launcher: plugins::Launcher, linked: Vec<paper_plugin::Entry>) -> Result<RunningServer> {
     let started = Instant::now();
     log::info!("Starting Paper-RS {} for Minecraft {} (protocol {})", env!("CARGO_PKG_VERSION"), paper_data::VERSION_NAME, paper_data::PROTOCOL_VERSION);
     let io_threads = config.io_threads();
@@ -97,6 +103,9 @@ pub fn start_with_plugin_launcher(config: Config, launcher: plugins::Launcher) -
             }
         }
     }
+    // Rust plugins: those of the plugins folder and those linked in.
+    plugins::native::load(&mut server, linked);
+    plugins::native::enable_all(&mut server);
 
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(io_threads).thread_name("Network IO").enable_all().build().context("creating the network runtime")?;
     let bind_ip = if props.server_ip.is_empty() { "0.0.0.0".to_owned() } else { props.server_ip.clone() };

@@ -1172,9 +1172,10 @@ fn cmd_reload(server: &mut Server, source: &CommandSource, args: &[&str]) {
 /// Lists plugins like Paper's `/plugins`: Paper plugins and Bukkit plugins separately.
 fn cmd_plugins(server: &mut Server, source: &CommandSource, _: &[&str]) {
     let mut plugins = server.plugin_list.clone();
+    plugins.extend(server.native.list.iter().map(|p| crate::plugins::PluginInfo { name: p.name.clone(), version: p.version.clone(), enabled: p.enabled, kind: "rust".to_owned() }));
     plugins.sort_by_key(|p| p.name.to_ascii_lowercase());
     server.feedback(source, Component::text(format!("\u{2139} Server Plugins ({}):", plugins.len())).color("white"));
-    for (kind, title) in [("paper", "Paper Plugins:"), ("bukkit", "Bukkit Plugins:")] {
+    for (kind, title) in [("paper", "Paper Plugins:"), ("bukkit", "Bukkit Plugins:"), ("rust", "Rust Plugins:")] {
         let group: Vec<_> = plugins.iter().filter(|p| p.kind == kind).collect();
         if group.is_empty() {
             continue;
