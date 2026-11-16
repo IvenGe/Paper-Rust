@@ -314,6 +314,13 @@ translator answers the server's configuration in the client's place, and holds w
 sends meanwhile until the server plays. It also confirms teleports and chunk batches, which 1.8
 clients never do.
 
+1.7 clients (`paper_compat::legacy::v1_7`, protocols 4 and 5) go through the 1.8 translator and
+a second step: entity ids as ints, block positions as three numbers, chunks as separate block id
+and metadata arrays, items with gzipped NBT, names of mobs where 1.7 keeps them, and the blocks,
+items and mobs 1.8 added replaced by ones 1.7 has. 1.7 knows no compression, so the connection
+does not turn it on (`Translator::compression`); the writer unpacks shared frames with the
+server's threshold rather than the connection's for that reason.
+
 Clients from before 1.7 (`paper_compat::prenetty`, now 1.4.6 and 1.4.7) predate Netty: they send
 no length in front of a packet and no Netty handshake. The connection tells them apart by their
 first byte (`0x02`, a handshake of theirs, which no Netty frame can start with; `0xFE`, an

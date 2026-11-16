@@ -14,7 +14,7 @@ fn packet(id: u8) -> Vec<u8> {
 }
 
 /// 1.8 JSON text as 1.4.6's: `§` codes, translations in English where the server knows them.
-pub(super) fn legacy_text(json: &str) -> String {
+pub(crate) fn legacy_text(json: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(json) {
         Ok(value) => text::legacy_string(&value),
         Err(_) => json.to_owned(),
@@ -86,7 +86,7 @@ pub(super) fn chat_lines(text: &str) -> Vec<String> {
 
 /// Where a hanging entity's block is from the block it hangs on, by its facing (south, west,
 /// north, east): 1.4.6 places frames and paintings by the latter, 1.8 by the former.
-fn facing_offset(facing: i32) -> (i32, i32) {
+pub(crate) fn facing_offset(facing: i32) -> (i32, i32) {
     match facing & 3 {
         0 => (0, 1),
         1 => (-1, 0),
@@ -97,6 +97,12 @@ fn facing_offset(facing: i32) -> (i32, i32) {
 
 /// A 1.8 chunk as 1.4.6's: block ids and their metadata apart, the whole zlib-compressed.
 fn chunk(x: i32, z: i32, full: bool, mask: u16, data: &[u8], sky: bool) -> Result<Vec<u8>> {
+    chunk_with(0x33, x, z, full, mask, data, sky, ids::block)
+}
+
+/// A 1.8 chunk in the form 1.4.6 to 1.7 share (packet `id`), its blocks through `block`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chunk_with(id: u8, x: i32, z: i32, full: bool, mask: u16, data: &[u8], sky: bool, block: fn(u16) -> u16) -> Result<Vec<u8>> {
     let sections = mask.count_ones() as usize;
     let blocks = sections * 8192;
     let light = sections * 2048;
@@ -107,7 +113,7 @@ fn chunk(x: i32, z: i32, full: bool, mask: u16, data: &[u8], sky: bool) -> Resul
     let mut raw = vec![0u8; sections * 6144];
     let (block_ids, metadata) = raw.split_at_mut(sections * 4096);
     for (i, pair) in data[..blocks].chunks_exact(2).enumerate() {
-        let block = ids::block(u16::from_le_bytes([pair[0], pair[1]]));
+        let block = block(u16::from_le_bytes([pair[0], pair[1]]));
         block_ids[i] = (block >> 4) as u8;
         metadata[i / 2] |= ((block & 15) as u8) << (4 * (i % 2));
     }
@@ -118,7 +124,7 @@ fn chunk(x: i32, z: i32, full: bool, mask: u16, data: &[u8], sky: bool) -> Resul
         raw.extend_from_slice(biomes);
     }
     let packed = wire::zlib(&raw);
-    let mut w = packet(0x33);
+    let mut w = packet(id);
     w.put_i32(x);
     w.put_i32(z);
     w.put_bool(full);

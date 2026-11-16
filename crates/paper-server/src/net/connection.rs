@@ -445,7 +445,9 @@ async fn login_flow(conn: &mut Connection, shared: &Arc<Shared>, intention: Inte
     }
 
     // --- compression, then success ---
-    if let Some(threshold) = shared.config.compression_threshold() {
+    // Not for clients from before 1.8, which know no compression.
+    let compresses = conn.translator.as_ref().is_none_or(|t| t.compression());
+    if let Some(threshold) = shared.config.compression_threshold().filter(|_| compresses) {
         conn.send(&login::LoginCompression { threshold: VarInt(threshold as i32) }).await?;
         conn.enc.set_compression(Some(threshold));
         conn.dec.set_compression(Some(threshold));

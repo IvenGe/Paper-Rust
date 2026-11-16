@@ -15,6 +15,7 @@ pub mod prenetty;
 mod serverbound;
 mod tables;
 pub mod text;
+pub mod v1_7;
 
 use crate::io::{self, Result};
 use crate::{Outcome, Translator, Version};

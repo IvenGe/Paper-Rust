@@ -35,6 +35,8 @@ pub enum Family {
     Modern,
     /// 1.8: from before the flattening (`legacy`).
     Legacy18,
+    /// 1.7, through the 1.8 translator (`legacy::v1_7`).
+    Legacy17,
     /// From before Netty (`legacy::prenetty`), through the 1.8 translator. Such clients are
     /// told apart by their first bytes, not by a handshake's protocol number (whose numbers
     /// Netty's restarted).
@@ -58,6 +60,8 @@ pub const VERSIONS: &[Version] = &[
     Version { protocol: 776, name: "26.2", family: Family::Modern, data: "26.2" },
     Version { protocol: 775, name: "26.1", family: Family::Modern, data: "26.1" },
     Version { protocol: 47, name: "1.8.x", family: Family::Legacy18, data: "" },
+    Version { protocol: 5, name: "1.7.x", family: Family::Legacy17, data: "" },
+    Version { protocol: 4, name: "1.7.x", family: Family::Legacy17, data: "" },
     Version { protocol: legacy::prenetty::PROTOCOL as i32, name: "1.4.6-1.4.7", family: Family::PreNetty, data: "" },
 ];
 
@@ -81,10 +85,12 @@ pub fn status_protocol(protocol: i32) -> i32 {
     }
 }
 
-/// The versions that can join, for the server list and messages: `1.4.6-1.4.7, 1.8.x, 26.1-26.3`.
+/// The versions that can join, for the server list and messages: `1.4.6-1.4.7, 1.7.x, 1.8.x,
+/// 26.1-26.3`.
 pub fn version_range() -> String {
     let modern = VERSIONS.iter().rfind(|v| v.family == Family::Modern);
     let mut parts: Vec<String> = VERSIONS.iter().filter(|v| v.family != Family::Modern).rev().map(|v| v.name.to_owned()).collect();
+    parts.dedup();
     parts.push(match modern {
         Some(oldest) => format!("{}-{}", oldest.name, paper_data::VERSION_NAME),
         None => paper_data::VERSION_NAME.to_owned(),
@@ -121,6 +127,12 @@ pub trait Translator: Send {
 
     /// A packet of the client (its version).
     fn serverbound(&mut self, payload: &[u8], out: &mut Outcome) -> Result<()>;
+
+    /// Whether the client's version knows compressed packets (1.8 on): the connection does
+    /// not turn compression on for one that does not.
+    fn compression(&self) -> bool {
+        true
+    }
 }
 
 /// A translator for a client of `protocol`, or `None` if it speaks 26.3 or cannot join.
@@ -129,6 +141,7 @@ pub fn translator(protocol: i32) -> Option<Box<dyn Translator>> {
     Some(match version.family {
         Family::Modern => Box::new(modern::Modern::new(version, data::load(version.data))),
         Family::Legacy18 => Box::new(legacy::Legacy18::new(version)),
+        Family::Legacy17 => Box::new(legacy::v1_7::Legacy17::new(version)),
         // Found by their first bytes: see `pre_netty_translator`.
         Family::PreNetty => return None,
     })

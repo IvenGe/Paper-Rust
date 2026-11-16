@@ -185,8 +185,9 @@ async fn write_loop(
             Outbound::Framed(frame) => {
                 queued.fetch_sub(frame.len().min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
                 match translation {
-                    // Shared frames are 26.3: the translator needs the packet itself.
-                    Some(t) => match paper_protocol::frame::unframe(&frame, enc.compression()) {
+                    // Shared frames are 26.3, made with the server's threshold (whether or not
+                    // this client compresses): the translator needs the packet itself.
+                    Some(t) => match paper_protocol::frame::unframe(&frame, t.shared.config.compression_threshold()) {
                         Ok(payload) => t.encode(&payload, enc, out),
                         Err(e) => log::warn!("Dropping an unreadable shared frame: {e}"),
                     },

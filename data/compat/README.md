@@ -19,9 +19,10 @@ flattening. For each such version (now 1.8) it holds, base64-encoded as little-e
 the legacy block (`id << 4 | meta`) of every 26.3 block state, the legacy item (`id << 16 |
 damage`) of every 26.3 item, and the index in `sound_names` of the legacy sound of every 26.3
 sound event. Entities, biomes, enchantments, effects and particles are small tables in
-`crates/paper-compat/src/legacy/tables.rs`. Clients older than 1.8 (1.4.6) get 1.8's ids with
-what 1.5 to 1.8 added replaced by blocks, items and mobs they have; that table is
-`crates/paper-compat/src/legacy/prenetty/ids.rs`.
+`crates/paper-compat/src/legacy/tables.rs`. Clients older than 1.8 get 1.8's ids with what
+came later replaced by blocks, items and mobs they have: `crates/paper-compat/src/legacy/v1_7/ids.rs`
+for 1.7 (after ViaRewind's replacements), `crates/paper-compat/src/legacy/prenetty/ids.rs` for
+1.4.6.
 
 ## Sources
 

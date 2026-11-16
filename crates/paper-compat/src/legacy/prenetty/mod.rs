@@ -9,7 +9,7 @@
 //! ([`server_auth_data`], [`read_shared_key`], [`SHARED_KEY_ACK`]) and finds packets with
 //! [`split_serverbound`]; the translator takes over with the client's first packet after that.
 
-mod clientbound;
+pub(crate) mod clientbound;
 pub mod ids;
 mod serverbound;
 pub mod wire;
@@ -135,6 +135,10 @@ impl PreNetty {
 impl Translator for PreNetty {
     fn version(&self) -> &'static Version {
         self.version
+    }
+
+    fn compression(&self) -> bool {
+        false
     }
 
     fn clientbound(&mut self, payload: &[u8], out: &mut Outcome) -> Result<()> {
