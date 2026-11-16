@@ -2210,7 +2210,7 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
             return;
         }
         final World world = location.getWorld() != null ? location.getWorld() : this.getWorld();
-        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ()));
+        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ()), "respawn_forced", force);
     }
 
     // inventory
@@ -2865,7 +2865,13 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
 
     @Override
     public Player.Spigot spigot() {
+        final HostPlayer player = this;
         return new Player.Spigot() {
+            /** As if the player pressed the respawn button (when it is dead). */
+            @Override
+            public void respawn() {
+                player.server.call("player.respawn", Values.of("uuid", player.uuid.toString()));
+            }
         };
     }
 

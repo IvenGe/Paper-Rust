@@ -1632,6 +1632,7 @@ public final class HostEvents {
             case "event.entity_death" -> this.entities.entityDeath(args);
             case "event.player_death" -> this.entities.playerDeath(args);
             case "event.respawn" -> this.entities.respawn(args);
+            case "event.post_respawn" -> this.entities.postRespawn(args);
             case "event.creature_spawn" -> this.entities.creatureSpawn(args);
             case "event.mount" -> this.entities.mount(args);
             case "event.dismount" -> this.entities.dismount(args);

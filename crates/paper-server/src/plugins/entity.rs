@@ -62,7 +62,7 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
         out.set("in_water", in_water);
         out.set("under_water", point_in_fluid(w, Vec3::new(eye.x, eye.y - 0.11111111, eye.z), Fluid::Water));
         out.set("in_lava", box_in_fluid(w, &area, Fluid::Lava));
-        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (e.pos.y + e.info.height as f64).ceil() as i32, z));
+        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (e.pos.y + e.info.height as f64).floor() as i32, z));
         out.set("in_bubble_column", at_feet == "minecraft:bubble_column");
         out.set("in_powder_snow", at_feet == "minecraft:powder_snow");
     }

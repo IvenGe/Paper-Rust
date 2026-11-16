@@ -949,7 +949,7 @@ fn cmd_set_world_spawn(server: &mut Server, source: &CommandSource, args: &[&str
     };
     let w = &mut server.worlds[world];
     w.spawn = pos;
-    let packet = play::SetDefaultSpawnPosition { dimension: w.dimension.clone(), pos, yaw: w.spawn_yaw, pitch: 0.0 };
+    let packet = play::SetDefaultSpawnPosition { dimension: w.key.clone(), pos, yaw: w.spawn_yaw, pitch: 0.0 };
     let payload = bytes::Bytes::from(paper_protocol::packets::encode_packet(&packet));
     server.broadcast_payload_in_world(world, payload);
     server.feedback(source, Component::text(format!("Set the world spawn point to {}, {}, {}", pos.x, pos.y, pos.z)));

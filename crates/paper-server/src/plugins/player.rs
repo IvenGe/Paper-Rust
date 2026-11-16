@@ -35,6 +35,7 @@ pub fn handles(method: &str) -> bool {
     matches!(
         method,
         "player.set"
+            | "player.respawn"
             | "player.update_inventory"
             | "player.set_border"
             | "player.border"
@@ -57,6 +58,11 @@ pub fn handles(method: &str) -> bool {
 pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> {
     let id = player_id(server, args)?;
     match method {
+        // `Player.Spigot.respawn()`: as if the player pressed the respawn button.
+        "player.respawn" => {
+            server.respawn_player(id);
+            Ok(Value::Null)
+        }
         "player.set" => {
             set(server, id, args)?;
             Ok(super::api::player_state(server, &server.players[&id]))
@@ -423,6 +429,8 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
     }
     if let Some(r) = respawn {
         p.respawn = r;
+        // `setRespawnLocation(location, force)`: forced, it holds without a bed.
+        p.respawn_forced = r.is_some() && args.bool("respawn_forced") == Some(true);
     }
     if let Some(b) = args.bool("seen_credits") {
         p.seen_credits = b;
@@ -448,7 +456,7 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
         p.conn.send(&play::SetExperience { bar: p.xp_progress, level: VarInt(p.xp_level), total: VarInt(p.xp_total) });
     }
     if let Some((world, pos, yaw)) = compass {
-        let dimension = server.worlds[world].dimension.clone();
+        let dimension = server.worlds[world].key.clone();
         server.players[&id].conn.send(&play::SetDefaultSpawnPosition { dimension, pos, yaw, pitch: 0.0 });
     }
     if let Some(v) = velocity {

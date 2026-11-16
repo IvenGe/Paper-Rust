@@ -107,6 +107,8 @@ impl Server {
             xp_progress: 0.0,
             xp_total: 0,
             respawn: None,
+            respawn_forced: false,
+            last_death: None,
             last_attacker: None,
             last_damage: None,
             last_fall: 0.0,
@@ -164,6 +166,8 @@ impl Server {
             player.effects = saved.effects;
             player.absorption = saved.absorption;
             player.respawn = saved.respawn;
+            player.respawn_forced = saved.respawn_forced;
+            player.last_death = saved.last_death;
             if let Some(seed) = saved.enchantment_seed {
                 player.enchantment_seed = seed;
             }
@@ -182,14 +186,16 @@ impl Server {
         player.conn.send(&play::Login {
             entity_id,
             hardcore: props.hardcore,
-            dimension_names: self.worlds.iter().filter(|w| !w.unloaded).map(|w| w.dimension.clone()).collect(),
+            // Worlds by their keys, as Paper names them to clients: a world a plugin made has
+            // its own, so going there is a change of dimension for the client.
+            dimension_names: self.worlds.iter().filter(|w| !w.unloaded).map(|w| w.key.clone()).collect(),
             max_players: VarInt(props.max_players),
             view_distance: VarInt(player.view.radius),
             simulation_distance: VarInt(props.simulation_distance),
             reduced_debug_info: world.rules.bool("reduced_debug_info"),
             enable_respawn_screen: !world.rules.bool("immediate_respawn"),
             limited_crafting: world.rules.bool("limited_crafting"),
-            spawn: self.spawn_info(world_index, player.game_mode, None),
+            spawn: play::SpawnInfo { death_location: self.death_location(&player), ..self.spawn_info(world_index, player.game_mode, None) },
             online_mode: props.online_mode,
             enforces_secure_chat: false,
         });
@@ -231,7 +237,7 @@ impl Server {
             player.conn.send(&play::GameEvent { event: play::game_event::RAIN_LEVEL_CHANGE, value: rain.rain_level });
             player.conn.send(&play::GameEvent { event: play::game_event::THUNDER_LEVEL_CHANGE, value: rain.thunder_level });
         }
-        player.conn.send(&play::SetDefaultSpawnPosition { dimension: world.dimension.clone(), pos: world.spawn, yaw: world.spawn_yaw, pitch: 0.0 });
+        player.conn.send(&play::SetDefaultSpawnPosition { dimension: world.key.clone(), pos: world.spawn, yaw: world.spawn_yaw, pitch: 0.0 });
         player.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         player.conn.send(&play::SetChunkCacheCenter { x: VarInt(player.view.center.x), z: VarInt(player.view.center.z) });
         player.conn.send(&play::ContainerSetContent { window_id: 0, state_id: player.inventory_state, slots: player.inventory.clone(), carried: Slot::EMPTY });
@@ -273,12 +279,18 @@ impl Server {
         }
     }
 
+    /// Where a player last died, as Login and Respawn tell its client (the recovery compass
+    /// points there).
+    pub(super) fn death_location(&self, p: &super::player::Player) -> Option<(String, paper_protocol::codec::BlockPos)> {
+        p.last_death.filter(|(w, _)| self.worlds.get(*w).is_some_and(|w| !w.unloaded)).map(|(w, pos)| (self.worlds[w].key.clone(), pos))
+    }
+
     /// The world description sent in Login and Respawn packets.
     pub(super) fn spawn_info(&self, world: usize, game_mode: GameMode, previous: Option<GameMode>) -> play::SpawnInfo {
         let w = &self.worlds[world];
         play::SpawnInfo {
             dimension_type: w.dimension_type,
-            dimension_name: w.dimension.clone(),
+            dimension_name: w.key.clone(),
             hashed_seed: w.hashed_seed(),
             game_mode: game_mode.id(),
             previous_game_mode: previous.map(GameMode::id),

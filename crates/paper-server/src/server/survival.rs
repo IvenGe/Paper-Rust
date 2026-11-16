@@ -1135,8 +1135,14 @@ impl Server {
         let message = death.message.clone().unwrap_or_else(|| Component::text(""));
         self.close_menu(id, true);
         self.clear_effects(world, id, "DEATH");
+        // Dying wakes (`LivingEntity.die`) and calls off a portal trip on its way.
+        if self.players.get(&id).is_some_and(|p| p.sleeping.is_some()) {
+            self.wake_up(id);
+        }
+        self.cancel_travel(id);
         let Some(p) = self.players.get_mut(&id) else { return };
         p.dead = true;
+        p.last_death = Some((world, paper_protocol::codec::BlockPos::new(p.loc.x.floor() as i32, p.loc.y.floor() as i32, p.loc.z.floor() as i32)));
         p.absorption = 0.0;
         p.health = 0.0;
         p.fire_ticks = 0;
@@ -1185,7 +1191,7 @@ impl Server {
 
     /// The client asked to respawn after the death screen, or to come back from the end
     /// credits (`ServerGamePacketListenerImpl.handleClientCommand`, `PlayerList.respawn`).
-    pub(super) fn respawn_player(&mut self, id: i32) {
+    pub(crate) fn respawn_player(&mut self, id: i32) {
         let Some(p) = self.players.get(&id) else { return };
         // After the end credits the player comes back with everything it had.
         let after_credits = p.won_game && !p.dead;
@@ -1195,19 +1201,25 @@ impl Server {
             return;
         }
         let overworld = self.world_of_dimension("minecraft:overworld").unwrap_or(0);
-        // Respawn next to the bed, or at the world spawn with some spread.
-        let (world, target) = match self.bed_respawn(id) {
+        // Respawn next to the bed (or at a forced point), or at the world spawn with some spread.
+        let point = self.respawn_point(id);
+        let (world, target) = match point.at {
             Some(found) => found,
             None => (overworld, self.world_spawn_location(overworld, true)),
         };
-        let target = crate::plugins::events::on_respawn(self, id, world, target);
+        let reason = if after_credits { "END_PORTAL" } else { "DEATH" };
+        let (world, target) = crate::plugins::events::on_respawn(self, id, world, target, point.bed, point.missing, reason);
         let hardcore = self.config.properties.hardcore && !after_credits;
-        let old_world = self.players[&id].world;
+        // A plugin may have sent the player away meanwhile.
+        let Some(old_world) = self.players.get(&id).map(|p| p.world) else { return };
+        self.cancel_travel(id);
 
         // A new player takes the old one's place, as in vanilla, where a new `ServerPlayer`
         // does: others see the old body go and the new player come, and the client forgets
         // what it saw and gets the chunks and entities around the new place again, even in
-        // the same world.
+        // the same world. Old clients keep chunks until told: the ones the new view leaves
+        // out are forgotten (in another world the client drops them all itself).
+        let server_view = self.config.properties.view_distance;
         if old_world == world {
             let p = &self.players[&id];
             let mut seen: Vec<VarInt> = p.visible.iter().map(|v| VarInt(*v)).collect();
@@ -1215,14 +1227,15 @@ impl Server {
             if !seen.is_empty() {
                 p.conn.send(&play::RemoveEntities { entity_ids: seen });
             }
+            let kept: std::collections::HashSet<_> = super::player::ChunkView::area(target.chunk(), p.view_distance(server_view)).collect();
+            for pos in p.view.sent.iter().filter(|c| !kept.contains(c)) {
+                p.conn.send(&play::ForgetLevelChunk { x: pos.x, z: pos.z });
+            }
         }
         self.leave_world(id);
-        let spawn_info = {
-            let p = &self.players[&id];
-            let mode = if hardcore { GameMode::Spectator } else { p.game_mode };
-            self.spawn_info(world, mode, p.previous_game_mode)
-        };
-        let server_view = self.config.properties.view_distance;
+        let Some(p) = self.players.get(&id) else { return };
+        let mut spawn_info = self.spawn_info(world, p.game_mode, p.previous_game_mode);
+        spawn_info.death_location = self.death_location(p);
         let p = self.players.get_mut(&id).unwrap();
         p.seen_by.clear();
         if !after_credits {
@@ -1234,9 +1247,13 @@ impl Server {
             p.air = 300;
             p.last_attacker = None;
             p.last_damage = None;
+            // The client starts the new player from the attributes' base values
+            // (`assignBaseValues`): their modifiers are sent again.
+            p.attributes.mark_all_dirty();
         }
         p.dead = false;
         p.won_game = false;
+        p.sleeping = None;
         // The client loads the world again (`restartClientLoadTimerAfterRespawn`).
         p.loaded = false;
         p.load_timeout = 60;
@@ -1247,10 +1264,6 @@ impl Server {
         p.sent_health = None;
         p.metadata_dirty = true;
         p.equipment_dirty = true;
-        if hardcore {
-            p.game_mode = GameMode::Spectator;
-            p.apply_game_mode_abilities();
-        }
         p.world = world;
         // A fresh view, sent from scratch; how fast the client takes chunks belongs to the
         // connection (vanilla's `ChunkSender`), so that carries over.
@@ -1263,7 +1276,7 @@ impl Server {
         let w = &self.worlds[overworld];
         let p = &self.players[&id];
         p.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
-        p.conn.send(&play::SetDefaultSpawnPosition { dimension: w.dimension.clone(), pos: w.spawn, yaw: w.spawn_yaw, pitch: 0.0 });
+        p.conn.send(&play::SetDefaultSpawnPosition { dimension: w.key.clone(), pos: w.spawn, yaw: w.spawn_yaw, pitch: 0.0 });
         p.conn.send(&play::ChangeDifficulty { difficulty: self.difficulty.id(), locked: false });
         p.conn.send(&p.abilities_packet());
         p.conn.send(&play::SetHeldSlot { slot: VarInt(p.held_slot as i32) });
@@ -1276,9 +1289,18 @@ impl Server {
         self.resync_inventory(id);
         self.send_experience(id);
         self.send_health_if_changed(id);
+        // Effects outlive the credits; the new player on the client has none.
+        self.resend_effects(id);
         self.refresh_chunk_view(id);
-        if old_world != world {
+        // Hardcore: a spectator from now on, told to everyone (and to plugins).
+        if hardcore {
+            self.set_game_mode(id, GameMode::Spectator);
+        }
+        if old_world != world && self.players.contains_key(&id) {
             crate::plugins::events::on_changed_world(self, id, old_world);
+        }
+        if self.players.contains_key(&id) {
+            crate::plugins::events::on_post_respawn(self, id, point.bed, point.missing, reason);
         }
     }
 

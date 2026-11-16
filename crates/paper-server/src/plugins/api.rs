@@ -217,7 +217,7 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         out.set("in_water", box_in_fluid(w, &area, Fluid::Water));
         out.set("under_water", point_in_fluid(w, eye, Fluid::Water));
         out.set("in_lava", box_in_fluid(w, &area, Fluid::Lava));
-        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (p.loc.y + height).ceil() as i32, z));
+        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (p.loc.y + height).floor() as i32, z));
         out.set("in_bubble_column", at_feet == "minecraft:bubble_column");
         out.set("in_powder_snow", at_feet == "minecraft:powder_snow");
     }
@@ -515,20 +515,30 @@ fn section_value(section: &crate::world::chunk::Section) -> Value {
     }
 }
 
-/// Applies `world.edit_batch` entries in order; how many there were.
+/// Applies `world.edit_batch` entries in order; how many there were. The whole batch is
+/// checked first, and refused whole if an entry is bad.
 fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<usize> {
     use crate::world::block_updates::{flags, Level};
     const SET: i32 = 0;
     const EFFECTS: i32 = 1;
     let int = |e: &[u8], i: usize| i32::from_le_bytes(e[i * 4..i * 4 + 4].try_into().unwrap());
+    for (n, e) in edits.chunks_exact(28).enumerate() {
+        let (kind, state, old) = (int(e, 0), int(e, 4) as u32, int(e, 5) as u32);
+        if kind != SET && kind != EFFECTS {
+            bail!("unknown edit kind {kind} in edit {n}");
+        }
+        if !blocks::is_valid_state(state) || kind == EFFECTS && !blocks::is_valid_state(old) {
+            bail!("invalid block state in edit {n}");
+        }
+    }
+    // The batch may come in the middle of something else the server does (a plugin's event
+    // handler queued it): what that left to tell players stays for it to publish.
+    let earlier = std::mem::take(&mut server.worlds[world].updates.effects);
     let mut last_chunk = None;
     let mut n = 0;
     for e in edits.chunks_exact(28) {
         let (kind, x, y, z, state) = (int(e, 0), int(e, 1), int(e, 2), int(e, 3), int(e, 4) as u32);
         let (old, effects) = (int(e, 5) as u32, int(e, 6));
-        if !blocks::is_valid_state(state) || kind == EFFECTS && !blocks::is_valid_state(old) {
-            bail!("invalid block state in edit {n}");
-        }
         let chunk = crate::world::chunk::ChunkPos::of_block(x, z);
         if last_chunk != Some(chunk) {
             ensure_chunk(server, world, x, z);
@@ -536,33 +546,41 @@ fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<u
         }
         let pos = paper_protocol::codec::BlockPos::new(x, y, z);
         let mut level = Level::new(&mut server.worlds[world]);
-        match kind {
-            SET => {
-                level.set_block(pos, state, flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE);
+        if kind == SET {
+            level.set_block(pos, state, flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE);
+        } else {
+            // On the block as it is now, which an earlier entry's side effects may have
+            // changed (a wire's connections), as WorldEdit's `applySideEffects` reads it.
+            let mut now = level.state(pos);
+            if effects & 1 != 0 && now != old {
+                level.on_place(now, pos, old, false);
+                // `onPlace` replaced the block (TNT lit): the rest is for the new one, which
+                // was placed with its own updates (`markAndNotifyBlock` stops here).
+                if level.state(pos) != now {
+                    n += 1;
+                    continue;
+                }
+                now = level.state(pos);
             }
-            EFFECTS if level.state(pos) == state => {
-                if effects & 1 != 0 {
-                    level.on_place(state, pos, old, false);
-                }
-                if effects & 2 != 0 {
-                    level.update_neighbors_at(pos, blocks::block_id_of_state(old));
-                    if paper_data::physics::has_analog_output(state) {
-                        level.update_neighbour_for_output_signal(pos, blocks::block_id_of_state(state));
-                    }
-                }
-                if effects & 4 != 0 {
-                    let limit = crate::world::block_updates::UPDATE_LIMIT - 1;
-                    level.update_indirect_neighbour_shapes(old, pos, flags::CLIENTS, limit);
-                    level.update_neighbour_shapes(state, pos, flags::CLIENTS, limit);
-                    level.update_indirect_neighbour_shapes(state, pos, flags::CLIENTS, limit);
+            if effects & 2 != 0 {
+                level.update_neighbors_at(pos, blocks::block_id_of_state(old));
+                if paper_data::physics::has_analog_output(now) {
+                    level.update_neighbour_for_output_signal(pos, blocks::block_id_of_state(now));
                 }
             }
-            EFFECTS => {}
-            other => bail!("unknown edit kind {other}"),
+            if effects & 4 != 0 {
+                let limit = crate::world::block_updates::UPDATE_LIMIT - 1;
+                level.update_indirect_neighbour_shapes(old, pos, flags::CLIENTS, limit);
+                level.update_neighbour_shapes(now, pos, flags::CLIENTS, limit);
+                level.update_indirect_neighbour_shapes(now, pos, flags::CLIENTS, limit);
+            }
         }
         n += 1;
     }
     server.publish_block_updates(world);
+    let w = &mut server.worlds[world];
+    let mut later = std::mem::replace(&mut w.updates.effects, earlier);
+    w.updates.effects.append(&mut later);
     Ok(n)
 }
 

@@ -133,7 +133,8 @@ final class EntityEvents {
         event.setKeepLevel(Values.bool(args, "keep_level", false));
         event.callEvent();
         return Values.of("cancelled", event.isCancelled(), "message", Components.toJson(event.deathMessage()), "drops", values(event.getDrops()),
-            "xp", event.getDroppedExp(), "keep_inventory", event.getKeepInventory(), "keep_level", event.getKeepLevel());
+            "xp", event.getDroppedExp(), "keep_inventory", event.getKeepInventory(), "keep_level", event.getKeepLevel(),
+            "revive_health", event.getReviveHealth());
     }
 
     Object respawn(final Map<String, Object> args) {
@@ -147,11 +148,34 @@ final class EntityEvents {
         }
         final Location location = new Location(world, Values.f64(args, "x", 0), Values.f64(args, "y", 0), Values.f64(args, "z", 0),
             (float) Values.f64(args, "yaw", 0), (float) Values.f64(args, "pitch", 0));
-        final PlayerRespawnEvent event = new PlayerRespawnEvent(player, location, false, false, false, PlayerRespawnEvent.RespawnReason.DEATH);
+        final PlayerRespawnEvent event = new PlayerRespawnEvent(player, location, Values.bool(args, "bed", false), false,
+            Values.bool(args, "missing", false), respawnReason(args));
         event.callEvent();
         final Location to = event.getRespawnLocation();
         return Values.of("world", to.getWorld() == null ? world.getName() : to.getWorld().getName(), "x", to.getX(), "y", to.getY(), "z", to.getZ(),
             "yaw", (double) to.getYaw(), "pitch", (double) to.getPitch());
+    }
+
+    private static PlayerRespawnEvent.RespawnReason respawnReason(final Map<String, Object> args) {
+        try {
+            return PlayerRespawnEvent.RespawnReason.valueOf(Values.str(args, "reason", "DEATH"));
+        } catch (IllegalArgumentException e) {
+            return PlayerRespawnEvent.RespawnReason.DEATH;
+        }
+    }
+
+    /** Paper's {@code PlayerPostRespawnEvent}: the player is back in the world. */
+    Object postRespawn(final Map<String, Object> args) {
+        final HostPlayer player = this.server.player(Values.uuid(args, "uuid"));
+        final World world = this.server.getWorld(Values.str(args, "world", "world"));
+        if (player == null || world == null) {
+            return Values.of();
+        }
+        final Location location = new Location(world, Values.f64(args, "x", 0), Values.f64(args, "y", 0), Values.f64(args, "z", 0),
+            (float) Values.f64(args, "yaw", 0), (float) Values.f64(args, "pitch", 0));
+        new com.destroystokyo.paper.event.player.PlayerPostRespawnEvent(player, location, Values.bool(args, "bed", false), false,
+            Values.bool(args, "missing", false), respawnReason(args)).callEvent();
+        return Values.of();
     }
 
     /** {@code EntityMountEvent}: something gets on something. */

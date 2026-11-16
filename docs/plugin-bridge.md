@@ -95,7 +95,9 @@ reads block after block while it asks for them, keeps its cache. The server runs
 with plugins hearing no events (WorldEdit's `EVENTS` side effect is off unless set; with it
 on, the side effects are a waited call), and tells players per section with the light per
 chunk. A 27,000-block `//set` takes about a fifth of a second this way; one call per block
-took 17 seconds, during which the server could not tick.
+took 17 seconds, during which the server could not tick. As with any call the host does not
+wait for, plugins hear nothing while a batch runs: a container a batch replaces under a
+player who has it open closes without `InventoryCloseEvent`.
 
 Both main threads look busily for an answer (or the other side's next call) for 150
 microseconds before they sleep: waking a sleeping thread takes about as long as a round trip,

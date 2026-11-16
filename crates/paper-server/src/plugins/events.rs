@@ -892,7 +892,9 @@ pub fn on_player_death(server: &mut Server, id: i32, damage: &crate::server::sur
         message: Some(message.clone()),
         keep_inventory: keep,
         keep_level: keep,
-        drops: if keep { Vec::new() } else { p.inventory.iter().filter(|s| !s.is_empty()).cloned().collect() },
+        // Not slot 0, the 2x2 crafting result: it is only what the grid would make (the grid's
+        // own items drop).
+        drops: if keep { Vec::new() } else { p.inventory.iter().skip(1).filter(|s| !s.is_empty()).cloned().collect() },
         xp: if keep { 0 } else { (p.xp_level * 7).min(100) },
     };
     if !listens(server, "PlayerDeathEvent") {
@@ -912,8 +914,13 @@ pub fn on_player_death(server: &mut Server, id: i32, damage: &crate::server::sur
     };
     match fire(server, "PlayerDeathEvent", "event.player_death", args) {
         Some(result) if result.bool("cancelled") == Some(true) => {
+            // Back with the revive health a listener set (Paper's `setReviveHealth`), half a
+            // heart otherwise, unless a listener gave the player health already.
             if let Some(p) = server.players.get_mut(&id) {
-                p.health = 1.0;
+                if p.health <= 0.0 {
+                    let revive = result.f64("revive_health").filter(|h| *h > 0.0).map_or(1.0, |h| h as f32);
+                    p.health = revive.min(p.max_health());
+                }
             }
             None
         }
@@ -965,23 +972,44 @@ pub fn on_entity_death(server: &mut Server, world: usize, id: i32, damage: &crat
 }
 
 /// PlayerRespawnEvent: plugins may change where the player respawns.
-pub fn on_respawn(server: &mut Server, id: i32, world: usize, target: crate::server::player::Location) -> crate::server::player::Location {
+/// PlayerRespawnEvent: where the player respawns, which a plugin may change, to another world
+/// too. `bed`: next to its bed; `missing`: the respawn point it had is gone; `reason`: Paper's
+/// `RespawnReason` (`DEATH`, `END_PORTAL`).
+pub fn on_respawn(server: &mut Server, id: i32, world: usize, target: crate::server::player::Location, bed: bool, missing: bool, reason: &str) -> (usize, crate::server::player::Location) {
     if !listens(server, "PlayerRespawnEvent") {
-        return target;
+        return (world, target);
     }
-    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return target };
+    let Some(uuid) = server.players.get(&id).map(|p| p.uuid().to_string()) else { return (world, target) };
     let world_name = server.worlds[world].name.clone();
-    let args = bmap! { "uuid" => uuid, "world" => world_name, "x" => target.x, "y" => target.y, "z" => target.z, "yaw" => target.yaw as f64, "pitch" => target.pitch as f64 };
-    match fire(server, "PlayerRespawnEvent", "event.respawn", args) {
-        Some(result) => crate::server::player::Location {
-            x: result.f64("x").unwrap_or(target.x),
-            y: result.f64("y").unwrap_or(target.y),
-            z: result.f64("z").unwrap_or(target.z),
-            yaw: result.f64("yaw").map_or(target.yaw, |v| v as f32),
-            pitch: result.f64("pitch").map_or(target.pitch, |v| v as f32),
-        },
-        None => target,
+    let args = bmap! {
+        "uuid" => uuid, "world" => world_name, "x" => target.x, "y" => target.y, "z" => target.z, "yaw" => target.yaw as f64, "pitch" => target.pitch as f64,
+        "bed" => bed, "missing" => missing, "reason" => reason,
+    };
+    let Some(result) = fire(server, "PlayerRespawnEvent", "event.respawn", args) else { return (world, target) };
+    let to = result.str("world").and_then(|name| server.worlds.iter().position(|w| w.name == name && !w.unloaded)).unwrap_or(world);
+    let at = crate::server::player::Location {
+        x: result.f64("x").unwrap_or(target.x),
+        y: result.f64("y").unwrap_or(target.y),
+        z: result.f64("z").unwrap_or(target.z),
+        yaw: result.f64("yaw").map_or(target.yaw, |v| v as f32),
+        pitch: result.f64("pitch").map_or(target.pitch, |v| v as f32),
+    };
+    (to, at)
+}
+
+/// Paper's PlayerPostRespawnEvent: the player is back in the world, where plugins may now
+/// teleport it.
+pub fn on_post_respawn(server: &mut Server, id: i32, bed: bool, missing: bool, reason: &str) {
+    if !listens(server, "PlayerPostRespawnEvent") {
+        return;
     }
+    let Some(p) = server.players.get(&id) else { return };
+    let args = bmap! {
+        "uuid" => p.uuid().to_string(), "world" => server.worlds[p.world].name.clone(),
+        "x" => p.loc.x, "y" => p.loc.y, "z" => p.loc.z, "yaw" => p.loc.yaw as f64, "pitch" => p.loc.pitch as f64,
+        "bed" => bed, "missing" => missing, "reason" => reason,
+    };
+    fire(server, "PlayerPostRespawnEvent", "event.post_respawn", args);
 }
 
 /// CreatureSpawnEvent, after the fact: a cancelled spawn is removed again.

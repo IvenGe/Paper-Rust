@@ -1017,7 +1017,7 @@ impl Server {
         let w = &mut self.worlds[world];
         w.spawn = pos;
         w.spawn_yaw = yaw;
-        let packet = play::SetDefaultSpawnPosition { dimension: w.dimension.clone(), pos, yaw, pitch: 0.0 };
+        let packet = play::SetDefaultSpawnPosition { dimension: w.key.clone(), pos, yaw, pitch: 0.0 };
         let payload = Bytes::from(encode_packet(&packet));
         self.broadcast_payload_in_world(world, payload);
     }

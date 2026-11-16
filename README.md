@@ -289,7 +289,9 @@ What works:
   slow falling, invisibility, and the attribute effects (speed, slowness, ...) for clients.
   Beds set the respawn point and let players sleep through the night (with
   `players_sleeping_percentage`; not with monsters nearby, and getting hurt wakes them); they
-  explode in the Nether and the End.
+  explode in the Nether and the End. A bed far away is found after a restart (its chunk is
+  loaded to look), a point set with force (`setRespawnLocation(location, true)`) needs no
+  bed, and the recovery compass points where the player last died.
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
   that smelt over time, hoppers, droppers and dispensers; vanilla's click rules
@@ -390,7 +392,9 @@ What works:
   `InventoryOpenEvent`, `InventoryClickEvent`, `InventoryDragEvent`, `InventoryCloseEvent`,
   `CraftItemEvent`, `PlayerAttemptPickupItemEvent`, `EntityPickupItemEvent`,
   `PlayerDropItemEvent`, `EntityDamageEvent` (and its `ByEntity`/`ByBlock` forms),
-  `EntityDeathEvent`, `PlayerDeathEvent`, `PlayerRespawnEvent`, `CreatureSpawnEvent`,
+  `EntityDeathEvent`, `PlayerDeathEvent` (cancelled: back with the revive health),
+  `PlayerRespawnEvent` (to another world too, with `isBedSpawn`, `isMissingRespawnBlock` and
+  the reason) and Paper's `PlayerPostRespawnEvent`, `CreatureSpawnEvent`,
   `PlayerStatisticIncrementEvent`, `SignChangeEvent`, `PlayerInteractEvent` (clicks on
   blocks and in the air, stepping on pressure plates and trampling farmland; a denied
   block or item is not used, as in CraftBukkit), `PlayerInteractAtEntityEvent` (which
@@ -544,7 +548,10 @@ What works:
     `VillagerReplenishTradeEvent`;
   * worlds made by plugins (`Bukkit.createWorld`): normal or flat; overworld, Nether or End;
     opened again from their folders; unloaded again (`Bukkit.unloadWorld`, with
-    `WorldUnloadEvent`); and players teleported from one world to another;
+    `WorldUnloadEvent`); and players teleported from one world to another. Each is a dimension
+    of its own for clients (`minecraft:<name>`, as Paper names it), so going from one
+    overworld to another leaves nothing of the first on the client, and players' data
+    remembers the world, respawn points in it too;
   * chunks' persistent data containers (saved with the chunks, under `ChunkBukkitValues` as in
     Paper) and chunk snapshots (`Chunk#getChunkSnapshot`);
   * player state: walking and flying speeds, the time and weather one player sees

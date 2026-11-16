@@ -6,7 +6,8 @@
 mod common;
 
 use common::*;
-use paper_bridge::bmap;
+use paper_bridge::{bmap, Value};
+use paper_data::blocks;
 use paper_protocol::codec::VarInt;
 use paper_protocol::packets::play;
 use paper_server::config::{Difficulty, GameMode};
@@ -163,5 +164,185 @@ fn respawning_sends_the_world_around_again() {
     press_respawn(&mut alice);
     bob.find(TIMEOUT, |r: &play::RemoveEntities| r.entity_ids.contains(&VarInt(alice_id))).expect("the body goes");
     bob.find(TIMEOUT, |a: &play::AddEntity| a.entity_id.0 == alice_id).expect("Alice comes back");
+    server.stop();
+}
+
+// --- what the audit of respawning found -----------------------------------------------------
+
+/// Kicks whoever respawns, in `PlayerRespawnEvent` (the server once fell over this).
+#[derive(Default)]
+struct KickOnRespawn;
+
+impl paper_plugin::Plugin for KickOnRespawn {
+    fn info(&self) -> paper_plugin::Info {
+        paper_plugin::Info::new("KickOnRespawn", "1").listen("PlayerRespawnEvent")
+    }
+
+    fn event(&mut self, server: &mut paper_plugin::Server, event: &mut paper_plugin::Event) {
+        if let Some(player) = event.player() {
+            let _ = server.call("player.kick", paper_plugin::bmap! { "uuid" => player.uuid, "reason" => "{\"text\":\"bye\"}" });
+        }
+    }
+}
+
+/// Sends whoever respawns to the Nether, and says so once the player is back.
+#[derive(Default)]
+struct RespawnInTheNether;
+
+impl paper_plugin::Plugin for RespawnInTheNether {
+    fn info(&self) -> paper_plugin::Info {
+        paper_plugin::Info::new("RespawnInTheNether", "1").listen("PlayerRespawnEvent").listen("PlayerPostRespawnEvent")
+    }
+
+    fn event(&mut self, server: &mut paper_plugin::Server, event: &mut paper_plugin::Event) {
+        if event.is("PlayerRespawnEvent") {
+            event.set("world", "world_nether");
+            event.set("x", 5.5);
+            event.set("y", 70.0);
+            event.set("z", 5.5);
+        } else if let Some(player) = event.player() {
+            let world = event.get("world").as_str().unwrap_or("?").to_owned();
+            player.send_message(server, &format!("back in {world}"));
+        }
+    }
+}
+
+#[test]
+fn a_plugin_kicking_on_respawn_does_not_bring_the_server_down() {
+    let server = start_server_with_natives(|c| c.properties.gamemode = GameMode::Survival, vec![paper_plugin::entry::<KickOnRespawn>()]);
+    let mut alice = join(&server, "Alice");
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    alice.send(&play::ClientCommand { action: VarInt(0) });
+    assert!(alice.find(TIMEOUT, |d: &play::Disconnect| d.reason.to_plain().contains("bye")).is_some(), "kicked");
+    // The server goes on: someone else can join and play.
+    let _bob = join(&server, "Bob");
+    assert_eq!(server.handle.run(|s| s.players.len()).unwrap(), 1);
+    server.stop();
+}
+
+#[test]
+fn plugins_choose_the_world_the_player_respawns_in() {
+    let server = start_server_with_natives(|c| c.properties.gamemode = GameMode::Survival, vec![paper_plugin::entry::<RespawnInTheNether>()]);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    alice.send(&play::ClientCommand { action: VarInt(0) });
+    let respawn: play::Respawn = alice.expect();
+    assert_eq!(respawn.spawn.dimension_name, "minecraft:the_nether");
+    let (world, x, z) = server.handle.run(move |s| { let p = &s.players[&id]; (s.worlds[p.world].name.clone(), p.loc.x, p.loc.z) }).unwrap();
+    assert_eq!((world.as_str(), x, z), ("world_nether", 5.5, 5.5));
+    let said: play::SystemChat = alice.find(TIMEOUT, |c: &play::SystemChat| c.content.to_plain().starts_with("back in")).expect("PlayerPostRespawnEvent");
+    assert_eq!(said.content.to_plain(), "back in world_nether");
+    server.stop();
+}
+
+#[test]
+fn a_bed_in_a_chunk_no_one_has_loaded_is_still_found() {
+    let root = temp_root("respawn-far-bed");
+    let server = survival_server(Some(root.clone()));
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    // A bed far from spawn, set as Alice's respawn point.
+    let head = blocks::parse_state("minecraft:red_bed[part=head,facing=north]").unwrap();
+    let foot = blocks::parse_state("minecraft:red_bed[part=foot,facing=north]").unwrap();
+    plugin_call(&server, "world.set_block", bmap! { "x" => 300, "y" => -60, "z" => 300, "state" => head as i64, "physics" => false });
+    plugin_call(&server, "world.set_block", bmap! { "x" => 300, "y" => -60, "z" => 301, "state" => foot as i64, "physics" => false });
+    server.handle.run(move |s| s.players.get_mut(&id).unwrap().respawn = Some((0, paper_protocol::codec::BlockPos::new(300, -60, 300)))).unwrap();
+    drop(alice);
+    server.stop();
+
+    // After a restart nothing keeps the bed's chunk loaded: dying still takes Alice to it.
+    let server = survival_server(Some(root.clone()));
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    assert!(!server.handle.run(|s| s.worlds[0].chunks.contains_key(&paper_server::world::chunk::ChunkPos::of_block(300, 300))).unwrap(), "the bed's chunk is not loaded");
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    press_respawn(&mut alice);
+    let (x, z, respawn) = server.handle.run(move |s| { let p = &s.players[&id]; (p.loc.x, p.loc.z, p.respawn) }).unwrap();
+    assert!((x - 300.5).abs() < 3.0 && (z - 300.5).abs() < 3.0, "next to the bed: {x}, {z}");
+    assert!(respawn.is_some(), "the respawn point is kept");
+    server.stop();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn respawning_far_away_tells_the_client_everything_it_needs() {
+    let server = survival_server(None);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    // A forced respawn point far away (`setRespawnLocation(location, true)`): no bed needed.
+    let uuid = server.handle.run(move |s| s.players[&id].uuid().to_string()).unwrap();
+    plugin_call(&server, "player.set", bmap! { "uuid" => uuid.clone(), "respawn" => Value::List(vec!["world".into(), 1000.into(), (-60).into(), 1000.into()]), "respawn_forced" => true });
+    // Something to keep: armour (its attributes come back after the respawn).
+    server.handle.run(|s| s.set_game_rule(0, "keep_inventory", paper_data::game_rules::Value::Bool(true))).unwrap();
+    let chestplate = paper_data::items::id("minecraft:iron_chestplate").unwrap() as i32;
+    server.handle.run(move |s| { s.players.get_mut(&id).unwrap().inventory[6] = paper_protocol::types::Slot::of(chestplate, 1); s.resync_inventory(id); }).unwrap();
+    alice.drain(QUIET);
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    alice.send(&play::ClientCommand { action: VarInt(0) });
+
+    // Old clients keep chunks until told: the spawn chunks are forgotten.
+    alice.find(TIMEOUT, |f: &play::ForgetLevelChunk| f.x == 0 && f.z == 0).expect("the spawn chunk is forgotten");
+    let respawn: play::Respawn = alice.expect();
+    // Where Alice died, for the recovery compass.
+    let (dimension, pos) = respawn.spawn.death_location.expect("the death location");
+    assert_eq!(dimension, "minecraft:overworld");
+    assert!(pos.x.abs() < 20 && pos.z.abs() < 20, "{pos:?}");
+    let at: play::PlayerPosition = alice.expect();
+    assert_eq!((at.x, at.z), (1000.5, 1000.5), "the forced point");
+    // The client starts the new player from base values: the armour is sent again.
+    alice.find(TIMEOUT, |a: &play::UpdateAttributes| a.entity_id == id).expect("attributes after the respawn");
+    server.stop();
+}
+
+#[test]
+fn the_crafting_grid_result_does_not_drop_on_death() {
+    let server = survival_server(None);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let (log, planks) = (paper_data::items::id("minecraft:oak_log").unwrap() as i32, paper_data::items::id("minecraft:oak_planks").unwrap() as i32);
+    // A log in the 2x2 grid, with what it would make in the result slot.
+    server.handle.run(move |s| { let p = s.players.get_mut(&id).unwrap(); p.inventory[1] = paper_protocol::types::Slot::of(log, 1); p.inventory[0] = paper_protocol::types::Slot::of(planks, 4); }).unwrap();
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    let count = |item: i32| server.handle.run(move |s| s.worlds[0].entities.values().filter_map(|e| match &e.kind { paper_server::world::entity::EntityKind::Item { stack: paper_protocol::types::Slot(Some(st)), .. } if st.item == item => Some(st.count), _ => None }).sum::<i32>()).unwrap();
+    assert_eq!((count(log), count(planks)), (1, 0), "the log drops, the planks it would make do not");
+    server.stop();
+}
+
+#[test]
+fn spigot_respawn_and_plugin_worlds_of_their_own() {
+    let server = survival_server(None);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let uuid = server.handle.run(move |s| s.players[&id].uuid().to_string()).unwrap();
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    // `player.spigot().respawn()`, as auto-respawn plugins do.
+    plugin_call(&server, "player.respawn", bmap! { "uuid" => uuid });
+    alice.expect::<play::Respawn>();
+    assert!(!is_dead(&server, id));
+
+    // A world a plugin made is a dimension of its own for the client, so going there from
+    // the overworld is a change of world (not the same one with the old chunks kept).
+    let sky = server.handle.run(|s| s.create_world("skyland", "NORMAL", Some(1), "FLAT", false, None).unwrap()).unwrap();
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    server.handle.run(move |s| s.change_dimension(id, sky, paper_server::server::player::Location { x: 0.5, y: -60.0, z: 0.5, yaw: 0.0, pitch: 0.0 })).unwrap();
+    let respawn: play::Respawn = alice.expect();
+    assert_eq!(respawn.spawn.dimension_name, "minecraft:skyland");
     server.stop();
 }

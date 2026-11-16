@@ -277,6 +277,10 @@ pub struct Player {
     pub xp_total: i32,
     /// Where the player respawns, if not at the world spawn: (world, block position).
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
+    /// The respawn point holds without a bed there (`setRespawnLocation(location, true)`).
+    pub respawn_forced: bool,
+    /// Where the player last died (world, block), for the recovery compass.
+    pub last_death: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// Who hurt this player last and when (tick), for death messages.
     pub last_attacker: Option<(i32, u64)>,
     /// The last damage taken, for death messages.

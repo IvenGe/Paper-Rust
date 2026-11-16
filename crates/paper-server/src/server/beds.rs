@@ -24,6 +24,15 @@ fn is_bed(state: u32) -> bool {
     blocks::block_of_state(state).name.ends_with("_bed")
 }
 
+
+/// Where a respawn point puts a player (see `Server::respawn_point`): the place, whether it is
+/// next to a bed, and whether a point the player had was lost.
+#[derive(Default)]
+pub(super) struct RespawnPoint {
+    pub at: Option<(usize, Location)>,
+    pub bed: bool,
+    pub missing: bool,
+}
 impl Server {
     /// Right-click on a bed. Returns whether the click was used.
     pub(super) fn use_bed(&mut self, id: i32, pos: BlockPos) -> bool {
@@ -181,21 +190,38 @@ impl Server {
         None
     }
 
-    /// The respawn point at a bed, if the bed is still there; otherwise tells the player and
-    /// forgets it.
-    pub(super) fn bed_respawn(&mut self, id: i32) -> Option<(usize, Location)> {
-        let (world, head) = self.players.get(&id)?.respawn.filter(|(w, _)| *w < self.worlds.len())?;
-        let bed = self.worlds[world].block_at(head.x, head.y, head.z).is_some_and(is_bed);
-        match bed.then(|| self.stand_up_position(world, head)).flatten() {
-            Some(at) => Some((world, at)),
-            None => {
-                if let Some(p) = self.players.get_mut(&id) {
-                    p.respawn = None;
-                }
-                self.send_message(id, &Component::translatable("block.minecraft.spawn.not_valid", vec![]));
-                None
+    /// Where a player with a respawn point respawns (`ServerPlayer.findRespawnAndUseSpawnBlock`):
+    /// next to its bed if the bed is still there and not walled in; at the block itself if the
+    /// point was set with force (`setRespawnLocation(location, true)`) and there is room;
+    /// otherwise nowhere, and the player is told and the point forgotten.
+    pub(super) fn respawn_point(&mut self, id: i32) -> RespawnPoint {
+        let Some(p) = self.players.get(&id) else { return RespawnPoint::default() };
+        let forced = p.respawn_forced;
+        let Some((world, head)) = p.respawn.filter(|(w, _)| *w < self.worlds.len() && !self.worlds[*w].unloaded) else { return RespawnPoint::default() };
+        // A bed far away is in a chunk no one keeps loaded: it is loaded to look, as reading
+        // the block does in vanilla (an unloaded chunk is not a missing bed).
+        let chunk = crate::world::chunk::ChunkPos::of_block(head.x, head.z);
+        if !self.worlds[world].chunks.contains_key(&chunk) {
+            self.load_chunk_now(world, chunk);
+        }
+        let w = &self.worlds[world];
+        if w.block_at(head.x, head.y, head.z).is_some_and(is_bed) {
+            if let Some(at) = self.stand_up_position(world, head) {
+                return RespawnPoint { at: Some((world, at)), bed: true, missing: false };
+            }
+        } else if forced {
+            let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(|s| !blocks::has_collision(s) && super::survival::fluid_of(s).is_none());
+            if room(head.y) && room(head.y + 1) {
+                let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 };
+                return RespawnPoint { at: Some((world, at)), bed: false, missing: false };
             }
         }
+        if let Some(p) = self.players.get_mut(&id) {
+            p.respawn = None;
+            p.respawn_forced = false;
+        }
+        self.send_message(id, &Component::translatable("block.minecraft.spawn.not_valid", vec![]));
+        RespawnPoint { at: None, bed: false, missing: true }
     }
 
     /// Sleeping players: the count shown to everyone, skipping the night when enough have

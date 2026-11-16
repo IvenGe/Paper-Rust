@@ -41,6 +41,8 @@ pub struct SavedPlayer {
     pub effects: Vec<super::effects::ActiveEffect>,
     pub absorption: f32,
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
+    pub respawn_forced: bool,
+    pub last_death: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// Bukkit's `bukkit.firstPlayed`, for offline players in the plugin API.
     pub first_played: Option<i64>,
     pub enchantment_seed: Option<i32>,
@@ -150,7 +152,7 @@ impl Server {
             .with("Rotation", Tag::List(vec![Tag::Float(player.loc.yaw), Tag::Float(player.loc.pitch)]))
             .with("Motion", Tag::List(vec![Tag::Double(0.0), Tag::Double(0.0), Tag::Double(0.0)]))
             .with("OnGround", Tag::Byte(player.on_ground as i8))
-            .with("Dimension", Tag::String(world.dimension.clone()))
+            .with("Dimension", Tag::String(world.key.clone()))
             .with("paper-rs:world", Tag::String(world.name.clone()))
             .with("playerGameType", Tag::Int(player.game_mode.id()))
             .with("Health", Tag::Float(player.health))
@@ -233,17 +235,25 @@ impl Server {
         }
         c.insert("AbsorptionAmount", Tag::Float(player.absorption));
         c.insert("attributes", player.attributes.to_nbt());
+        // Worlds by their key (as Paper saves them: plugin worlds have their own) and name.
         if let Some((w, pos)) = player.respawn.filter(|(w, _)| *w < self.worlds.len()) {
             c.insert(
                 "respawn",
                 Tag::Compound(
                     Compound::new()
-                        .with("dimension", Tag::String(self.worlds[w].dimension.clone()))
+                        .with("dimension", Tag::String(self.worlds[w].key.clone()))
+                        .with("paper-rs:world", Tag::String(self.worlds[w].name.clone()))
                         .with("pos", Tag::IntArray(vec![pos.x, pos.y, pos.z]))
                         .with("yaw", Tag::Float(0.0))
                         .with("pitch", Tag::Float(0.0))
-                        .with("forced", Tag::Byte(0)),
+                        .with("forced", Tag::Byte(player.respawn_forced as i8)),
                 ),
+            );
+        }
+        if let Some((w, pos)) = player.last_death.filter(|(w, _)| *w < self.worlds.len()) {
+            c.insert(
+                "LastDeathLocation",
+                Tag::Compound(Compound::new().with("dimension", Tag::String(self.worlds[w].key.clone())).with("paper-rs:world", Tag::String(self.worlds[w].name.clone())).with("pos", Tag::IntArray(vec![pos.x, pos.y, pos.z]))),
             );
         }
         // Bukkit's and Paper's play times, for offline players in the plugin API.
@@ -268,7 +278,7 @@ impl Server {
         let world = c
             .string("paper-rs:world")
             .and_then(|name| self.worlds.iter().position(|w| w.name == name))
-            .or_else(|| c.string("Dimension").and_then(|d| self.worlds.iter().position(|w| w.dimension == d && !w.unloaded)))
+            .or_else(|| c.string("Dimension").and_then(|d| self.worlds.iter().position(|w| w.key == d && !w.unloaded).or_else(|| self.worlds.iter().position(|w| w.dimension == d && !w.unloaded))))
             .unwrap_or(0);
         let mut inventory = vec![Slot::EMPTY; INVENTORY_SLOTS];
         for entry in c.list("Inventory").unwrap_or(&[]) {
@@ -329,11 +339,9 @@ impl Server {
                 })
                 .collect(),
             absorption: c.f64("AbsorptionAmount").map_or(0.0, |a| a as f32),
-            respawn: c.compound("respawn").and_then(|r| {
-                let world = self.worlds.iter().position(|w| Some(w.dimension.as_str()) == r.string("dimension"))?;
-                let Some(Tag::IntArray(pos)) = r.get("pos") else { return None };
-                (pos.len() == 3).then(|| (world, paper_protocol::codec::BlockPos::new(pos[0], pos[1], pos[2])))
-            }),
+            respawn: c.compound("respawn").and_then(|r| self.saved_place(r)),
+            respawn_forced: c.compound("respawn").and_then(|r| r.bool("forced")).unwrap_or(false),
+            last_death: c.compound("LastDeathLocation").and_then(|r| self.saved_place(r)),
             first_played: c.compound("bukkit").and_then(|b| b.i64("firstPlayed")),
             enchantment_seed: c.i32("XpSeed"),
             attributes: c.list("attributes").map(<[Tag]>::to_vec).unwrap_or_default(),
@@ -369,6 +377,19 @@ impl Server {
                 None
             }
         }
+    }
+
+    /// A saved place (a respawn point, a death location): the world by our name for it, else
+    /// by its key, else by its dimension (older saves), and the block.
+    fn saved_place(&self, r: &Compound) -> Option<(usize, paper_protocol::codec::BlockPos)> {
+        let find = |f: &dyn Fn(&crate::world::World) -> bool| self.worlds.iter().enumerate().find(|(_, w)| !w.unloaded && f(w)).map(|(i, _)| i);
+        let world = r
+            .string("paper-rs:world")
+            .and_then(|n| find(&|w| w.name == n))
+            .or_else(|| r.string("dimension").and_then(|d| find(&|w| w.key == d)))
+            .or_else(|| r.string("dimension").and_then(|d| find(&|w| w.dimension == d)))?;
+        let Some(Tag::IntArray(pos)) = r.get("pos") else { return None };
+        (pos.len() == 3).then(|| (world, paper_protocol::codec::BlockPos::new(pos[0], pos[1], pos[2])))
     }
 
     /// Queues a player's data for saving.

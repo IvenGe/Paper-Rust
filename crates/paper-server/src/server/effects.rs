@@ -307,6 +307,15 @@ impl Server {
 
     /// Applies a player's effects to its attributes; the changed ones go out with the next
     /// attribute sync.
+    /// Sends a player's effects again, as vanilla does after a respawn or a change of world
+    /// (`PlayerList.sendActivePlayerEffects`): the client's new player has none.
+    pub(super) fn resend_effects(&mut self, id: i32) {
+        let Some(p) = self.players.get(&id) else { return };
+        for effect in &p.effects {
+            p.conn.send(&play::UpdateMobEffect { entity_id: VarInt(id), effect: VarInt(effect.id), amplifier: VarInt(effect.amplifier), duration: VarInt(effect.duration), flags: effect.flags() });
+        }
+    }
+
     pub(super) fn sync_effect_attributes(&mut self, id: i32) {
         self.refresh_player_attributes(id);
     }

@@ -110,18 +110,28 @@ fn side_effects_wait_for_the_edit_to_finish() {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    // Side effects for a block that changed since are left out.
+    // Side effects are for the block as it is when they run (an earlier one's may have
+    // changed it, as a wire's connections), not as the host last saw it.
     let stone = blocks::default_state("minecraft:stone").unwrap();
     let mut edits = Vec::new();
-    entry(&mut edits, 0, (9, -55, 9), stone, 0, 0);
-    entry(&mut edits, 1, (9, -55, 9), water, air, 1);
+    entry(&mut edits, 0, (9, -55, 9), water, 0, 0);
+    entry(&mut edits, 1, (9, -55, 9), stone, air, 1 | 2);
     call(&server, "world.edit_batch", bmap! { "edits" => edits });
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(name_at(&server, 9, -55, 9), "minecraft:stone");
+    let deadline = Instant::now() + TIMEOUT;
+    while name_at(&server, 9, -56, 9) != "minecraft:water" {
+        assert!(Instant::now() < deadline, "the water there flows, though the entry said stone");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
-    // A bad batch is refused whole.
+    // A bad batch is refused whole: nothing of it is made.
     let result = server.handle.run(|s| paper_server::plugins::api::handle(s, "world.edit_batch", &bmap! { "edits" => vec![1u8, 2, 3] }).is_err()).unwrap();
     assert!(result, "28 bytes an entry");
+    let mut edits = Vec::new();
+    entry(&mut edits, 0, (12, -55, 12), stone, 0, 0);
+    entry(&mut edits, 0, (13, -55, 12), u32::MAX, 0, 0);
+    let refused = server.handle.run(move |s| paper_server::plugins::api::handle(s, "world.edit_batch", &bmap! { "edits" => edits }).is_err()).unwrap();
+    assert!(refused, "an invalid state");
+    assert_eq!(name_at(&server, 12, -55, 12), "minecraft:air", "the good entry before it was not made either");
     assert_eq!(server.handle.run(|s| s.events_suppressed).unwrap(), 0);
     server.stop();
 }

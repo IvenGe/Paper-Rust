@@ -236,6 +236,15 @@ impl Server {
         }
     }
 
+    /// Calls off a portal trip still waiting for its destination (the player died, or
+    /// respawned): it would take the player through later.
+    pub(super) fn cancel_travel(&mut self, id: i32) {
+        let Some(travel) = self.players.get_mut(&id).and_then(|p| p.travel.take()) else { return };
+        for c in travel.chunks {
+            self.worlds[travel.to].remove_ticket(c);
+        }
+    }
+
     /// Finishes trips whose destination is loaded.
     pub(super) fn tick_travels(&mut self) {
         let travelling: Vec<i32> = self.players.values().filter(|p| p.travel.is_some()).map(|p| p.entity_id).collect();
@@ -544,12 +553,12 @@ impl Server {
         let server_view = self.config.properties.view_distance;
         let spawn_info = {
             let p = &self.players[&id];
-            self.spawn_info(to, p.game_mode, p.previous_game_mode)
+            play::SpawnInfo { death_location: self.death_location(p), ..self.spawn_info(to, p.game_mode, p.previous_game_mode) }
         };
         let overworld = self.world_of_dimension("minecraft:overworld").unwrap_or(0);
         let (spawn_dimension, spawn, spawn_yaw) = {
             let w = &self.worlds[overworld];
-            (w.dimension.clone(), w.spawn, w.spawn_yaw)
+            (w.key.clone(), w.spawn, w.spawn_yaw)
         };
         let time = self.time_payload_for(to, &self.players[&id]);
         let border = self.border_packet_for(id, to);
@@ -580,6 +589,8 @@ impl Server {
         self.resync_inventory(id);
         self.send_experience(id);
         self.send_health_if_changed(id);
+        // The client's player in the new world has no effects until told.
+        self.resend_effects(id);
         self.refresh_chunk_view(id);
         crate::plugins::events::on_changed_world(self, id, from);
     }

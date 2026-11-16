@@ -288,6 +288,13 @@ impl Modern {
     fn play_clientbound(&mut self, id: i32, body: &[u8], out: &mut Outcome) -> Result<()> {
         use play::clientbound as cb;
         let old = self.old_id(id);
+        // A change of game mode (game event 3): attacks become a spectator's and back with it.
+        if id == cb::GAME_EVENT {
+            let mut r = Reader::new(body);
+            if let (Ok(3), Ok(mode)) = (r.u8(), r.f32()) {
+                self.game_mode = mode as i32;
+            }
+        }
         match id {
             cb::SWING_ANIMATION => return entities::swing(self, body, out),
             cb::ADD_TRANSIENT_BLOCK | cb::POST_EFFECTS => return Ok(()),

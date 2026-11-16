@@ -58,6 +58,9 @@ impl Legacy18 {
                 let respawn: packets::Respawn = decode(body)?;
                 self.enter(respawn.spawn.dimension_type, respawn.spawn.game_mode);
                 self.entities.clear();
+                // The server waits for the client to load the world again: it is told once
+                // the client has its new position, as after joining.
+                self.loaded = false;
                 w = packet(cb::RESPAWN);
                 w.put_i32(self.dimension as i32);
                 w.put_u8(self.difficulty);
