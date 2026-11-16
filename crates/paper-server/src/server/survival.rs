@@ -1109,7 +1109,7 @@ impl Server {
         }))
     }
 
-    fn kill_player(&mut self, id: i32, damage: Damage) {
+    pub(crate) fn kill_player(&mut self, id: i32, damage: Damage) {
         let Some(p) = self.players.get(&id) else { return };
         let world = p.world;
         let message = self.death_message(id, &damage);
@@ -1183,12 +1183,15 @@ impl Server {
         self.send_health_if_changed(id);
     }
 
-    /// The client asked to respawn after the death screen.
+    /// The client asked to respawn after the death screen, or to come back from the end
+    /// credits (`ServerGamePacketListenerImpl.handleClientCommand`, `PlayerList.respawn`).
     pub(super) fn respawn_player(&mut self, id: i32) {
         let Some(p) = self.players.get(&id) else { return };
         // After the end credits the player comes back with everything it had.
         let after_credits = p.won_game && !p.dead;
-        if !p.dead && !after_credits {
+        // Otherwise vanilla only asks that no health is left: a player that died here, but
+        // also one that left on the death screen and came back, or that a plugin set to zero.
+        if !after_credits && !p.dead && p.health > 0.0 {
             return;
         }
         let overworld = self.world_of_dimension("minecraft:overworld").unwrap_or(0);
@@ -1201,18 +1204,19 @@ impl Server {
         let hardcore = self.config.properties.hardcore && !after_credits;
         let old_world = self.players[&id].world;
 
-        if old_world != world {
-            self.leave_world(id);
-        } else {
-            // Others see the old body disappear and the new player appear.
-            let viewers: Vec<i32> = self.players[&id].seen_by.iter().copied().collect();
-            for v in viewers {
-                if let Some(viewer) = self.players.get_mut(&v) {
-                    viewer.conn.send(&play::RemoveEntities { entity_ids: vec![VarInt(id)] });
-                    viewer.visible.remove(&id);
-                }
+        // A new player takes the old one's place, as in vanilla, where a new `ServerPlayer`
+        // does: others see the old body go and the new player come, and the client forgets
+        // what it saw and gets the chunks and entities around the new place again, even in
+        // the same world.
+        if old_world == world {
+            let p = &self.players[&id];
+            let mut seen: Vec<VarInt> = p.visible.iter().map(|v| VarInt(*v)).collect();
+            seen.extend(self.worlds[world].entities.values().filter(|e| e.viewers.contains(&id)).map(|e| VarInt(e.id)));
+            if !seen.is_empty() {
+                p.conn.send(&play::RemoveEntities { entity_ids: seen });
             }
         }
+        self.leave_world(id);
         let spawn_info = {
             let p = &self.players[&id];
             let mode = if hardcore { GameMode::Spectator } else { p.game_mode };
@@ -1248,9 +1252,13 @@ impl Server {
             p.apply_game_mode_abilities();
         }
         p.world = world;
-        if old_world != world {
-            p.view = super::player::ChunkView::new(target.chunk(), p.view_distance(server_view));
-        }
+        // A fresh view, sent from scratch; how fast the client takes chunks belongs to the
+        // connection (vanilla's `ChunkSender`), so that carries over.
+        let radius = p.view_distance(server_view);
+        let old = std::mem::replace(&mut p.view, super::player::ChunkView::new(target.chunk(), radius));
+        p.view.desired_per_tick = old.desired_per_tick;
+        p.view.unacknowledged_batches = old.unacknowledged_batches;
+        p.view.max_unacknowledged_batches = old.max_unacknowledged_batches;
         p.conn.send(&play::Respawn { spawn: spawn_info, data_kept: if after_credits { 3 } else { 0 } });
         let w = &self.worlds[overworld];
         let p = &self.players[&id];
@@ -1263,9 +1271,7 @@ impl Server {
         p.conn.send_payload(self.time_payload_for(world, p));
         p.conn.send(&self.border_packet_for(id, world));
         self.send_weather(id);
-        if old_world != world {
-            p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
-        }
+        p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
         self.teleport(id, target);
         self.resync_inventory(id);
         self.send_experience(id);

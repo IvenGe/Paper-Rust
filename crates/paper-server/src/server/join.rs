@@ -169,6 +169,8 @@ impl Server {
             }
             player.attributes.load_nbt(&saved.attributes);
             player.health = player.health.min(player.max_health());
+            // Left on the death screen: back on it, and able to respawn from it.
+            player.dead = player.health <= 0.0;
             player.apply_game_mode_abilities();
             player.flying = saved.flying && player.allow_flight;
         } else {

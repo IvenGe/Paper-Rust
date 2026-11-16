@@ -520,7 +520,7 @@ impl Server {
     }
 
     /// A mob died: death animation, sound, loot and experience.
-    fn kill_mob(&mut self, world: usize, id: i32, damage: Damage) {
+    pub(crate) fn kill_mob(&mut self, world: usize, id: i32, damage: Damage) {
         let tick = self.tick;
         let Some(e) = self.worlds[world].entities.get(&id) else { return };
         let (info, pos) = (e.info, e.pos);

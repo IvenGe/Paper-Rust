@@ -650,8 +650,13 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
         "player.set_health" => {
             let id = player_id(server, args)?;
             let player = server.players.get_mut(&id).unwrap();
+            let mut dies = false;
             if let Some(h) = args.f64("health") {
+                let alive = !player.dead && player.health > 0.0;
                 player.health = (h as f32).clamp(0.0, 1024.0);
+                // No health left kills (`CraftLivingEntity.setHealth` runs `die` with generic
+                // damage): the death event, drops, the death screen. Not again while dying.
+                dies = alive && player.health <= 0.0;
             }
             if let Some(f) = args.i32("food") {
                 player.food = f.clamp(0, 20);
@@ -659,7 +664,14 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             if let Some(s) = args.f64("saturation") {
                 player.saturation = s as f32;
             }
-            player.conn.send(&play::SetHealth { health: player.health, food: VarInt(player.food), saturation: player.saturation });
+            if dies {
+                server.kill_player(id, crate::server::survival::Damage::new("minecraft:generic"));
+            }
+            // Sent even when unchanged (and scaled as `setHealthScale` asks).
+            if let Some(player) = server.players.get_mut(&id) {
+                player.sent_health = None;
+            }
+            server.send_health_if_changed(id);
             Ok(Value::Null)
         }
         "player.set_flight" => {

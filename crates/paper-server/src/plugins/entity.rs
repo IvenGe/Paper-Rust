@@ -650,6 +650,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 // `ItemFrame.setItem(item, playSound)`.
                 server.set_frame_item(world, id, item, args.bool("sound") != Some(false));
             }
+            // `setHealth(0)` kills (`CraftLivingEntity.setHealth` runs `die` with generic damage).
+            let mut dies = false;
             let e = server.worlds[world].entities.get_mut(&id).unwrap();
             if args.bool("clear_custom_name") == Some(true) {
                 e.custom_name = None;
@@ -754,6 +756,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                         if h < 0.0 || h > m.living.max_health as f64 {
                             bail!("Health value ({h}) must be between 0 and {}", m.living.max_health);
                         }
+                        // Not again while dying; the dragon dies its own way when out of health.
+                        dies = h <= 0.0 && !m.living.is_dead() && m.living.death_time == 0 && e.info.name != crate::server::dragon::DRAGON;
                         m.living.health = h as f32;
                         e.metadata_dirty = true;
                     }
@@ -1060,7 +1064,13 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 }
                 _ => {}
             }
-            Ok(entity_value(server, world, &server.worlds[world].entities[&id]))
+            if dies {
+                server.kill_mob(world, id, crate::server::survival::Damage::new("minecraft:generic"));
+            }
+            match server.worlds[world].entities.get(&id) {
+                Some(e) => Ok(entity_value(server, world, e)),
+                None => Ok(Value::Null),
+            }
         }
         other => bail!("unknown plugin API method {other}"),
     }

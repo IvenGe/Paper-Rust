@@ -273,11 +273,13 @@ What works:
 * **Survival**: damage from falls, the void, lava, fire, drowning, suffocation, cacti and
   magma, with armour, protection enchantments, difficulty scaling and invulnerability frames;
   hunger, saturation and natural regeneration; eating; death (dropped inventory and
-  experience, death messages) and respawning; attacking with the attack cooldown, critical
-  hits, sweeping, knockback and weapon enchantments; tool and weapon wear; bows; attributes
-  (max health, armour, attack damage and speed, movement speed, knockback resistance, fall
-  damage, reach, ...) with the modifiers of equipment, effects and sprinting, sent to the
-  clients and saved with players and mobs; explosions
+  experience, death messages) and respawning, also for players who left on the death screen
+  and come back, with the chunks and entities around the respawn point sent again as vanilla
+  does; a plugin's `setHealth(0)` kills players and mobs as on Paper; attacking with the
+  attack cooldown, critical hits, sweeping, knockback and weapon enchantments; tool and
+  weapon wear; bows; attributes (max health, armour, attack damage and speed, movement speed,
+  knockback resistance, fall damage, reach, ...) with the modifiers of equipment, effects and
+  sprinting, sent to the clients and saved with players and mobs; explosions
   that break blocks and hurt and push entities. Blocks take vanilla's mining time (tool
   speeds, efficiency, haste, mining fatigue, water and air) and drop their loot; ores,
   spawners and sculk give experience when mined with the right tool, not with silk touch. Status
