@@ -19,6 +19,118 @@ pub trait Ids {
     /// Whether this turns 26.3 into an older version (else an older version into 26.3: the
     /// values read are the older version's).
     fn to_old(&self) -> bool;
+    /// The protocol of the older version (whose formats are written or read).
+    fn protocol(&self) -> i32 {
+        crate::NATIVE_PROTOCOL
+    }
+}
+
+/// The versions whose component formats differ, by protocol: a client older than one has the
+/// formats of before it.
+const V26_1: i32 = 775;
+const V1_21_11: i32 = 774;
+const V1_21_9: i32 = 773;
+const V1_21_6: i32 = 771;
+
+/// A registry value as an id (26.1 on) or, before, either an id (`true`) or a name.
+fn either_id(ids: &dyn Ids, rw: &mut Rw<'_>, registry: &str) -> Result<bool> {
+    if ids.protocol() >= V26_1 {
+        id(ids, rw, registry)?;
+        return Ok(true);
+    }
+    if ids.to_old() {
+        rw.w.put_bool(true);
+        id(ids, rw, registry)?;
+        return Ok(true);
+    }
+    if rw.r.bool()? {
+        id(ids, rw, registry)?;
+        return Ok(true);
+    }
+    let name = rw.r.string(32767)?;
+    match paper_data::synced::id(registry, &name) {
+        Some(id) => {
+            rw.w.put_varint(id as i32);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+/// A holder (26.1 on) or, before, either a holder (`true`) or a name.
+fn either_holder(ids: &dyn Ids, rw: &mut Rw<'_>, registry: &str, inline: impl FnOnce(&mut Rw<'_>) -> Result<()>) -> Result<bool> {
+    if ids.protocol() >= V26_1 {
+        holder(ids, rw, registry, inline)?;
+        return Ok(true);
+    }
+    if ids.to_old() {
+        rw.w.put_bool(true);
+        holder(ids, rw, registry, inline)?;
+        return Ok(true);
+    }
+    if rw.r.bool()? {
+        holder(ids, rw, registry, inline)?;
+        return Ok(true);
+    }
+    let name = rw.r.string(32767)?;
+    let id = paper_data::synced::id(registry, &name).or_else(|| paper_data::registries::id(registry, &name).map(|id| id as i32));
+    match id {
+        Some(id) => {
+            rw.w.put_varint(id as i32 + 1);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+/// A holder set (26.1 on) or, before, a tag's name: a set of ids has no older form.
+fn tag_or_holder_set(ids: &dyn Ids, rw: &mut Rw<'_>, registry: &str) -> Result<bool> {
+    if ids.protocol() >= V26_1 {
+        holder_set(ids, rw, registry)?;
+        return Ok(true);
+    }
+    if ids.to_old() {
+        let n = rw.r.varint()?;
+        if n == 0 {
+            rw.string()?;
+            return Ok(true);
+        }
+        for _ in 0..n - 1 {
+            rw.r.varint()?;
+        }
+        return Ok(false);
+    }
+    rw.w.put_varint(0);
+    rw.string()?;
+    Ok(true)
+}
+
+/// An entity's or block entity's data: 1.21.9 gave the type ahead of the NBT, which held it
+/// as `id` before.
+fn typed_nbt(ids: &dyn Ids, rw: &mut Rw<'_>, registry: &str) -> Result<()> {
+    if ids.protocol() >= V1_21_9 {
+        id(ids, rw, registry)?;
+        return rw.nbt();
+    }
+    if ids.to_old() {
+        let kind = rw.r.varint()?;
+        let name = paper_data::registries::entries(registry).and_then(|e| e.get(kind as usize).copied()).unwrap_or("");
+        let mut tag = match rw.r.nbt()? {
+            Some(paper_nbt::Tag::Compound(c)) => c,
+            _ => paper_nbt::Compound::default(),
+        };
+        tag.insert("id", paper_nbt::Tag::String(name.to_owned()));
+        paper_nbt::write_network_compound(&mut rw.w, &tag);
+        return Ok(());
+    }
+    let mut tag = match rw.r.nbt()? {
+        Some(paper_nbt::Tag::Compound(c)) => c,
+        _ => paper_nbt::Compound::default(),
+    };
+    let kind = tag.remove("id").and_then(|t| t.as_str().map(str::to_owned)).and_then(|name| paper_data::registries::id(registry, &name)).unwrap_or(0);
+    rw.w.put_varint(kind as i32);
+    paper_nbt::write_network_compound(&mut rw.w, &tag);
+    Ok(())
 }
 
 /// The 26.3 name of a data component type, for a 26.3 id.
@@ -305,6 +417,51 @@ pub fn resolvable_profile(rw: &mut Rw<'_>) -> Result<()> {
     optional(rw, |rw| rw.bool().map(drop))
 }
 
+/// A player head's profile: resolvable from 1.21.9 (a whole or partial profile, then skin
+/// overrides), before a plain game profile (optional name, optional id, properties).
+fn profile(ids: &dyn Ids, rw: &mut Rw<'_>) -> Result<()> {
+    if ids.protocol() >= V1_21_9 {
+        return resolvable_profile(rw);
+    }
+    let property = |rw: &mut Rw<'_>| -> Result<()> {
+        rw.string()?;
+        rw.string()?;
+        optional(rw, |rw| rw.string().map(drop))
+    };
+    if !ids.to_old() {
+        // An older client's game profile is a partial one, without overrides.
+        rw.w.put_bool(false);
+        optional(rw, |rw| rw.string().map(drop))?;
+        optional(rw, |rw| rw.uuid().map(drop))?;
+        list(rw, property)?;
+        for _ in 0..4 {
+            rw.w.put_bool(false);
+        }
+        return Ok(());
+    }
+    if rw.r.bool()? {
+        let uuid = rw.r.uuid()?;
+        let name = rw.r.string(32767)?;
+        rw.w.put_bool(true);
+        rw.w.put_string(&name);
+        rw.w.put_bool(true);
+        rw.w.put_uuid(uuid);
+        list(rw, property)?;
+    } else {
+        optional(rw, |rw| rw.string().map(drop))?;
+        optional(rw, |rw| rw.uuid().map(drop))?;
+        list(rw, property)?;
+    }
+    // The overrides have no older form.
+    let mut skip = Rw { r: rw.r.clone(), w: Vec::new() };
+    for _ in 0..3 {
+        optional(&mut skip, |rw| rw.string().map(drop))?;
+    }
+    optional(&mut skip, |rw| rw.bool().map(drop))?;
+    rw.r = skip.r;
+    Ok(())
+}
+
 /// A painting variant holder (entity data of paintings).
 pub fn painting_variant(ids: &dyn Ids, rw: &mut Rw<'_>) -> Result<()> {
     holder(ids, rw, "minecraft:painting_variant", |rw| {
@@ -396,7 +553,7 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
         "minimum_attack_charge" | "potion_duration_scale" => {
             rw.f32()?;
         }
-        "damage_type" => id(ids, rw, "minecraft:damage_type")?,
+        "damage_type" => return either_id(ids, rw, "minecraft:damage_type"),
         "item_model" | "tooltip_style" | "note_block_sound" => {
             rw.string()?;
         }
@@ -407,6 +564,8 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
         })?,
         "can_place_on" | "can_break" => list(rw, |rw| block_predicate(ids, rw))?,
         "attribute_modifiers" => {
+            // 1.21.6 gave each modifier how it is displayed.
+            let display = ids.protocol() >= V1_21_6;
             let n = rw.r.len(1024)?;
             let mut kept = Vec::new();
             let mut count = 0;
@@ -417,8 +576,18 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
                 entry.f64()?;
                 entry.varint()?;
                 entry.varint()?;
-                if entry.varint()? == 2 {
-                    text(&mut entry)?;
+                if display {
+                    if entry.varint()? == 2 {
+                        text(&mut entry)?;
+                    }
+                } else if ids.to_old() {
+                    let mark = entry.w.len();
+                    if entry.varint()? == 2 {
+                        text(&mut entry)?;
+                    }
+                    entry.w.truncate(mark);
+                } else {
+                    entry.w.put_varint(0);
                 }
                 rw.r = entry.r;
                 let mapped = ids.registry("minecraft:attribute", attribute);
@@ -456,7 +625,8 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
         }
         "consumable" => {
             rw.f32()?;
-            rw.varint()?;
+            // 1.21.11 added the spear's animation (11).
+            rw.map_varint(|animation| if animation == 11 && ids.to_old() && ids.protocol() < V1_21_11 { 0 } else { animation })?;
             sound(ids, rw)?;
             rw.bool()?;
             list(rw, |rw| consume_effect(ids, rw))?;
@@ -467,7 +637,7 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
             rw.f32()?;
             optional(rw, |rw| rw.string().map(drop))?;
         }
-        "damage_resistant" => holder_set(ids, rw, "minecraft:damage_type")?,
+        "damage_resistant" => return tag_or_holder_set(ids, rw, "minecraft:damage_type"),
         "tool" => {
             list(rw, |rw| {
                 holder_set(ids, rw, "minecraft:block")?;
@@ -489,8 +659,25 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
             optional(rw, |rw| rw.string().map(drop))?;
             optional(rw, |rw| rw.string().map(drop))?;
             optional(rw, |rw| holder_set(ids, rw, "minecraft:entity_type"))?;
-            rw.bytes(5)?;
-            sound(ids, rw)?;
+            rw.bytes(4)?;
+            // 1.21.6 added whether it can be sheared off, and the sound of it.
+            if ids.protocol() >= V1_21_6 {
+                rw.bytes(1)?;
+                sound(ids, rw)?;
+            } else if ids.to_old() {
+                rw.r.bool()?;
+                let mut skip = Rw { r: rw.r.clone(), w: Vec::new() };
+                sound(ids, &mut skip)?;
+                rw.r = skip.r;
+            } else {
+                rw.w.put_bool(false);
+                let snip = paper_data::registries::id("minecraft:sound_event", "minecraft:item.shears.snip").map_or(0, |id| id as i32 + 1);
+                rw.w.put_varint(snip);
+                if snip == 0 {
+                    rw.w.put_string("minecraft:item.shears.snip");
+                    rw.w.put_bool(false);
+                }
+            }
         }
         "repairable" => holder_set(ids, rw, "minecraft:item")?,
         "blocks_attacks" => {
@@ -503,7 +690,34 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
                 rw.f32().map(drop)
             })?;
             rw.bytes(12)?;
-            optional(rw, |rw| holder_set(ids, rw, "minecraft:damage_type"))?;
+            // What gets past it: a tag's name before 26.1, a holder set from it.
+            if ids.protocol() >= V26_1 || !ids.to_old() {
+                if ids.protocol() >= V26_1 {
+                    optional(rw, |rw| holder_set(ids, rw, "minecraft:damage_type"))?;
+                } else if rw.r.bool()? {
+                    rw.w.put_bool(true);
+                    rw.w.put_varint(0);
+                    rw.string()?;
+                } else {
+                    rw.w.put_bool(false);
+                }
+            } else if rw.r.bool()? {
+                let mut set = Rw { r: rw.r.clone(), w: Vec::new() };
+                let n = set.r.varint()?;
+                if n == 0 {
+                    let tag = set.r.string(32767)?;
+                    rw.w.put_bool(true);
+                    rw.w.put_string(&tag);
+                } else {
+                    for _ in 0..n - 1 {
+                        set.r.varint()?;
+                    }
+                    rw.w.put_bool(false);
+                }
+                rw.r = set.r;
+            } else {
+                rw.w.put_bool(false);
+            }
             optional(rw, |rw| sound(ids, rw))?;
             optional(rw, |rw| sound(ids, rw))?;
         }
@@ -559,12 +773,20 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
         "trim" | "provides_trim_material" => {
             // The inline form of a material changed in 26.3 (a palette id where 26.2 has an
             // asset name and overrides): items with one lose their trim on older clients.
+            // Before 26.1 the material an item provides may also be named.
             let mut inline = false;
-            holder(ids, rw, "minecraft:trim_material", |rw| {
+            let material = |rw: &mut Rw<'_>| -> Result<()> {
                 inline = true;
                 rw.string()?;
                 text(rw)
-            })?;
+            };
+            if name.ends_with("provides_trim_material") {
+                if !either_holder(ids, rw, "minecraft:trim_material", material)? {
+                    return Ok(false);
+                }
+            } else {
+                holder(ids, rw, "minecraft:trim_material", material)?;
+            }
             if name.ends_with("trim") {
                 holder(ids, rw, "minecraft:trim_pattern", |rw| {
                     rw.string()?;
@@ -576,17 +798,11 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
                 return Ok(false);
             }
         }
-        "entity_data" => {
-            id(ids, rw, "minecraft:entity_type")?;
-            rw.nbt()?;
-        }
-        "block_entity_data" => {
-            id(ids, rw, "minecraft:block_entity_type")?;
-            rw.nbt()?;
-        }
+        "entity_data" => typed_nbt(ids, rw, "minecraft:entity_type")?,
+        "block_entity_data" => typed_nbt(ids, rw, "minecraft:block_entity_type")?,
         "instrument" => {
             // 26.3 gave an inline instrument a durability damage before its description.
-            holder(ids, rw, "minecraft:instrument", |rw| {
+            return either_holder(ids, rw, "minecraft:instrument", |rw| {
                 sound(ids, rw)?;
                 rw.f32()?;
                 rw.f32()?;
@@ -596,15 +812,17 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
                     rw.w.put_varint(1);
                 }
                 text(rw)
-            })?;
+            });
         }
-        "jukebox_playable" => holder(ids, rw, "minecraft:jukebox_song", |rw| {
-            sound(ids, rw)?;
-            text(rw)?;
-            rw.f32()?;
-            rw.varint().map(drop)
-        })?,
-        "provides_banner_patterns" => holder_set(ids, rw, "minecraft:banner_pattern")?,
+        "jukebox_playable" => {
+            return either_holder(ids, rw, "minecraft:jukebox_song", |rw| {
+                sound(ids, rw)?;
+                text(rw)?;
+                rw.f32()?;
+                rw.varint().map(drop)
+            })
+        }
+        "provides_banner_patterns" => return tag_or_holder_set(ids, rw, "minecraft:banner_pattern"),
         "lodestone_tracker" => {
             optional(rw, |rw| {
                 rw.string()?;
@@ -617,7 +835,7 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
             rw.varint()?;
             list(rw, firework_explosion)?;
         }
-        "profile" => resolvable_profile(rw)?,
+        "profile" => profile(ids, rw)?,
         "banner_patterns" => list(rw, |rw| {
             holder(ids, rw, "minecraft:banner_pattern", |rw| {
                 rw.string()?;
@@ -632,8 +850,7 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
             rw.string().map(drop)
         })?,
         "bees" => list(rw, |rw| {
-            id(ids, rw, "minecraft:entity_type")?;
-            rw.nbt()?;
+            typed_nbt(ids, rw, "minecraft:entity_type")?;
             rw.varint()?;
             rw.varint().map(drop)
         })?,
@@ -654,9 +871,9 @@ fn component(ids: &dyn Ids, rw: &mut Rw<'_>, ty: i32) -> Result<bool> {
         "pig/sound_variant" => id(ids, rw, "minecraft:pig_sound_variant")?,
         "cow/variant" => id(ids, rw, "minecraft:cow_variant")?,
         "cow/sound_variant" => id(ids, rw, "minecraft:cow_sound_variant")?,
-        "chicken/variant" => id(ids, rw, "minecraft:chicken_variant")?,
+        "chicken/variant" => return either_id(ids, rw, "minecraft:chicken_variant"),
         "chicken/sound_variant" => id(ids, rw, "minecraft:chicken_sound_variant")?,
-        "zombie_nautilus/variant" => id(ids, rw, "minecraft:zombie_nautilus_variant")?,
+        "zombie_nautilus/variant" => return either_id(ids, rw, "minecraft:zombie_nautilus_variant"),
         "frog/variant" => id(ids, rw, "minecraft:frog_variant")?,
         "cat/variant" => id(ids, rw, "minecraft:cat_variant")?,
         "cat/sound_variant" => id(ids, rw, "minecraft:cat_sound_variant")?,

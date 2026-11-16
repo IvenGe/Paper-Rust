@@ -26,6 +26,9 @@ impl Ids for ToOld<'_> {
     fn to_old(&self) -> bool {
         true
     }
+    fn protocol(&self) -> i32 {
+        self.0.version.protocol
+    }
 }
 
 /// The id conversions of an old to 26.3 translation (what a client sends).
@@ -46,6 +49,9 @@ impl Ids for ToNew<'_> {
     }
     fn to_old(&self) -> bool {
         false
+    }
+    fn protocol(&self) -> i32 {
+        self.0.version.protocol
     }
 }
 

@@ -339,7 +339,7 @@ fn the_server_list_shows_older_versions_as_compatible() {
     let server = start_server(|_| {});
     let status = OldClient::status(server.port(), 775);
     assert_eq!(status["version"]["protocol"], 775);
-    assert!(status["version"]["name"].as_str().unwrap().contains("26.1"), "{}", status["version"]["name"]);
+    assert!(status["version"]["name"].as_str().unwrap().contains(&paper_compat::version_range()), "{}", status["version"]["name"]);
     // A version that cannot join (1.12.2) sees the server's own.
     let status = OldClient::status(server.port(), 340);
     assert_eq!(status["version"]["protocol"], paper_data::PROTOCOL_VERSION);

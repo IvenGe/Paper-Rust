@@ -1,7 +1,8 @@
 # Older client versions
 
 What the server needs to translate its packets for clients of older versions
-(`crates/paper-compat`): one file per version, made by `tools/datagen/compat.py`.
+(`crates/paper-compat`): one file per version (26.2, 26.1, 1.21.11, 1.21.9, 1.21.7, 1.21.6,
+1.21.5), made by `tools/datagen/compat.py`.
 
 Each file holds:
 
@@ -59,7 +60,8 @@ python3 tools/datagen/compat.py <ViaVersion checkout> <ViaBackwards checkout> \
     <mcmeta versions dir> <minecraft-data>/data/pc/common/protocolVersions.json .
 ```
 
-`<mcmeta versions dir>/<version>/` holds that version's summary, fetched from
+`<mcmeta versions dir>/<version>/` holds a version's summary (for a protocol shared by several
+releases, the last: 1.21.10 for 1.21.9's, 1.21.8 for 1.21.7's), fetched from
 `https://raw.githubusercontent.com/misode/mcmeta/<version>-summary/` (`version.json`,
 `registries/data.min.json`, `blocks/data.min.json` and `data/<registry>/data.min.json` for each
 data-driven registry the server sends).

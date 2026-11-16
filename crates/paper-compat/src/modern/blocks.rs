@@ -1,8 +1,8 @@
 //! Chunks and blocks: block states, biomes and block entity types by their old ids, light
-//! masks as long arrays (26.3 sends them as byte arrays), and the block entities 26.1 draws
-//! beds with.
+//! masks as long arrays (26.3 sends them as byte arrays), sections without the fluid count
+//! before 26.1, and the block entities 26.1 and older draw beds with.
 
-use super::{Modern, V26_2};
+use super::{Modern, V26_1, V26_2};
 use crate::io::{Result, Rw};
 use crate::Outcome;
 use paper_nbt::{Compound, Tag};
@@ -42,6 +42,7 @@ impl Modern {
         if let Some(info) = name.and_then(paper_data::synced::dimension_type) {
             self.min_y = info.min_y;
             self.sections = (info.height / 16) as usize;
+            self.coordinate_scale = info.coordinate_scale;
         }
     }
 
@@ -111,7 +112,10 @@ pub(super) fn chunk(m: &mut Modern, old: i32, body: &[u8]) -> Result<Vec<u8>> {
         blocks.map(|s| m.state(s));
         biomes.map(|b| m.biome(b));
         sections.put_i16(non_air);
-        sections.put_i16(fluids);
+        // 26.1 added the count of fluid blocks.
+        if m.protocol() >= V26_1 {
+            sections.put_i16(fluids);
+        }
         write_palette(&mut sections, &blocks, old_block_bits);
         write_palette(&mut sections, &biomes, old_biome_bits);
         index += 1;

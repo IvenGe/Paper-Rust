@@ -1,6 +1,8 @@
-//! Clients of the versions just before 26.3 (26.2, 26.1): the same protocol with ids that
-//! moved, packets that were added, split or reordered, and new fields. What changed between
-//! the versions follows ViaBackwards' `Protocol26_3To26_2` and `Protocol26_2To26_1`.
+//! Clients of the versions before 26.3 back to 1.21.5: the same protocol with ids that moved,
+//! packets that were added, split or reordered, and new fields. One pass turns a 26.3 packet
+//! into the client's version, each change gated on the version that brought it. What changed
+//! follows ViaBackwards' protocol steps, from `Protocol26_3To26_2` down to
+//! `Protocol1_21_6To1_21_5`.
 
 mod blocks;
 mod entities;
@@ -16,8 +18,12 @@ use paper_protocol::codec::{Reader, WriteExt};
 use paper_protocol::packets::State;
 use std::collections::HashMap;
 
-/// 26.2's protocol: 26.1 lacks what 26.2 added.
+/// The protocols of the versions: a client older than one lacks what it brought.
 pub(crate) const V26_2: i32 = 776;
+pub(crate) const V26_1: i32 = 775;
+pub(crate) const V1_21_11: i32 = 774;
+pub(crate) const V1_21_9: i32 = 773;
+pub(crate) const V1_21_6: i32 = 771;
 
 /// One connection of a 26.2 or 26.1 client.
 pub struct Modern {
@@ -36,11 +42,37 @@ pub struct Modern {
     teleport: Option<i32>,
     /// The open brewing stand's window: 26.3 sends two more of its properties.
     brewing_stand: Option<i32>,
+    /// The world's age as the client counts it (from the time packets and its ticks): before
+    /// 1.21.11, anger is sent as ticks left rather than an end time.
+    game_time: i64,
+    /// The time of day and whether it runs, last sent (before 26.1 the client needs one
+    /// even where 26.3 has no clock).
+    day_time: (i64, bool),
+    /// Where the player looks (before 1.21.9, rotations are absolute).
+    rotation: (f32, f32),
+    pub(crate) game_mode: i32,
+    /// The coordinate scale of the player's dimension (before 1.21.9, the world border's
+    /// centre is scaled by it).
+    coordinate_scale: f64,
 }
 
 impl Modern {
     pub fn new(version: &'static Version, data: &'static VersionData) -> Modern {
-        Modern { version, data, state: State::Login, entity_types: HashMap::new(), min_y: -64, sections: 24, teleport: None, brewing_stand: None }
+        Modern {
+            version,
+            data,
+            state: State::Login,
+            entity_types: HashMap::new(),
+            min_y: -64,
+            sections: 24,
+            teleport: None,
+            brewing_stand: None,
+            game_time: 0,
+            day_time: (6000, true),
+            rotation: (0.0, 0.0),
+            game_mode: 0,
+            coordinate_scale: 1.0,
+        }
     }
 
     fn protocol(&self) -> i32 {
@@ -106,6 +138,13 @@ impl Modern {
 
     fn configuration_clientbound(&mut self, id: i32, body: &[u8], out: &mut Outcome) -> Result<()> {
         let old = self.old_id(id);
+        if id == cfg::clientbound::CODE_OF_CONDUCT && old < 0 {
+            // Before 1.21.9 there is no code of conduct to agree to: agree for the client.
+            let mut accept = Vec::new();
+            accept.put_varint(cfg::serverbound::ACCEPT_CODE_OF_CONDUCT);
+            out.to_server.push(accept);
+            return Ok(());
+        }
         if old < 0 {
             // `post_effects` and other packets the old version does not have.
             return Ok(());
@@ -201,7 +240,7 @@ impl Modern {
             entry.put_string(&registry);
             entry.put_varint(tags.len() as i32);
             for (name, ids) in tags {
-                let name = if registry == "minecraft:block" && name == "minecraft:convertible_to_mud" { "minecraft:convertable_to_mud".to_owned() } else { name };
+                let name = if registry == "minecraft:block" { old_block_tag(self.protocol(), &name).map_or(name, str::to_owned) } else { name };
                 entry.put_string(&name);
                 let ids: Vec<i32> = ids.into_iter().map(|id| self.registry_id(&registry, id)).filter(|id| *id >= 0).collect();
                 entry.put_varint(ids.len() as i32);
@@ -255,8 +294,37 @@ impl Modern {
             _ if old < 0 => return Ok(()),
             _ => {}
         }
+        let p = self.protocol();
         let payload = match id {
             cb::LOGIN | cb::RESPAWN => entities::spawn(self, id == cb::LOGIN, old, body)?,
+            cb::SET_TIME => misc::set_time(self, old, body)?,
+            cb::INITIALIZE_BORDER | cb::SET_BORDER_LERP_SIZE | cb::SET_BORDER_CENTER if p < V1_21_11 => misc::border(self, id, old, body)?,
+            cb::UPDATE_MOB_EFFECT | cb::REMOVE_MOB_EFFECT => {
+                let mut rw = Rw::new(body, old);
+                rw.varint()?;
+                let effect = rw.r.varint()?;
+                let mapped = self.registry_id("minecraft:mob_effect", effect);
+                if mapped < 0 {
+                    return Ok(());
+                }
+                rw.w.put_varint(mapped);
+                rw.finish()
+            }
+            cb::SET_ENTITY_MOTION if p < V1_21_9 => entities::entity_motion(old, body)?,
+            cb::PLAYER_POSITION => misc::teleport(self, old, body)?,
+            cb::PLAYER_ROTATION => misc::rotation(self, old, body)?,
+            cb::SET_DEFAULT_SPAWN_POSITION if p < V1_21_9 => {
+                let mut r = Reader::new(body);
+                r.string(32767)?;
+                let pos = r.position()?;
+                let yaw = r.f32()?;
+                let mut w = Vec::new();
+                w.put_varint(old);
+                w.put_position(pos);
+                w.put_f32(yaw);
+                w
+            }
+            cb::STOP_SOUND if p < V1_21_6 => misc::stop_sound(old, body)?,
             cb::LEVEL_CHUNK_WITH_LIGHT => blocks::chunk(self, old, body)?,
             cb::LIGHT_UPDATE => blocks::light_update(old, body)?,
             cb::BLOCK_UPDATE => blocks::block_update(self, old, body, out)?,
@@ -265,10 +333,7 @@ impl Modern {
             cb::BLOCK_ENTITY_DATA => blocks::block_entity_data(self, old, body)?,
             cb::LEVEL_EVENT => blocks::level_event(self, old, body)?,
             cb::OPEN_SIGN_EDITOR => blocks::open_sign_editor(old, body)?,
-            cb::ADD_ENTITY => match entities::add_entity(self, old, body)? {
-                Some(payload) => payload,
-                None => return Ok(()),
-            },
+            cb::ADD_ENTITY => return entities::add_entity(self, old, body, out),
             cb::REMOVE_ENTITIES => entities::remove_entities(self, old, body)?,
             cb::SET_ENTITY_DATA => match entities::entity_data(self, old, body)? {
                 Some(payload) => payload,
@@ -314,9 +379,35 @@ impl Modern {
         use play::serverbound as sb;
         let packets = self.data.packets(State::Play);
         let name = packets.serverbound_names.get(old as usize).map(String::as_str).unwrap_or("");
+        let p = self.protocol();
         match name {
             "minecraft:swing" => return entities::swing_serverbound(self, body, out),
             "minecraft:spectate_entity" => return entities::spectate(self, body, out),
+            "minecraft:interact" if p < V26_1 => return entities::interact_serverbound(self, body, out),
+            "minecraft:player_command" if p < V1_21_6 => {
+                // 1.21.5 also sneaks with this (0, 1): 26.3 sneaks by the input packet.
+                let mut r = Reader::new(body);
+                let entity = r.varint()?;
+                let action = r.varint()?;
+                if action < 2 {
+                    return Ok(());
+                }
+                let mut w = Vec::new();
+                w.put_varint(sb::PLAYER_COMMAND);
+                w.put_varint(entity);
+                w.put_varint(action - 2);
+                w.extend_from_slice(r.rest());
+                out.to_server.push(w);
+                return Ok(());
+            }
+            "minecraft:client_tick_end" => self.game_time += 1,
+            "minecraft:move_player_pos_rot" | "minecraft:move_player_rot" => {
+                let mut r = Reader::new(body);
+                if name == "minecraft:move_player_pos_rot" {
+                    r.take(24)?;
+                }
+                self.rotation = (r.f32()?, r.f32()?);
+            }
             _ => {}
         }
         let id = self.new_serverbound_id(old);
@@ -413,6 +504,25 @@ impl Translator for Modern {
             }
         }
     }
+}
+
+/// A block tag's name in an older version, where it had another.
+fn old_block_tag(protocol: i32, name: &str) -> Option<&'static str> {
+    let short = name.strip_prefix("minecraft:")?;
+    Some(match short {
+        "convertible_to_mud" => "minecraft:convertable_to_mud",
+        // Renamed in 26.1.
+        "supports_dry_vegetation" if protocol < V26_1 => "minecraft:dry_vegetation_may_place_on",
+        "supports_bamboo" if protocol < V26_1 => "minecraft:bamboo_plantable_on",
+        "supports_small_dripleaf" if protocol < V26_1 => "minecraft:small_dripleaf_placeable",
+        "supports_big_dripleaf" if protocol < V26_1 => "minecraft:big_dripleaf_placeable",
+        "overrides_mushroom_light_requirement" if protocol < V26_1 => "minecraft:mushroom_grow_block",
+        "support_override_snow_layer" if protocol < V26_1 => "minecraft:snow_layer_can_survive_on",
+        "cannot_support_snow_layer" if protocol < V26_1 => "minecraft:snow_layer_cannot_survive_on",
+        // Renamed in 1.21.6.
+        "triggers_ambient_desert_dry_vegetation_block_sounds" if protocol < V1_21_6 => "minecraft:plays_ambient_desert_block_sounds",
+        _ => return None,
+    })
 }
 
 /// The key of a 26.3 id registry in the mapping files.

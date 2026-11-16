@@ -1,6 +1,6 @@
 //! Entities: their types, data and movement as the older versions encode them.
 
-use super::{items, misc, Modern, V26_2};
+use super::{items, misc, Modern, V1_21_11, V1_21_6, V1_21_9, V26_1, V26_2};
 use crate::io::{self, Result, Rw};
 use crate::Outcome;
 use anyhow::bail;
@@ -50,30 +50,139 @@ fn entity_name(kind: i32) -> &'static str {
     paper_data::registries::entries("minecraft:entity_type").and_then(|e| e.get(kind as usize).copied()).unwrap_or("")
 }
 
+/// The mobs that grow up (`AgeableMob`), which 26.1 gave an age lock at 17.
+const AGEABLE: &[&str] = &[
+    "villager", "wandering_trader", "axolotl", "chicken", "panda", "pig", "polar_bear", "rabbit", "sheep", "bee", "turtle", "fox", "frog", "goat", "hoglin", "strider", "sniffer",
+    "armadillo", "happy_ghast", "ocelot", "cow", "mooshroom", "cat", "wolf", "parrot", "nautilus", "zombie_nautilus", "horse", "skeleton_horse", "zombie_horse", "camel", "camel_husk",
+    "donkey", "mule", "llama", "trader_llama", "dolphin", "squid", "glow_squid",
+];
+
+/// Removes the value at `removed` (if any), moving those after it down by one.
+fn remove_index(index: u8, removed: Option<u8>) -> Option<u8> {
+    match removed {
+        Some(r) if index == r => None,
+        Some(r) if index > r => Some(index - 1),
+        _ => Some(index),
+    }
+}
+
+/// How a value changes on its way to an older version, besides its serializer's id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Change {
+    Keep,
+    /// The main arm: its own serializer from 1.21.11, a byte before.
+    ArmToByte,
+    /// Wolves' and bees' anger: the game time it ends from 1.21.11, the ticks left before.
+    AngerToTicks,
+    /// A shoulder parrot: its variant from 1.21.9, the parrot as NBT before.
+    ShoulderToNbt,
+}
+
 impl Modern {
     /// Which entity data of an entity of 26.3 type `kind` the old version has, and at which
-    /// index (`None`: drop it).
+    /// index (`None`: drop it). Each version's changes apply in turn, newest first, as the
+    /// indexes they name are those of the version before.
     fn data_index(&self, kind: i32, index: u8) -> Option<u8> {
         let name = entity_name(kind);
+        let short = name.strip_prefix("minecraft:").unwrap_or(name);
+        let p = self.protocol();
         // Entities the old version does not have are shown as another type: keep only what
         // every entity has.
-        let replaced = match name {
-            "minecraft:cushion" => true,
-            "minecraft:sulfur_cube" => self.protocol() < V26_2,
+        let replaced = match short {
+            "cushion" => true,
+            "sulfur_cube" => p < V26_2,
             _ => false,
         };
         if replaced && index > 7 {
             return None;
         }
-        if self.protocol() < V26_2 && matches!(name, "minecraft:slime" | "minecraft:magma_cube" | "minecraft:sulfur_cube") {
+        let mut index = index;
+        if p < V26_2 && matches!(short, "slime" | "magma_cube" | "sulfur_cube") {
             // 26.2 gave cube mobs a baby flag (16) and an age lock (17).
-            return match index {
-                16 | 17 => None,
-                i if i > 17 => Some(i - 2),
-                i => Some(i),
+            index = match index {
+                16 | 17 => return None,
+                i if i > 17 => i - 2,
+                i => i,
             };
         }
+        if p < V26_1 {
+            // 26.1: villagers' "data finalized" flags, the animals' sound variants, and age
+            // locks (the type's own first: they come after the age lock).
+            let own = match short {
+                "zombie_villager" => Some(21),
+                "villager" => Some(20),
+                "cat" => Some(24),
+                "chicken" | "cow" => Some(19),
+                "pig" => Some(20),
+                "tadpole" => Some(17),
+                _ => None,
+            };
+            index = remove_index(index, own)?;
+            if AGEABLE.contains(&short) {
+                index = remove_index(index, Some(17))?;
+            }
+        }
+        // 1.21.11's nautiluses are squids before: no taming, dashing or variant.
+        if p < V1_21_11 && matches!(short, "nautilus" | "zombie_nautilus") && index >= 17 {
+            return None;
+        }
+        if p < V1_21_9 {
+            // 1.21.9's copper golems are frogs before; players' arm, skin, absorption and
+            // score moved.
+            if short == "copper_golem" && matches!(index, 16 | 17) {
+                return None;
+            }
+            if short == "player" {
+                index = match index {
+                    15 => 18,
+                    16 => 17,
+                    17 => 15,
+                    18 => 16,
+                    i => i,
+                };
+            }
+        }
+        if p < V1_21_6 {
+            // 1.21.6 gave hanging entities their direction (8); happy ghasts are ghasts before.
+            if matches!(short, "item_frame" | "glow_item_frame" | "painting" | "leash_knot") {
+                index = remove_index(index, Some(8))?;
+            }
+            if short == "happy_ghast" && (16..=18).contains(&index) {
+                return None;
+            }
+        }
         Some(index)
+    }
+
+    /// The old id of a 26.3 entity data serializer (`None`: the old version has none).
+    fn serializer(&self, ty: i32) -> Option<i32> {
+        // From ViaVersion's `EntityDataTypes` of each version, by name.
+        const TO_1_21_11: [i8; 44] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, -1, 22, -1, 23, 24, 25, 26, -1, 27, -1, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, -1];
+        const TO_1_21_9: [i8; 44] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, -1, 22, -1, 23, 24, 25, 26, -1, 27, -1, -1, 28, 29, 30, 31, 32, 33, 34, 35, 36, -1, -1];
+        const TO_1_21_5: [i8; 44] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, -1, 23, -1, 24, 25, 26, 27, -1, 28, -1, -1, 29, 30, 31, 32, -1, -1, 33, 34, -1, -1, -1];
+        let p = self.protocol();
+        let table = if p >= V26_1 {
+            return (ty != serializer::DYE_COLOR).then_some(ty);
+        } else if p >= V1_21_11 {
+            &TO_1_21_11
+        } else if p >= V1_21_9 {
+            &TO_1_21_9
+        } else {
+            &TO_1_21_5
+        };
+        table.get(ty as usize).map(|&t| t as i32).filter(|t| *t >= 0)
+    }
+
+    /// How a value of an entity of 26.3 type `kind` changes besides its serializer.
+    fn change(&self, kind: Option<i32>, ty: i32) -> Change {
+        let p = self.protocol();
+        let short = kind.map(entity_name).map_or("", |n| n.strip_prefix("minecraft:").unwrap_or(n));
+        match ty {
+            serializer::HUMANOID_ARM if p < V1_21_9 => Change::ArmToByte,
+            serializer::LONG if p < V1_21_11 && matches!(short, "wolf" | "bee") => Change::AngerToTicks,
+            serializer::OPTIONAL_UNSIGNED_INT if p < V1_21_9 && short == "player" => Change::ShoulderToNbt,
+            _ => Change::Keep,
+        }
     }
 }
 
@@ -82,7 +191,11 @@ impl Modern {
 pub(super) fn spawn(m: &mut Modern, login: bool, old: i32, body: &[u8]) -> Result<Vec<u8>> {
     let mut rw = Rw::new(body, old);
     if login {
-        rw.i32()?;
+        // The player's own entity: its data is a player's too.
+        let player = rw.i32()?;
+        if let Some(kind) = paper_data::registries::id("minecraft:entity_type", "minecraft:player") {
+            m.entity_types.insert(player, kind as i32);
+        }
         rw.bool()?;
         rw.copy(|r| r.list(64, |r| r.string(256)))?;
         rw.varint()?;
@@ -98,6 +211,7 @@ pub(super) fn spawn(m: &mut Modern, login: bool, old: i32, body: &[u8]) -> Resul
     rw.string()?;
     rw.i64()?;
     let game_mode = rw.r.varint()?;
+    m.game_mode = game_mode;
     rw.w.put_i8(game_mode as i8);
     let previous = rw.r.varint()?;
     rw.w.put_i8(if previous == 0 { -1 } else { (previous - 1) as i8 });
@@ -115,21 +229,29 @@ pub(super) fn spawn(m: &mut Modern, login: bool, old: i32, body: &[u8]) -> Resul
     Ok(rw.finish())
 }
 
-pub(super) fn add_entity(m: &mut Modern, old: i32, body: &[u8]) -> Result<Option<Vec<u8>>> {
+pub(super) fn add_entity(m: &mut Modern, old: i32, body: &[u8], out: &mut Outcome) -> Result<()> {
     let mut rw = Rw::new(body, old);
     let id = rw.varint()?;
     rw.uuid()?;
     let kind = rw.r.varint()?;
     let old_kind = m.registry_id("minecraft:entity_type", kind);
     if old_kind < 0 {
-        return Ok(None);
+        return Ok(());
+    }
+    // Mannequins are players before 1.21.9, which then need a tab list entry of their own.
+    if m.protocol() < V1_21_9 && entity_name(kind) == "minecraft:mannequin" {
+        return Ok(());
     }
     m.entity_types.insert(id, kind);
     rw.w.put_varint(old_kind);
     rw.f64()?;
     rw.f64()?;
     rw.f64()?;
-    rw.copy(|r| r.lp_vec3())?;
+    // Before 1.21.9 the velocity comes last, as shorts.
+    let velocity = if m.protocol() < V1_21_9 { Some(rw.r.lp_vec3()?) } else {
+        rw.copy(|r| r.lp_vec3())?;
+        None
+    };
     rw.u8()?;
     rw.u8()?;
     rw.u8()?;
@@ -140,7 +262,48 @@ pub(super) fn add_entity(m: &mut Modern, old: i32, body: &[u8]) -> Result<Option
         _ => data,
     };
     rw.w.put_varint(data);
-    Ok(Some(rw.finish()))
+    if let Some((vx, vy, vz)) = velocity {
+        let shorts = [legacy_velocity(vx), legacy_velocity(vy), legacy_velocity(vz)];
+        for v in shorts {
+            rw.w.put_i16(v);
+        }
+        // 1.21.5 sets only living things moving from their spawn: others get it apart.
+        if m.protocol() < V1_21_6 && shorts != [0, 0, 0] && !is_living(kind) {
+            out.to_client.push(rw.finish());
+            let mut motion = Vec::new();
+            motion.put_varint(m.old_id(play::clientbound::SET_ENTITY_MOTION));
+            motion.put_varint(id);
+            for v in shorts {
+                motion.put_i16(v);
+            }
+            out.to_client.push(motion);
+            return Ok(());
+        }
+    }
+    out.to_client.push(rw.finish());
+    Ok(())
+}
+
+/// A velocity (blocks per tick) as the shorts of before 1.21.9 (8000ths, at most 3.9).
+fn legacy_velocity(v: f64) -> i16 {
+    (v.clamp(-3.9, 3.9) * 8000.0) as i16
+}
+
+/// Whether entities of a 26.3 type are living (mobs, players, armor stands).
+fn is_living(kind: i32) -> bool {
+    let name = entity_name(kind);
+    matches!(name, "minecraft:player" | "minecraft:armor_stand" | "minecraft:mannequin") || paper_data::entity_types::by_name(name).is_some_and(|t| t.mob)
+}
+
+/// 26.3: an entity's velocity as a low-precision vector; before 1.21.9: three shorts.
+pub(super) fn entity_motion(old: i32, body: &[u8]) -> Result<Vec<u8>> {
+    let mut rw = Rw::new(body, old);
+    rw.varint()?;
+    let (x, y, z) = rw.r.lp_vec3()?;
+    for v in [x, y, z] {
+        rw.w.put_i16(legacy_velocity(v));
+    }
+    Ok(rw.finish())
 }
 
 impl Modern {
@@ -172,18 +335,45 @@ pub(super) fn entity_data(m: &mut Modern, old: i32, body: &[u8]) -> Result<Optio
         let ty = rw.r.varint()?;
         let keep = match kind {
             Some(kind) => m.data_index(kind, index),
-            // The player's own entity, or one the client was not told about.
+            // One the client was not told about.
             None => Some(index),
         };
-        let keep = keep.filter(|_| ty != serializer::DYE_COLOR);
-        match keep {
-            Some(index) => {
+        let change = m.change(kind, ty);
+        // What the value becomes, by its 26.3 serializer.
+        let as_ty = match change {
+            Change::Keep => ty,
+            Change::ArmToByte => serializer::BYTE,
+            Change::AngerToTicks => serializer::INT,
+            Change::ShoulderToNbt => serializer::OPTIONAL_UNSIGNED_INT,
+        };
+        let old_ty = match change {
+            // Compound tags are 16 in the versions that have shoulder parrots as NBT.
+            Change::ShoulderToNbt => Some(16),
+            _ => m.serializer(as_ty),
+        };
+        match (keep, old_ty) {
+            (Some(index), Some(old_ty)) => {
                 rw.w.put_u8(index);
-                rw.w.put_varint(ty);
-                value(m, &mut rw, ty)?;
+                rw.w.put_varint(old_ty);
+                match change {
+                    Change::Keep => value(m, &mut rw, ty)?,
+                    Change::ArmToByte => rw.w.put_u8(rw.r.varint()? as u8),
+                    Change::AngerToTicks => {
+                        let end = rw.r.varlong()?;
+                        rw.w.put_varint((end - m.game_time).clamp(0, i32::MAX as i64) as i32);
+                    }
+                    Change::ShoulderToNbt => {
+                        let mut parrot = paper_nbt::Compound::default();
+                        if rw.r.bool()? {
+                            parrot.insert("id", paper_nbt::Tag::String("minecraft:parrot".into()));
+                            parrot.insert("Variant", paper_nbt::Tag::Int(rw.r.varint()?));
+                        }
+                        paper_nbt::write_network_compound(&mut rw.w, &parrot);
+                    }
+                }
                 entries += 1;
             }
-            None => {
+            _ => {
                 // Read past the value without writing it.
                 let mark = rw.w.len();
                 value(m, &mut rw, ty)?;
@@ -382,6 +572,36 @@ pub(super) fn swing_serverbound(_m: &mut Modern, body: &[u8], out: &mut Outcome)
         w.put_varint(play::serverbound::PUNCH);
         out.to_server.push(w);
     }
+    Ok(())
+}
+
+/// Before 26.1 one `interact` packet attacks (1), interacts (0) or interacts at a point (2);
+/// 26.3 has `attack` (or `spectator_action` for a spectator) and `interact` with the point.
+/// Clients send the interaction at a point first and the plain one after it: the latter is
+/// left out.
+pub(super) fn interact_serverbound(m: &mut Modern, body: &[u8], out: &mut Outcome) -> Result<()> {
+    use paper_protocol::packets::play as packets;
+    use paper_protocol::types::LpVec3;
+    let mut r = Reader::new(body);
+    let entity = r.varint()?;
+    let payload = match r.varint()? {
+        0 => return Ok(()),
+        1 if m.game_mode == 3 => {
+            let mut w = Vec::new();
+            w.put_varint(play::serverbound::SPECTATOR_ACTION);
+            w.put_varint(entity + 1);
+            w
+        }
+        1 => paper_protocol::packets::encode_packet(&packets::Attack { entity_id: paper_protocol::codec::VarInt(entity) }),
+        2 => {
+            let target = LpVec3(r.f32()? as f64, r.f32()? as f64, r.f32()? as f64);
+            let hand = r.varint()?;
+            let sneaking = r.bool()?;
+            paper_protocol::packets::encode_packet(&packets::Interact { entity_id: paper_protocol::codec::VarInt(entity), hand: paper_protocol::codec::VarInt(hand), target, sneaking })
+        }
+        other => bail!("interaction type {other}"),
+    };
+    out.to_server.push(payload);
     Ok(())
 }
 

@@ -37,10 +37,32 @@ import sys
 from pathlib import Path
 
 # Newest first: each version's file maps 26.3 straight to it, through every step above it.
+# `summary`: the mcmeta summary of the version (the last release with its protocol); `play`
+# and `config`: ViaVersion's packet enums, by direction.
+PLAY_26_1 = {"clientbound": "v1_21_11to26_1/packet/ClientboundPackets26_1.java", "serverbound": "v1_21_11to26_1/packet/ServerboundPackets26_1.java"}
+CONFIG_1_21_9 = {"clientbound": "v1_21_7to1_21_9/packet/ClientboundConfigurationPackets1_21_9.java", "serverbound": "v1_21_7to1_21_9/packet/ServerboundConfigurationPackets1_21_9.java"}
+CONFIG_1_21_6 = {"clientbound": "v1_21_5to1_21_6/packet/ClientboundConfigurationPackets1_21_6.java", "serverbound": "v1_21_5to1_21_6/packet/ServerboundConfigurationPackets1_21_6.java"}
+SERVERBOUND_1_21_6 = "v1_21_5to1_21_6/packet/ServerboundPackets1_21_6.java"
 VERSIONS = [
-    {"name": "26.2", "protocol": 776, "step": "26.3to26.2", "play": "v1_21_11to26_1/packet/{dir}Packets26_1.java", "config": "v1_21_7to1_21_9/packet/{dir}ConfigurationPackets1_21_9.java"},
-    {"name": "26.1", "protocol": 775, "step": "26.2to26.1", "play": "v1_21_11to26_1/packet/{dir}Packets26_1.java", "config": "v1_21_7to1_21_9/packet/{dir}ConfigurationPackets1_21_9.java"},
+    {"name": "26.2", "protocol": 776, "step": "26.3to26.2", "summary": "26.2", "play": PLAY_26_1, "config": CONFIG_1_21_9},
+    {"name": "26.1", "protocol": 775, "step": "26.2to26.1", "summary": "26.1", "play": PLAY_26_1, "config": CONFIG_1_21_9},
+    {"name": "1.21.11", "protocol": 774, "step": "26.1to1.21.11", "summary": "1.21.11",
+     "play": {"clientbound": "v1_21_9to1_21_11/packet/ClientboundPackets1_21_11.java", "serverbound": SERVERBOUND_1_21_6}, "config": CONFIG_1_21_9},
+    {"name": "1.21.9", "protocol": 773, "step": "1.21.11to1.21.9", "summary": "1.21.10",
+     "play": {"clientbound": "v1_21_7to1_21_9/packet/ClientboundPackets1_21_9.java", "serverbound": SERVERBOUND_1_21_6}, "config": CONFIG_1_21_9},
+    {"name": "1.21.7", "protocol": 772, "step": "1.21.9to1.21.7", "summary": "1.21.8",
+     "play": {"clientbound": "v1_21_5to1_21_6/packet/ClientboundPackets1_21_6.java", "serverbound": SERVERBOUND_1_21_6}, "config": CONFIG_1_21_6},
+    {"name": "1.21.6", "protocol": 771, "step": "1.21.7to1.21.6", "summary": "1.21.6",
+     "play": {"clientbound": "v1_21_5to1_21_6/packet/ClientboundPackets1_21_6.java", "serverbound": SERVERBOUND_1_21_6}, "config": CONFIG_1_21_6},
+    {"name": "1.21.5", "protocol": 770, "step": "1.21.6to1.21.5", "summary": "1.21.5",
+     "play": {"clientbound": "v1_21_4to1_21_5/packet/ClientboundPackets1_21_5.java", "serverbound": "v1_21_4to1_21_5/packet/ServerboundPackets1_21_5.java"},
+     "config": {"clientbound": "v1_20_5to1_21/packet/ClientboundConfigurationPackets1_21.java", "serverbound": "v1_20_3to1_20_5/packet/ServerboundConfigurationPackets1_20_5.java"}},
 ]
+
+# Packets an older version names differently, by its name: 26.3's.
+RENAMED_PACKETS = {
+    "minecraft:horse_screen_open": "minecraft:mount_screen_open",
+}
 
 # Id registries of the mapping files, by the name of the registry in 26.3.
 MAPPING_KEYS = {
@@ -265,11 +287,11 @@ def main():
         for state in ("handshake", "status", "login"):
             packets[state] = ours_packets[state]
         for state, key in (("configuration", "config"), ("play", "play")):
-            packets[state] = {d: [aliases.get(n, n) for n in enum_names(via_protocols / version[key].format(dir=d.capitalize()))] for d in ("clientbound", "serverbound")}
+            packets[state] = {d: [RENAMED_PACKETS.get(n, aliases.get(n, n)) for n in enum_names(via_protocols / version[key][d])] for d in ("clientbound", "serverbound")}
 
-        summary = mcmeta / version["name"]
+        summary = mcmeta / version["summary"]
         if not summary.is_dir():
-            sys.exit(f"no mcmeta summary for {version['name']} in {mcmeta}")
+            sys.exit(f"no mcmeta summary for {version['summary']} in {mcmeta}")
         data_registries = {}
         for registry in synced["order"]:
             entries = synced["entries"][registry]

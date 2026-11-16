@@ -297,6 +297,17 @@ the difference:
   place straight to the main thread. The reader translates what the client sends, and gives the
   translator's answers to the client to the writer.
 
+The modern translator serves 26.2 and 26.1 and the 1.21 releases back to 1.21.5 in one pass:
+it reads each 26.3 packet once and writes the client's version, every change gated on the
+protocol of the version that made it (`modern::V26_1`, `V1_21_9`, ...), so a 1.21.5 client
+gets all of them, a 26.1 client only the newest. That covers packets (the time as clocks from
+26.1, the world border's timing, explosions, rotations, the one `interact` packet of before
+26.1), chunk sections (no fluid count before 26.1), entity data (serializer ids from each
+version's list, values that moved or changed type, such as players' arm and shoulder parrots
+before 1.21.9) and item components (holders that could also be names before 26.1, entity and
+block entity data with their type inside before 1.21.9, and so on, walked by
+`components.rs` with the client's protocol).
+
 A translator follows the connection's state and rewrites what differs: packet ids, registry ids
 (block states, items, entities, sounds, particles, data components, ...) from the tables of
 `data/compat` (ViaVersion and ViaBackwards' mappings, composed from 26.3 down), packets that were

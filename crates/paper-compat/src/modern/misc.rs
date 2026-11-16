@@ -1,6 +1,6 @@
 //! Sounds, particles, explosions, the command tree, statistics and teams.
 
-use super::{Modern, V26_2};
+use super::{Modern, V1_21_6, V1_21_9, V26_1, V26_2};
 use crate::io::{Result, Rw};
 use crate::Outcome;
 use anyhow::bail;
@@ -32,7 +32,91 @@ fn sound_holder(m: &Modern, rw: &mut Rw<'_>) -> Result<()> {
 pub(super) fn sound(m: &Modern, old: i32, body: &[u8]) -> Result<Vec<u8>> {
     let mut rw = Rw::new(body, old);
     sound_holder(m, &mut rw)?;
+    // The user interface's sounds (10) were the master volume's (0) before 1.21.6.
+    rw.map_varint(|source| if source == 10 && m.protocol() < V1_21_6 { 0 } else { source })?;
     Ok(rw.finish())
+}
+
+/// Stopping sounds of a source (flag 1): the user interface's are the master volume's before
+/// 1.21.6.
+pub(super) fn stop_sound(old: i32, body: &[u8]) -> Result<Vec<u8>> {
+    let mut rw = Rw::new(body, old);
+    let flags = rw.u8()?;
+    if flags & 1 != 0 {
+        rw.map_varint(|source| if source == 10 { 0 } else { source })?;
+    }
+    Ok(rw.finish())
+}
+
+/// The time: 26.1 sends clocks (each with a rate); before, the time of day and whether it
+/// runs. The world's age counts the client's ticks for anger (before 1.21.11).
+pub(super) fn set_time(m: &mut Modern, old: i32, body: &[u8]) -> Result<Vec<u8>> {
+    let mut r = Reader::new(body);
+    let age = r.i64()?;
+    m.game_time = age;
+    if m.protocol() >= V26_1 {
+        return Ok(crate::io::with_id(old, body));
+    }
+    let clocks = r.list(64, |r| Ok((r.varint()?, r.varlong()?, r.f32()?, r.f32()?)))?;
+    if let Some((_, time, _, rate)) = clocks.first() {
+        m.day_time = (*time, *rate != 0.0);
+    }
+    let mut w = Vec::new();
+    w.put_varint(old);
+    w.put_i64(age);
+    w.put_i64(m.day_time.0);
+    w.put_bool(m.day_time.1);
+    Ok(w)
+}
+
+/// The world border: before 1.21.11 its changes take milliseconds rather than ticks, and
+/// before 1.21.9 its centre is scaled by the dimension's coordinate scale.
+pub(super) fn border(m: &Modern, id: i32, old: i32, body: &[u8]) -> Result<Vec<u8>> {
+    use paper_data::packets::play::clientbound as cb;
+    let mut rw = Rw::new(body, old);
+    if id == cb::INITIALIZE_BORDER || id == cb::SET_BORDER_CENTER {
+        let (x, z) = (rw.r.f64()?, rw.r.f64()?);
+        let scale = if m.protocol() < V1_21_9 { m.coordinate_scale } else { 1.0 };
+        rw.w.put_f64(x * scale);
+        rw.w.put_f64(z * scale);
+    }
+    if id == cb::INITIALIZE_BORDER || id == cb::SET_BORDER_LERP_SIZE {
+        rw.f64()?;
+        rw.f64()?;
+        let ticks = rw.r.varlong()?;
+        rw.w.put_varlong(ticks.saturating_mul(50));
+    }
+    Ok(rw.finish())
+}
+
+/// A teleport: where the player then looks is kept, for rotations relative to it (before
+/// 1.21.9 they are absolute).
+pub(super) fn teleport(m: &mut Modern, old: i32, body: &[u8]) -> Result<Vec<u8>> {
+    let mut r = Reader::new(body);
+    r.varint()?;
+    r.take(6 * 8)?;
+    let (yaw, pitch) = (r.f32()?, r.f32()?);
+    let flags = r.i32()?;
+    let relative = |bit: i32, base: f32, v: f32| if flags & bit != 0 { base + v } else { v };
+    m.rotation = (relative(0x08, m.rotation.0, yaw), relative(0x10, m.rotation.1, pitch));
+    Ok(crate::io::with_id(old, body))
+}
+
+/// A rotation: 1.21.9 may make either angle relative; before, both are absolute.
+pub(super) fn rotation(m: &mut Modern, old: i32, body: &[u8]) -> Result<Vec<u8>> {
+    let mut r = Reader::new(body);
+    let (yaw, yaw_relative, pitch, pitch_relative) = (r.f32()?, r.bool()?, r.f32()?, r.bool()?);
+    let yaw = if yaw_relative { m.rotation.0 + yaw } else { yaw };
+    let pitch = if pitch_relative { m.rotation.1 + pitch } else { pitch };
+    m.rotation = (yaw, pitch);
+    if m.protocol() >= V1_21_9 {
+        return Ok(crate::io::with_id(old, body));
+    }
+    let mut w = Vec::new();
+    w.put_varint(old);
+    w.put_f32(yaw);
+    w.put_f32(pitch);
+    Ok(w)
 }
 
 /// What follows the type of a particle, by particle name.
@@ -90,6 +174,16 @@ pub(super) fn particle(m: &Modern, rw: &mut Rw<'_>) -> Result<()> {
         _ => None,
     };
     rw.w.put_varint(old.max(0));
+    // 1.21.9 gave dragon breath a power, flashes a colour and effects a colour and power.
+    if m.protocol() < V1_21_9 && matches!(name, "minecraft:dragon_breath" | "minecraft:flash" | "minecraft:effect" | "minecraft:instant_effect") {
+        let mark = rw.w.len();
+        match options(name) {
+            Options::Float | Options::Color => rw.bytes(4)?,
+            _ => rw.bytes(8)?,
+        }
+        rw.w.truncate(mark);
+        return Ok(());
+    }
     match options(name) {
         Options::None => {}
         Options::BlockState => {
@@ -180,20 +274,30 @@ pub(super) fn particles(m: &Modern, old: i32, body: &[u8], out: &mut Outcome) ->
 pub(super) fn explode(m: &Modern, old: i32, body: &[u8]) -> Result<Vec<u8>> {
     let mut rw = Rw::new(body, old);
     rw.bytes(24)?;
-    rw.f32()?;
-    rw.i32()?;
+    // 1.21.9 added the radius, the count of blocks hit and the block particles.
+    let v1_21_9 = m.protocol() >= V1_21_9;
+    if v1_21_9 {
+        rw.f32()?;
+        rw.i32()?;
+    } else {
+        rw.r.take(8)?;
+    }
     if rw.bool()? {
         rw.bytes(24)?;
     }
     particle(m, &mut rw)?;
     let mark = rw.w.len();
     sound_holder(m, &mut rw)?;
+    let before_particles = rw.w.len();
     let count = rw.varint()?;
     for _ in 0..count {
         particle(m, &mut rw)?;
         rw.f32()?;
         rw.f32()?;
         rw.varint()?;
+    }
+    if !v1_21_9 {
+        rw.w.truncate(before_particles);
     }
     let play_sound = rw.r.bool()?;
     if !play_sound {

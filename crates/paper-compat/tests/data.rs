@@ -3,13 +3,31 @@
 use paper_compat::data;
 use paper_protocol::packets::State;
 
-/// 26.3 packets the older versions do not have, which the translators replace or drop.
-const NEW_IN_26_3: &[&str] = &["minecraft:add_transient_block", "minecraft:post_effects", "minecraft:swing_animation"];
+/// Packets 26.3 sends that some older version does not have, which the translators replace
+/// or drop: 26.3's own, 26.1's (game rules, disk space), 1.21.9's (debug values, test
+/// highlights, the code of conduct, which is agreed to for the client) and 1.21.6's
+/// (dialogs, waypoints).
+const NEW_IN_26_3: &[&str] = &[
+    "minecraft:add_transient_block",
+    "minecraft:post_effects",
+    "minecraft:swing_animation",
+    "minecraft:game_rule_values",
+    "minecraft:low_disk_space_warning",
+    "minecraft:debug/block_value",
+    "minecraft:debug/chunk_value",
+    "minecraft:debug/entity_value",
+    "minecraft:debug/event",
+    "minecraft:game_test_highlight_pos",
+    "minecraft:code_of_conduct",
+    "minecraft:waypoint",
+    "minecraft:clear_dialog",
+    "minecraft:show_dialog",
+];
 
 #[test]
 fn every_26_3_packet_has_an_older_counterpart_or_a_replacement() {
     for version in paper_compat::VERSIONS.iter().filter(|v| v.family == paper_compat::Family::Modern) {
-        let data = data::load(version.name);
+        let data = data::load(version.data);
         assert_eq!(data.protocol, version.protocol);
         for state in [State::Login, State::Configuration, State::Play] {
             let packets = data.packets(state);
@@ -32,7 +50,7 @@ fn every_26_3_packet_has_an_older_counterpart_or_a_replacement() {
 #[test]
 fn ids_map_into_the_older_registries() {
     for version in paper_compat::VERSIONS.iter().filter(|v| v.family == paper_compat::Family::Modern) {
-        let data = data::load(version.name);
+        let data = data::load(version.data);
         for key in ["blockstates", "blocks", "items", "entities", "sounds", "particles"] {
             let size = data.size(key) as i32;
             assert!(size > 0, "{} {key}", version.name);

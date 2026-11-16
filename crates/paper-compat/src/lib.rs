@@ -31,7 +31,7 @@ pub const NATIVE_PROTOCOL: i32 = paper_data::PROTOCOL_VERSION;
 /// How a version's packets are translated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
-    /// The versions just before 26.3: the same protocol with changes (`modern`).
+    /// The versions back to 1.21.5: the same protocol with changes (`modern`).
     Modern,
     /// 1.8: from before the flattening (`legacy`).
     Legacy18,
@@ -52,13 +52,18 @@ pub struct Version {
     pub name: &'static str,
     pub family: Family,
     /// The data file of `data/compat` with its ids (modern versions).
-    data: &'static str,
+    pub data: &'static str,
 }
 
 /// Every version besides 26.3 that may join, newest first.
 pub const VERSIONS: &[Version] = &[
     Version { protocol: 776, name: "26.2", family: Family::Modern, data: "26.2" },
     Version { protocol: 775, name: "26.1", family: Family::Modern, data: "26.1" },
+    Version { protocol: 774, name: "1.21.11", family: Family::Modern, data: "1.21.11" },
+    Version { protocol: 773, name: "1.21.9-1.21.10", family: Family::Modern, data: "1.21.9" },
+    Version { protocol: 772, name: "1.21.7-1.21.8", family: Family::Modern, data: "1.21.7" },
+    Version { protocol: 771, name: "1.21.6", family: Family::Modern, data: "1.21.6" },
+    Version { protocol: 770, name: "1.21.5", family: Family::Modern, data: "1.21.5" },
     Version { protocol: 47, name: "1.8.x", family: Family::Legacy18, data: "" },
     Version { protocol: 5, name: "1.7.x", family: Family::Legacy17, data: "" },
     Version { protocol: 4, name: "1.7.x", family: Family::Legacy17, data: "" },
@@ -90,7 +95,7 @@ pub fn status_protocol(protocol: i32) -> i32 {
 }
 
 /// The versions that can join, for the server list and messages: `1.4.6-1.4.7, 1.5.x,
-/// 1.6.2-1.6.4, 1.7.x, 1.8.x, 26.1-26.3`.
+/// 1.6.2-1.6.4, 1.7.x, 1.8.x, 1.21.5-26.3`.
 pub fn version_range() -> String {
     let modern = VERSIONS.iter().rfind(|v| v.family == Family::Modern);
     let mut parts: Vec<String> = VERSIONS.iter().filter(|v| v.family != Family::Modern).rev().map(|v| v.name.to_owned()).collect();
