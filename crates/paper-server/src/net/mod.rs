@@ -7,6 +7,7 @@
 //! queues for the player. Game state never lives on these threads.
 
 pub mod auth;
+pub mod boost;
 mod connection;
 mod play;
 
@@ -132,6 +133,8 @@ pub struct Shared {
     pub plugin_host: RwLock<Option<Arc<crate::plugins::HostConnection>>>,
     /// Players' packets held back until the main thread next flushes.
     pub outgoing: Arc<Outgoing>,
+    /// Logins with the Paper-RS Boost mod whose extra connections may still come.
+    pub boost: boost::Sessions,
 }
 
 /// What the main thread sends players is held back until it flushes (at the end of a tick,
@@ -178,20 +181,22 @@ pub struct PlayerConn {
     /// Messages held back until a flush, and where to say that there are some (see
     /// [`Outgoing`]); without them messages go to the writer at once.
     held: Option<(Arc<parking_lot::Mutex<Vec<Outbound>>>, Arc<Outgoing>)>,
+    /// The extra connections of a client with the Paper-RS Boost mod.
+    boost: Option<Arc<boost::Streams>>,
 }
 
 /// A connection is dropped once this much data is waiting to be written to it.
 const MAX_QUEUED_BYTES: usize = 256 * 1024 * 1024;
 
 impl PlayerConn {
-    pub(crate) fn new(tx: mpsc::UnboundedSender<Outbound>, addr: SocketAddr, queued: Arc<AtomicUsize>, outgoing: Arc<Outgoing>) -> Self {
-        Self { tx, addr, queued, held: Some((Default::default(), outgoing)) }
+    pub(crate) fn new(tx: mpsc::UnboundedSender<Outbound>, addr: SocketAddr, queued: Arc<AtomicUsize>, outgoing: Arc<Outgoing>, boost: Option<Arc<boost::Streams>>) -> Self {
+        Self { tx, addr, queued, held: Some((Default::default(), outgoing)), boost }
     }
 
     /// A connection that discards everything, for tests of main-thread logic.
     pub fn detached() -> (Self, mpsc::UnboundedReceiver<Outbound>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self { tx, addr: SocketAddr::from(([127, 0, 0, 1], 0)), queued: Arc::new(AtomicUsize::new(0)), held: None }, rx)
+        (Self { tx, addr: SocketAddr::from(([127, 0, 0, 1], 0)), queued: Arc::new(AtomicUsize::new(0)), held: None, boost: None }, rx)
     }
 
     fn push(&self, message: Outbound, size: usize) {
@@ -235,6 +240,21 @@ impl PlayerConn {
     pub fn send_payload(&self, payload: Bytes) {
         let size = payload.len();
         self.push(Outbound::Packet(payload), size);
+    }
+
+    /// Queues a chunk's shared frame: over one of the extra connections of a client with the
+    /// Paper-RS Boost mod (with a marker here to keep it in order), else here.
+    pub fn send_chunk(&self, frame: Arc<Vec<u8>>) {
+        if let Some(seq) = self.boost.as_ref().and_then(|b| b.send(&frame)) {
+            self.send_payload(boost::marker(seq).into());
+            return;
+        }
+        self.send_framed(frame);
+    }
+
+    /// How many extra connections the client has (Paper-RS Boost).
+    pub fn boost_streams(&self) -> usize {
+        self.boost.as_ref().map_or(0, |b| b.count())
     }
 
     /// Queues a pre-framed packet.

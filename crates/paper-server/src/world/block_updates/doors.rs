@@ -24,9 +24,12 @@ fn open_close_pitch(level: &mut Level) -> f32 {
     level.random_float() * 0.1 + 0.9
 }
 
+/// The sound of opening or closing, and the game event sculk hears.
 fn play(level: &mut Level, except: Option<i32>, pos: BlockPos, sound: String) {
     let pitch = open_close_pitch(level);
     level.play_sound(except, pos, &sound, sound_source::BLOCKS, 1.0, pitch);
+    let state = level.state(pos);
+    level.game_event(if sound.ends_with(".open") { "minecraft:block_open" } else { "minecraft:block_close" }, pos, Some(state));
 }
 
 fn door_sound(state: u32, open: bool) -> String {

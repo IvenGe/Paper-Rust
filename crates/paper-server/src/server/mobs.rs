@@ -455,6 +455,7 @@ impl Server {
             let kind = match name.as_str() {
                 "minecraft:tnt" => EntityKind::Tnt { fuse: 80 },
                 "minecraft:experience_orb" => EntityKind::ExperienceOrb { value: 1 },
+                "minecraft:end_crystal" => EntityKind::Crystal { beam_target: None, show_bottom: true },
                 n if super::boats::is_boat(n) => super::boats::boat_kind(n),
                 // Projectiles, still until given a velocity (or a fireball a direction).
                 "minecraft:fireball" | "minecraft:small_fireball" | "minecraft:dragon_fireball" => EntityKind::Thrown { item: Slot::EMPTY, owner: None, gravity: 0.0, left_owner: false },
@@ -622,6 +623,17 @@ impl Server {
         moved.sort_unstable_by_key(|(id, _)| *id);
         for (id, m) in moved {
             self.worlds[world].reindex_entity(id);
+            let at = self.worlds[world].entities.get(&id).map(|e| e.pos);
+            if let (Some((event, on)), Some(at)) = (m.step, at) {
+                // Wool laid on the ground muffles steps.
+                let muffled = event == "minecraft:step" && paper_data::synced::tag("minecraft:block", "minecraft:occludes_vibration_signals").is_some_and(|ids| ids.contains(&(blocks::block_id_of_state(on) as i32)));
+                if !muffled {
+                    self.game_event(world, event, at, Some(id), (event == "minecraft:step").then_some(on));
+                }
+            }
+            if let (Some(on), Some(at)) = (m.hit_ground, at) {
+                self.game_event(world, "minecraft:hit_ground", at, Some(id), Some(on));
+            }
             if let Some((feet, distance)) = m.came_down {
                 self.landed_on(world, feet, distance, id);
             }
@@ -1838,6 +1850,10 @@ fn category_key(category: &str) -> &'static str {
 pub(super) struct Moved {
     came_down: Option<(paper_protocol::codec::BlockPos, f64)>,
     landed: Option<f64>,
+    /// A step or stroke sculk hears, with the block stepped on.
+    step: Option<(&'static str, u32)>,
+    /// It came down after falling (`hit_ground`), on this block.
+    hit_ground: Option<u32>,
 }
 
 /// Walking physics (`LivingEntity.travel` with the mob's move control). A mob moves by
@@ -1860,6 +1876,7 @@ pub(super) fn travel(w: &World, e: &mut Entity) -> Moved {
     let in_lava = survival::box_in_fluid(w, &area, Fluid::Lava);
     let was_on_ground = e.on_ground;
     let y_before = e.pos.y;
+    let start = e.pos;
     let mut forward = 0.0;
     let mut jump = false;
 
@@ -1960,7 +1977,23 @@ pub(super) fn travel(w: &World, e: &mut Entity) -> Moved {
     let mut came_down = None;
     let (pos_y, on_ground) = (e.pos.y, e.on_ground);
     let feet = paper_protocol::codec::BlockPos::new(e.pos.x.floor() as i32, (e.pos.y - 0.2).floor() as i32, e.pos.z.floor() as i32);
+    let on_state = w.block_at(feet.x, feet.y, feet.z).unwrap_or(blocks::AIR);
+    let (moved_x, moved_z) = (e.pos.x - start.x, e.pos.z - start.z);
+    let riding = e.vehicle.is_some();
+    let mut step = None;
+    let mut hit_ground = None;
     if let EntityKind::Mob(mob) = &mut e.kind {
+        // `Entity.move`: a step every 1/0.6 blocks walked on something; strokes in water.
+        if !riding && !mob.living.is_dead() {
+            mob.brain.move_dist += ((moved_x * moved_x + moved_z * moved_z).sqrt() * 0.6) as f32;
+            if mob.brain.move_dist > mob.brain.next_step && !blocks::is_air(on_state) {
+                mob.brain.next_step = mob.brain.move_dist.floor() + 1.0;
+                step = Some((if in_water { "minecraft:swim" } else { "minecraft:step" }, on_state));
+            }
+        }
+        if on_ground && !was_on_ground && mob.living.fall_distance > 0.0 && !in_water && !in_lava {
+            hit_ground = Some(on_state);
+        }
         let dy = pos_y - y_before;
         if in_water || in_lava {
             mob.living.fall_distance = 0.0;
@@ -1980,7 +2013,7 @@ pub(super) fn travel(w: &World, e: &mut Entity) -> Moved {
     if info.name == "minecraft:chicken" && !e.on_ground && e.vel.y < 0.0 {
         e.vel.y *= 0.6;
     }
-    Moved { came_down: came_down.map(|d| (feet, d)), landed }
+    Moved { came_down: came_down.map(|d| (feet, d)), landed, step, hit_ground }
 }
 
 /// Turns `from` towards `to` by at most `max` degrees.

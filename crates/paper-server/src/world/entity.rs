@@ -330,6 +330,10 @@ impl LivingState {
 /// What a mob is doing.
 #[derive(Clone, Debug, Default)]
 pub struct MobBrain {
+    /// How far it has walked (`moveDist`) and where its next step falls (`nextStep`): each step
+    /// is a vibration.
+    pub move_dist: f32,
+    pub next_step: f32,
     /// The entity it is attacking (or fleeing from when panicking).
     pub target: Option<i32>,
     /// Remaining path, next node first.
@@ -552,6 +556,9 @@ pub enum EntityKind {
     Fishing(Box<FishingHook>),
     /// A firework rocket (see `server::fireworks`).
     Firework(Box<Firework>),
+    /// An end crystal: where its beam points (the dragon's respawn, plugins) and whether its
+    /// bedrock base shows (`EndCrystal`'s `beam_target` and `ShowBottom`).
+    Crystal { beam_target: Option<paper_protocol::codec::BlockPos>, show_bottom: bool },
     /// Any other type: exists and is shown, but does nothing.
     Other,
 }
@@ -750,7 +757,7 @@ pub fn friction_below(world: &World, pos: Vec3) -> f64 {
 /// (`CraftEventFactory.doEntityAddEventCalling`).
 pub fn announced_plainly(e: &Entity) -> bool {
     match e.kind {
-        EntityKind::FallingBlock { .. } | EntityKind::ExperienceOrb { .. } | EntityKind::Tnt { .. } | EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Hanging(_) => true,
+        EntityKind::FallingBlock { .. } | EntityKind::ExperienceOrb { .. } | EntityKind::Tnt { .. } | EntityKind::EyeOfEnder { .. } | EntityKind::Cloud { .. } | EntityKind::Hanging(_) | EntityKind::Crystal { .. } => true,
         EntityKind::Other => e.info.name != "minecraft:lightning_bolt",
         _ => false,
     }

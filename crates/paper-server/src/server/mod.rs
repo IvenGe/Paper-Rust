@@ -61,6 +61,8 @@ pub mod hanging;
 pub mod score_commands;
 pub mod stats;
 pub mod dragon;
+mod dragon_respawn;
+pub mod sculk;
 mod weather;
 mod farming;
 pub mod brewing;
@@ -382,6 +384,7 @@ impl Server {
             bound_port: AtomicI32::new(0),
             plugin_host: RwLock::new(None),
             outgoing: Default::default(),
+            boost: Default::default(),
         });
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -772,6 +775,7 @@ impl Server {
                     if fresh {
                         self.spawn_for_chunk_generation(world, pos);
                     }
+                    self.sculk_chunk_loaded(world, pos);
                     crate::plugins::events::on_chunk_load(self, world, pos, fresh);
                     if fresh {
                         crate::plugins::events::on_chunk_populate(self, world, pos);
@@ -843,6 +847,7 @@ impl Server {
         phase!("hoppers", self.tick_hoppers());
         phase!("pressure plates", self.tick_pressure_plates());
         phase!("dragon fights", self.tick_dragon_fights());
+        phase!("sculk", self.tick_sculk());
         phase!("stats", self.tick_stats());
         phase!("player tracker", self.tick_tracker());
 

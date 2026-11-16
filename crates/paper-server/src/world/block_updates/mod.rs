@@ -28,6 +28,7 @@ pub mod piston;
 pub mod plants;
 pub mod rails;
 pub mod redstone;
+pub mod sculk;
 pub mod state;
 pub mod support;
 pub mod tripwire;
@@ -111,6 +112,10 @@ pub enum Effect {
     CrafterPowered { pos: BlockPos },
     /// A carved pumpkin or jack o'lantern was placed: it may finish a golem.
     Golem { pos: BlockPos },
+    /// A shrieker stopped shrieking: the warden may answer (`SculkShriekerBlockEntity.tryRespond`).
+    ShriekerDone { pos: BlockPos },
+    /// Something sculk can hear happened (`Level.gameEvent`); `source` is the player acting.
+    GameEvent { event: &'static str, pos: BlockPos, source: Option<i32>, affected: Option<u32> },
 }
 
 /// Game rules and dimension properties block updates depend on.
@@ -818,6 +823,13 @@ impl<'w> Level<'w> {
 
     /// `playSound(player, pos, sound, source, volume, pitch)`: `except` hears it from its own
     /// client.
+    /// `Level.gameEvent`: something sculk can hear happened at the block (done by the player
+    /// acting, if any); the server passes it on.
+    pub fn game_event(&mut self, event: &'static str, pos: BlockPos, affected: Option<u32>) {
+        let source = self.actor;
+        self.world.updates.effects.push(Effect::GameEvent { event, pos, source, affected });
+    }
+
     pub fn play_sound(&mut self, except: Option<i32>, pos: BlockPos, sound: &str, source: i32, volume: f32, pitch: f32) {
         let seed = self.random() as i64;
         self.world.updates.effects.push(Effect::Sound { pos, sound: sound.to_owned(), source, volume, pitch, seed, except });
@@ -1078,6 +1090,7 @@ impl<'w> Level<'w> {
             Kind::DetectorRail if state::get_bool(state, "powered") => self.world.updates.effects.push(Effect::CheckDetectorRail { pos }),
             Kind::SugarCane | Kind::Cactus | Kind::Farmland | Kind::Leaves => plants::tick(self, state, pos),
             Kind::Falling => falling::tick(self, state, pos),
+            _ if sculk::is_sculk_block(state) => sculk::tick(self, state, pos),
             _ => {}
         }
     }

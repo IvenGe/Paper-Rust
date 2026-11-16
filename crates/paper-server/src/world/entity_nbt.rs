@@ -273,6 +273,13 @@ pub fn entity_to_nbt_in(e: &Entity, dimension: &str) -> Option<Compound> {
                 c.insert("Fixed", Tag::Byte(h.fixed as i8));
             }
         }
+        // `EndCrystal.addAdditionalSaveData`.
+        EntityKind::Crystal { beam_target, show_bottom } => {
+            if let Some(p) = beam_target {
+                c.insert("beam_target", Tag::IntArray(vec![p.x, p.y, p.z]));
+            }
+            c.insert("ShowBottom", Tag::Byte(*show_bottom as i8));
+        }
         EntityKind::EyeOfEnder { .. } | EntityKind::Thrown { .. } | EntityKind::Cloud { .. } | EntityKind::Boat { .. } | EntityKind::Fishing(_) | EntityKind::Firework(_) | EntityKind::Other => {}
     }
     Some(c)
@@ -414,6 +421,18 @@ pub fn entity_from_nbt(id: i32, c: &Compound) -> Option<Entity> {
             }))
         }
         name if super::hanging::is_hanging(name) => EntityKind::Hanging(Box::new(hanging_from_nbt(name, c)?)),
+        // Its beam's target (`beam_target`, or the `BeamTarget` compound of older worlds).
+        "minecraft:end_crystal" => EntityKind::Crystal {
+            beam_target: match c.get("beam_target").or_else(|| c.get("BeamTarget")) {
+                Some(Tag::IntArray(v)) if v.len() == 3 => Some(paper_protocol::codec::BlockPos::new(v[0], v[1], v[2])),
+                Some(Tag::Compound(p)) => match (p.i32("X"), p.i32("Y"), p.i32("Z")) {
+                    (Some(x), Some(y), Some(z)) => Some(paper_protocol::codec::BlockPos::new(x, y, z)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            show_bottom: c.bool("ShowBottom").unwrap_or(true),
+        },
         _ => EntityKind::Other,
     };
     let mut e = Entity::new(id, info, pos, kind);

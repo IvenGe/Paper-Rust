@@ -245,6 +245,7 @@ const GROWABLE: &[&str] = &[
     "oak", "fancy_oak", "oak_bees_005", "fancy_oak_bees_005", "spruce", "mega_spruce", "mega_pine", "birch", "birch_bees_005",
     "jungle_tree_no_vine", "mega_jungle_tree", "acacia", "cherry", "cherry_bees_005", "dark_oak", "pale_oak_bonemeal", "mangrove",
     "tall_mangrove", "azalea_tree", "huge_brown_mushroom", "huge_red_mushroom", "crimson_fungus_planted", "warped_fungus_planted",
+    "red_poplar", "orange_poplar", "yellow_poplar",
 ];
 
 impl Decoration {

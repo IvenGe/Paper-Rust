@@ -68,6 +68,8 @@ pub fn signal(level: &Level, state: u32, pos: BlockPos, dir: Dir) -> u8 {
                 0
             }
         }
+        // A calibrated sensor gives nothing out of its input side.
+        Kind::SculkSensor if block_name(state) == super::sculk::CALIBRATED && facing(state) == dir => 0,
         Kind::PressurePlate { weighted: true } | Kind::DaylightDetector | Kind::TargetBlock | Kind::SculkSensor => get_int(state, "power") as u8,
         Kind::RedstoneBlock => 15,
         Kind::Repeater | Kind::Comparator => diode_signal(level, state, pos, dir),
@@ -166,6 +168,14 @@ pub fn analog_output(level: &Level, state: u32, pos: BlockPos) -> u8 {
         }
         n if n.ends_with("candle_cake") => 14,
         "crafter" => crafter_signal(level.world, pos),
+        // An active sensor tells what it heard (`last_vibration_frequency`).
+        "sculk_sensor" | "calibrated_sculk_sensor" => {
+            if prop(state, "sculk_sensor_phase") != Some("active") {
+                return 0;
+            }
+            let entity = level.world.chunks.get(&ChunkPos::of_block(pos.x, pos.z)).and_then(|c| c.block_entities.get(&(pos.y, (pos.z & 15) as u8, (pos.x & 15) as u8)));
+            entity.and_then(|e| e.i32("last_vibration_frequency")).unwrap_or(0).clamp(0, 15) as u8
+        }
         _ => container_signal(level.world, pos, state),
     }
 }
@@ -610,6 +620,7 @@ pub fn lever_use(level: &mut Level, state: u32, pos: BlockPos) -> Interaction {
     attached_update_neighbours(level, new, pos);
     let pitch = if powered(new) { 0.6 } else { 0.5 };
     level.play_sound(None, pos, "minecraft:block.lever.click", sound_source::BLOCKS, 0.3, pitch);
+    level.game_event(if powered(new) { "minecraft:block_activate" } else { "minecraft:block_deactivate" }, pos, Some(new));
     Interaction::Success
 }
 
@@ -623,6 +634,7 @@ fn button_press_ticks(state: u32) -> i32 {
 fn button_sound(level: &mut Level, except: Option<i32>, pos: BlockPos, state: u32, pressed: bool) {
     let sound = format!("minecraft:block.{}_button.click_{}", block_set(state), if pressed { "on" } else { "off" });
     level.play_sound(if pressed { except } else { None }, pos, &sound, sound_source::BLOCKS, 1.0, 1.0);
+    level.game_event(if pressed { "minecraft:block_activate" } else { "minecraft:block_deactivate" }, pos, Some(state));
 }
 
 pub fn button_use(level: &mut Level, state: u32, pos: BlockPos, ctx: UseContext) -> Interaction {
@@ -1014,6 +1026,7 @@ fn play_note(level: &mut Level, state: u32, pos: BlockPos) {
     let instrument = prop(state, "instrument").unwrap_or("harp");
     if mob_head_instrument(instrument) || super::state::is_air(level.state(pos.above())) {
         level.block_event(pos, block_id(state), 0, 0);
+        level.game_event("minecraft:note_block_play", pos, Some(state));
     }
 }
 

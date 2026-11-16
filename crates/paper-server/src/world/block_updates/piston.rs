@@ -574,6 +574,7 @@ pub fn trigger_event(level: &mut Level, state: u32, pos: BlockPos, action: u8, p
         level.set_block(pos, extended_state, flags::ALL | flags::MOVE_BY_PISTON);
         let pitch = level.random_float() * 0.25 + 0.6;
         level.play_sound(None, pos, "minecraft:block.piston.extend", sound_source::BLOCKS, 0.5, pitch);
+        level.game_event("minecraft:block_activate", pos, Some(state));
         return true;
     }
     // Retract (1) or retract without pulling (2).
@@ -623,6 +624,7 @@ pub fn trigger_event(level: &mut Level, state: u32, pos: BlockPos, action: u8, p
     }
     let pitch = level.random_float() * 0.15 + 0.6;
     level.play_sound(None, pos, "minecraft:block.piston.contract", sound_source::BLOCKS, 0.5, pitch);
+    level.game_event("minecraft:block_deactivate", pos, Some(state));
     true
 }
 

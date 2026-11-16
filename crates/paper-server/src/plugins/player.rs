@@ -41,6 +41,7 @@ pub fn handles(method: &str) -> bool {
             | "player.hide_entity"
             | "player.show_entity"
             | "player.cooldown"
+            | "player.warden"
             | "player.game_event"
             | "player.transfer"
             | "player.swing"
@@ -118,6 +119,25 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 }
             }
             Ok(Value::Bool(changed))
+        }
+        "player.warden" => {
+            // Paper's warden methods: the tracker's three numbers, any of them set first
+            // (`increase` as `increaseWardenWarningLevel`).
+            let p = server.players.get_mut(&id).unwrap();
+            if let Some(v) = args.i32("cooldown") {
+                p.warden.cooldown_ticks = v.max(0);
+            }
+            if let Some(v) = args.i32("since") {
+                p.warden.ticks_since_last_warning = v.max(0);
+            }
+            if let Some(v) = args.i32("level") {
+                p.warden.set_warning_level(v);
+            }
+            if args.bool("increase") == Some(true) {
+                p.warden.increase();
+            }
+            let t = p.warden;
+            Ok(paper_bridge::bmap! { "cooldown" => t.cooldown_ticks, "since" => t.ticks_since_last_warning, "level" => t.warning_level })
         }
         "player.cooldown" => {
             // `HumanEntity.setCooldown`: an item cooldown group (the item's id by default).

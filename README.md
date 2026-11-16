@@ -68,6 +68,39 @@ cp target/release/examples/libhello_plugin.so my-server/plugins/
 [Rust plugins](docs/rust-plugins.md) covers events, commands, the API, threads and the
 plugin interface.
 
+### The Paper-RS Boost client mod
+
+Paper-RS already spreads its work over threads (see `[threads]` in `config/paper-rs.toml`),
+but each player's connection is one stream: everything the server sends a player is
+compressed once, then encrypted and written in order by that connection's own task, and the
+client reads and decodes all of it on one network thread. Players can install an optional
+Fabric mod, *Paper-RS Boost* (`client-mod/`), so that their chunks come over several extra
+connections instead. Each one is encrypted and written by its own server thread and read and
+decoded by its own client thread, while small markers on the main connection keep every
+chunk in its place among the other packets.
+
+The server only offers this when you set it in `config/paper-rs.toml`:
+
+```toml
+[network]
+boost-mod = true
+boost-streams = 4
+```
+
+With `boost-mod = false` (the default) the server never asks: every client, with or without
+the mod, is served as vanilla, and the mod does nothing. With it on, clients without the mod
+are asked during login, answer as vanilla clients do, and also play as usual. The protocol is
+described in `crates/paper-server/src/net/boost.rs`. To build the mod (it needs JDK 25; its
+first build downloads Gradle, Fabric Loom, Fabric API and Minecraft 26.3 to compile against):
+
+```bash
+cd client-mod && ./gradlew build
+```
+
+The jar is `client-mod/build/libs/paper-rs-boost-1.0.0.jar`; put it in the `mods` folder of a
+Fabric 26.3 client, with Fabric API. The server side is tested with a simulated client; the
+mod itself has not yet been tried in a real game.
+
 Status
 ------
 
@@ -140,7 +173,9 @@ What works:
   back to dirt, grass and mycelium spread or die in the dark, sugar cane, cactus (and its
   flowers), pumpkin and melon stems, sweet berries, nether wart and cocoa grow, leaves away
   from logs decay, ice and snow melt near light, lava sets things on fire. Saplings grow
-  into vanilla's trees (2x2 ones from four saplings, bee nests near flowers), and bone meal
+  into vanilla's trees (2x2 ones from four saplings, bee nests near flowers; poplars red,
+  orange or yellow in the proportions the dappled forest plants them, as how vanilla picks
+  is not in the data), and bone meal
   grows them, azaleas, huge mushrooms and huge fungi; flat worlds take the tree features
   from the vanilla jar too. Hoes till, shovels make paths, axes strip logs and wood, bone
   meal grows crops; seeds need farmland and jumping on it tramples it (bigger mobs too,
@@ -297,8 +332,25 @@ What works:
   experience pours out (500 after the first time); then the exit portal opens, the dragon
   egg appears the first time, and the next of twenty gateways opens around the island,
   leading out to the islands beyond (found along its direction from the terrain noise, with
-  a little island made if there is no room) where a gateway leads back. The fight is saved in
-  the End's `level.dat` as vanilla's `DragonFight`.
+  a little island made if there is no room) where a gateway leads back. End crystals go on
+  obsidian and bedrock, and four on the sides of the exit portal call the dragon back:
+  the portal closes, the crystals beam at the sky and then at each pillar in turn, which
+  is blown up and built again with an unbreakable crystal, and the new dragon comes as the
+  four blow up (breaking one of them stops it and opens the portal again). The fight is
+  saved in the End's `level.dat` as vanilla's `DragonFight`.
+* **Sculk**: what players and mobs do (steps, landing, blocks placed and broken, doors,
+  levers, buttons, note blocks, pistons, containers, eating and drinking, projectiles,
+  damage, deaths, explosions, TNT, lightning, buckets, spawn eggs, ...) reaches sculk
+  sensors in range as vibrations that travel a block a tick, with the vibration particle,
+  unless wool is in the way, sneaking muffles it or wool lies on the ground. A sensor gives
+  a redstone signal by distance for a while, tells comparators the frequency, and makes
+  amethyst next to it resonate; a calibrated sensor hears only the frequency at its back.
+  A shrieker set off by a sensor (or stood on) warns the players near it; the warning stays
+  with the player (`warden_spawn_tracker`), brings darkness, and at the fourth calls up the
+  warden. Something dying near a catalyst makes it bloom, and the nearest takes its
+  experience (none drops) to spread sculk, veins, sensors and shriekers as vanilla's
+  spreader does. Plugins see `GenericGameEvent`, `BlockReceiveGameEvent` and the sensors'
+  `BlockRedstoneEvent`.
 * **Weather**: vanilla's rain and thunder cycle (`advance_weather`) with `/weather`, saved in
   `level.dat`: clients see rain and thunder fade in and out, storms darken the sky (enough to
   sleep in a thunderstorm), rain puts out fires, keeps farmland wet and protects undead from
@@ -576,15 +628,13 @@ What works:
 
 Not yet:
 
-* World generation: sculk sensors, shriekers and catalysts from world generation have no
-  block entities on the server.
-* The dragon fight: the dragon cannot be summoned again with four end crystals on the exit
-  portal.
+* Sculk: the warden comes up without its emerging animation and fights as a plain melee
+  mob (no sniffing, anger at vibrations or sonic boom); `bounce` vibrations are taken to
+  have `hit_ground`'s frequency.
 * Gameplay: minecarts cannot be ridden, parrots do not ride on shoulders, cats do not sleep on
   beds or bring gifts, and wild wolves do not hunt. Villagers do not breed, sleep, gather at bells, farm or call iron golems, there are no
   zombie villagers to cure, and explorer maps are not offered (this server has no maps yet,
-  so cartographers offer their other trades). Poplar saplings do not grow (how they pick their tree is not in the
-  data). Withers and copper golems cannot be built. Dispensers do not place shulker boxes, build withers, or launch
+  so cartographers offer their other trades). Withers and copper golems cannot be built. Dispensers do not place shulker boxes, build withers, or launch
   fireworks, wind charges or minecarts.
 * Statistics of what the server does not do yet (raids, note blocks, bells,
   cauldrons, cakes, flower pots, ...) stay at zero, and items count as

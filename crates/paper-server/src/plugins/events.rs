@@ -1097,6 +1097,52 @@ pub fn on_block_ignite(server: &mut Server, world: usize, pos: BlockPos, cause: 
     }
 }
 
+/// `GenericGameEvent`: `event` happened at `at`, done by `source`, heard within `radius`
+/// blocks. Returns the radius plugins leave, or `None` if they stop it.
+pub fn on_generic_game_event(server: &mut Server, world: usize, event: &str, at: crate::world::entity::Vec3, source: Option<i32>, radius: i32) -> Option<i32> {
+    if !listens(server, "GenericGameEvent") {
+        return Some(radius);
+    }
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "event" => event, "x" => at.x, "y" => at.y, "z" => at.z, "radius" => radius };
+    if let Some(id) = source.filter(|id| server.players.contains_key(id) || server.worlds[world].entities.contains_key(id)) {
+        args.set("entity", entity_ref(server, id));
+    }
+    match fire(server, "GenericGameEvent", "event.generic_game_event", args) {
+        Some(result) if result.bool("cancelled") == Some(true) => None,
+        Some(result) => Some(result.i32("radius").unwrap_or(radius).max(0)),
+        None => Some(radius),
+    }
+}
+
+/// `BlockReceiveGameEvent`: the sculk block at `pos` is to hear `event` (cancelled already if
+/// it would not). Returns whether it hears it.
+pub fn on_block_receive_game_event(server: &mut Server, world: usize, pos: BlockPos, event: &str, source: Option<i32>, cancelled: bool) -> bool {
+    if !listens(server, "BlockReceiveGameEvent") {
+        return !cancelled;
+    }
+    let mut args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "event" => event, "cancelled" => cancelled };
+    if let Some(id) = source.filter(|id| server.players.contains_key(id) || server.worlds[world].entities.contains_key(id)) {
+        args.set("entity", entity_ref(server, id));
+    }
+    match fire(server, "BlockReceiveGameEvent", "event.block_receive_game_event", args) {
+        Some(result) => result.bool("cancelled") != Some(true),
+        None => !cancelled,
+    }
+}
+
+/// `BlockRedstoneEvent`: the block at `pos` goes from power `old` to `new`; returns the power
+/// plugins leave.
+pub fn on_block_redstone(server: &mut Server, world: usize, pos: BlockPos, old: i32, new: i32) -> i32 {
+    if !listens(server, "BlockRedstoneEvent") {
+        return new;
+    }
+    let args = bmap! { "world" => server.worlds[world].name.clone(), "x" => pos.x, "y" => pos.y, "z" => pos.z, "old" => old, "new" => new };
+    match fire(server, "BlockRedstoneEvent", "event.block_redstone", args) {
+        Some(result) => result.i32("new").unwrap_or(new),
+        None => new,
+    }
+}
+
 fn pos_value(pos: BlockPos) -> Value {
     Value::List(vec![pos.x.into(), pos.y.into(), pos.z.into()])
 }

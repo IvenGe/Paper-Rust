@@ -1015,6 +1015,35 @@ public final class HostEntity implements HostProxies.Backed {
         return this.state().get("spawning") instanceof String uuid ? java.util.UUID.fromString(uuid) : null;
     }
 
+    // end crystals (EnderCrystal), as CraftEnderCrystal
+
+    public boolean isShowingBottom() {
+        return Values.bool(this.state(), "show_bottom", true);
+    }
+
+    public void setShowingBottom(final boolean showing) {
+        this.set("show_bottom", showing);
+    }
+
+    /** Where the beam points, in this world; null for no beam. */
+    public @Nullable Location getBeamTarget() {
+        if (!(this.state().get("beam_target") instanceof Map<?, ?> target)) {
+            return null;
+        }
+        final Map<String, Object> t = Values.map(target);
+        return new Location(this.getWorld(), Values.i32(t, "x", 0), Values.i32(t, "y", 0), Values.i32(t, "z", 0));
+    }
+
+    /** As CraftEnderCrystal: a target in another world is refused. */
+    public void setBeamTarget(final @Nullable Location location) {
+        if (location == null) {
+            this.set("beam_target", Values.of());
+            return;
+        }
+        com.google.common.base.Preconditions.checkArgument(location.getWorld() == null || location.getWorld().equals(this.getWorld()), "Cannot set beam target location to different world");
+        this.set("beam_target", Values.of("x", location.getBlockX(), "y", location.getBlockY(), "z", location.getBlockZ()));
+    }
+
     // fishing bobbers (FishHook), with CraftFishHook's checks
 
     private int hookInt(final String key, final int fallback) {

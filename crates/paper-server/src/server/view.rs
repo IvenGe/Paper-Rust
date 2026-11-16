@@ -185,7 +185,7 @@ impl Server {
             let count = batch.len() as i32;
             for (pos, frame) in batch {
                 view.sent.insert(pos);
-                player.conn.send_framed(frame);
+                player.conn.send_chunk(frame);
             }
             player.conn.send(&play::ChunkBatchFinished { batch_size: VarInt(count) });
         }

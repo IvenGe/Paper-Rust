@@ -18,6 +18,7 @@ const EQUIPMENT: [(&str, usize); 5] = [("head", 5), ("chest", 6), ("legs", 7), (
 /// Player data read back from disk.
 pub struct SavedPlayer {
     pub world: usize,
+    pub warden: super::sculk::WardenTracker,
     pub loc: Location,
     pub game_mode: Option<GameMode>,
     pub previous_game_mode: Option<GameMode>,
@@ -186,6 +187,7 @@ impl Server {
         c.insert("Air", Tag::Short(player.air.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
         c.insert("fall_distance", Tag::Double(player.fall_distance));
         c.insert("seenCredits", Tag::Byte(player.seen_credits as i8));
+        c.insert("warden_spawn_tracker", Tag::Compound(player.warden.save()));
         // What plugins set (`Entity.setInvulnerable`, `addScoreboardTag`, ...), as vanilla saves it.
         if player.api.invulnerable {
             c.insert("Invulnerable", Tag::Byte(1));
@@ -283,6 +285,7 @@ impl Server {
             }
         }
         Some(SavedPlayer {
+            warden: super::sculk::WardenTracker::load(c.compound("warden_spawn_tracker")),
             world,
             loc: Location { x, y, z, yaw, pitch: pitch.clamp(-90.0, 90.0) },
             game_mode: c.i32("playerGameType").and_then(GameMode::from_id),

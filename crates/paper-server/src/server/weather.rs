@@ -273,6 +273,7 @@ impl Server {
         if !self.lightning_allowed(world, bolt, cause) {
             return None;
         }
+        self.game_event(world, "minecraft:lightning_strike", at, Some(bolt), None);
         if matches!(self.difficulty, Difficulty::Normal | Difficulty::Hard) && self.worlds[world].updates.settings.fire_spreads {
             let mut rng = rand::thread_rng();
             let mut targets = vec![pos];

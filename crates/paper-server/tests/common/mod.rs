@@ -143,13 +143,31 @@ impl Client {
     }
 
     pub fn join_with(port: u16, name: &str, settings: ClientSettings) -> Client {
+        // Like vanilla: plugin queries are answered as unknown.
+        Client::join_full(port, name, settings, |_, _| None)
+    }
+
+    /// Joins answering the server's login plugin queries (channel, data) with `answer`.
+    pub fn join_answering(port: u16, name: &str, answer: impl FnMut(&str, &[u8]) -> Option<Vec<u8>>) -> Client {
+        Client::join_full(port, name, ClientSettings::default(), answer)
+    }
+
+    fn join_full(port: u16, name: &str, settings: ClientSettings, mut answer: impl FnMut(&str, &[u8]) -> Option<Vec<u8>>) -> Client {
         let (mut c, first) = Client::begin_login(port, paper_data::PROTOCOL_VERSION, name);
         let mut frame = first.expect("login reply");
-        // Optional compression, then login success.
-        if packet_id(&frame) == login::LoginCompression::ID {
-            let p: login::LoginCompression = decode(&frame);
-            c.enc.set_compression(Some(p.threshold.0 as u32));
-            c.dec.set_compression(Some(p.threshold.0 as u32));
+        // Optional compression and plugin queries, then login success.
+        loop {
+            if packet_id(&frame) == login::LoginCompression::ID {
+                let p: login::LoginCompression = decode(&frame);
+                c.enc.set_compression(Some(p.threshold.0 as u32));
+                c.dec.set_compression(Some(p.threshold.0 as u32));
+            } else if packet_id(&frame) == login::CustomQuery::ID {
+                let p: login::CustomQuery = decode(&frame);
+                let data = answer(&p.channel, &p.data.0);
+                c.send(&login::CustomQueryAnswer { message_id: p.message_id.0, data });
+            } else {
+                break;
+            }
             frame = c.read_frame(Instant::now() + TIMEOUT).expect("login finished");
         }
         if packet_id(&frame) == login::LoginDisconnect::ID {

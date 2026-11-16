@@ -226,6 +226,13 @@ pub fn entity_value(server: &Server, world: usize, e: &Entity) -> Value {
             out.set("sky_influenced", h.sky_influenced);
             out.set("open_water", h.open_water);
         }
+        // `EnderCrystal`: its base and where its beam points (absent for none).
+        EntityKind::Crystal { beam_target, show_bottom } => {
+            out.set("show_bottom", *show_bottom);
+            if let Some(p) = beam_target {
+                out.set("beam_target", bmap! { "x" => p.x, "y" => p.y, "z" => p.z });
+            }
+        }
         EntityKind::Other if e.info.name == "minecraft:lightning_bolt" => out.set("effect", e.flags.visual_only),
         EntityKind::EyeOfEnder { .. } | EntityKind::Boat { .. } | EntityKind::Other => {}
     }
@@ -990,6 +997,21 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                     if !args.get("hooked").is_null() {
                         h.hooked = hooked;
                         h.state = if h.hooked.is_some() { crate::world::entity::HookState::HookedInEntity } else { crate::world::entity::HookState::Flying };
+                        e.metadata_dirty = true;
+                    }
+                }
+                // `EnderCrystal.setShowingBottom`, `setBeamTarget` (an empty map for none).
+                EntityKind::Crystal { beam_target, show_bottom } => {
+                    if let Some(v) = args.bool("show_bottom") {
+                        *show_bottom = v;
+                        e.metadata_dirty = true;
+                    }
+                    let target = args.get("beam_target");
+                    if !target.is_null() {
+                        *beam_target = match (target.i32("x"), target.i32("y"), target.i32("z")) {
+                            (Some(x), Some(y), Some(z)) => Some(paper_protocol::codec::BlockPos::new(x, y, z)),
+                            _ => None,
+                        };
                         e.metadata_dirty = true;
                     }
                 }

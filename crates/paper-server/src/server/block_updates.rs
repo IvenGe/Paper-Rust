@@ -150,6 +150,7 @@ impl Server {
         level.player_will_destroy(state, pos, creative, shears);
         let removed = level.remove_block(pos, false);
         self.publish_block_updates(world);
+        self.game_event(world, "minecraft:block_destroy", crate::world::entity::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), Some(player), Some(state));
         removed
     }
 
@@ -348,6 +349,8 @@ impl Server {
                 Effect::PrimeTnt { pos, igniter } => self.prime_tnt(world, pos, 80, igniter),
                 Effect::Fall { pos, state } => self.start_falling(world, pos, state),
                 Effect::Golem { pos } => self.try_spawn_golem(world, pos),
+                Effect::ShriekerDone { pos } => self.shrieker_done(world, pos),
+                Effect::GameEvent { event, pos, source, affected } => self.game_event(world, event, crate::world::entity::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), source, affected),
                 Effect::Dispense { pos } => self.dispense(world, pos),
                 Effect::CheckPlate { pos } => self.check_pressure_plate(world, pos),
                 Effect::CheckTripwire { pos } => self.check_tripwire(world, pos),

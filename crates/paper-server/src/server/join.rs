@@ -96,6 +96,9 @@ impl Server {
             fire_ticks: 0,
             air: 300,
             invulnerable_time: 0,
+            warden: Default::default(),
+            move_dist: 0.0,
+            next_step: 0.0,
             last_hurt: 0.0,
             dead: false,
             using_item: None,
@@ -147,6 +150,7 @@ impl Server {
             player.inventory = saved.inventory;
             player.ender_items = saved.ender_items;
             player.pdc = saved.pdc;
+            player.warden = saved.warden;
             player.api = super::player::ApiState { joined_tick: player.api.joined_tick, ..saved.api };
             player.xp_level = saved.xp_level;
             player.xp_progress = saved.xp_progress;

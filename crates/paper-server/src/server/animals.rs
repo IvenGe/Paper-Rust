@@ -412,6 +412,8 @@ impl Server {
     pub fn shear_sheep_dropping(&mut self, world: usize, id: i32, drops: Vec<Slot>) {
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let pos = e.pos;
+        self.game_event(world, "minecraft:shear", pos, None, None);
+        let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
         let Some(m) = e.mob_mut() else { return };
         m.sheared = true;
         e.metadata_dirty = true;

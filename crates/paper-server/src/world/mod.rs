@@ -126,6 +126,8 @@ pub struct World {
     pub trader_spawn_chance: i32,
     /// The End's dragon fight (only in Ends; made on its first tick there).
     pub dragon_fight: Option<dragon_fight::DragonFight>,
+    /// Sculk blocks with vibrations or spreading charge on the way (`server::sculk`).
+    pub sculk_active: std::collections::BTreeSet<(i32, i32, i32)>,
     /// Network id of the world's clock in `minecraft:world_clock`, if it has one.
     pub clock: Option<i32>,
     /// Size of the synchronised biome registry.
@@ -325,6 +327,7 @@ impl World {
             trader_spawn_delay: 24000,
             trader_spawn_chance: 25,
             dragon_fight: None,
+            sculk_active: Default::default(),
             weather: Weather::default(),
             border: Border::default(),
             forced: HashSet::new(),

@@ -842,7 +842,7 @@ impl Server {
     /// A crystal was destroyed (`EnderDragon.onCrystalDestroyed`): if it was healing the
     /// dragon, the dragon takes 10 damage; a circling dragon turns on the player.
     pub(super) fn crystal_destroyed(&mut self, world: usize, crystal: i32, at: Vec3, attacker: Option<i32>) {
-        if self.worlds[world].dimension != END {
+        if self.worlds[world].dimension != END || self.respawn_crystal_destroyed(world, crystal) {
             return;
         }
         self.update_crystal_count(world);
@@ -1261,6 +1261,9 @@ impl Server {
         if fight.needs_scan && loaded {
             self.scan_fight(world);
         }
+        if self.worlds[world].dragon_fight.as_ref().is_some_and(|f| f.respawn.is_some()) {
+            self.tick_dragon_respawn(world, loaded);
+        }
         let Some(fight) = self.worlds[world].dragon_fight.as_mut() else { return };
         if fight.dragon_killed {
             return;
@@ -1316,7 +1319,7 @@ impl Server {
 
     /// The exit portal's floor centre: saved, or found under the pillar at the origin
     /// (`findExitPortal`); `active` asks for an open one.
-    fn find_exit_portal(&mut self, world: usize, active: bool) -> Option<BlockPos> {
+    pub(super) fn find_exit_portal(&mut self, world: usize, active: bool) -> Option<BlockPos> {
         let w = &self.worlds[world];
         let portal = blocks::by_name("minecraft:end_portal").map(|b| b.default_state);
         let floor = match self.worlds[world].dragon_fight.as_ref().and_then(|f| f.exit_portal) {
@@ -1401,7 +1404,7 @@ impl Server {
     }
 
     /// `createNewDragon`: above the island, circling.
-    fn spawn_fight_dragon(&mut self, world: usize) {
+    pub(super) fn spawn_fight_dragon(&mut self, world: usize) {
         let yaw = rand::thread_rng().gen::<f32>() * 360.0;
         let Some(id) = self.spawn_mob(world, DRAGON, Vec3::new(0.0, 128.0, 0.0), SpawnReason::Natural) else { return };
         let Some(e) = self.worlds[world].entities.get_mut(&id) else { return };
@@ -1413,11 +1416,12 @@ impl Server {
         }
         if let Some(f) = self.worlds[world].dragon_fight.as_mut() {
             f.dragon = Some(uuid);
+            f.progress = 1.0;
         }
     }
 
     /// `updateCrystalCount`: the crystals still on top of the pillars.
-    fn update_crystal_count(&mut self, world: usize) {
+    pub(super) fn update_crystal_count(&mut self, world: usize) {
         let seed = self.worlds[world].seed;
         let w = &self.worlds[world];
         let mut count = 0;
@@ -1696,11 +1700,11 @@ impl Server {
         let gone: Vec<i32> = fight.viewers.difference(&valid).copied().collect();
         let added: Vec<i32> = valid.difference(&fight.viewers).copied().collect();
         fight.viewers = valid;
-        let (bar, killed, progress) = (fight.boss_bar, fight.dragon_killed, fight.progress);
-        for v in gone {
-            self.send(v, &play::BossEvent { uuid: bar, action: play::BossEventAction::Remove });
-        }
-        if !killed {
+        let (bar, shown, progress) = (fight.boss_bar, fight.bar_visible && !fight.dragon_killed, fight.progress);
+        if shown {
+            for v in gone {
+                self.send(v, &play::BossEvent { uuid: bar, action: play::BossEventAction::Remove });
+            }
             for v in added {
                 self.send(v, &play::BossEvent { uuid: bar, action: play::BossEventAction::Add { title: Component::translatable("entity.minecraft.ender_dragon", vec![]), health: progress, color: 0, division: 0, flags: 2 | 4 } });
             }
@@ -1711,12 +1715,22 @@ impl Server {
     fn update_boss_bar(&mut self, world: usize) {
         let Some(fight) = self.worlds[world].dragon_fight.as_mut() else { return };
         let (bar, viewers, killed, progress) = (fight.boss_bar, fight.viewers.clone(), fight.dragon_killed, fight.progress);
+        // `setVisible(!dragonKilled)`: the players near stay; only the bar goes, and comes
+        // back with a new dragon.
         if killed {
-            if !viewers.is_empty() {
-                fight.viewers.clear();
+            if fight.bar_visible {
+                fight.bar_visible = false;
                 for v in viewers {
                     self.send(v, &play::BossEvent { uuid: bar, action: play::BossEventAction::Remove });
                 }
+            }
+            return;
+        }
+        if !fight.bar_visible {
+            fight.bar_visible = true;
+            fight.sent_progress = progress;
+            for v in viewers {
+                self.send(v, &play::BossEvent { uuid: bar, action: play::BossEventAction::Add { title: Component::translatable("entity.minecraft.ender_dragon", vec![]), health: progress, color: 0, division: 0, flags: 2 | 4 } });
             }
             return;
         }

@@ -90,6 +90,7 @@ impl Server {
             self.worlds[world].remove_entity(id);
             return None;
         }
+        self.projectile_shot(world, id);
         Some(id)
     }
 
@@ -323,6 +324,7 @@ impl Server {
         // Plugins may stop it, or send the player elsewhere (`PlayerTeleportEvent`); a
         // stopped pearl does nothing at all.
         let Some((to_world, loc)) = crate::plugins::events::on_teleport(self, id, world, loc, "ENDER_PEARL") else { return };
+        self.game_event(world, "minecraft:teleport", at, Some(id), None);
         if rand::thread_rng().gen::<f32>() < 0.05 && self.worlds[world].rules.bool("spawn_mobs") {
             self.spawn_mob(world, "minecraft:endermite", at, SpawnReason::Natural);
         }
@@ -617,6 +619,7 @@ impl Server {
             self.set_inventory_slot(player, slot, rest);
         }
         self.award_stat(player, "minecraft:used", item_name(&stack), 1);
+        self.game_event(world, "minecraft:entity_place", at, Some(player), None);
         true
     }
 
@@ -660,6 +663,7 @@ impl Server {
             self.set_inventory_slot(player, slot, rest);
         }
         self.award_stat(player, "minecraft:used", item_name(&stack), 1);
+        self.game_event(world, "minecraft:entity_place", at, Some(player), None);
         true
     }
 }

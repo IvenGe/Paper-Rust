@@ -53,7 +53,11 @@ paper-compat     translators that let clients of older versions join
   Before the play state the task handles everything itself. In play it splits into a reader,
   which decodes packets and queues them for the main thread, and a writer, which frames,
   compresses and encrypts what the main thread queued for that player. Game state never
-  lives on these threads.
+  lives on these threads. A client with the Paper-RS Boost mod (`client-mod/`, when
+  `network.boost-mod` allows it) also opens a few extra connections, each with a writer
+  task of its own: its chunks (the frames the worker pool already compressed for everyone)
+  go over those, encrypted and written in parallel, and a marker on the main connection
+  (`paper-rs:boost/chunk`) keeps each in order there (`net/boost.rs`).
 * **Main thread** (`Server::run`). Runs 20 ticks per second and between ticks handles
   `MainTask`s as they arrive: packets, joins, disconnects, finished worker jobs, console
   commands, plugin calls. All game state (players, worlds, the command registry) is owned

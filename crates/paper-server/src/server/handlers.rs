@@ -574,7 +574,7 @@ impl Server {
         // Levers, buttons, doors, repeaters... react to the click instead of a block being placed.
         let used = self.within_reach(id, use_on.pos) && self.use_block(id, &use_on);
         // Hoes, shovels, axes and bone meal work on the block.
-        let used = used || item_allowed && self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_hanging_item(id, &use_on) || self.use_firework_on(id, &use_on) || self.use_tool_on_block(id, &use_on));
+        let used = used || item_allowed && self.within_reach(id, use_on.pos) && (self.use_spawn_egg(id, &use_on) || self.use_hanging_item(id, &use_on) || self.use_firework_on(id, &use_on) || self.use_end_crystal(id, &use_on) || self.use_tool_on_block(id, &use_on));
         let placed = used || item_allowed && self.try_place_block(id, &use_on);
         if !item_allowed {
             self.resync_inventory(id);
@@ -671,6 +671,7 @@ impl Server {
                 self.set_block_and_update(world, pos, second_state);
             }
             self.block_placed(world, target, state);
+            self.game_event(world, "minecraft:block_place", crate::world::entity::Vec3::new(target.x as f64 + 0.5, target.y as f64 + 0.5, target.z as f64 + 0.5), Some(id), Some(state));
             if super::signs::is_sign(blocks::block_of_state(state).name) {
                 self.sign_placed(id, world, target);
             }

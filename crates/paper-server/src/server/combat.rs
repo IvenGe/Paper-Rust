@@ -391,7 +391,7 @@ impl Server {
             }
             // End crystals break at any hit, and blow up unless an explosion broke them
             // (`EndCrystal.hurtServer`).
-            EntityKind::Other if e.info.name == "minecraft:end_crystal" => {
+            EntityKind::Crystal { .. } => {
                 // The dragon's own breath and bites leave them be.
                 let by_dragon = damage.attacker.is_some_and(|a| self.worlds[world].entities.get(&a).is_some_and(|d| d.info.name == super::dragon::DRAGON));
                 if e.removed || by_dragon {
@@ -505,6 +505,8 @@ impl Server {
                 self.merchant_hurt(world, id, attacker);
             }
         }
+        // Sculk hears the blow, made by whoever dealt it.
+        self.game_event(world, "minecraft:entity_damage", pos, damage.attacker, None);
         if dead {
             self.kill_mob(world, id, damage);
         }
@@ -591,6 +593,16 @@ impl Server {
             let vel = Vec3::new(rng.gen_range(-0.1..0.1), 0.2, rng.gen_range(-0.1..0.1));
             self.spawn_item(world, Vec3::new(pos.x, pos.y + 0.5, pos.z), stack, vel, 10);
         }
+        // Sculk hears it die; a catalyst near takes the experience it would give, killed by
+        // a player or not, and then none drops (`SculkCatalystBlockEntity.CatalystListener`).
+        let reward = if baby_animal || info.experience <= 0 {
+            0
+        } else {
+            let base = if info.category == "MONSTER" { info.experience } else { info.experience + rand::thread_rng().gen_range(0..3) };
+            if baby { (base as f64 * 2.5) as i32 } else { base }
+        };
+        let left = self.death_game_event(world, id, pos, reward);
+        let xp = if left < reward { 0 } else { xp };
         if xp > 0 {
             self.award_experience(world, pos, xp);
         }
@@ -711,6 +723,7 @@ impl Server {
     /// (`ProjectileLaunchEvent`). Returns whether it flies.
     pub(crate) fn launch(&mut self, world: usize, id: i32) -> bool {
         if crate::plugins::events::on_projectile_launch(self, world, id) {
+            self.projectile_shot(world, id);
             return true;
         }
         self.worlds[world].remove_entity(id);
@@ -832,9 +845,10 @@ impl Server {
             }
             e.metadata_dirty = true;
             e.force_sync = true;
-            let _ = block;
             let at = e.pos;
             self.play_sound(world, at, "minecraft:entity.arrow.hit", category::NEUTRAL, 1.0, 1.2 / (rand::thread_rng().gen::<f32>() * 0.2 + 0.9), None);
+            let hit = self.worlds[world].block_at(block.x, block.y, block.z);
+            self.game_event(world, "minecraft:projectile_land", at, Some(id), hit);
             return;
         }
         e.pos = to;
@@ -893,6 +907,7 @@ impl Server {
     /// [`Server::explode`], and with `fire` an incendiary explosion (`createFire`): fire on a
     /// third of the blocks it reached that are empty above a solid block.
     pub fn explode_with(&mut self, world: usize, center: Vec3, radius: f32, destroy_blocks: bool, fire: bool, source: Option<i32>) {
+        self.game_event(world, "minecraft:explode", center, source, None);
         let mut rng = rand::thread_rng();
         // Who the blast is blamed on (`getIndirectSourceEntity`): a fireball's shooter, no one
         // for TNT (who lit it is not kept), else what exploded.
@@ -1080,6 +1095,7 @@ impl Server {
             return;
         }
         self.play_sound(world, at, "minecraft:entity.tnt.primed", category::BLOCKS, 1.0, 1.0, None);
+        self.game_event(world, "minecraft:prime_fuse", Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), _igniter, None);
     }
 }
 

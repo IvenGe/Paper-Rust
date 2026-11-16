@@ -504,7 +504,7 @@ impl Server {
         self.send_menu_contents(id);
         // Lid animation and sound.
         if let MenuKind::Container { world, positions } = &menu_kind {
-            self.container_viewers_changed(*world, positions.clone(), true);
+            self.container_viewers_changed(*world, positions.clone(), true, Some(id));
         }
         match menu_kind {
             MenuKind::Furnace { world, pos, .. } => self.send_furnace_data(world, pos),
@@ -554,7 +554,7 @@ impl Server {
         let leftovers: Vec<Slot> = inputs.iter().filter(|s| !s.is_empty()).cloned().collect();
         self.return_grid_and_cursor(id, leftovers);
         match &menu.kind {
-            MenuKind::Container { world, positions } => self.container_viewers_changed(*world, positions.clone(), false),
+            MenuKind::Container { world, positions } => self.container_viewers_changed(*world, positions.clone(), false, Some(id)),
             MenuKind::EnderChest => {
                 // The ender chest lid stays open while anyone looks; a close sound is enough.
                 if let Some(p) = self.players.get(&id) {
@@ -595,7 +595,7 @@ impl Server {
     }
 
     /// Updates the lid animation after viewers came or went, and plays the sound.
-    fn container_viewers_changed(&mut self, world: usize, positions: Vec<BlockPos>, opened: bool) {
+    fn container_viewers_changed(&mut self, world: usize, positions: Vec<BlockPos>, opened: bool, by: Option<i32>) {
         let viewers = self.players.values().filter(|p| positions.iter().any(|pos| self.menu_shows(p.open_menu.as_ref(), world, *pos))).count();
         for pos in &positions {
             let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { continue };
@@ -626,6 +626,8 @@ impl Server {
         let last_viewer_left = !opened && viewers == 0;
         if opened && viewers == 1 || last_viewer_left {
             self.play_sound_at(world, first, sound, 0.5);
+            let event = if opened { "minecraft:container_open" } else { "minecraft:container_close" };
+            self.game_event(world, event, crate::world::entity::Vec3::new(first.x as f64 + 0.5, first.y as f64 + 0.5, first.z as f64 + 0.5), by, None);
         }
     }
 

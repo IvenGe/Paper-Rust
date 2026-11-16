@@ -149,6 +149,18 @@ fn saplings_grow_into_trees() {
         .run(move |s| (-3..=3).any(|dx| (2..10).any(|dy| s.worlds[0].block_at(oak.x + dx, oak.y + dy, oak.z).is_some_and(|b| blocks::block_of_state(b).name == "minecraft:oak_leaves"))))
         .unwrap();
     assert!(leaves, "the oak has leaves");
+
+    // A poplar sapling grows into a red, orange or yellow poplar.
+    let poplar = BlockPos::new(20, -60, 4);
+    server.handle.run(move |s| s.set_block_and_update(0, poplar, blocks::parse_state("poplar_sapling[stage=1]").unwrap())).unwrap();
+    wait_until("the poplar to grow", Duration::from_secs(30), || name_at(&server, poplar) == "minecraft:poplar_log");
+    let coloured = server
+        .handle
+        .run(move |s| {
+            (-3..=3).any(|dx| (1..16).any(|dy| (-3..=3).any(|dz| s.worlds[0].block_at(poplar.x + dx, poplar.y + dy, poplar.z + dz).is_some_and(|b| blocks::block_of_state(b).name.ends_with("_poplar_leaves")))))
+        })
+        .unwrap();
+    assert!(coloured, "the poplar has coloured leaves");
     server.handle.run(|s| s.set_game_rule(0, "random_tick_speed", paper_data::game_rules::Value::Int(0))).unwrap();
 
     // Dark oaks need four saplings in a square; bone meal grows them.

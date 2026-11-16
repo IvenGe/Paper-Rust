@@ -27,13 +27,17 @@ pub(super) async fn run(conn: Connection, login: LoginResult, shared: Arc<Shared
     let answers = tx.downgrade();
     let queued = Arc::new(AtomicUsize::new(0));
     let entity_id = shared.next_entity_id.fetch_add(1, Ordering::Relaxed);
+    // A broken extra connection (Paper-RS Boost) closes this one too.
+    if let Some(streams) = &login.boost {
+        streams.set_kick(tx.downgrade());
+    }
     let request = JoinRequest {
         entity_id,
         profile: login.profile,
         settings: login.settings,
         brand: login.brand,
         virtual_host: login.virtual_host,
-        conn: PlayerConn::new(tx, addr, queued.clone(), shared.outgoing.clone()),
+        conn: PlayerConn::new(tx, addr, queued.clone(), shared.outgoing.clone(), login.boost),
     };
     if shared.to_main.send(MainTask::Join(Box::new(request))).is_err() {
         return;

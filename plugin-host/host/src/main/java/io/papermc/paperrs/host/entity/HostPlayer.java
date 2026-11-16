@@ -1735,6 +1735,47 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         return Values.i32(this.state, "portal_cooldown", 0);
     }
 
+    // the warden's warnings (WardenSpawnTracker), read from the server each time: they tick
+
+    private Map<String, Object> warden(final Object... changes) {
+        return Values.map(this.server.call("player.warden", this.args(changes)));
+    }
+
+    @Override
+    public int getWardenWarningCooldown() {
+        return Values.i32(this.warden(), "cooldown", 0);
+    }
+
+    @Override
+    public void setWardenWarningCooldown(final int cooldown) {
+        this.warden("cooldown", Math.max(cooldown, 0));
+    }
+
+    @Override
+    public int getWardenTimeSinceLastWarning() {
+        return Values.i32(this.warden(), "since", 0);
+    }
+
+    @Override
+    public void setWardenTimeSinceLastWarning(final int time) {
+        this.warden("since", time);
+    }
+
+    @Override
+    public int getWardenWarningLevel() {
+        return Values.i32(this.warden(), "level", 0);
+    }
+
+    @Override
+    public void setWardenWarningLevel(final int warningLevel) {
+        this.warden("level", warningLevel);
+    }
+
+    @Override
+    public void increaseWardenWarningLevel() {
+        this.warden("increase", true);
+    }
+
     @Override
     public void setPortalCooldown(final int cooldown) {
         com.google.common.base.Preconditions.checkArgument(cooldown >= 0, "Portal cooldown (%s) must be beq 0", cooldown);

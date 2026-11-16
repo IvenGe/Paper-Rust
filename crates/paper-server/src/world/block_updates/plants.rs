@@ -614,8 +614,7 @@ struct Grower {
 
 const NO_GROWER: Grower = Grower { secondary_chance: 0.0, mega: None, secondary_mega: None, tree: None, secondary_tree: None, flowers: None, secondary_flowers: None };
 
-/// Vanilla's growers by block. Poplar saplings are left out: how they choose among their
-/// three tree colours is not in the data.
+/// Vanilla's growers by block. A poplar sapling's tree is chosen by [`poplar_tree`].
 fn grower(block: &str) -> Option<Grower> {
     Some(match block {
         "minecraft:oak_sapling" => Grower { secondary_chance: 0.1, tree: Some("oak"), secondary_tree: Some("fancy_oak"), flowers: Some("oak_bees_005"), secondary_flowers: Some("fancy_oak_bees_005"), ..NO_GROWER },
@@ -628,8 +627,23 @@ fn grower(block: &str) -> Option<Grower> {
         "minecraft:cherry_sapling" => Grower { tree: Some("cherry"), flowers: Some("cherry_bees_005"), ..NO_GROWER },
         "minecraft:dark_oak_sapling" => Grower { mega: Some("dark_oak"), ..NO_GROWER },
         "minecraft:pale_oak_sapling" => Grower { mega: Some("pale_oak_bonemeal"), ..NO_GROWER },
+        "minecraft:poplar_sapling" => Grower { tree: Some("orange_poplar"), ..NO_GROWER },
         _ => return None,
     })
+}
+
+/// A poplar sapling's tree: red, orange or yellow. How vanilla chooses is not in the data, so
+/// the colours come in the proportions the dappled forest plants them (200, 240 and 90 of its
+/// `trees_dappled_forest` weights).
+fn poplar_tree(level: &mut Level) -> &'static str {
+    let n = level.random_float() * 530.0;
+    if n < 200.0 {
+        "red_poplar"
+    } else if n < 440.0 {
+        "orange_poplar"
+    } else {
+        "yellow_poplar"
+    }
 }
 
 /// `SaplingBlock.advanceTree`: the first stage, then the tree.
@@ -668,7 +682,10 @@ pub fn grow_tree(level: &mut Level, state: u32, pos: BlockPos) -> bool {
         tree = if flowers && g.secondary_flowers.is_some() { g.secondary_flowers } else { g.secondary_tree };
     }
     let tree = tree.or(if flowers && g.flowers.is_some() { g.flowers } else { g.tree });
-    let Some(tree) = tree else { return false };
+    let Some(mut tree) = tree else { return false };
+    if block_name(state) == "minecraft:poplar_sapling" {
+        tree = poplar_tree(level);
+    }
     let fill = if get_bool(state, "waterlogged") { blocks::default_state("minecraft:water").unwrap_or(blocks::AIR) } else { blocks::AIR };
     place_grown_feature(level, tree, pos, pos, &[(pos, fill)])
 }

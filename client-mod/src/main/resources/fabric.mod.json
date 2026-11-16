@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "paperrs_boost",
+	"version": "${version}",
+	"name": "Paper-RS Boost",
+	"description": "On Paper-RS servers that allow it, receives the world over several connections at once, written by several server threads and read by several of yours. Elsewhere it does nothing.",
+	"license": "GPL-3.0-or-later",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"io.papermc.paperrs.boost.BoostClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

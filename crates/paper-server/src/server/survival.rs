@@ -462,6 +462,7 @@ impl Server {
 
     fn tick_player(&mut self, id: i32) {
         let Some(p) = self.players.get_mut(&id) else { return };
+        p.warden.tick();
         if p.dead || p.game_mode == GameMode::Spectator {
             return;
         }
@@ -770,6 +771,17 @@ impl Server {
                 p.fall_distance = 0.0;
             }
         }
+        // Steps and strokes sculk hears (`Entity.move`): one every 1/0.6 blocks moved, on
+        // something; climbing counts the climb.
+        let mut step = None;
+        if p.vehicle.is_none() && moved {
+            let climb = if climbing { dy } else { 0.0 };
+            p.move_dist += ((dx * dx + climb * climb + dz * dz).sqrt() * 0.6) as f32;
+            if p.move_dist > p.next_step && !blocks::is_air(below) {
+                p.next_step = p.move_dist.floor() + 1.0;
+                step = Some(if in_water { "minecraft:swim" } else { "minecraft:step" });
+            }
+        }
 
         // Exhaustion: jumping and sprinting on the ground, swimming.
         let horizontal = (dx * dx + dz * dz).sqrt();
@@ -786,6 +798,20 @@ impl Server {
             self.add_exhaustion(id, exhaustion);
         }
 
+        let here = Vec3::new(to.x, to.y, to.z);
+        if let Some(event) = step {
+            let muffled = event == "minecraft:step" && paper_data::synced::tag("minecraft:block", "minecraft:occludes_vibration_signals").is_some_and(|ids| ids.contains(&(blocks::block_id_of_state(below) as i32)));
+            if !muffled {
+                self.game_event(world, event, here, Some(id), (event == "minecraft:step").then_some(below));
+            }
+        }
+        if landed.is_some() {
+            self.game_event(world, "minecraft:hit_ground", here, Some(id), Some(below));
+        }
+        // Standing on a shrieker sets it off (`SculkShriekerBlock.stepOn`).
+        if on_ground && blocks::block_of_state(below).name == "minecraft:sculk_shrieker" {
+            self.try_shriek(world, below_pos, Some(id));
+        }
         if let Some(distance) = landed {
             let multiplier = match blocks::block_of_state(below).name {
                 "minecraft:hay_block" | "minecraft:honey_block" => 0.2,
@@ -1016,6 +1042,7 @@ impl Server {
         if self.players.get(&id).is_some_and(|p| p.sleeping.is_some()) {
             self.wake_up(id);
         }
+        self.game_event(world, "minecraft:entity_damage", pos, damage.attacker, None);
         if dead {
             self.kill_player(id, damage);
         }
@@ -1147,7 +1174,9 @@ impl Server {
                 let vel = Vec3::new(-g.sin() * f, 0.2, g.cos() * f);
                 self.spawn_item(world, Vec3::new(pos.x, pos.y + 1.32, pos.z), stack, vel, 40);
             }
-            self.award_experience(world, pos, xp);
+            // A catalyst near takes the experience to spread sculk with.
+            let left = self.death_game_event(world, id, pos, xp);
+            self.award_experience(world, pos, left);
             self.resync_inventory(id);
             self.send_experience(id);
         }
@@ -1431,6 +1460,11 @@ impl Server {
         };
         let stack = consumed.0.unwrap_or_else(|| held.clone());
         let data = item_data::by_id(stack.item as u32);
+        if let Some(p) = self.players.get(&id) {
+            let (world, at) = (p.world, Vec3::new(p.loc.x, p.loc.y, p.loc.z));
+            self.game_event(world, if data.food.is_some() { "minecraft:eat" } else { "minecraft:drink" }, at, Some(id), None);
+            self.game_event(world, "minecraft:item_interact_finish", at, Some(id), None);
+        }
         // Eating fills the food bar, as far as plugins let it (`FoodLevelChangeEvent`).
         let food_level = match &data.food {
             Some(food) => {

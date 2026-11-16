@@ -334,6 +334,12 @@ pub struct Player {
     pub attributes: crate::world::attributes::Attributes,
     /// The client's last answer to a resource pack offer (0 loaded ... 7 discarded).
     pub resource_pack_status: Option<i32>,
+    /// How far the player has walked (`moveDist`) and where the next step falls: each step is
+    /// a vibration.
+    pub move_dist: f32,
+    pub next_step: f32,
+    /// How close the player is to calling the warden (`warden_spawn_tracker`).
+    pub warden: super::sculk::WardenTracker,
     /// What only plugins change (see [`ApiState`]).
     pub api: ApiState,
 }

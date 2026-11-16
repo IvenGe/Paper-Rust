@@ -365,11 +365,17 @@ pub struct NetworkConfig {
     pub login_timeout_seconds: u64,
     /// Seconds without any packet before a connection is dropped.
     pub read_timeout_seconds: u64,
+    /// Serve players who have the Paper-RS Boost client mod (`client-mod/`) over extra
+    /// connections: their chunks are written, and read on their side, by several threads at
+    /// once. Off: every client is served as vanilla, with or without the mod.
+    pub boost_mod: bool,
+    /// How many extra connections such a client may open (1 to 8).
+    pub boost_streams: u32,
 }
 
 impl Default for NetworkConfig {
     fn default() -> Self {
-        Self { compression_level: 4, login_timeout_seconds: 30, read_timeout_seconds: 30 }
+        Self { compression_level: 4, login_timeout_seconds: 30, read_timeout_seconds: 30, boost_mod: false, boost_streams: 4 }
     }
 }
 
@@ -455,6 +461,9 @@ const CONFIG_HEADER: &str = "\
 #            the work of a tick that can be split up (tracking entities, moving mobs).
 # [plugins]  Java plugins run in a separate JVM process (\"separate mode\") that talks to
 #            the server over a local socket. Set enabled = false to run without plugins.
+# [network]  boost-mod = true lets players with the Paper-RS Boost client mod receive chunks
+#            over boost-streams extra connections, written and read by several threads at
+#            once. Players without the mod join as usual either way.
 
 ";
 

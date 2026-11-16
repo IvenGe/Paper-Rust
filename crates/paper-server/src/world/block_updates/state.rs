@@ -393,7 +393,8 @@ fn classify(name: &str) -> Kind {
         "detector_rail" => return Kind::DetectorRail,
         "rail" => return Kind::Rail,
         "powered_rail" | "activator_rail" => return Kind::PoweredRail,
-        "trapped_chest" | "jukebox" | "calibrated_sculk_sensor" => return Kind::PassiveSource,
+        "trapped_chest" | "jukebox" => return Kind::PassiveSource,
+        "calibrated_sculk_sensor" => return Kind::SculkSensor,
         _ => {}
     }
     if super::falling::is_falling(n) {

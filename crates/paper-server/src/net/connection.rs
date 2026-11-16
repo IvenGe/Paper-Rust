@@ -39,6 +39,8 @@ pub(super) struct LoginResult {
     pub brand: Option<String>,
     /// The address the client says it connected to.
     pub virtual_host: String,
+    /// The extra connections of a client with the Paper-RS Boost mod.
+    pub boost: Option<Arc<super::boost::Streams>>,
 }
 
 /// Why the pre-play phase ended without a player.
@@ -182,6 +184,14 @@ pub(super) async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shar
     let _ = stream.set_nodelay(true);
     let network = &shared.config.paper.network;
     let mut conn = Connection::new(stream, addr, network.compression_level);
+    // An extra connection of a player with the Paper-RS Boost mod.
+    if network.boost_mod {
+        if let Ok(Ok(true)) = tokio::time::timeout(Duration::from_secs(10), boost_stream_header(&mut conn)).await {
+            let header: Vec<u8> = conn.dec.peek()[..super::boost::STREAM_HEADER].to_vec();
+            super::boost::serve_stream(conn.stream, &header, &shared).await;
+            return;
+        }
+    }
     let timeout = Duration::from_secs(network.login_timeout_seconds.max(1));
     match tokio::time::timeout(timeout, pre_play(&mut conn, &shared)).await {
         Ok(Ok(Some(login))) => play::run(conn, login, shared).await,
@@ -194,6 +204,20 @@ pub(super) async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shar
             log::debug!("{addr}: took too long to log in");
         }
     }
+}
+
+/// Whether the connection is a Paper-RS Boost stream: `PRSB` (no handshake starts with it:
+/// a Netty frame 0x50 bytes long would go on with packet id 0). Its header is then buffered.
+async fn boost_stream_header(conn: &mut Connection) -> Result<bool> {
+    if !conn.fill(1, None).await? || conn.dec.peek()[0] != super::boost::MAGIC[0] {
+        return Ok(false);
+    }
+    conn.fill(4, Some(Duration::from_millis(250))).await?;
+    if !conn.dec.peek().starts_with(super::boost::MAGIC) {
+        return Ok(false);
+    }
+    conn.fill(super::boost::STREAM_HEADER, Some(Duration::from_secs(5))).await?;
+    Ok(conn.dec.peek().len() >= super::boost::STREAM_HEADER)
 }
 
 /// What a client's first bytes say it is.
@@ -457,6 +481,13 @@ async fn login_flow(conn: &mut Connection, shared: &Arc<Shared>, intention: Inte
         conn.enc.set_compression(Some(threshold));
         conn.dec.set_compression(Some(threshold));
     }
+    // A client with the Paper-RS Boost mod (only asked when the server allows it; others
+    // answer that they do not know the channel).
+    let boost = if shared.config.paper.network.boost_mod && conn.translator.is_none() {
+        boost_query(conn, shared).await?
+    } else {
+        None
+    };
     conn.send(&login::LoginFinished { profile: profile.clone(), session_id: uuid::Uuid::new_v4() }).await?;
 
     // The client may answer cookie requests or plugin queries before acknowledging.
@@ -467,7 +498,32 @@ async fn login_flow(conn: &mut Connection, shared: &Arc<Shared>, intention: Inte
         }
     }
 
-    configuration_flow(conn, shared, profile, intention.server_address).await
+    configuration_flow(conn, shared, profile, intention.server_address, boost).await
+}
+
+/// Asks whether the client has the Paper-RS Boost mod; with it, the streams it may open.
+async fn boost_query(conn: &mut Connection, shared: &Arc<Shared>) -> Result<Option<Arc<super::boost::Streams>>> {
+    use rand::RngCore;
+    let mut token = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut token);
+    let offered = shared.config.paper.network.boost_streams.clamp(1, 8);
+    let message_id = rand::thread_rng().next_u32() as i32 & 0x7FFF_FFFF;
+    let data = super::boost::hello(offered, conn.enc.compression(), &token);
+    conn.send(&login::CustomQuery { message_id: VarInt(message_id), channel: super::boost::CHANNEL.into(), data: paper_protocol::codec::RemainingBytes(data) }).await?;
+    loop {
+        let frame = conn.expect_frame().await?;
+        if packet_id(&frame)? != login::CustomQueryAnswer::ID {
+            continue;
+        }
+        let answer: login::CustomQueryAnswer = decode_as(&frame)?;
+        if answer.message_id != message_id {
+            continue;
+        }
+        return Ok(super::boost::streams_answered(answer.data.as_deref(), offered).map(|streams| {
+            log::debug!("{}: Paper-RS Boost with {streams} streams", conn.addr);
+            shared.boost.open(token, streams)
+        }));
+    }
 }
 
 /// The online-mode encryption handshake and session check. Returns `None` if the player
@@ -515,7 +571,7 @@ async fn authenticate(conn: &mut Connection, shared: &Arc<Shared>, name: &str) -
     }
 }
 
-async fn configuration_flow(conn: &mut Connection, shared: &Arc<Shared>, profile: GameProfile, virtual_host: String) -> Result<Option<LoginResult>> {
+async fn configuration_flow(conn: &mut Connection, shared: &Arc<Shared>, profile: GameProfile, virtual_host: String, boost: Option<Arc<super::boost::Streams>>) -> Result<Option<LoginResult>> {
     let packets = &shared.config_packets;
     let mut settings = ClientSettings::default();
     let mut brand = None;
@@ -564,5 +620,5 @@ async fn configuration_flow(conn: &mut Connection, shared: &Arc<Shared>, profile
             other => handle_common(other, &mut settings, &mut brand),
         }
     }
-    Ok(Some(LoginResult { profile, settings, brand, virtual_host }))
+    Ok(Some(LoginResult { profile, settings, brand, virtual_host, boost }))
 }

@@ -807,6 +807,7 @@ impl Server {
                 self.set_block_and_update(world, hit, new_state);
                 let sound = if fluid == Fluid::Lava { "minecraft:item.bucket.fill_lava" } else { "minecraft:item.bucket.fill" };
                 self.play_sound(world, Vec3::new(hit.x as f64 + 0.5, hit.y as f64 + 0.5, hit.z as f64 + 0.5), sound, category::BLOCKS, 1.0, 1.0, None);
+                self.game_event(world, "minecraft:fluid_pickup", Vec3::new(hit.x as f64 + 0.5, hit.y as f64 + 0.5, hit.z as f64 + 0.5), Some(id), None);
                 let filled = given.and_then(|g| g.0).unwrap_or(filled_stack);
                 self.fill_container_item(id, slot, &stack, filled, creative);
                 self.award_stat(id, "minecraft:used", item, 1);
@@ -854,6 +855,7 @@ impl Server {
                         None => "minecraft:item.bucket.empty",
                     };
                     self.play_sound(world, at, sound, category::BLOCKS, 1.0, 1.0, None);
+                    self.game_event(world, "minecraft:fluid_place", at, Some(id), None);
                 }
                 // A bucket of fish lets its fish out where the water went.
                 if let Some((mob, _)) = bucketed {

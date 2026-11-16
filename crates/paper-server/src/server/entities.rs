@@ -530,6 +530,20 @@ impl Server {
                     e.removed = true;
                 }
             }
+            // In an End with a dragon fight, fire burns where a crystal stands (`EndCrystal.tick`),
+            // unless plugins put it out (`BlockIgniteEvent`, `ENDER_CRYSTAL`).
+            EntityKind::Crystal { .. } => {
+                let at = BlockPos::new(e.pos.x.floor() as i32, e.pos.y.floor() as i32, e.pos.z.floor() as i32);
+                if self.worlds[world].dragon_fight.is_some() && self.worlds[world].block_at(at.x, at.y, at.z) == Some(blocks::AIR) {
+                    self.worlds[world].entities.insert(id, e);
+                    if crate::plugins::events::on_block_ignite(self, world, at, "ENDER_CRYSTAL", crate::plugins::events::Igniter::Entity(id)) {
+                        let fire = crate::world::block_updates::fire::fire_state_for(&self.worlds[world], at);
+                        self.set_block_and_update(world, at, fire);
+                    }
+                    let Some(back) = self.worlds[world].entities.remove(&id) else { return };
+                    e = back;
+                }
+            }
         }
         let despawning = matches!(e.kind, EntityKind::Item { .. }) && !e.removed && e.age >= ITEM_LIFETIME;
         self.worlds[world].entities.insert(id, e);
@@ -1042,6 +1056,15 @@ pub fn entity_metadata(e: &Entity, spawning: bool) -> Vec<u8> {
             }
             if let Some(i) = info.data_index("DATA_SHOT_AT_ANGLE").filter(|_| !spawning || f.shot_at_angle) {
                 m = m.boolean(i, f.shot_at_angle);
+            }
+        }
+        // An end crystal's beam and base.
+        EntityKind::Crystal { beam_target, show_bottom } => {
+            if let Some(i) = info.data_index("DATA_BEAM_TARGET").filter(|_| !spawning || beam_target.is_some()) {
+                m = m.optional_block_pos(i, *beam_target);
+            }
+            if let Some(i) = info.data_index("DATA_SHOW_BOTTOM").filter(|_| !spawning || !show_bottom) {
+                m = m.boolean(i, *show_bottom);
             }
         }
         // What a bobber hooked (its id + 1, or 0) and whether a fish bites.

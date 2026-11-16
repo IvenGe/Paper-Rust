@@ -1529,6 +1529,34 @@ public final class HostEvents {
                 spread.callEvent();
                 yield Values.of("cancelled", spread.isCancelled(), "state", state.getBlockData().getAsString());
             }
+            case "event.generic_game_event" -> {
+                final org.bukkit.GameEvent gameEvent = org.bukkit.Registry.GAME_EVENT.get(org.bukkit.NamespacedKey.fromString(Values.str(args, "event", "minecraft:step")));
+                final org.bukkit.World world = this.server.getWorld(Values.str(args, "world", ""));
+                if (gameEvent == null || world == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.entity.Entity entity = args.get("entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                final org.bukkit.event.world.GenericGameEvent event = new org.bukkit.event.world.GenericGameEvent(gameEvent,
+                    new Location(world, Values.f64(args, "x", 0), Values.f64(args, "y", 0), Values.f64(args, "z", 0)), entity, Values.i32(args, "radius", 16), false);
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled(), "radius", event.getRadius());
+            }
+            case "event.block_receive_game_event" -> {
+                final org.bukkit.GameEvent gameEvent = org.bukkit.Registry.GAME_EVENT.get(org.bukkit.NamespacedKey.fromString(Values.str(args, "event", "minecraft:step")));
+                if (gameEvent == null) {
+                    yield Values.of();
+                }
+                final org.bukkit.entity.Entity entity = args.get("entity") instanceof Map<?, ?> ref ? io.papermc.paperrs.host.entity.Entities.of(this.server, Values.map(ref)) : null;
+                final org.bukkit.event.block.BlockReceiveGameEvent event = new org.bukkit.event.block.BlockReceiveGameEvent(gameEvent, this.block(args), entity);
+                event.setCancelled(Values.bool(args, "cancelled", false));
+                event.callEvent();
+                yield Values.of("cancelled", event.isCancelled());
+            }
+            case "event.block_redstone" -> {
+                final org.bukkit.event.block.BlockRedstoneEvent event = new org.bukkit.event.block.BlockRedstoneEvent(this.block(args), Values.i32(args, "old", 0), Values.i32(args, "new", 0));
+                event.callEvent();
+                yield Values.of("new", event.getNewCurrent());
+            }
             case "event.block_ignite" -> {
                 // Set by an entity (a player, lightning, a fireball's shooter, an explosion) or a
                 // block (lava, a dispenser).
