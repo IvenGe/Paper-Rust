@@ -164,6 +164,8 @@ descriptor of its top inventory), `window_id`, and for blocks also `world`, `x`,
 | `event.creature_spawn` | `entity`, `type`, `value` (state), `world`, `x`, `y`, `z`, `reason` | `cancelled` (`CreatureSpawnEvent`; the mob is removed again) |
 | `event.trade` | `uuid`, `merchant` (`{entity, value}` or `{merchant}`), `recipe`, `reward_exp`, `increase_uses` | `cancelled`, `recipe`, `reward_exp`, `increase_uses` (`PlayerTradeEvent` for villagers and wandering traders, `PlayerPurchaseEvent` for plugin merchants; a changed recipe stays on the offer) |
 | `event.trade_select` | `uuid`, `index` | `cancelled` (`TradeSelectEvent`) |
+| `event.prepare_result` | `uuid`, `type` (`STONECUTTER`, `SMITHING`, `GRINDSTONE`, `LOOM`), `result` | `result` (`PrepareSmithingEvent`, `PrepareGrindstoneEvent`, Paper's `PrepareResultEvent` for the others; the window shows it) |
+| `event.station_select` | `uuid`, `type` (`STONECUTTER`: `choice` the recipe id, with its `result` and `inputs`; `LOOM`: `choice` the pattern key) | `cancelled`, `choice` (`PlayerStonecutterRecipeSelectEvent`, `PlayerLoomPatternSelectEvent`: another recipe or pattern on offer may be picked instead) |
 | `event.villager_acquire_trade` / `event.villager_replenish_trade` | `entity`, `value` (state), `recipe` | `cancelled`, `recipe` (`VillagerAcquireTradeEvent`, `VillagerReplenishTradeEvent`; one per trade) |
 | `event.villager_career_change` | `entity`, `value`, `profession`, `reason` (`EMPLOYED`, `LOSING_JOB`) | `cancelled`, `profession` (`VillagerCareerChangeEvent`) |
 | `event.mount` / `event.dismount` | `entity` (the rider), `mount` / `dismounted` (the vehicle) | `cancelled` (`VehicleEnterEvent` / `VehicleExitEvent` first for a living rider of a Bukkit vehicle, then `EntityMountEvent`, `EntityDismountEvent`) |
@@ -343,7 +345,7 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.stop_sound` | `uuid`, and optionally `sound` and `category` (none: all sounds) |
 | `player.inventory` / `player.set_slot` / `player.set_held_slot` | `uuid` / `slot`, `item` (window slot numbers) / `slot` |
 | `player.open_inventory` | `uuid`, `inventory` (descriptor), `title` (answers `opened`, `window`) |
-| `player.open_station` | `uuid`, `kind` (`crafting`, `anvil`, `enchanting`), optional `x`, `y`, `z` (else where the player stands), `force` (else the block must be one) (answers `opened`, `window`: `openWorkbench`, `openAnvil`, `openEnchanting`) |
+| `player.open_station` | `uuid`, `kind` (`crafting`, `anvil`, `enchanting`, `stonecutter`, `smithing`, `grindstone`, `loom`), optional `x`, `y`, `z` (else where the player stands), `force` (else the block must be one) (answers `opened`, `window`: `openWorkbench`, `openAnvil`, `openEnchanting`, `openStonecutter`, `openSmithingTable`, `openGrindstone`, `openLoom`) |
 | `player.close_inventory` | `uuid`, `reason` |
 | `player.cursor` / `player.set_cursor` | `uuid` / `item` |
 | `player.set_scoreboard` | `uuid`, `board` |

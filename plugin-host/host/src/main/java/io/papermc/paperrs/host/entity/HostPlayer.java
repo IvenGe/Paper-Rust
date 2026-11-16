@@ -1268,6 +1268,26 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         return this.openStation("anvil", location, force);
     }
 
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openStonecutter(final @Nullable Location location, final boolean force) {
+        return this.openStation("stonecutter", location, force);
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openSmithingTable(final @Nullable Location location, final boolean force) {
+        return this.openStation("smithing", location, force);
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openGrindstone(final @Nullable Location location, final boolean force) {
+        return this.openStation("grindstone", location, force);
+    }
+
+    @Override
+    public org.bukkit.inventory.@Nullable InventoryView openLoom(final @Nullable Location location, final boolean force) {
+        return this.openStation("loom", location, force);
+    }
+
     /**
      * {@code HumanEntity#openMerchant}: trading with a villager, wandering trader or a merchant
      * a plugin made. Without {@code force}, a merchant already trading with someone stays

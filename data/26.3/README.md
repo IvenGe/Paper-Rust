@@ -18,6 +18,7 @@ These JSON files are compiled into the `paper-data` crate by its build script.
 | `block_behaviour.json` | per block state: sturdy faces, legacy solid, redstone conductor, comparator output, piston reaction, full collision faces, note block instrument |
 | `block_physics.json` | per block state: collision shapes and behaviour flags; per block: loot table, friction, speed and jump factors; block entity types |
 | `item_components.json` | default components of items that behave differently (durability, food, tools, weapons, attributes, equipment slots, fuel) |
+| `item_providers.json` | the items that provide an armour trim material (`provides_trim_material`) or banner patterns (`provides_banner_patterns`) |
 | `entities.json` | entity types: size, eye height, category, attributes, health, experience, spawn rules, sounds |
 | `entity_data.json` | the entity metadata layout (field index and serializer) of each entity type |
 | `game_rules.json` | game rules with their defaults (and bounds for integer rules) |
@@ -50,6 +51,9 @@ exact inputs, the method and the full list of checks
   `game_rules.json`) by `tools/datagen/pumpkin_extra.py`, which checks item ids
   and block state ids against `items.json` / `blocks.json` and game rule names
   against the `minecraft:game_rule` registry. The same licence note applies.
+* `item_providers.json` is written by `tools/datagen/item_providers.py` from the default
+  item components of misode/mcmeta `26.3-summary` (`item_components/data.json`), checking
+  the items against `items.json`.
 * Synchronised registry entries, tags and dimension types are read from the
   `data/minecraft/**` files inside the jar.
 * `worldgen/multi_noise_biome_tree.json.gz` is `assets/multi_noise_biome_tree.json` of

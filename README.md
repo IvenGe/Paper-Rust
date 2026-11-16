@@ -226,7 +226,14 @@ What works:
   offer vanilla's three enchantments from the bookshelves around them for lapis and levels;
   anvils repair with materials, combine items and enchanted books, rename, add the prior
   work penalty and wear out. Brewing stands brew vanilla's potions (and splash and
-  lingering ones) with blaze powder, also fed by hoppers.
+  lingering ones) with blaze powder, also fed by hoppers. Stonecutters cut by vanilla's
+  stonecutting recipes (clients are sent the list to pick from); smithing tables upgrade
+  to netherite (keeping enchantments and names) and put armour trims on in the material
+  of the addition; grindstones take enchantments other than curses off and repair two
+  items into one, giving experience back; looms add banner patterns (with or without a
+  pattern item) in the dye's colour, up to six layers. Plugins see `PrepareResultEvent`,
+  `PrepareSmithingEvent`, `PrepareGrindstoneEvent` and the stonecutter and loom select
+  events, and open these windows (`openStonecutter`, `openSmithingTable`, ...).
 * **Redstone with items and entities**: hoppers move items between containers (furnace
   sides and chest boats included), pick up dropped items and lock when powered; droppers and dispensers
   fire on a rising signal (also from above), droppers into containers in front of them,

@@ -32,6 +32,9 @@ pub struct OpenMenu {
     /// pays for (`activeOffer`).
     pub trade_selection: Option<usize>,
     pub active_offer: Option<usize>,
+    /// The stonecutter recipe (index among those for the input) or loom pattern (id in
+    /// `minecraft:banner_pattern`) picked.
+    pub station_choice: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +58,11 @@ pub enum MenuKind {
     Mount { world: usize, id: i32, saddle: super::menu::SlotKind, body: super::menu::SlotKind },
     /// A chest boat's chest.
     EntityChest { world: usize, id: i32 },
+    /// Workstations (see `server::stations`): their inputs and result are in the grid.
+    Stonecutter { world: usize, pos: BlockPos },
+    Smithing { world: usize, pos: BlockPos },
+    Grindstone { world: usize, pos: BlockPos },
+    Loom { world: usize, pos: BlockPos },
 }
 
 /// Who a trading window trades with.
@@ -124,6 +132,10 @@ pub enum ContainerBlock {
     Anvil,
     BrewingStand,
     Crafter,
+    Stonecutter,
+    SmithingTable,
+    Grindstone,
+    Loom,
 }
 
 pub fn container_block(state: u32) -> Option<ContainerBlock> {
@@ -141,6 +153,10 @@ pub fn container_block(state: u32) -> Option<ContainerBlock> {
         "minecraft:brewing_stand" => ContainerBlock::BrewingStand,
         "minecraft:crafter" => ContainerBlock::Crafter,
         "minecraft:anvil" | "minecraft:chipped_anvil" | "minecraft:damaged_anvil" => ContainerBlock::Anvil,
+        "minecraft:stonecutter" => ContainerBlock::Stonecutter,
+        "minecraft:smithing_table" => ContainerBlock::SmithingTable,
+        "minecraft:grindstone" => ContainerBlock::Grindstone,
+        "minecraft:loom" => ContainerBlock::Loom,
         _ => return None,
     })
 }
@@ -403,6 +419,10 @@ impl Server {
             ContainerBlock::Anvil => (MenuKind::Anvil { world, pos }, "minecraft:anvil", "container.repair"),
             ContainerBlock::BrewingStand => (MenuKind::Brewing { world, pos }, "minecraft:brewing_stand", "container.brewing"),
             ContainerBlock::Crafter => (MenuKind::Crafter { world, pos }, "minecraft:crafter_3x3", "container.crafter"),
+            ContainerBlock::Stonecutter => (MenuKind::Stonecutter { world, pos }, "minecraft:stonecutter", "container.stonecutter"),
+            ContainerBlock::SmithingTable => (MenuKind::Smithing { world, pos }, "minecraft:smithing", "container.upgrade"),
+            ContainerBlock::Grindstone => (MenuKind::Grindstone { world, pos }, "minecraft:grindstone", "container.grindstone_title"),
+            ContainerBlock::Loom => (MenuKind::Loom { world, pos }, "minecraft:loom", "container.loom"),
             ContainerBlock::Furnace(recipe_type) => {
                 let (menu, title) = match recipe_type {
                     "minecraft:smoking" => ("minecraft:smoker", "container.smoker"),
@@ -436,6 +456,10 @@ impl Server {
             ContainerBlock::Dispenser => "minecraft:inspect_dispenser",
             ContainerBlock::BrewingStand => "minecraft:interact_with_brewingstand",
             ContainerBlock::Anvil => "minecraft:interact_with_anvil",
+            ContainerBlock::Stonecutter => "minecraft:interact_with_stonecutter",
+            ContainerBlock::SmithingTable => "minecraft:interact_with_smithing_table",
+            ContainerBlock::Grindstone => "minecraft:interact_with_grindstone",
+            ContainerBlock::Loom => "minecraft:interact_with_loom",
             ContainerBlock::EnchantingTable | ContainerBlock::Crafter => "",
         };
         if !stat.is_empty() {
@@ -466,9 +490,12 @@ impl Server {
             MenuKind::CraftingTable => vec![Slot::EMPTY; 10],
             MenuKind::Enchanting { .. } => vec![Slot::EMPTY; 2],
             MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => vec![Slot::EMPTY; 3],
-            _ => Vec::new(),
+            ref kind => match super::stations::Station::of(kind) {
+                Some((station, ..)) => vec![Slot::EMPTY; station.result_slot() + 1],
+                None => Vec::new(),
+            },
         };
-        player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid, anvil: Default::default(), trade_selection: None, active_offer: None });
+        player.open_menu = Some(OpenMenu { window_id, kind: menu_kind.clone(), state_id: 1, craft_grid, anvil: Default::default(), trade_selection: None, active_offer: None, station_choice: None });
         match &menu_kind {
             // A mount's window has a packet of its own: the client builds it from the mount.
             MenuKind::Mount { id: mount, .. } => player.conn.send(&play::MountScreenOpen { container_id: VarInt(window_id), inventory_columns: VarInt(mount_columns), entity_id: *mount }),
@@ -484,6 +511,7 @@ impl Server {
             MenuKind::Enchanting { .. } => self.update_enchanting_table(id),
             MenuKind::Brewing { world, pos } => self.send_brewing_state(world, pos),
             MenuKind::Crafter { world, pos } => self.send_crafter_data(world, pos),
+            MenuKind::Stonecutter { .. } | MenuKind::Loom { .. } => self.send_station_choice(id),
             _ => {}
         }
         true
@@ -518,7 +546,10 @@ impl Server {
         // What the player put in goes back (not results).
         let inputs = match menu.kind {
             MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => &menu.craft_grid[..2],
-            _ => menu.craft_grid.get(1..).unwrap_or(&[]),
+            ref kind => match super::stations::Station::of(kind) {
+                Some((station, ..)) => &menu.craft_grid[..station.result_slot()],
+                None => menu.craft_grid.get(1..).unwrap_or(&[]),
+            },
         };
         let leftovers: Vec<Slot> = inputs.iter().filter(|s| !s.is_empty()).cloned().collect();
         self.return_grid_and_cursor(id, leftovers);
@@ -631,6 +662,7 @@ impl Server {
             Some(MenuKind::Furnace { recipe_type, .. }) => Layout::furnace(recipe_type),
             Some(MenuKind::Crafter { .. }) => Layout::crafter(),
             Some(MenuKind::Mount { saddle, body, .. }) => Layout::mount(*saddle, *body, size.saturating_sub(2)),
+            Some(kind @ (MenuKind::Stonecutter { .. } | MenuKind::Smithing { .. } | MenuKind::Grindstone { .. } | MenuKind::Loom { .. })) => super::stations::Station::of(kind).unwrap().0.layout(),
         }
     }
 
@@ -642,6 +674,7 @@ impl Server {
             MenuKind::Container { world, positions } => positions.iter().flat_map(|p| self.container_items(*world, *p)).collect(),
             MenuKind::EnderChest => player.ender_items.clone(),
             MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => menu.craft_grid.clone(),
+            MenuKind::Stonecutter { .. } | MenuKind::Smithing { .. } | MenuKind::Grindstone { .. } | MenuKind::Loom { .. } => menu.craft_grid.clone(),
             MenuKind::Furnace { world, pos, .. } | MenuKind::Brewing { world, pos } => self.container_items(*world, *pos),
             MenuKind::Custom { id } => self.plugin_data.inventories.get(id).map(|i| i.items.clone()).unwrap_or_default(),
             MenuKind::Mount { world, id: mount, .. } => {
@@ -688,7 +721,7 @@ impl Server {
                 }
             }
             MenuKind::EnderChest => player.ender_items.clone_from_slice(&slots[..27]),
-            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } => {
+            MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } | MenuKind::Stonecutter { .. } | MenuKind::Smithing { .. } | MenuKind::Grindstone { .. } | MenuKind::Loom { .. } => {
                 if let Some(menu) = player.open_menu.as_mut() {
                     let n = menu.craft_grid.len();
                     menu.craft_grid.clone_from_slice(&slots[..n]);
@@ -815,8 +848,13 @@ impl Server {
         let recipes = self.recipes.clone();
         // Taking a trade's result pays for it, one trade at a time.
         let trading = matches!(kind, Some(MenuKind::Merchant { .. })) && click.slot == 2 && matches!(click.mode, 0 | 1 | 2 | 4);
+        // A workstation's result uses up its inputs as it is taken.
+        let station = kind.as_ref().and_then(super::stations::Station::of).map(|(s, ..)| s);
+        let station_take = station.is_some_and(|s| click.slot as usize == s.result_slot() && matches!(click.mode, 0 | 1 | 2 | 4));
         let result = if trading {
             self.trade_result_click(id, &layout, &mut slots, &mut carried, click.mode, click.button)
+        } else if station_take {
+            self.station_result_click(id, &layout, &mut slots, &mut carried, click.mode, click.button)
         } else {
             let mut menu = Menu { layout: &layout, slots: &mut slots, carried: &mut carried, recipes: recipes.as_deref(), creative, drag: &mut drag };
             if kind.is_none() || matches!(kind, Some(MenuKind::CraftingTable)) {
@@ -865,6 +903,15 @@ impl Server {
             Some(MenuKind::Anvil { .. }) if !before[2].is_empty() && slots[2].is_empty() => self.took_anvil_result(id),
             Some(MenuKind::Anvil { .. }) if before[..2] != slots[..2] => self.update_anvil(id),
             Some(MenuKind::Merchant { .. }) if before[..2] != slots[..2] && !trading => self.update_trade_result(id),
+            Some(kind) if !station_take => {
+                if let Some((station, ..)) = super::stations::Station::of(kind) {
+                    let inputs = station.result_slot();
+                    if before[..inputs] != slots[..inputs] {
+                        let replaced = before[0].0.as_ref().map(|s| s.item) != slots[0].0.as_ref().map(|s| s.item);
+                        self.update_station(id, replaced);
+                    }
+                }
+            }
             _ => {}
         }
         // Others looking into the same container see its slots change.

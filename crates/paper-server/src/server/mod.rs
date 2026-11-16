@@ -66,6 +66,7 @@ mod farming;
 pub mod brewing;
 mod spawners;
 pub mod workstations;
+pub mod stations;
 pub mod survival;
 pub mod usercache;
 pub mod villagers;

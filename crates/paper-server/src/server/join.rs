@@ -188,6 +188,8 @@ impl Server {
             enforces_secure_chat: false,
         });
         player.conn.send(&play::ChangeDifficulty { difficulty: self.difficulty.id(), locked: false });
+        // The stonecutter's recipes and which slots take what (`ClientboundUpdateRecipesPacket`).
+        player.conn.send(&self.recipes_packet());
         player.conn.send(&player.abilities_packet());
         player.conn.send(&play::SetHeldSlot { slot: VarInt(player.held_slot as i32) });
         // Entity status 24-28 tells the client its operator permission level (0-4).

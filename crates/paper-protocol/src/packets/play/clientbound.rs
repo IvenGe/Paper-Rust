@@ -1650,6 +1650,81 @@ impl Decode for ContainerSetData {
     }
 }
 
+/// What clients need of the server's recipes (`ClientboundUpdateRecipesPacket`): the item
+/// sets that decide which slots take what (`RecipePropertySet`: furnace inputs, the smithing
+/// table's template, base and addition), and the stonecutter's recipes, in the order the
+/// client numbers its choices.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct UpdateRecipes {
+    /// (property set id, item ids)
+    pub property_sets: Vec<(String, Vec<i32>)>,
+    /// (the item ids the recipe takes, the result's item id and count)
+    pub stonecutter: Vec<(Vec<i32>, i32, i32)>,
+}
+
+packet_id!(UpdateRecipes = play::clientbound::UPDATE_RECIPES);
+
+/// The `minecraft:slot_display` type of a stack of items (`ItemStackSlotDisplay`).
+fn item_stack_display() -> i32 {
+    paper_data::registries::id("minecraft:slot_display", "minecraft:item_stack").map_or(5, |i| i as i32)
+}
+
+impl Encode for UpdateRecipes {
+    fn encode(&self, w: &mut Vec<u8>) {
+        w.put_varint(self.property_sets.len() as i32);
+        for (name, items) in &self.property_sets {
+            w.put_string(name);
+            w.put_varint(items.len() as i32);
+            for item in items {
+                w.put_varint(*item);
+            }
+        }
+        w.put_varint(self.stonecutter.len() as i32);
+        for (inputs, item, count) in &self.stonecutter {
+            // The input as an inline id set (`HolderSet`: size + 1, then the ids).
+            w.put_varint(inputs.len() as i32 + 1);
+            for i in inputs {
+                w.put_varint(*i);
+            }
+            // The result as an item stack template without components.
+            w.put_varint(item_stack_display());
+            w.put_varint(*item);
+            w.put_varint(*count);
+            w.put_varint(0);
+            w.put_varint(0);
+        }
+    }
+}
+
+impl Decode for UpdateRecipes {
+    fn decode(r: &mut Reader<'_>) -> Result<Self> {
+        let mut out = UpdateRecipes::default();
+        for _ in 0..r.varint()? {
+            let name = r.string(32767)?;
+            let n = r.varint()?;
+            let items = (0..n).map(|_| r.varint()).collect::<Result<Vec<i32>>>()?;
+            out.property_sets.push((name, items));
+        }
+        for _ in 0..r.varint()? {
+            let n = r.varint()?;
+            if n == 0 {
+                return Err(DecodeError::InvalidEnum { what: "stonecutter recipe input (a tag)", value: 0 });
+            }
+            let inputs = (0..n - 1).map(|_| r.varint()).collect::<Result<Vec<i32>>>()?;
+            let display = r.varint()?;
+            if display != item_stack_display() {
+                return Err(DecodeError::InvalidEnum { what: "stonecutter recipe display", value: display as i64 });
+            }
+            let (item, count, added, removed) = (r.varint()?, r.varint()?, r.varint()?, r.varint()?);
+            if added != 0 || removed != 0 {
+                return Err(DecodeError::InvalidEnum { what: "stonecutter result components", value: added as i64 });
+            }
+            out.stonecutter.push((inputs, item, count));
+        }
+        Ok(out)
+    }
+}
+
 /// Attribute values of an entity (`minecraft:attribute` registry ids).
 #[derive(Clone, Debug, PartialEq)]
 pub struct UpdateAttributes {

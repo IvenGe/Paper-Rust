@@ -83,6 +83,11 @@ public final class HostEvents {
         // PlayerTradeEvent shares PlayerPurchaseEvent's handler list.
         GATED.put("PlayerPurchaseEvent", io.papermc.paper.event.player.PlayerPurchaseEvent.class);
         GATED.put("TradeSelectEvent", org.bukkit.event.inventory.TradeSelectEvent.class);
+        GATED.put("PrepareResultEvent", com.destroystokyo.paper.event.inventory.PrepareResultEvent.class);
+        GATED.put("PrepareSmithingEvent", org.bukkit.event.inventory.PrepareSmithingEvent.class);
+        GATED.put("PrepareGrindstoneEvent", org.bukkit.event.inventory.PrepareGrindstoneEvent.class);
+        GATED.put("PlayerStonecutterRecipeSelectEvent", io.papermc.paper.event.player.PlayerStonecutterRecipeSelectEvent.class);
+        GATED.put("PlayerLoomPatternSelectEvent", io.papermc.paper.event.player.PlayerLoomPatternSelectEvent.class);
         GATED.put("VillagerAcquireTradeEvent", org.bukkit.event.entity.VillagerAcquireTradeEvent.class);
         GATED.put("VillagerCareerChangeEvent", org.bukkit.event.entity.VillagerCareerChangeEvent.class);
         GATED.put("VillagerReplenishTradeEvent", org.bukkit.event.entity.VillagerReplenishTradeEvent.class);
@@ -418,6 +423,58 @@ public final class HostEvents {
         event.callEvent();
         final org.bukkit.inventory.ItemStack result = event.getItemStack();
         return Values.of("cancelled", event.isCancelled(), "item", result == null || result.equals(item) ? null : io.papermc.paperrs.host.item.HostItemStack.toValue(result));
+    }
+
+    /**
+     * A workstation worked out its result: {@code PrepareSmithingEvent}, {@code
+     * PrepareGrindstoneEvent}, or Paper's {@code PrepareResultEvent} for stonecutters and looms.
+     */
+    private Object prepareResult(final Map<String, Object> args) {
+        final HostPlayer player = this.player(args);
+        final org.bukkit.inventory.InventoryView view = player.getOpenInventory();
+        final org.bukkit.inventory.ItemStack result = io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("result"));
+        final com.destroystokyo.paper.event.inventory.PrepareResultEvent event = switch (Values.str(args, "type", "")) {
+            case "SMITHING" -> new org.bukkit.event.inventory.PrepareSmithingEvent(view, result);
+            case "GRINDSTONE" -> new org.bukkit.event.inventory.PrepareGrindstoneEvent(view, result);
+            default -> new com.destroystokyo.paper.event.inventory.PrepareResultEvent(view, result);
+        };
+        event.callEvent();
+        return Values.of("result", io.papermc.paperrs.host.item.HostItemStack.toValue(event.getResult()));
+    }
+
+    /** A stonecutter recipe or loom pattern was picked: Paper's select events. */
+    private Object stationSelect(final Map<String, Object> args) {
+        final HostPlayer player = this.player(args);
+        final org.bukkit.inventory.Inventory top = player.getOpenInventory().getTopInventory();
+        final String choice = Values.str(args, "choice", "");
+        if ("LOOM".equals(Values.str(args, "type", "")) && top instanceof org.bukkit.inventory.LoomInventory loom) {
+            final org.bukkit.block.banner.PatternType pattern = org.bukkit.Registry.BANNER_PATTERN.get(org.bukkit.NamespacedKey.fromString(choice));
+            if (pattern == null) {
+                return Values.of("cancelled", false, "choice", choice);
+            }
+            final io.papermc.paper.event.player.PlayerLoomPatternSelectEvent event = new io.papermc.paper.event.player.PlayerLoomPatternSelectEvent(player, loom, pattern);
+            final boolean go = event.callEvent();
+            return Values.of("cancelled", !go, "choice", event.getPatternType().getKey().toString());
+        }
+        if (top instanceof org.bukkit.inventory.StonecutterInventory stonecutter) {
+            final java.util.List<org.bukkit.Material> inputs = new java.util.ArrayList<>();
+            for (Object name : Values.list(args.get("inputs"))) {
+                final org.bukkit.Material material = org.bukkit.Material.matchMaterial(String.valueOf(name));
+                if (material != null) {
+                    inputs.add(material);
+                }
+            }
+            final org.bukkit.inventory.ItemStack result = io.papermc.paperrs.host.item.HostItemStack.fromValue(args.get("result"));
+            final org.bukkit.NamespacedKey key = org.bukkit.NamespacedKey.fromString(choice);
+            if (key == null || inputs.isEmpty() || result.isEmpty()) {
+                return Values.of("cancelled", false, "choice", choice);
+            }
+            final org.bukkit.inventory.StonecuttingRecipe recipe = new org.bukkit.inventory.StonecuttingRecipe(key, result, new org.bukkit.inventory.RecipeChoice.MaterialChoice(inputs));
+            final io.papermc.paper.event.player.PlayerStonecutterRecipeSelectEvent event = new io.papermc.paper.event.player.PlayerStonecutterRecipeSelectEvent(player, stonecutter, recipe);
+            final boolean go = event.callEvent();
+            return Values.of("cancelled", !go, "choice", event.getStonecuttingRecipe().getKey().toString());
+        }
+        return Values.of("cancelled", false, "choice", choice);
     }
 
     private HostPlayer player(final Map<String, Object> args) {
@@ -1539,6 +1596,8 @@ public final class HostEvents {
             case "event.inventory_open" -> this.inventories.open(args);
             case "event.inventory_click" -> this.inventories.click(args);
             case "event.inventory_close" -> this.inventories.close(args);
+            case "event.prepare_result" -> this.prepareResult(args);
+            case "event.station_select" -> this.stationSelect(args);
             case "event.pickup_item" -> this.inventories.pickup(args);
             case "event.drop_item" -> this.inventories.drop(args);
             case "event.entity_damage" -> this.entities.damage(args);

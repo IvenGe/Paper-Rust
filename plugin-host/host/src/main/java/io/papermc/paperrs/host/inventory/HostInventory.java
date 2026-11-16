@@ -718,8 +718,18 @@ public final class HostInventory implements HostProxies.Backed {
 
     // --- FurnaceInventory (0 smelting, 1 fuel, 2 result) and CraftingInventory (0 result) -------
 
+    /** Where a window keeps its result: first in a crafting grid, after the inputs elsewhere. */
+    private int resultSlot() {
+        return switch (this.type) {
+            case STONECUTTER -> 1;
+            case SMITHING, LOOM -> 3;
+            case ANVIL, MERCHANT, GRINDSTONE, FURNACE, SMOKER, BLAST_FURNACE -> 2;
+            default -> this.kind().equals("crafting") ? 0 : 2;
+        };
+    }
+
     public @Nullable ItemStack getResult() {
-        return this.kind().equals("crafting") ? this.getItem(0) : this.getItem(2);
+        return this.getItem(this.resultSlot());
     }
 
     public @Nullable ItemStack getFuel() {
@@ -731,7 +741,49 @@ public final class HostInventory implements HostProxies.Backed {
     }
 
     public void setResult(final @Nullable ItemStack item) {
-        this.setItem(this.kind().equals("crafting") ? 0 : 2, item);
+        this.setItem(this.resultSlot(), item);
+    }
+
+    // --- StonecutterInventory (0 input, 1 result) ------------------------------------------
+
+    public @Nullable ItemStack getInputItem() {
+        return this.getItem(0);
+    }
+
+    public void setInputItem(final @Nullable ItemStack item) {
+        this.setItem(0, item);
+    }
+
+    // --- SmithingInventory (0 template, 1 base, 2 addition, 3 result) -------------------------
+
+    public @Nullable ItemStack getInputTemplate() {
+        return this.getItem(0);
+    }
+
+    public @Nullable ItemStack getInputEquipment() {
+        return this.getItem(1);
+    }
+
+    public @Nullable ItemStack getInputMineral() {
+        return this.getItem(2);
+    }
+
+    // --- GrindstoneInventory (0 upper, 1 lower, 2 result) -------------------------------------
+
+    public @Nullable ItemStack getUpperItem() {
+        return this.getItem(0);
+    }
+
+    public void setUpperItem(final @Nullable ItemStack item) {
+        this.setItem(0, item);
+    }
+
+    public @Nullable ItemStack getLowerItem() {
+        return this.getItem(1);
+    }
+
+    public void setLowerItem(final @Nullable ItemStack item) {
+        this.setItem(1, item);
     }
 
     public void setFuel(final @Nullable ItemStack item) {

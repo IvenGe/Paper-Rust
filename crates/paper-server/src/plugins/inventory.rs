@@ -175,7 +175,7 @@ pub fn contents(server: &Server, inv: &InvRef) -> Result<Vec<Slot>> {
         InvRef::Crafting(id) => {
             let p = server.players.get(id).ok_or_else(|| anyhow!("player left"))?;
             match &p.open_menu {
-                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. }) => m.craft_grid.clone(),
+                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } | MenuKind::Stonecutter { .. } | MenuKind::Smithing { .. } | MenuKind::Grindstone { .. } | MenuKind::Loom { .. }) => m.craft_grid.clone(),
                 _ => p.inventory[0..5].to_vec(),
             }
         }
@@ -229,7 +229,7 @@ pub fn set_slots(server: &mut Server, inv: &InvRef, changes: Vec<(usize, Slot)>)
         InvRef::Crafting(id) => {
             let p = server.players.get_mut(id).ok_or_else(|| anyhow!("player left"))?;
             match p.open_menu.as_mut() {
-                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. }) => {
+                Some(m) if matches!(m.kind, MenuKind::CraftingTable | MenuKind::Enchanting { .. } | MenuKind::Anvil { .. } | MenuKind::Merchant { .. } | MenuKind::Stonecutter { .. } | MenuKind::Smithing { .. } | MenuKind::Grindstone { .. } | MenuKind::Loom { .. }) => {
                     for (index, item) in changes {
                         m.craft_grid[index] = item;
                     }
@@ -309,7 +309,7 @@ pub fn container_value(server: &Server, world: usize, positions: &[BlockPos], en
         ContainerBlock::Dispenser => (block_inventory_type(paper_data::blocks::block_of_state(state).name), 9),
         ContainerBlock::BrewingStand => ("BREWING", 5),
         ContainerBlock::Crafter => ("CRAFTER", 9),
-        ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => return Value::Null,
+        ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil | ContainerBlock::Stonecutter | ContainerBlock::SmithingTable | ContainerBlock::Grindstone | ContainerBlock::Loom => return Value::Null,
     };
     let inv = InvRef::Block { world, positions: positions.to_vec() };
     bmap! { "type" => ty, "size" => size as i64, "inventory" => inv.value(server) }
@@ -426,6 +426,10 @@ pub fn menu_value(server: &Server, id: i32, kind: Option<&MenuKind>) -> Value {
         Some(MenuKind::Enchanting { .. }) => ("ENCHANTING".to_owned(), 2, InvRef::Crafting(id), None),
         Some(MenuKind::Anvil { .. }) => ("ANVIL".to_owned(), 3, InvRef::Crafting(id), None),
         Some(MenuKind::Merchant { .. }) => ("MERCHANT".to_owned(), 3, InvRef::Crafting(id), None),
+        Some(kind @ (MenuKind::Stonecutter { .. } | MenuKind::Smithing { .. } | MenuKind::Grindstone { .. } | MenuKind::Loom { .. })) => {
+            let station = crate::server::stations::Station::of(kind).unwrap().0;
+            (station.inventory_type().to_owned(), station.result_slot() + 1, InvRef::Crafting(id), None)
+        }
         Some(MenuKind::Brewing { world, pos }) => ("BREWING".to_owned(), 5, InvRef::Block { world: *world, positions: vec![*pos] }, None),
         Some(MenuKind::Crafter { world, pos }) => ("CRAFTER".to_owned(), 9, InvRef::Block { world: *world, positions: vec![*pos] }, None),
         Some(MenuKind::Furnace { world, pos, recipe_type }) => {

@@ -210,6 +210,16 @@ It checks Pumpkin's item ids and block state ids against `items.json` and
 `blocks.json`, and game rule names against the `minecraft:game_rule` registry,
 and reports mismatches instead of writing them.
 
+### `item_providers.json`
+
+Written by `item_providers.py` from the default item components in mcmeta's summary: which
+items give an armour trim material on a smithing table, and which banner patterns a loom
+offers with a pattern item.
+
+```sh
+python3 -I tools/datagen/item_providers.py /home/user/upstream/mcmeta/summary data/26.3
+```
+
 ## How the bytecode is analysed
 
 26.x jars are not obfuscated, but the registration code is no longer a flat list

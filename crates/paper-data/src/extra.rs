@@ -274,6 +274,33 @@ pub mod item_data {
     pub fn by_id(id: u32) -> &'static ItemData {
         crate::items::get(id).map_or_else(|| EMPTY.get_or_init(ItemData::default), |info| get(info.name))
     }
+
+    /// Items that provide an armour trim material or banner patterns (`item_providers.json`).
+    struct Providers {
+        trim_materials: HashMap<String, String>,
+        banner_patterns: HashMap<String, String>,
+    }
+
+    fn providers() -> &'static Providers {
+        static T: OnceLock<Providers> = OnceLock::new();
+        T.get_or_init(|| {
+            let v: Value = serde_json::from_str(include_str!("../../../data/26.3/item_providers.json")).expect("item_providers.json");
+            let map = |key: &str| -> HashMap<String, String> { v[key].as_object().map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect()).unwrap_or_default() };
+            Providers { trim_materials: map("trim_materials"), banner_patterns: map("banner_patterns") }
+        })
+    }
+
+    /// The armour trim material an item gives on a smithing table (`provides_trim_material`).
+    pub fn trim_material(id: u32) -> Option<&'static str> {
+        let name = crate::items::get(id)?.name;
+        providers().trim_materials.get(name).map(String::as_str)
+    }
+
+    /// The banner pattern tag (without `#`) an item lets a loom use (`provides_banner_patterns`).
+    pub fn banner_patterns(id: u32) -> Option<&'static str> {
+        let name = crate::items::get(id)?.name;
+        providers().banner_patterns.get(name).map(String::as_str)
+    }
 }
 
 /// Entity types: sizes, attributes, categories and the metadata layout.

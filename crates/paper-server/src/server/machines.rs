@@ -118,7 +118,7 @@ impl Server {
             ContainerBlock::Furnace(_) => Some(Inventory { positions: vec![pos], furnace: true, brewing: false, crafter: false, entity: None }),
             ContainerBlock::BrewingStand => Some(Inventory { positions: vec![pos], furnace: false, brewing: true, crafter: false, entity: None }),
             ContainerBlock::Crafter => Some(Inventory { positions: vec![pos], furnace: false, brewing: false, crafter: true, entity: None }),
-            ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil => self.entity_inventory_at(world, pos),
+            ContainerBlock::EnderChest | ContainerBlock::CraftingTable | ContainerBlock::EnchantingTable | ContainerBlock::Anvil | ContainerBlock::Stonecutter | ContainerBlock::SmithingTable | ContainerBlock::Grindstone | ContainerBlock::Loom => self.entity_inventory_at(world, pos),
         }
     }
 

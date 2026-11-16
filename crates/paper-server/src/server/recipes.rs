@@ -1,10 +1,11 @@
 //! Crafting and cooking recipes, loaded from the vanilla data (`data/minecraft/recipe/*.json`).
 //!
 //! Supported: `crafting_shaped` (with mirroring), `crafting_shapeless`, `crafting_transmute`
-//! (the input's components carry over), and the cooking types `smelting`, `blasting`,
-//! `smoking` and `campfire_cooking`. Special recipes (dyeing armour, map copying, ...) are
-//! not implemented. Plugins add recipes of the same kinds, whose ingredients may be exact
-//! items, and remove recipes, theirs or vanilla's.
+//! (the input's components carry over), the cooking types `smelting`, `blasting`, `smoking`
+//! and `campfire_cooking`, `stonecutting`, and `smithing_transform` and `smithing_trim`.
+//! Special recipes (dyeing armour, map copying, ...) are not implemented. Plugins add
+//! crafting and cooking recipes, whose ingredients may be exact items, and remove recipes,
+//! theirs or vanilla's.
 
 use crate::vanilla::VanillaData;
 use paper_data::items;
@@ -96,6 +97,48 @@ pub struct CookingRecipe {
     pub cooking_time: i32,
 }
 
+/// A stonecutting recipe: one item in, `result` out.
+#[derive(Clone, Debug)]
+pub struct StonecuttingRecipe {
+    pub id: String,
+    pub ingredient: Ingredient,
+    pub result: ItemStack,
+}
+
+/// A smithing recipe. Each input is optional: a recipe without one takes an empty slot.
+#[derive(Clone, Debug)]
+pub enum SmithingRecipe {
+    /// The base becomes `result`, keeping its components (netherite upgrades).
+    Transform { id: String, template: Option<Ingredient>, base: Option<Ingredient>, addition: Option<Ingredient>, result: ItemStack },
+    /// The base gets an armour trim: `pattern`, in the material the addition provides.
+    Trim { id: String, template: Option<Ingredient>, base: Option<Ingredient>, addition: Option<Ingredient>, pattern: String },
+}
+
+impl SmithingRecipe {
+    pub fn id(&self) -> &str {
+        match self {
+            SmithingRecipe::Transform { id, .. } | SmithingRecipe::Trim { id, .. } => id,
+        }
+    }
+
+    fn inputs(&self) -> [&Option<Ingredient>; 3] {
+        match self {
+            SmithingRecipe::Transform { template, base, addition, .. } | SmithingRecipe::Trim { template, base, addition, .. } => [template, base, addition],
+        }
+    }
+
+    /// `SmithingRecipe.matches`: each slot holds what the recipe takes there (an empty slot
+    /// where it takes nothing).
+    pub fn matches(&self, template: &Slot, base: &Slot, addition: &Slot) -> bool {
+        let test = |ingredient: &Option<Ingredient>, slot: &Slot| match ingredient {
+            Some(i) => i.matches(slot),
+            None => slot.is_empty(),
+        };
+        let [t, b, a] = self.inputs();
+        test(t, template) && test(b, base) && test(a, addition)
+    }
+}
+
 impl CraftingRecipe {
     pub fn id(&self) -> &str {
         match self {
@@ -114,6 +157,9 @@ pub struct Recipes {
     /// Recipes plugins added (`Server#addRecipe`), tried before vanilla's.
     plugin_crafting: Vec<CraftingRecipe>,
     plugin_cooking: Vec<CookingRecipe>,
+    /// Stonecutting recipes, by id (the order clients are told them in).
+    stonecutting: Vec<StonecuttingRecipe>,
+    smithing: Vec<SmithingRecipe>,
     /// Vanilla recipes plugins removed.
     removed: HashSet<String>,
 }
@@ -217,9 +263,27 @@ impl Recipes {
                         });
                     }
                 }
+                "minecraft:stonecutting" => {
+                    if let (Some(ingredient), Some(result)) = (Ingredient::parse(&v["ingredient"]), result_stack(&v["result"])) {
+                        r.stonecutting.push(StonecuttingRecipe { id, ingredient, result });
+                    }
+                }
+                "minecraft:smithing_transform" | "minecraft:smithing_trim" => {
+                    let input = |key: &str| if v[key].is_null() { None } else { Ingredient::parse(&v[key]) };
+                    let (template, base, addition) = (input("template"), input("base"), input("addition"));
+                    if ty == "minecraft:smithing_trim" {
+                        if let Some(pattern) = v["pattern"].as_str() {
+                            r.smithing.push(SmithingRecipe::Trim { id, template, base, addition, pattern: pattern.to_owned() });
+                        }
+                    } else if let Some(result) = result_stack(&v["result"]) {
+                        r.smithing.push(SmithingRecipe::Transform { id, template, base, addition, result });
+                    }
+                }
                 _ => {}
             }
         }
+        r.stonecutting.sort_by(|a, b| a.id.cmp(&b.id));
+        r.smithing.sort_by(|a, b| a.id().cmp(b.id()));
         // Fuel: each item's `cooking_fuel` names a context_int_provider with the burn time.
         let providers: HashMap<String, Value> = data.registry("context_int_provider").into_iter().collect();
         for item in 0..items::count() {
@@ -237,6 +301,44 @@ impl Recipes {
 
     pub fn crafting_count(&self) -> usize {
         self.crafting.len()
+    }
+
+    /// Every stonecutting recipe, in the order clients are told them (`stonecutterRecipes`).
+    pub fn stonecutting(&self) -> impl Iterator<Item = &StonecuttingRecipe> {
+        self.stonecutting.iter().filter(|r| !self.removed.contains(&r.id))
+    }
+
+    /// The stonecutting recipes for an input, in the same order (the client numbers its
+    /// choices so: `SelectableRecipe.SingleInputSet.selectByInput`).
+    pub fn stonecutting_for(&self, input: &Slot) -> Vec<&StonecuttingRecipe> {
+        self.stonecutting().filter(|r| r.ingredient.matches(input)).collect()
+    }
+
+    /// The smithing recipe the three inputs make, if any.
+    pub fn smithing(&self, template: &Slot, base: &Slot, addition: &Slot) -> Option<&SmithingRecipe> {
+        self.smithing.iter().filter(|r| !self.removed.contains(r.id())).find(|r| r.matches(template, base, addition))
+    }
+
+    /// The items that go into a smithing table's template, base or addition slot
+    /// (`RecipePropertySet` `smithing_template`, `smithing_base`, `smithing_addition`).
+    pub fn smithing_inputs(&self, slot: usize) -> Vec<i32> {
+        let mut out: Vec<i32> = self.smithing.iter().filter_map(|r| r.inputs()[slot].as_ref()).flat_map(|i| i.0.iter().copied()).collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Whether an item goes into a smithing table's template (0), base (1) or addition (2).
+    pub fn is_smithing_input(&self, slot: usize, item: i32) -> bool {
+        self.smithing.iter().filter_map(|r| r.inputs()[slot].as_ref()).any(|i| i.0.contains(&item))
+    }
+
+    /// The items a kind of cooking recipe takes (`furnace_input`, `smoker_input`, ...).
+    pub fn cooking_inputs(&self, kind: &str) -> Vec<i32> {
+        let mut out: Vec<i32> = self.cooking.iter().chain(&self.plugin_cooking).filter(|r| r.kind == kind).flat_map(|r| r.ingredient.0.iter().copied()).collect();
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     pub fn cooking_count(&self) -> usize {

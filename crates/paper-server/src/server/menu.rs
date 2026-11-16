@@ -37,6 +37,21 @@ pub enum SlotKind {
     Worn(&'static str, &'static str),
     /// A slot the window shows but nothing can go in (a donkey's armour slot).
     Locked,
+    /// An input of a workstation (see `server::stations`), taking what it can use.
+    Station(StationSlot),
+}
+
+/// The inputs of the workstations of `server::stations`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StationSlot {
+    /// A smithing table's template (0), base (1) or addition (2): items some recipe takes there.
+    Smithing(usize),
+    /// A grindstone's inputs: damageable or enchanted items.
+    Grindstone,
+    /// A loom's banner, dye and banner pattern.
+    LoomBanner,
+    LoomDye,
+    LoomPattern,
 }
 
 /// Whether an item's `equippable` component lets this kind of entity wear it
@@ -88,6 +103,14 @@ pub enum MenuShape {
     Crafter,
     /// A mount's window: saddle, body armour, its chest, then the player's inventory.
     Mount,
+    /// A stonecutter: the input and the result.
+    Stonecutter,
+    /// A smithing table: template, base, addition and the result.
+    Smithing,
+    /// A grindstone: two inputs and the result.
+    Grindstone,
+    /// A loom: banner, dye, banner pattern and the result.
+    Loom,
 }
 
 impl Layout {
@@ -172,6 +195,42 @@ impl Layout {
     }
 
     /// `MerchantMenu`: payment A, payment B, result.
+    /// `StonecutterMenu`: the input and the result (taken through `server::stations`).
+    pub fn stonecutter() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 38];
+        kinds[1] = SlotKind::Output;
+        Layout { kinds, main: 2..29, hotbar: 29..38, offhand: None, container: 0..2, crafting: None, furnace: None, kind: MenuShape::Stonecutter }
+    }
+
+    /// `SmithingMenu`: template, base, addition, result.
+    pub fn smithing() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 40];
+        for (i, kind) in kinds.iter_mut().enumerate().take(3) {
+            *kind = SlotKind::Station(StationSlot::Smithing(i));
+        }
+        kinds[3] = SlotKind::Output;
+        Layout { kinds, main: 4..31, hotbar: 31..40, offhand: None, container: 0..4, crafting: None, furnace: None, kind: MenuShape::Smithing }
+    }
+
+    /// `GrindstoneMenu`: two inputs and the result.
+    pub fn grindstone() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 39];
+        kinds[0] = SlotKind::Station(StationSlot::Grindstone);
+        kinds[1] = SlotKind::Station(StationSlot::Grindstone);
+        kinds[2] = SlotKind::Output;
+        Layout { kinds, main: 3..30, hotbar: 30..39, offhand: None, container: 0..3, crafting: None, furnace: None, kind: MenuShape::Grindstone }
+    }
+
+    /// `LoomMenu`: banner, dye, banner pattern, result.
+    pub fn loom() -> Layout {
+        let mut kinds = vec![SlotKind::Normal; 40];
+        kinds[0] = SlotKind::Station(StationSlot::LoomBanner);
+        kinds[1] = SlotKind::Station(StationSlot::LoomDye);
+        kinds[2] = SlotKind::Station(StationSlot::LoomPattern);
+        kinds[3] = SlotKind::Output;
+        Layout { kinds, main: 4..31, hotbar: 31..40, offhand: None, container: 0..4, crafting: None, furnace: None, kind: MenuShape::Loom }
+    }
+
     pub fn merchant() -> Layout {
         let mut kinds = vec![SlotKind::Normal; 39];
         kinds[2] = SlotKind::Output;
@@ -250,6 +309,11 @@ impl Menu<'_> {
             SlotKind::BrewFuel => super::brewing::is_fuel(stack),
             SlotKind::Worn(slot, entity) => paper_data::item_data::by_id(stack.item as u32).equip_slot.as_deref() == Some(slot) && may_wear(stack.item as u32, entity),
             SlotKind::Locked => false,
+            SlotKind::Station(StationSlot::Smithing(slot)) => self.recipes.is_none_or(|r| r.is_smithing_input(slot, stack.item)),
+            SlotKind::Station(StationSlot::Grindstone) => super::stations::grindable(stack),
+            SlotKind::Station(StationSlot::LoomBanner) => super::stations::is_banner(stack.item),
+            SlotKind::Station(StationSlot::LoomDye) => super::stations::dye_color(stack.item).is_some(),
+            SlotKind::Station(StationSlot::LoomPattern) => paper_data::item_data::banner_patterns(stack.item as u32).is_some(),
         }
     }
 
@@ -481,6 +545,64 @@ impl Menu<'_> {
                             self.move_into(&mut item, l.main.clone(), false);
                         }
                     }
+                }
+            }
+            // `StonecutterMenu.quickMoveStack`: the input goes back to the inventory; from the
+            // inventory, what some recipe takes goes in, the rest between inventory and hotbar.
+            // (The result is taken through `server::stations`.)
+            MenuShape::Stonecutter => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if self.recipes.is_some_and(|r| !r.stonecutting_for(&item).is_empty()) {
+                    self.move_into(&mut item, 0..1, false);
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
+                }
+            }
+            // `ItemCombinerMenu.quickMoveStack`: from the inventory into the first input that
+            // takes it (`SmithingMenu.getSlotToQuickMoveTo`), else between inventory and hotbar.
+            MenuShape::Smithing => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if let Some(first) = (0..3).find(|i| self.may_place(*i, &item)) {
+                    if !self.move_into(&mut item, first..3, false) {
+                        if l.main.contains(&index) {
+                            self.move_into(&mut item, l.hotbar.clone(), false);
+                        } else {
+                            self.move_into(&mut item, l.main.clone(), false);
+                        }
+                    }
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
+                }
+            }
+            // `GrindstoneMenu.quickMoveStack`: into a free input, else between inventory and
+            // hotbar.
+            MenuShape::Grindstone => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if (self.slots[0].is_empty() || self.slots[1].is_empty()) && self.may_place(0, &item) {
+                    self.move_into(&mut item, 0..2, false);
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
+                }
+            }
+            // `LoomMenu.quickMoveStack`: banners, dyes and patterns into their slots.
+            MenuShape::Loom => {
+                if l.container.contains(&index) {
+                    self.move_into(&mut item, player.clone(), true);
+                } else if let Some(slot) = (0..3).find(|i| self.may_place(*i, &item)) {
+                    self.move_into(&mut item, slot..slot + 1, false);
+                } else if l.main.contains(&index) {
+                    self.move_into(&mut item, l.hotbar.clone(), false);
+                } else {
+                    self.move_into(&mut item, l.main.clone(), false);
                 }
             }
             // `MerchantMenu.quickMoveStack`: payment goes back to the inventory, and the

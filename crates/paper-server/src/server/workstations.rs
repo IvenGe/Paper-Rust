@@ -154,7 +154,7 @@ impl Server {
         self.send_experience(id);
     }
 
-    fn window_property(&self, id: i32, property: i16, value: i32) {
+    pub(super) fn window_property(&self, id: i32, property: i16, value: i32) {
         if let Some(p) = self.players.get(&id) {
             if let Some(m) = &p.open_menu {
                 p.conn.send(&play::ContainerSetData { window_id: m.window_id, property, value: value.clamp(i16::MIN as i32, i16::MAX as i32) as i16 });

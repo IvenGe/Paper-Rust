@@ -945,6 +945,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
                 "crafting" => ("crafting_table", "minecraft:crafting", "container.crafting"),
                 "anvil" => ("anvil", "minecraft:anvil", "container.repair"),
                 "enchanting" => ("enchanting_table", "minecraft:enchantment", "container.enchant"),
+                "stonecutter" => ("stonecutter", "minecraft:stonecutter", "container.stonecutter"),
+                "smithing" => ("smithing_table", "minecraft:smithing", "container.upgrade"),
+                "grindstone" => ("grindstone", "minecraft:grindstone", "container.grindstone_title"),
+                "loom" => ("loom", "minecraft:loom", "container.loom"),
                 other => bail!("no {other} menu"),
             };
             let there = server.worlds[world].block_at(pos.x, pos.y, pos.z).map_or("", |s| blocks::block_of_state(s).name);
@@ -954,6 +958,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             let menu_kind = match kind {
                 "crafting" => MenuKind::CraftingTable,
                 "anvil" => MenuKind::Anvil { world, pos },
+                "stonecutter" => MenuKind::Stonecutter { world, pos },
+                "smithing" => MenuKind::Smithing { world, pos },
+                "grindstone" => MenuKind::Grindstone { world, pos },
+                "loom" => MenuKind::Loom { world, pos },
                 _ => MenuKind::Enchanting { world, pos },
             };
             let opened = server.open_menu(id, menu_kind, menu, paper_protocol::text::Component::translatable(title, vec![]));

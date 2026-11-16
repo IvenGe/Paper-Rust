@@ -118,6 +118,17 @@ public final class Inventories {
                 if (player != null && type == InventoryType.ENCHANTING) {
                     yield proxy(new HostInventory(server, ref, InventoryType.ENCHANTING, 2, null, null), org.bukkit.inventory.EnchantingInventory.class);
                 }
+                // Workstations: their inputs, then the result.
+                final Class<? extends Inventory> station = switch (type) {
+                    case STONECUTTER -> org.bukkit.inventory.StonecutterInventory.class;
+                    case SMITHING -> org.bukkit.inventory.SmithingInventory.class;
+                    case GRINDSTONE -> org.bukkit.inventory.GrindstoneInventory.class;
+                    case LOOM -> org.bukkit.inventory.LoomInventory.class;
+                    default -> null;
+                };
+                if (player != null && station != null) {
+                    yield proxy(new HostInventory(server, ref, type, size, null, null), station);
+                }
                 yield player == null ? null : crafting(server, player, type == InventoryType.WORKBENCH);
             }
             case "custom" -> {
@@ -148,7 +159,12 @@ public final class Inventories {
         final int size = Values.i32(window, "size", type.getDefaultSize());
         final Inventory top = of(server, Values.map(window.get("top")), type, size);
         final Component title = Components.fromJson(window.get("title"));
-        final Class<? extends InventoryView> view = type == InventoryType.MERCHANT ? org.bukkit.inventory.view.MerchantView.class : InventoryView.class;
+        final Class<? extends InventoryView> view = switch (type) {
+            case MERCHANT -> org.bukkit.inventory.view.MerchantView.class;
+            case STONECUTTER -> org.bukkit.inventory.view.StonecutterView.class;
+            case LOOM -> org.bukkit.inventory.view.LoomView.class;
+            default -> InventoryView.class;
+        };
         return HostProxies.create(new HostInventoryView(server, player, top, type, title), view);
     }
 

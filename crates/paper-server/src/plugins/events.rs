@@ -1523,6 +1523,55 @@ pub fn on_trade(server: &mut Server, player: i32, merchant: crate::server::conta
 }
 
 /// A player picks a trade in a trading window (`TradeSelectEvent`). Returns whether it may.
+/// A workstation worked out its result (Paper's `PrepareResultEvent`, and the kinds of it for
+/// smithing tables and grindstones: `PrepareSmithingEvent`, `PrepareGrindstoneEvent`).
+/// Returns the result as plugins left it.
+pub fn on_prepare_result(server: &mut Server, player: i32, kind: &str, result: paper_protocol::types::Slot) -> paper_protocol::types::Slot {
+    let event = match kind {
+        "SMITHING" => "PrepareSmithingEvent",
+        "GRINDSTONE" => "PrepareGrindstoneEvent",
+        _ => "PrepareResultEvent",
+    };
+    if !listens(server, event) {
+        return result;
+    }
+    let Some(p) = server.players.get(&player) else { return result };
+    let args = bmap! { "uuid" => p.uuid().to_string(), "type" => kind, "result" => super::api::item_value(&result) };
+    match fire(server, event, "event.prepare_result", args) {
+        Some(answer) => super::api::slot_from(answer.get("result")).unwrap_or(result),
+        None => result,
+    }
+}
+
+/// What plugins are told of a stonecutter recipe picked: its result and the items it takes.
+pub struct StationChoice {
+    pub result: paper_protocol::types::Slot,
+    pub inputs: Vec<i32>,
+}
+
+/// A stonecutter recipe (`kind` `STONECUTTER`, its id) or loom pattern (`LOOM`, the
+/// pattern's key) was picked (Paper's `PlayerStonecutterRecipeSelectEvent`,
+/// `PlayerLoomPatternSelectEvent`). Returns the one plugins left picked, or `None` if they
+/// cancelled it.
+pub fn on_station_select(server: &mut Server, player: i32, kind: &str, choice: &str, info: Option<StationChoice>) -> Option<String> {
+    let event = if kind == "LOOM" { "PlayerLoomPatternSelectEvent" } else { "PlayerStonecutterRecipeSelectEvent" };
+    if !listens(server, event) {
+        return Some(choice.to_owned());
+    }
+    let p = server.players.get(&player)?;
+    let mut args = bmap! { "uuid" => p.uuid().to_string(), "type" => kind, "choice" => choice };
+    if let Some(info) = info {
+        args.set("result", super::api::item_value(&info.result));
+        let names: Vec<Value> = info.inputs.iter().filter_map(|i| paper_data::items::get(*i as u32)).map(|i| Value::Str(i.name.to_owned())).collect();
+        args.set("inputs", Value::List(names));
+    }
+    match fire(server, event, "event.station_select", args) {
+        Some(answer) if answer.bool("cancelled") == Some(true) => None,
+        Some(answer) => Some(answer.str("choice").unwrap_or(choice).to_owned()),
+        None => Some(choice.to_owned()),
+    }
+}
+
 pub fn on_trade_select(server: &mut Server, player: i32, index: i32) -> bool {
     let Some(p) = server.players.get(&player) else { return true };
     let args = bmap! { "uuid" => p.uuid().to_string(), "index" => index };
