@@ -685,6 +685,7 @@ name = "paper-compat"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "paper-data",
  "paper-nbt",
  "paper-protocol",

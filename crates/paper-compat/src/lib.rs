@@ -13,15 +13,27 @@
 //! ([`Outcome::to_server`]): a client too old for a step of the 26.3 conversation (the
 //! configuration phase, teleport confirmations, ...) has that step done for it.
 
+pub mod chunk;
 pub mod components;
 pub mod data;
 pub mod io;
+pub mod legacy;
 pub mod modern;
+pub mod particles;
 
 use anyhow::Result;
 
 /// The version the server speaks.
 pub const NATIVE_PROTOCOL: i32 = paper_data::PROTOCOL_VERSION;
+
+/// How a version's packets are translated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    /// The versions just before 26.3: the same protocol with changes (`modern`).
+    Modern,
+    /// 1.8: from before the flattening (`legacy`).
+    Legacy18,
+}
 
 /// A client version the server can translate for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,12 +42,17 @@ pub struct Version {
     pub protocol: i32,
     /// Its name (the first release with this protocol, or a range).
     pub name: &'static str,
-    /// The data file of `data/compat` with its ids.
+    pub family: Family,
+    /// The data file of `data/compat` with its ids (modern versions).
     data: &'static str,
 }
 
 /// Every version besides 26.3 that may join, newest first.
-pub const VERSIONS: &[Version] = &[Version { protocol: 776, name: "26.2", data: "26.2" }, Version { protocol: 775, name: "26.1", data: "26.1" }];
+pub const VERSIONS: &[Version] = &[
+    Version { protocol: 776, name: "26.2", family: Family::Modern, data: "26.2" },
+    Version { protocol: 775, name: "26.1", family: Family::Modern, data: "26.1" },
+    Version { protocol: 47, name: "1.8.x", family: Family::Legacy18, data: "" },
+];
 
 /// The version of a client's handshake, if it can join.
 pub fn version(protocol: i32) -> Option<&'static Version> {
@@ -57,12 +74,15 @@ pub fn status_protocol(protocol: i32) -> i32 {
     }
 }
 
-/// The versions that can join, for the server list and messages: `26.1-26.3`.
+/// The versions that can join, for the server list and messages: `1.8.x, 26.1-26.3`.
 pub fn version_range() -> String {
-    match VERSIONS.last() {
+    let modern = VERSIONS.iter().rfind(|v| v.family == Family::Modern);
+    let mut parts: Vec<String> = VERSIONS.iter().filter(|v| v.family != Family::Modern).rev().map(|v| v.name.to_owned()).collect();
+    parts.push(match modern {
         Some(oldest) => format!("{}-{}", oldest.name, paper_data::VERSION_NAME),
         None => paper_data::VERSION_NAME.to_owned(),
-    }
+    });
+    parts.join(", ")
 }
 
 /// What a translator makes of one packet.
@@ -99,5 +119,8 @@ pub trait Translator: Send {
 /// A translator for a client of `protocol`, or `None` if it speaks 26.3 or cannot join.
 pub fn translator(protocol: i32) -> Option<Box<dyn Translator>> {
     let version = version(protocol)?;
-    Some(Box::new(modern::Modern::new(version, data::load(version.data))))
+    Some(match version.family {
+        Family::Modern => Box::new(modern::Modern::new(version, data::load(version.data))),
+        Family::Legacy18 => Box::new(legacy::Legacy18::new(version)),
+    })
 }

@@ -305,6 +305,17 @@ pub fn resolvable_profile(rw: &mut Rw<'_>) -> Result<()> {
     optional(rw, |rw| rw.bool().map(drop))
 }
 
+/// A painting variant holder (entity data of paintings).
+pub fn painting_variant(ids: &dyn Ids, rw: &mut Rw<'_>) -> Result<()> {
+    holder(ids, rw, "minecraft:painting_variant", |rw| {
+        rw.varint()?;
+        rw.varint()?;
+        rw.string()?;
+        optional(rw, text)?;
+        optional(rw, text)
+    })
+}
+
 /// A component inside an exact matcher: its type and value.
 fn typed_component(ids: &dyn Ids, rw: &mut Rw<'_>) -> Result<bool> {
     let ty = rw.r.varint()?;

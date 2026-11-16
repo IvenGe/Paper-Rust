@@ -8,7 +8,7 @@ const NEW_IN_26_3: &[&str] = &["minecraft:add_transient_block", "minecraft:post_
 
 #[test]
 fn every_26_3_packet_has_an_older_counterpart_or_a_replacement() {
-    for version in paper_compat::VERSIONS {
+    for version in paper_compat::VERSIONS.iter().filter(|v| v.family == paper_compat::Family::Modern) {
         let data = data::load(version.name);
         assert_eq!(data.protocol, version.protocol);
         for state in [State::Login, State::Configuration, State::Play] {
@@ -31,7 +31,7 @@ fn every_26_3_packet_has_an_older_counterpart_or_a_replacement() {
 
 #[test]
 fn ids_map_into_the_older_registries() {
-    for version in paper_compat::VERSIONS {
+    for version in paper_compat::VERSIONS.iter().filter(|v| v.family == paper_compat::Family::Modern) {
         let data = data::load(version.name);
         for key in ["blockstates", "blocks", "items", "entities", "sounds", "particles"] {
             let size = data.size(key) as i32;

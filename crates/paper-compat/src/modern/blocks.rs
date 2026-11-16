@@ -6,6 +6,7 @@ use super::{Modern, V26_2};
 use crate::io::{Result, Rw};
 use crate::Outcome;
 use paper_nbt::{Compound, Tag};
+use crate::chunk::{ceil_log2, read_palette, write_palette};
 use paper_protocol::codec::{BlockPos, Reader, WriteExt};
 use std::sync::OnceLock;
 
@@ -17,117 +18,6 @@ fn is_bed(state: u32) -> bool {
     static BEDS: OnceLock<Vec<bool>> = OnceLock::new();
     let beds = BEDS.get_or_init(|| (0..paper_data::blocks::STATE_COUNT).map(|s| paper_data::blocks::block_of_state(s).name.ends_with("_bed")).collect());
     beds.get(state as usize).copied().unwrap_or(false)
-}
-
-/// The fewest bits that tell `count` values apart.
-fn ceil_log2(count: usize) -> u8 {
-    if count <= 1 {
-        0
-    } else {
-        (usize::BITS - (count - 1).leading_zeros()) as u8
-    }
-}
-
-fn longs_for(entries: usize, bits: u8) -> usize {
-    let per_long = 64 / bits as usize;
-    entries.div_ceil(per_long)
-}
-
-/// What a paletted container holds.
-enum Palette {
-    Single(u32),
-    Indirect { bits: u8, palette: Vec<u32>, data: Vec<u64> },
-    Direct { values: Vec<u32> },
-}
-
-/// Reads a paletted container of `entries` values (26.1 to 26.3: no length before the
-/// longs). `max_indirect` is the largest palette bit count (8 for blocks, 3 for biomes),
-/// `min_indirect` the smallest the client uses (4 for blocks, 1 for biomes), `direct` the
-/// bits of a direct container.
-fn read_palette(r: &mut Reader<'_>, entries: usize, min_indirect: u8, max_indirect: u8, direct: u8) -> Result<Palette> {
-    let bits = r.u8()?;
-    if bits == 0 {
-        return Ok(Palette::Single(r.varint()? as u32));
-    }
-    if bits <= max_indirect {
-        let bits = bits.max(min_indirect);
-        let palette = r.list(1 << max_indirect, |r| Ok(r.varint()? as u32))?;
-        let mut data = Vec::with_capacity(longs_for(entries, bits));
-        for _ in 0..longs_for(entries, bits) {
-            data.push(r.u64()?);
-        }
-        return Ok(Palette::Indirect { bits, palette, data });
-    }
-    let per_long = 64 / direct as usize;
-    let mask = (1u64 << direct) - 1;
-    let mut values = Vec::with_capacity(entries);
-    for _ in 0..longs_for(entries, direct) {
-        let long = r.u64()?;
-        for k in 0..per_long {
-            if values.len() < entries {
-                values.push(((long >> (k * direct as usize)) & mask) as u32);
-            }
-        }
-    }
-    Ok(Palette::Direct { values })
-}
-
-fn write_palette(w: &mut Vec<u8>, palette: &Palette, direct: u8) {
-    match palette {
-        Palette::Single(v) => {
-            w.put_u8(0);
-            w.put_varint(*v as i32);
-        }
-        Palette::Indirect { bits, palette, data } => {
-            w.put_u8(*bits);
-            w.put_varint(palette.len() as i32);
-            for v in palette {
-                w.put_varint(*v as i32);
-            }
-            for long in data {
-                w.put_u64(*long);
-            }
-        }
-        Palette::Direct { values } => {
-            w.put_u8(direct);
-            let per_long = 64 / direct as usize;
-            for chunk in values.chunks(per_long) {
-                let mut long = 0u64;
-                for (k, v) in chunk.iter().enumerate() {
-                    long |= (*v as u64) << (k * direct as usize);
-                }
-                w.put_u64(long);
-            }
-        }
-    }
-}
-
-impl Palette {
-    fn map(&mut self, f: impl Fn(u32) -> u32) {
-        match self {
-            Palette::Single(v) => *v = f(*v),
-            Palette::Indirect { palette, .. } => palette.iter_mut().for_each(|v| *v = f(*v)),
-            Palette::Direct { values } => values.iter_mut().for_each(|v| *v = f(*v)),
-        }
-    }
-
-    /// The indices (0..4096, y-z-x order) whose value passes `test`.
-    fn find(&self, test: impl Fn(u32) -> bool) -> Vec<usize> {
-        match self {
-            Palette::Single(v) if test(*v) => (0..4096).collect(),
-            Palette::Single(_) => Vec::new(),
-            Palette::Indirect { bits, palette, data } => {
-                let hits: Vec<bool> = palette.iter().map(|v| test(*v)).collect();
-                if !hits.contains(&true) {
-                    return Vec::new();
-                }
-                let per_long = 64 / *bits as usize;
-                let mask = (1u64 << bits) - 1;
-                (0..4096).filter(|i| hits.get(((data[i / per_long] >> ((i % per_long) * *bits as usize)) & mask) as usize).copied().unwrap_or(false)).collect()
-            }
-            Palette::Direct { values } => (0..4096).filter(|i| test(values[*i])).collect(),
-        }
-    }
 }
 
 impl Modern {

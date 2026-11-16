@@ -20,9 +20,6 @@ type SharedTranslator = Arc<parking_lot::Mutex<Box<dyn paper_compat::Translator>
 
 pub(super) async fn run(conn: Connection, login: LoginResult, shared: Arc<Shared>) {
     let Connection { stream, addr, dec, enc, out, translator, pending, .. } = conn;
-    if !pending.is_empty() {
-        log::debug!("{addr}: {} translated packets for the server were left from configuration", pending.len());
-    }
     let translator: Option<SharedTranslator> = translator.map(|t| Arc::new(parking_lot::Mutex::new(t)));
     let (tx, rx) = mpsc::unbounded_channel();
     // The reader's answers to the client go through the writer; a weak sender does not keep
@@ -40,6 +37,12 @@ pub(super) async fn run(conn: Connection, login: LoginResult, shared: Arc<Shared
     };
     if shared.to_main.send(MainTask::Join(Box::new(request))).is_err() {
         return;
+    }
+    // What a translator made for the server before play (an old client's first packets).
+    for payload in &pending {
+        if forward(&shared, entity_id, payload).is_err() {
+            return;
+        }
     }
 
     let (read_half, write_half) = stream.into_split();

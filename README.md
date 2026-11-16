@@ -75,10 +75,15 @@ What works:
 
 * **Networking**: server list ping, online (Mojang authentication, encryption) and offline
   login, compression, the configuration phase, keep-alive.
-* **Older clients**: 26.2 and 26.1 clients join too. Their packets are translated on the
-  network threads (`crates/paper-compat`, with ViaVersion and ViaBackwards' mapping data): ids
-  of blocks, items, entities, sounds and particles, registries they lack, packets that changed.
-  The server list shows them the server as compatible.
+* **Older clients**: 26.2, 26.1 and 1.8.x clients join too. Their packets are translated on
+  the network threads (`crates/paper-compat`, with ViaVersion, ViaBackwards and ViaRewind's
+  mapping data): ids of blocks, items, entities, sounds and particles, registries they lack,
+  packets that changed. 1.8 clients get the world in legacy block and item ids (between y 0
+  and 255, the height they know), entities in their old kinds, chat as JSON text, and the
+  translator does for them what 1.8 never did (the configuration phase, teleport and chunk
+  confirmations). The server list shows these clients the server as compatible. Not yet for
+  1.8: villager trades, boss bars, and windows of blocks it does not have (smithing tables,
+  looms, ...).
 * **Worlds**: vanilla world generation for the overworld, the Nether and the End, ported
   from 26.3 and driven by the vanilla jar's worldgen data (`crates/paper-worldgen`): biomes,
   terrain with aquifers and ore veins, surface rules, caves and canyons, and the features

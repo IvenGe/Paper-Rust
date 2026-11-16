@@ -14,6 +14,13 @@ Each file holds:
 | `mappings` | for each id registry that differs (block states, blocks, items, entity types, sounds, particles, data component types, ...), the version's id of every 26.3 id (-1: none), as runs `[first 26.3 id, its old id, length]` |
 | `registries` | for the data-driven registries the server sends during configuration: the 26.3 entries the version knows (`keep`, by index) and what stands in for the others (`fallback`), or `dropped` if it does not have the registry |
 
+`legacy.json` (made by `tools/datagen/compat_legacy.py`) is for clients from before the
+flattening. For each such version (now 1.8) it holds, base64-encoded as little-endian arrays,
+the legacy block (`id << 4 | meta`) of every 26.3 block state, the legacy item (`id << 16 |
+damage`) of every 26.3 item, and the index in `sound_names` of the legacy sound of every 26.3
+sound event. Entities, biomes, enchantments, effects and particles are small tables in
+`crates/paper-compat/src/legacy/tables.rs`.
+
 ## Sources
 
 * The id mappings are those of [ViaVersion](https://github.com/ViaVersion/ViaVersion) and
@@ -22,6 +29,10 @@ Each file holds:
   a block, item or entity, they map it to a similar one. ViaVersion and ViaBackwards are
   licensed under the GPL, version 3 or later, as Paper-RS is. The translators follow what their
   protocol classes describe of each version's changes, written anew in Rust.
+* The legacy tables compose ViaBackwards' mappings from 26.3 down to 1.13, its flattening
+  table (1.13 to 1.12), then the replacements ViaBackwards and
+  [ViaRewind](https://github.com/ViaVersion/ViaRewind) (GPL-3.0 or later) give blocks and items
+  each older version lacks; the 1.8 sound names are ViaVersion's.
 * The packet orders come from ViaVersion's packet enums, checked against
   [minecraft-data](https://github.com/PrismarineJS/minecraft-data) (MIT) in
   `crates/paper-server/tests/compat.rs`.
@@ -31,6 +42,11 @@ Each file holds:
   registries are mapped by name, assuming 26.3 only added entries.
 
 ## Regenerating
+
+```bash
+python3 tools/datagen/compat_legacy.py <ViaVersion checkout> <ViaBackwards checkout> \
+    <ViaRewind checkout> .
+```
 
 ```bash
 python3 tools/datagen/compat.py <ViaVersion checkout> <ViaBackwards checkout> \

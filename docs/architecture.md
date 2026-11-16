@@ -305,6 +305,15 @@ client's own version of the vanilla data pack and sends only the registry entrie
 has; ids of the others point at a fallback. The server list shows a supported client its own
 protocol, so it is listed as compatible.
 
+1.8 clients (`paper_compat::legacy`) speak another protocol altogether, so their translator
+rebuilds most packets: chunks as sections of two-byte legacy blocks between y 0 and 255 with
+their light and a biome byte per column, entities spawned by kind and moved in 32ths of a block
+(it keeps where each entity is, so rounding does not add up), items with their name, lore and
+enchantments as NBT, text as 1.8 JSON. 1.8 has no configuration phase: after login the
+translator answers the server's configuration in the client's place, and holds what the client
+sends meanwhile until the server plays. It also confirms teleports and chunk batches, which 1.8
+clients never do.
+
 ## Version data
 
 `data/26.3` holds the tables the server needs for 26.3: packet ids, registries, blocks and
