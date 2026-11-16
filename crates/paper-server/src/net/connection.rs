@@ -9,6 +9,7 @@ use paper_protocol::packets::handshake::{Intent, Intention};
 use paper_protocol::packets::{configuration, encode_packet, login, status, Packet};
 use paper_protocol::text::Component;
 use paper_protocol::types::{GameProfile, JsonText};
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -25,6 +26,10 @@ pub(super) struct Connection {
     /// Encoded bytes waiting for the next flush.
     pub out: Vec<u8>,
     read_buf: Vec<u8>,
+    /// Translates the packets of a client of an older version.
+    pub translator: Option<Box<dyn paper_compat::Translator>>,
+    /// Payloads the translator made for the server, read before the socket.
+    pub pending: VecDeque<Vec<u8>>,
 }
 
 /// Everything learned about a player on the way to the play state.
@@ -44,20 +49,44 @@ enum Finished {
 
 impl Connection {
     fn new(stream: TcpStream, addr: SocketAddr, compression_level: u32) -> Self {
-        Self { stream, addr, dec: FrameDecoder::new(), enc: FrameEncoder::new(compression_level), out: Vec::with_capacity(1024), read_buf: vec![0; 8192] }
+        Self {
+            stream,
+            addr,
+            dec: FrameDecoder::new(),
+            enc: FrameEncoder::new(compression_level),
+            out: Vec::with_capacity(1024),
+            read_buf: vec![0; 8192],
+            translator: None,
+            pending: VecDeque::new(),
+        }
     }
 
     /// The next payload (packet id + body), or `None` once the peer closed the connection.
     async fn read_frame(&mut self) -> Result<Option<Vec<u8>>> {
         loop {
-            if let Some(frame) = self.dec.next_frame()? {
-                return Ok(Some(frame));
+            if let Some(payload) = self.pending.pop_front() {
+                return Ok(Some(payload));
             }
-            let n = self.stream.read(&mut self.read_buf).await?;
-            if n == 0 {
-                return Ok(None);
+            let frame = loop {
+                if let Some(frame) = self.dec.next_frame()? {
+                    break frame;
+                }
+                let n = self.stream.read(&mut self.read_buf).await?;
+                if n == 0 {
+                    return Ok(None);
+                }
+                self.dec.push(&self.read_buf[..n]);
+            };
+            let Some(translator) = &mut self.translator else { return Ok(Some(frame)) };
+            let mut outcome = paper_compat::Outcome::default();
+            translator.serverbound(&frame, &mut outcome)?;
+            self.pending.extend(outcome.to_server);
+            if !outcome.to_client.is_empty() {
+                for payload in &outcome.to_client {
+                    self.enc.encode(payload, &mut self.out)?;
+                }
+                self.flush().await?;
             }
-            self.dec.push(&self.read_buf[..n]);
         }
     }
 
@@ -70,7 +99,16 @@ impl Connection {
     }
 
     fn queue_payload(&mut self, payload: &[u8]) -> Result<()> {
-        self.enc.encode(payload, &mut self.out)?;
+        let Some(translator) = &mut self.translator else {
+            self.enc.encode(payload, &mut self.out)?;
+            return Ok(());
+        };
+        let mut outcome = paper_compat::Outcome::default();
+        translator.clientbound(payload, &mut outcome)?;
+        for payload in &outcome.to_client {
+            self.enc.encode(payload, &mut self.out)?;
+        }
+        self.pending.extend(outcome.to_server);
         Ok(())
     }
 
@@ -135,14 +173,28 @@ async fn pre_play(conn: &mut Connection, shared: &Arc<Shared>) -> Result<Option<
     let intention: Intention = decode_as(&first).context("handshake")?;
     match intention.intent {
         Intent::Status => {
-            status_flow(conn, shared).await?;
+            status_flow(conn, shared, intention.protocol_version).await?;
             Ok(None)
         }
         Intent::Login | Intent::Transfer => login_flow(conn, shared, intention).await,
     }
 }
 
-async fn status_flow(conn: &mut Connection, shared: &Arc<Shared>) -> Result<Finished> {
+/// A status response for a client of `protocol`: one that can join sees its own protocol
+/// (so its server list shows the server as compatible) and the versions that can join,
+/// unless a plugin chose others.
+fn status_for(json: String, protocol: i32) -> String {
+    let Ok(mut doc) = serde_json::from_str::<serde_json::Value>(&json) else { return json };
+    if doc["version"]["protocol"] == paper_data::PROTOCOL_VERSION {
+        doc["version"]["protocol"] = paper_compat::status_protocol(protocol).into();
+        if doc["version"]["name"] == format!("Paper-RS {}", paper_data::VERSION_NAME) {
+            doc["version"]["name"] = format!("Paper-RS {}", paper_compat::version_range()).into();
+        }
+    }
+    doc.to_string()
+}
+
+async fn status_flow(conn: &mut Connection, shared: &Arc<Shared>, protocol: i32) -> Result<Finished> {
     if !shared.config.properties.enable_status {
         return Ok(Finished::Done);
     }
@@ -166,7 +218,7 @@ async fn status_flow(conn: &mut Connection, shared: &Arc<Shared>) -> Result<Fini
                     }
                     None => snapshot.to_json(),
                 };
-                conn.send(&status::StatusResponse { json }).await?;
+                conn.send(&status::StatusResponse { json: status_for(json, protocol) }).await?;
             }
             id if id == status::PingRequest::ID => {
                 let ping: status::PingRequest = decode_as(&frame)?;
@@ -183,9 +235,16 @@ async fn login_flow(conn: &mut Connection, shared: &Arc<Shared>, intention: Inte
     let props = &shared.config.properties;
 
     if intention.protocol_version != paper_data::PROTOCOL_VERSION {
-        let key = if intention.protocol_version < paper_data::PROTOCOL_VERSION { "multiplayer.disconnect.outdated_client" } else { "multiplayer.disconnect.incompatible" };
-        conn.login_disconnect(Component::translatable(key, vec![Component::text(paper_data::VERSION_NAME)])).await?;
-        return Ok(None);
+        // An older client joins through a translator, if its version is one of those.
+        conn.translator = paper_compat::translator(intention.protocol_version);
+        match &conn.translator {
+            Some(translator) => log::debug!("{}: a {} client (protocol {})", conn.addr, translator.version().name, intention.protocol_version),
+            None => {
+                let key = if intention.protocol_version < paper_data::PROTOCOL_VERSION { "multiplayer.disconnect.outdated_client" } else { "multiplayer.disconnect.incompatible" };
+                conn.login_disconnect(Component::translatable(key, vec![Component::text(paper_compat::version_range())])).await?;
+                return Ok(None);
+            }
+        }
     }
     if intention.intent == Intent::Transfer && !props.accepts_transfers {
         conn.login_disconnect(Component::translatable("multiplayer.disconnect.transfers_disabled", vec![])).await?;

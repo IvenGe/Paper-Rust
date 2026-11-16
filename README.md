@@ -75,6 +75,10 @@ What works:
 
 * **Networking**: server list ping, online (Mojang authentication, encryption) and offline
   login, compression, the configuration phase, keep-alive.
+* **Older clients**: 26.2 and 26.1 clients join too. Their packets are translated on the
+  network threads (`crates/paper-compat`, with ViaVersion and ViaBackwards' mapping data): ids
+  of blocks, items, entities, sounds and particles, registries they lack, packets that changed.
+  The server list shows them the server as compatible.
 * **Worlds**: vanilla world generation for the overworld, the Nether and the End, ported
   from 26.3 and driven by the vanilla jar's worldgen data (`crates/paper-worldgen`): biomes,
   terrain with aquifers and ore veins, surface rules, caves and canyons, and the features
@@ -601,8 +605,10 @@ Layout
 | `crates/paper-worldgen` | vanilla world generation (terrain, biomes, carvers, features, structures, spawn search) |
 | `crates/paper-server` | the server: networking, tick loop, players, worlds, storage, plugin bridge |
 | `crates/paper-plugin` | writing plugins in Rust: the plugin trait, events, commands, the server API |
+| `crates/paper-compat` | translating packets for clients of older versions |
 | `plugin-host/` | the plugin host (Java), plus two small test plugins |
 | `data/26.3` | the version data tables, see its README |
+| `data/compat` | what older versions differ in (packet orders, id mappings), see its README |
 | `tools/datagen` | the tools that extract those tables from the vanilla jar without running it |
 | `docs/` | [architecture](docs/architecture.md), the [plugin bridge](docs/plugin-bridge.md) and [Rust plugins](docs/rust-plugins.md) |
 

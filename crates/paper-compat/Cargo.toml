@@ -1,0 +1,16 @@
+[package]
+name = "paper-compat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lets clients of older Minecraft versions join a Paper-RS server by translating its packets"
+
+[dependencies]
+paper-nbt.workspace = true
+paper-data.workspace = true
+paper-protocol.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

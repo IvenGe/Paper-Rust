@@ -221,6 +221,15 @@ pub fn frame_packet(payload: &[u8], threshold: Option<u32>, level: u32) -> Resul
     Ok(out)
 }
 
+/// The payload of a frame made by [`frame_packet`] with `threshold`, for connections that
+/// need the packet itself (those whose packets are translated for an older client).
+pub fn unframe(framed: &[u8], threshold: Option<u32>) -> Result<Vec<u8>, FrameError> {
+    let mut decoder = FrameDecoder::new();
+    decoder.set_compression(threshold);
+    decoder.push(framed);
+    decoder.next_frame()?.ok_or(FrameError::Empty)
+}
+
 /// Encoder for the outbound byte stream of one connection.
 pub struct FrameEncoder {
     threshold: Option<u32>,
@@ -294,6 +303,16 @@ mod tests {
         assert_eq!(got.iter().map(Vec::len).collect::<Vec<_>>(), [1, 2, 127, 128, 300, 70_000]);
         assert_eq!(got[4], payload(300));
         assert_eq!(dec.buffered(), 0);
+    }
+
+    #[test]
+    fn unframing_gives_the_payload_back() {
+        for threshold in [None, Some(64)] {
+            for len in [3, 200, 5000] {
+                let framed = frame_packet(&payload(len), threshold, 6).unwrap();
+                assert_eq!(unframe(&framed, threshold).unwrap(), payload(len));
+            }
+        }
     }
 
     #[test]

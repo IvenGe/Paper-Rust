@@ -8,6 +8,7 @@ members = [
     "crates/paper-server",
     "crates/paper-worldgen",
     "crates/paper-plugin",
+    "crates/paper-compat",
 ]
 
 [workspace.package]
@@ -24,6 +25,7 @@ paper-protocol = { path = "crates/paper-protocol" }
 paper-bridge = { path = "crates/paper-bridge" }
 paper-worldgen = { path = "crates/paper-worldgen" }
 paper-plugin = { path = "crates/paper-plugin" }
+paper-compat = { path = "crates/paper-compat" }
 
 aes = "0.8"
 anyhow = "1"

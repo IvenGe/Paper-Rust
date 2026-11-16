@@ -681,6 +681,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "paper-compat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "paper-data",
+ "paper-nbt",
+ "paper-protocol",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "paper-data"
 version = "0.1.0"
 dependencies = [
@@ -733,6 +745,7 @@ dependencies = [
  "md-5",
  "num-bigint",
  "paper-bridge",
+ "paper-compat",
  "paper-data",
  "paper-nbt",
  "paper-plugin",

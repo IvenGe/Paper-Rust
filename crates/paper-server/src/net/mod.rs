@@ -160,6 +160,9 @@ pub enum Outbound {
     Close(Option<Bytes>),
     /// Messages held back until a flush, in order.
     Batch(Vec<Outbound>),
+    /// Payloads already in the client's version (a translator's answers to an older
+    /// client), framed as they are.
+    Translated(Vec<Vec<u8>>),
 }
 
 /// The main thread's handle to a player's connection.

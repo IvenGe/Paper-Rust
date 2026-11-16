@@ -136,13 +136,14 @@ fn join_without_compression() {
 #[test]
 fn wrong_protocol_version_is_refused() {
     let server = start_server(|_| {});
-    for (version, key) in [(paper_data::PROTOCOL_VERSION - 1, "multiplayer.disconnect.outdated_client"), (paper_data::PROTOCOL_VERSION + 1, "multiplayer.disconnect.incompatible")] {
+    // Versions no translator covers (26.1 and 26.2 join through one, see compat.rs).
+    for (version, key) in [(700, "multiplayer.disconnect.outdated_client"), (paper_data::PROTOCOL_VERSION + 1, "multiplayer.disconnect.incompatible")] {
         let (mut client, frame) = Client::begin_login(server.port(), version, "Old");
         let frame = frame.expect("a disconnect packet");
         assert_eq!(packet_id(&frame), login::LoginDisconnect::ID);
         let disconnect: login::LoginDisconnect = decode(&frame);
         assert_eq!(disconnect.reason.0 .0["translate"], key);
-        assert_eq!(disconnect.reason.0 .0["with"][0]["text"], paper_data::VERSION_NAME);
+        assert_eq!(disconnect.reason.0 .0["with"][0]["text"], paper_compat::version_range().as_str());
         assert!(client.wait_closed(TIMEOUT));
     }
     // Names with illegal characters are refused too.

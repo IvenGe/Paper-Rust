@@ -14,6 +14,7 @@ paper-bridge     the plugin bridge wire format (frames and dynamically typed val
 paper-worldgen   vanilla world generation, built from the vanilla jar's worldgen data
 paper-server     the server itself, and the `paper` binary
 paper-plugin     the crate Rust plugins are written with (the plugin trait and its C interface)
+paper-compat     translators that let clients of older versions join
 ```
 
 `paper-server` is split into:
@@ -280,6 +281,29 @@ thread through a small C interface that carries the bridge's calls and values. A
 to Java plugins first, then to Rust plugins, each of which sees the outcome so far and may
 change it. Their calls into the server go to the same API as the host's (`plugins::api`). See
 [Rust plugins](rust-plugins.md).
+
+## Older clients
+
+A client whose handshake carries another protocol than 26.3's gets a translator
+(`paper-compat`) if its version is one the server knows (`paper_compat::VERSIONS`), and is
+refused otherwise. The translator sits on the connection's I/O threads, so the game never sees
+the difference:
+
+* Before play, the connection task passes every payload it sends through the translator and
+  every payload it reads back the other way. What the translator makes for the server in the
+  client's place goes to a queue the task reads before the socket.
+* In play, the writer translates what the main thread queues (it unpacks the pre-framed chunk
+  packets shared with 26.3 players first), and hands what the translator makes in the client's
+  place straight to the main thread. The reader translates what the client sends, and gives the
+  translator's answers to the client to the writer.
+
+A translator follows the connection's state and rewrites what differs: packet ids, registry ids
+(block states, items, entities, sounds, particles, data components, ...) from the tables of
+`data/compat` (ViaVersion and ViaBackwards' mappings, composed from 26.3 down), packets that were
+added, split or reordered, and fields whose encoding changed. During configuration it offers the
+client's own version of the vanilla data pack and sends only the registry entries that version
+has; ids of the others point at a fallback. The server list shows a supported client its own
+protocol, so it is listed as compatible.
 
 ## Version data
 
