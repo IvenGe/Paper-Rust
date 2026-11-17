@@ -220,7 +220,11 @@ impl Server {
     /// Tells the affected clients about a block change and the light changes it caused.
     pub fn publish_block_change(&mut self, world: usize, change: &BlockChange) {
         let chunk = ChunkPos::of_block(change.pos.x, change.pos.z);
-        self.broadcast_to_chunk_viewers(world, chunk, &play::BlockUpdate { pos: change.pos, state: VarInt(change.new as i32) });
+        // The block as it is now (as vanilla's `broadcastChanges` reads it), which a later
+        // change told already may have changed again: telling the old one would leave the
+        // client on it.
+        let state = self.worlds[world].block_at(change.pos.x, change.pos.y, change.pos.z).unwrap_or(change.new);
+        self.broadcast_to_chunk_viewers(world, chunk, &play::BlockUpdate { pos: change.pos, state: VarInt(state as i32) });
         self.publish_light_changes(world, &change.light);
         if !self.worlds[world].removed_block_entities.is_empty() {
             self.process_removed_block_entities(world);
@@ -236,7 +240,9 @@ impl Server {
         let mut light: HashSet<ChangedSection> = HashSet::new();
         for change in &changes {
             let p = change.pos;
-            sections.entry((p.x >> 4, p.y >> 4, p.z >> 4)).or_default().insert(((p.x & 15) as u8, (p.y & 15) as u8, (p.z & 15) as u8), change.new);
+            // The block as it is now (see `publish_block_change`).
+            let state = self.worlds[world].block_at(p.x, p.y, p.z).unwrap_or(change.new);
+            sections.entry((p.x >> 4, p.y >> 4, p.z >> 4)).or_default().insert(((p.x & 15) as u8, (p.y & 15) as u8, (p.z & 15) as u8), state);
             light.extend(change.light.iter().copied());
         }
         for ((sx, sy, sz), blocks) in sections {

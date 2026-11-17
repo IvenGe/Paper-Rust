@@ -233,3 +233,41 @@ fn worldedit_side_effects_land_in_big_edits_and_holders_are_emptied_first() {
     assert_eq!((block_name(&server, 120, -60, 120), potions), ("minecraft:brewing_stand", Some(1)), "back with its potion");
     server.stop();
 }
+
+/// With WorldEdit's `//reorder none`, a block an edit leaves as it was is no change: its
+/// neighbours get no updates (a floating sand block next to it stays), as on Paper, also
+/// while the side effects of blocks it did change still wait to go out.
+#[test]
+fn worldedit_leaves_unchanged_blocks_alone() {
+    use paper_server::world::block_updates::flags;
+    let Some(jars) = jars(&["worldedit"]) else { return };
+    let (server, _dir) = start("worldedit-unchanged", &jars);
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    server.handle.console_command("op Alice");
+    alice.drain(Duration::from_millis(500));
+    let (stone, sand) = (blocks::default_state("minecraft:stone").unwrap(), blocks::default_state("minecraft:sand").unwrap());
+    // Every other block of the line is stone already, with sand in the air beside it, placed
+    // without updates: any update makes the sand fall. WorldEdit replays an edit in its own
+    // order; whichever it takes, changed blocks (whose side effects wait to go out) come
+    // before unchanged ones.
+    server
+        .handle
+        .run(move |s| {
+            let quiet = flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE;
+            for z in (40..=60).step_by(2) {
+                s.set_block_with_flags(0, paper_protocol::codec::BlockPos::new(50, -56, z), stone, quiet);
+                s.set_block_with_flags(0, paper_protocol::codec::BlockPos::new(51, -56, z), sand, quiet);
+            }
+        })
+        .unwrap();
+    run(&mut alice, "/reorder none");
+    run(&mut alice, "/pos1 50,-56,40");
+    run(&mut alice, "/pos2 50,-56,60");
+    let (_, answer) = run_until(&mut alice, "/set stone", "Operation completed", Duration::from_secs(30));
+    assert!(answer.is_some(), "the edit finished");
+    std::thread::sleep(Duration::from_secs(1));
+    let fallen: Vec<i32> = (40..=60).step_by(2).filter(|&z| block_name(&server, 51, -56, z) != "minecraft:sand").collect();
+    assert_eq!((block_name(&server, 50, -56, 41), fallen), ("minecraft:stone", vec![]), "all the sand stays up");
+    server.stop();
+}

@@ -291,7 +291,9 @@ What works:
   `players_sleeping_percentage`; not with monsters nearby, and getting hurt wakes them); they
   explode in the Nether and the End. A bed far away is found after a restart (its chunk is
   loaded to look), a point set with force (`setRespawnLocation(location, true)`) needs no
-  bed, and the recovery compass points where the player last died.
+  bed, only room to stand (carpet, snow layers, pressure plates, signs and banners do; it
+  keeps the location's yaw and pitch), `getRespawnLocation()` says where the server would
+  put the player, and the recovery compass points where the player last died.
 * **Containers**: chests (also double), trapped chests, barrels, ender chests, crafting tables
   and the 2x2 inventory grid with the vanilla recipes, furnaces, smokers and blast furnaces
   that smelt over time, hoppers, droppers and dispensers; vanilla's click rules

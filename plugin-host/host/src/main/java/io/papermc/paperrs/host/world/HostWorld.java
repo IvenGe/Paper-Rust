@@ -79,14 +79,15 @@ public final class HostWorld extends AbstractWorld {
     /**
      * A section as read: a palette of state ids (and their names, once asked for), two bytes
      * of palette index per block (y, z, x) unless it is uniform, and which blocks hold block
-     * entities. Changed only on the main thread.
+     * entities. Changed only by the main thread; other threads read the main thread's
+     * sections too, so every access holds the section's lock.
      */
     private static final class CachedSection {
         final long epoch;
         int[] ids;
         @Nullable String[] names;
         byte @Nullable [] indices;
-        /** Blocks (y << 8 | z << 4 | x) with a block entity, or changed since, which may have one now. */
+        /** Blocks (y << 8 | z << 4 | x) with a block entity. */
         final java.util.BitSet blockEntities = new java.util.BitSet();
 
         CachedSection(final long epoch, final int[] ids, final @Nullable String[] names, final byte @Nullable [] indices) {
@@ -96,16 +97,20 @@ public final class HostWorld extends AbstractWorld {
             this.indices = indices;
         }
 
-        int paletteIndex(final int i) {
+        private int paletteIndex(final int i) {
             final byte[] indices = this.indices;
             return indices == null ? 0 : (indices[i * 2] & 0xFF) | (indices[i * 2 + 1] & 0xFF) << 8;
         }
 
-        int state(final int i) {
+        synchronized int state(final int i) {
             return this.ids[this.paletteIndex(i)];
         }
 
-        String name(final int i) {
+        synchronized boolean hasBlockEntity(final int i) {
+            return this.blockEntities.get(i);
+        }
+
+        synchronized String name(final int i) {
             final int p = this.paletteIndex(i);
             String name = this.names[p];
             if (name == null) {
@@ -115,7 +120,7 @@ public final class HostWorld extends AbstractWorld {
             return name;
         }
 
-        void set(final int i, final int state) {
+        synchronized void set(final int i, final int state) {
             int p = -1;
             for (int k = 0; k < this.ids.length; k++) {
                 if (this.ids[k] == state) {
@@ -135,7 +140,9 @@ public final class HostWorld extends AbstractWorld {
             }
             this.indices[i * 2] = (byte) p;
             this.indices[i * 2 + 1] = (byte) (p >> 8);
-            this.blockEntities.set(i);
+            // The block entity goes with a block that has none (the server takes the old one
+            // away when the block changes; one of the same block stays).
+            this.blockEntities.set(i, io.papermc.paperrs.host.data.HostData.get().hasBlockEntity(state));
         }
     }
     private final UUID uid;
@@ -226,10 +233,19 @@ public final class HostWorld extends AbstractWorld {
     private CachedSection section(final int x, final int y, final int z) {
         final long key = ((long) (x >> 4) & 0x3FFFFFL) << 42 | ((long) (z >> 4) & 0x3FFFFFL) << 20 | ((long) (y >> 4) & 0xFFFFFL);
         final boolean main = this.server.isPrimaryThread();
-        final Map<Long, CachedSection> cache = main ? this.sections : this.asyncSections;
-        CachedSection section = cache.get(key);
+        CachedSection section = this.sections.get(key);
         if (section != null && section.epoch == this.server.epoch()) {
+            // The main thread's, with what it queued: other threads see that as Paper would.
             return section;
+        }
+        // Other threads keep what they read apart: the main thread trusts only sections read
+        // after what it queued went out.
+        final Map<Long, CachedSection> cache = main ? this.sections : this.asyncSections;
+        if (!main) {
+            section = cache.get(key);
+            if (section != null && section.epoch == this.server.epoch()) {
+                return section;
+            }
         }
         // Queued changes go out first, so the section read has them (and if side effects must
         // go with them, the epoch moves on before this read is taken).
@@ -273,9 +289,17 @@ public final class HostWorld extends AbstractWorld {
         return this.section(x, y, z).state(indexOf(x, y, z));
     }
 
-    /** Whether a block may hold a block entity (it did when read, or changed since). */
+    /** Whether a block holds a block entity (as read, or as set since). */
     public boolean mayHaveBlockEntity(final int x, final int y, final int z) {
-        return this.section(x, y, z).blockEntities.get(indexOf(x, y, z));
+        return this.section(x, y, z).hasBlockEntity(indexOf(x, y, z));
+    }
+
+    /**
+     * A batch of the main thread's changes went out: what other threads read before it no
+     * longer holds (a batch of changes alone does not move the epoch on).
+     */
+    public void batchSent() {
+        this.asyncSections.clear();
     }
 
     /**
@@ -290,15 +314,19 @@ public final class HostWorld extends AbstractWorld {
         final CachedSection section = this.section(x, y, z);
         final int i = indexOf(x, y, z);
         final int old = section.state(i);
+        final boolean same = old == state;
         // Side effects still queued may change any block once the server gets to them, which
-        // the cache does not show: then the change goes out even if the block looks done.
-        if (old == state && !this.server.blockEdits().hasEffects(this.name)) {
+        // the cache does not show: then the change goes out even if the block looks done (but
+        // counts as no change, as Paper's setBlockState says when the state is the same: the
+        // caller's own side effects stay away from blocks it did not change).
+        if (same && !this.server.blockEdits().hasEffects(this.name)) {
             return -1;
         }
         this.server.blockEdits().set(this.name, x, y, z, state);
-        if (old != state) {
-            section.set(i, state);
+        if (same) {
+            return -1;
         }
+        section.set(i, state);
         return old;
     }
 

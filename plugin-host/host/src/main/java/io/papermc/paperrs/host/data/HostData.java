@@ -68,6 +68,13 @@ public final class HostData {
             this.registries.putIfAbsent(e.getKey(), strings(e.getValue().getAsJsonArray()));
         }
 
+        final JsonArray stateFlags = read("paper-rs-data/block_states.json").getAsJsonObject().getAsJsonArray("flags");
+        for (int s = 0; s < stateFlags.size(); s++) {
+            if ((stateFlags.get(s).getAsInt() & 32) != 0) {
+                this.blockEntityStates.set(s);
+            }
+        }
+
         JsonObject blocksJson = read("paper-rs-data/blocks.json").getAsJsonObject();
         this.stateToBlock = new int[blocksJson.get("state_count").getAsInt()];
         for (JsonElement el : blocksJson.getAsJsonArray("blocks")) {
@@ -140,6 +147,14 @@ public final class HostData {
             }
             this.tags.put(registry.getKey(), byTag);
         }
+    }
+
+    /** States whose block holds a block entity (a chest, a sign, ...). */
+    private final java.util.BitSet blockEntityStates = new java.util.BitSet();
+
+    /** Whether the block of a state holds a block entity. */
+    public boolean hasBlockEntity(final int state) {
+        return state >= 0 && this.blockEntityStates.get(state);
     }
 
     public static synchronized HostData get() {

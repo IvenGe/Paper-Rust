@@ -193,6 +193,9 @@ public final class BlockEdits {
         this.count -= n;
         try {
             this.server.sendKnown("world.edit_batch", Values.of("world", this.world, "edits", bytes));
+            if (this.server.getWorld(this.world) instanceof HostWorld host) {
+                host.batchSent();
+            }
         } catch (final io.papermc.paperrs.host.bridge.Bridge.DisconnectedException e) {
             // The server is gone: nothing more goes out, and the host shuts down as usual.
             this.drop();

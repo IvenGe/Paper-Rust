@@ -43,6 +43,7 @@ pub struct SavedPlayer {
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
     pub respawn_forced: bool,
     pub respawn_yaw: f32,
+    pub respawn_pitch: f32,
     pub last_death: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// Bukkit's `bukkit.firstPlayed`, for offline players in the plugin API.
     pub first_played: Option<i64>,
@@ -246,7 +247,7 @@ impl Server {
                         .with("paper-rs:world", Tag::String(self.worlds[w].name.clone()))
                         .with("pos", Tag::IntArray(vec![pos.x, pos.y, pos.z]))
                         .with("yaw", Tag::Float(player.respawn_yaw))
-                        .with("pitch", Tag::Float(0.0))
+                        .with("pitch", Tag::Float(player.respawn_pitch))
                         .with("forced", Tag::Byte(player.respawn_forced as i8)),
                 ),
             );
@@ -343,6 +344,7 @@ impl Server {
             respawn: c.compound("respawn").and_then(|r| self.saved_place(r)),
             respawn_forced: c.compound("respawn").and_then(|r| r.bool("forced")).unwrap_or(false),
             respawn_yaw: c.compound("respawn").and_then(|r| r.f64("yaw")).unwrap_or(0.0) as f32,
+            respawn_pitch: c.compound("respawn").and_then(|r| r.f64("pitch")).unwrap_or(0.0) as f32,
             last_death: c.compound("LastDeathLocation").and_then(|r| self.saved_place(r)),
             first_played: c.compound("bukkit").and_then(|b| b.i64("firstPlayed")),
             enchantment_seed: c.i32("XpSeed"),

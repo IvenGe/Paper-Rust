@@ -270,11 +270,29 @@ public final class PaperRsAdapter implements BukkitImplAdapter {
             return false;
         }
         // As Paper's adapter, which empties any block entity that holds items (Clearable):
-        // containers, brewing stands, crafters, campfires, bookshelves, lecterns, jukeboxes and
+        // containers, brewing stands, crafters, campfires, shelves, lecterns, jukeboxes and
         // pots. Their items would otherwise drop when the block goes, and come back on //undo.
+        // Other block entities (signs, banners, ...) hold none. Only block entity data changes,
+        // no block: the section cache stays good, so it goes as a read.
+        if (world instanceof io.papermc.paperrs.host.world.HostWorld host && !holdsItems(host.blockState(pt.x(), pt.y(), pt.z()))) {
+            return false;
+        }
         final Map<String, Object> args = args(world, pt.x(), pt.y(), pt.z());
         args.put("remove", java.util.List.of("Items", "Book", "RecordItem", "item"));
-        return Boolean.TRUE.equals(server().call("world.set_tile_data", args));
+        return Boolean.TRUE.equals(server().read("world.set_tile_data", args));
+    }
+
+    /** Whether a block's block entity can hold items (vanilla's {@code Clearable} ones). */
+    private static boolean holdsItems(final String state) {
+        final int bracket = state.indexOf('[');
+        final String name = bracket < 0 ? state : state.substring(0, bracket);
+        return (name.endsWith("chest") && !name.equals("minecraft:ender_chest")) || name.endsWith("shulker_box") || name.endsWith("_shelf")
+            || name.endsWith("chiseled_bookshelf") || switch (name) {
+                case "minecraft:barrel", "minecraft:dispenser", "minecraft:dropper", "minecraft:hopper", "minecraft:furnace", "minecraft:blast_furnace",
+                     "minecraft:smoker", "minecraft:brewing_stand", "minecraft:crafter", "minecraft:campfire", "minecraft:soul_campfire",
+                     "minecraft:lectern", "minecraft:jukebox", "minecraft:decorated_pot" -> true;
+                default -> false;
+            };
     }
 
     @Override

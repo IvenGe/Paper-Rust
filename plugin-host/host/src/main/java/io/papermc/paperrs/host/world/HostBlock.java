@@ -70,15 +70,21 @@ public final class HostBlock extends AbstractBlock {
     /** Sets the block state ({@code minecraft:name[property=value,...]}). */
     public void setState(final String state, final boolean applyPhysics) {
         this.pending = null;
-        if (!applyPhysics && this.world.server().isPrimaryThread() && !this.world.mayHaveBlockEntity(this.x, this.y, this.z)) {
+        if (!applyPhysics && this.world.server().isPrimaryThread()) {
             // Without physics only this block changes and nothing fires events: the change
-            // goes out with the next batch rather than as a call there and back. (A block
-            // entity going, a chest's items dropping, does fire events: that is a call.)
-            final int id = io.papermc.paperrs.host.data.HostData.get().parseState(state);
+            // goes out with the next batch rather than as a call there and back. A block
+            // entity going (another block in a chest's place: its items drop, its viewers'
+            // menus close) does fire events: that is a call.
+            final io.papermc.paperrs.host.data.HostData data = io.papermc.paperrs.host.data.HostData.get();
+            final int id = data.parseState(state);
             if (id >= 0) {
-                this.world.server().blockEdits().flushIfFull();
-                this.world.setBlockQuietly(this.x, this.y, this.z, id);
-                return;
+                final int old = this.world.stateId(this.x, this.y, this.z);
+                final boolean entityGoes = this.world.mayHaveBlockEntity(this.x, this.y, this.z) && data.blockOfState(old).id() != data.blockOfState(id).id();
+                if (!entityGoes) {
+                    this.world.server().blockEdits().flushIfFull();
+                    this.world.setBlockQuietly(this.x, this.y, this.z, id);
+                    return;
+                }
             }
         }
         this.world.server().call("world.set_block",

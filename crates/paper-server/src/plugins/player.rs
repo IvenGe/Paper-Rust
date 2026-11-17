@@ -36,6 +36,7 @@ pub fn handles(method: &str) -> bool {
         method,
         "player.set"
             | "player.respawn"
+            | "player.respawn_location"
             | "player.update_inventory"
             | "player.set_border"
             | "player.border"
@@ -66,6 +67,12 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             Ok(server.players.get(&id).map_or(Value::Null, |p| super::api::player_state(server, p)))
         }
+        // `Player.getRespawnLocation(true)`: where the player would respawn now, as the server
+        // works it out (the bed still there and not walled in, or a forced point with room).
+        "player.respawn_location" => Ok(match server.peek_respawn_point(id) {
+            Some((world, at)) => Value::List(vec![server.worlds[world].name.clone().into(), at.x.into(), at.y.into(), at.z.into(), at.yaw.into(), at.pitch.into()]),
+            None => Value::Null,
+        }),
         "player.set" => {
             set(server, id, args)?;
             Ok(super::api::player_state(server, &server.players[&id]))
@@ -264,7 +271,7 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
         v => {
             let world = world_named(server, v.at(0).as_str().ok_or_else(|| anyhow!("missing respawn world"))?)?;
             let pos = BlockPos::new(v.at(1).as_i64().unwrap_or(0) as i32, v.at(2).as_i64().unwrap_or(0) as i32, v.at(3).as_i64().unwrap_or(0) as i32);
-            Some(Some((world, pos, v.at(4).as_f64().unwrap_or(0.0) as f32)))
+            Some(Some((world, pos, v.at(4).as_f64().unwrap_or(0.0) as f32, v.at(5).as_f64().unwrap_or(0.0) as f32)))
         }
     };
     if let Value::List(l) = args.get("compass_target") {
@@ -431,8 +438,8 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
         experience = true;
     }
     if let Some(r) = respawn {
-        p.respawn = r.map(|(w, pos, _)| (w, pos));
-        p.respawn_yaw = r.map_or(0.0, |(_, _, yaw)| yaw);
+        p.respawn = r.map(|(w, pos, _, _)| (w, pos));
+        (p.respawn_yaw, p.respawn_pitch) = r.map_or((0.0, 0.0), |(_, _, yaw, pitch)| (yaw, pitch));
         // `setRespawnLocation(location, force)`: forced, it holds without a bed.
         p.respawn_forced = r.is_some() && args.bool("respawn_forced") == Some(true);
     }

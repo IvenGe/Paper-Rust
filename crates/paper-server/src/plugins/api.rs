@@ -542,9 +542,10 @@ fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<u
         }
     }
     // The batch may come in the middle of something else the server does (a plugin's event
-    // handler queued it): then its changes go after what that left, for it to publish in
-    // order (clients end on the latest state), else out now.
-    let in_the_middle = !server.worlds[world].updates.effects.is_empty();
+    // handler queued it): what that left stays for it to finish; the batch's own changes go
+    // out now (block packets carry the block as it is when they go, so players end on the
+    // latest state whichever goes first, and block entity data sent next finds its block).
+    let earlier = std::mem::take(&mut server.worlds[world].updates.effects);
     let mut last_chunk = None;
     let mut n = 0;
     for e in edits.chunks_exact(28) {
@@ -588,9 +589,10 @@ fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<u
         }
         n += 1;
     }
-    if !in_the_middle {
-        server.publish_block_updates(world);
-    }
+    server.publish_block_updates(world);
+    let w = &mut server.worlds[world];
+    let mut later = std::mem::replace(&mut w.updates.effects, earlier);
+    w.updates.effects.append(&mut later);
     Ok(n)
 }
 

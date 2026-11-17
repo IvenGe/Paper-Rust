@@ -197,8 +197,18 @@ impl Server {
     /// point was set with force (`setRespawnLocation(location, true)`) and there is room;
     /// otherwise nowhere, and the player is told and the point forgotten.
     pub(super) fn respawn_point(&mut self, id: i32) -> RespawnPoint {
+        self.find_respawn_point(id, true)
+    }
+
+    /// Where the player would respawn, without forgetting a point that is no good
+    /// (`Player.getRespawnLocation(true)`).
+    pub(crate) fn peek_respawn_point(&mut self, id: i32) -> Option<(usize, Location)> {
+        self.find_respawn_point(id, false).at
+    }
+
+    fn find_respawn_point(&mut self, id: i32, use_it: bool) -> RespawnPoint {
         let Some(p) = self.players.get(&id) else { return RespawnPoint::default() };
-        let (forced, yaw) = (p.respawn_forced, p.respawn_yaw);
+        let (forced, yaw, pitch) = (p.respawn_forced, p.respawn_yaw, p.respawn_pitch);
         let Some((world, head)) = p.respawn.filter(|(w, _)| *w < self.worlds.len() && !self.worlds[*w].unloaded) else { return RespawnPoint::default() };
         // A bed far away is in a chunk no one keeps loaded: it is loaded to look, as reading
         // the block does in vanilla (an unloaded chunk is not a missing bed).
@@ -212,13 +222,14 @@ impl Server {
                 return RespawnPoint { at: Some((world, at)), bed: true, missing: false };
             }
         } else if forced {
-            // `isPossibleToRespawnInThis`: neither solid (carpet and thin snow are not) nor a
-            // liquid, for the feet and the head.
-            let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(|s| !paper_data::physics::is_solid(s) && super::survival::fluid_of(s).is_none());
+            let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(possible_to_respawn_in);
             if room(head.y) && room(head.y + 1) {
-                let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw, pitch: 0.0 };
+                let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw, pitch };
                 return RespawnPoint { at: Some((world, at)), bed: false, missing: false };
             }
+        }
+        if !use_it {
+            return RespawnPoint::default();
         }
         if let Some(p) = self.players.get_mut(&id) {
             p.respawn = None;
@@ -282,4 +293,16 @@ impl Server {
             p.conn.send(&play::SetActionBarText { text: message });
         }
     }
+}
+
+/// `Block.isPossibleToRespawnInThis`: a block a player can be put in, for the feet and the
+/// head at a forced respawn point. Neither solid (carpet and thin snow are not) nor a liquid
+/// (water and lava themselves, not a waterlogged block); pressure plates, signs and banners
+/// always do, solid as they are for fluids.
+fn possible_to_respawn_in(state: u32) -> bool {
+    let name = blocks::block_of_state(state).name;
+    if name.ends_with("_pressure_plate") || name.ends_with("_sign") || name.ends_with("_banner") {
+        return true;
+    }
+    !paper_data::physics::is_solid(state) && !matches!(name, "minecraft:water" | "minecraft:lava" | "minecraft:bubble_column")
 }

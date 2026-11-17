@@ -2185,29 +2185,16 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         if (block == null || !loadLocationAndValidate) {
             return block;
         }
-        // ServerPlayer.findRespawnAndUseSpawnBlock: the bed or anchor must still be there; the
-        // player stands up next to it (BedBlock.findStandUpPosition, simplified).
-        final org.bukkit.Material type = block.getBlock().getType();
-        if (!org.bukkit.Tag.BEDS.isTagged(type) && type != org.bukkit.Material.RESPAWN_ANCHOR) {
-            // A point set with force holds without a bed if there is room to stand: the block
-            // and the one above are neither solid nor liquid (isPossibleToRespawnInThis).
-            final org.bukkit.block.Block feet = block.getBlock();
-            final org.bukkit.block.Block head = feet.getRelative(0, 1, 0);
-            if (Values.bool(this.state, "respawn_forced", false) && !feet.getType().isSolid() && !feet.isLiquid() && !head.getType().isSolid() && !head.isLiquid()) {
-                return block.clone().add(0.5, 0.1, 0.5);
-            }
+        // ServerPlayer.findRespawnAndUseSpawnBlock, as the server works it out: next to the bed
+        // if it is still there and not walled in, or at a point set with force if there is
+        // room, facing the way it was set; else nowhere.
+        final List<Object> at = Values.list(this.server.call("player.respawn_location", Values.of("uuid", this.uuid.toString())));
+        final World world = at.size() < 6 ? null : this.server.getWorld(String.valueOf(at.get(0)));
+        if (world == null) {
             return null;
         }
-        final int[][] around = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
-        for (final int dy : new int[] {0, 1, -1}) {
-            for (final int[] d : around) {
-                final org.bukkit.block.Block feet = block.getBlock().getRelative(d[0], dy, d[1]);
-                if (feet.isPassable() && feet.getRelative(0, 1, 0).isPassable() && feet.getRelative(0, -1, 0).getType().isSolid()) {
-                    return feet.getLocation().add(0.5, 0, 0.5);
-                }
-            }
-        }
-        return block.clone().add(0.5, 0.5625, 0.5);
+        return new Location(world, ((Number) at.get(1)).doubleValue(), ((Number) at.get(2)).doubleValue(), ((Number) at.get(3)).doubleValue(),
+            ((Number) at.get(4)).floatValue(), ((Number) at.get(5)).floatValue());
     }
 
     @Override
@@ -2217,7 +2204,7 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
             return;
         }
         final World world = location.getWorld() != null ? location.getWorld() : this.getWorld();
-        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ(), (double) location.getYaw()), "respawn_forced", force);
+        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ(), (double) location.getYaw(), (double) location.getPitch()), "respawn_forced", force);
     }
 
     // inventory
