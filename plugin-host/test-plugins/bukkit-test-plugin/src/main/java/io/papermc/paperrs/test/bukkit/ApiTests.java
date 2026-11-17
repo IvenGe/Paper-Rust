@@ -961,6 +961,8 @@ final class ApiTests implements Listener, CommandExecutor {
         final org.bukkit.Location target = player.getLocation().add(100, 0, 50);
         player.setCompassTarget(target);
         check(failures, player.getCompassTarget().getBlockX() == target.getBlockX() && player.getCompassTarget().getBlockZ() == target.getBlockZ(), "compass target");
+        target.setYaw(33f);
+        target.setPitch(12f);
         player.setRespawnLocation(target, true);
         final org.bukkit.Location forced = player.getRespawnLocation();
         check(failures, player.getPotentialRespawnLocation() != null && player.getPotentialRespawnLocation().getBlockX() == target.getBlockX()

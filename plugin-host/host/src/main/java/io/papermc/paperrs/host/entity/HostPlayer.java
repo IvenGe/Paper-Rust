@@ -2193,7 +2193,7 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         // there is room, facing the way it was set; else nowhere. For a player who has left,
         // from the point this object still has.
         final List<Object> at = Values.list(this.server.call("player.respawn_location", Values.of("uuid", this.uuid.toString(),
-            "respawn", Values.list(this.state.get("respawn")), "respawn_forced", Values.bool(this.state, "respawn_forced", false))));
+            "respawn", Values.list(this.state.get("respawn")), "respawn_forced", Values.bool(this.state, "respawn_forced", false), "offline", !this.online)));
         final World world = at.size() < 6 ? null : this.server.getWorld(String.valueOf(at.get(0)));
         if (world == null) {
             return null;

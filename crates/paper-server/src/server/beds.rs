@@ -24,6 +24,28 @@ fn is_bed(state: u32) -> bool {
     blocks::block_of_state(state).name.ends_with("_bed")
 }
 
+/// The rule a bed follows where it is: its dimension's `minecraft:gameplay/bed_rule`, or
+/// `straw_bed_rule` for a straw bed (which lets players sleep at night but never sets spawn,
+/// and breaks when they get up).
+fn bed_rule(w: &crate::world::World, state: u32) -> paper_data::BedRule {
+    let dimension = paper_data::synced::dimension_type(&w.dimension).or_else(|| paper_data::synced::dimension_type("minecraft:overworld"));
+    let dimension = dimension.expect("the overworld's dimension type");
+    if blocks::block_of_state(state).name == "minecraft:straw_bed" {
+        dimension.straw_bed_rule
+    } else {
+        dimension.bed_rule
+    }
+}
+
+/// Whether a bed rule's "when" holds now.
+fn holds(when: paper_data::BedWhen, dark: bool) -> bool {
+    match when {
+        paper_data::BedWhen::Always => true,
+        paper_data::BedWhen::WhenDark => dark,
+        paper_data::BedWhen::Never => false,
+    }
+}
+
 
 /// Where a respawn point puts a player (see `Server::respawn_point`): the place, whether it is
 /// next to a bed, and whether a point the player had was lost.
@@ -53,9 +75,10 @@ impl Server {
                 _ => return true,
             }
         }
-        let dimension = w.dimension.clone();
-        // Beds explode outside the overworld (`bed_rule` with `explodes`).
-        let explodes = dimension != "minecraft:overworld";
+        // What the bed lets players do here: beds explode in the Nether and the End
+        // (`destroy_on_use`).
+        let rule = bed_rule(w, state);
+        let explodes = rule.destroy_on_use;
         let (dx, dz) = facing_offset(blocks::property(state, "facing").unwrap_or("north"));
         let foot = head.offset(-dx, 0, -dz);
         if blocks::property(state, "occupied") == Some("true") {
@@ -82,19 +105,21 @@ impl Server {
             None
         };
         if problem.is_none() {
-            // The bed becomes the respawn point, by day too.
-            let changed = p.respawn != Some((world, head));
-            if let Some(p) = self.players.get_mut(&id) {
-                p.respawn = Some((world, head));
-                // With the way the player looks (`getRespawnLocation(false)` gives it).
-                (p.respawn_yaw, p.respawn_pitch) = (p.loc.yaw, p.loc.pitch);
-                // A bed's point needs the bed: an earlier forced point's force goes.
-                p.respawn_forced = false;
+            // The bed becomes the respawn point, by day too (a straw bed never does).
+            if holds(rule.can_set_spawn, dark) {
+                let changed = p.respawn != Some((world, head));
+                if let Some(p) = self.players.get_mut(&id) {
+                    p.respawn = Some((world, head));
+                    // With the way the player looks (`getRespawnLocation(false)` gives it).
+                    (p.respawn_yaw, p.respawn_pitch) = (p.loc.yaw, p.loc.pitch);
+                    // A bed's point needs the bed: an earlier forced point's force goes.
+                    p.respawn_forced = false;
+                }
+                if changed {
+                    self.send_message(id, &Component::translatable("block.minecraft.set_spawn", vec![]));
+                }
             }
-            if changed {
-                self.send_message(id, &Component::translatable("block.minecraft.set_spawn", vec![]));
-            }
-            if !dark {
+            if !holds(rule.can_sleep, dark) {
                 problem = Some(("NOT_POSSIBLE_NOW", Some("block.minecraft.bed.no_sleep")));
             } else if self.players[&id].game_mode != GameMode::Creative {
                 let around = Aabb::new(Vec3::new(head.x as f64 + 0.5 - 8.0, head.y as f64 - 5.0, head.z as f64 + 0.5 - 8.0), Vec3::new(head.x as f64 + 0.5 + 8.0, head.y as f64 + 5.0, head.z as f64 + 0.5 + 8.0));
@@ -184,6 +209,13 @@ impl Server {
         let packet = play::Animate { entity_id: VarInt(id), animation: 0 };
         self.send(id, &packet);
         self.broadcast_to_viewers(id, &packet);
+        // A straw bed breaks when its sleeper gets up (`destroy_on_leave`), the other half
+        // with it.
+        if bed.is_some_and(|state| bed_rule(&self.worlds[world], state).destroy_on_leave) {
+            self.set_block_and_update(world, head, blocks::AIR);
+            let at = Vec3::new(head.x as f64 + 0.5, head.y as f64 + 0.5, head.z as f64 + 0.5);
+            self.play_sound(world, at, "minecraft:block.straw_bed.break_leave", super::survival::category::BLOCKS, 1.0, 1.0, None);
+        }
     }
 
     /// Where a player gets up from the bed whose head is at `head`, looking towards `yaw`
@@ -278,10 +310,10 @@ impl Server {
             }
         }
         let w = &self.worlds[world];
-        // A bed sets spawn where beds work (`BED_RULE`): elsewhere it is no more than a forced
-        // point's block.
-        let beds_work = w.dimension == "minecraft:overworld";
-        if beds_work && w.block_at(head.x, head.y, head.z).is_some_and(is_bed) {
+        // A bed sets spawn where its rule lets it (`BED_RULE`; never in the Nether, never a
+        // straw bed): otherwise it is no more than a forced point's block.
+        let dark = super::mobs::sky_darken(w) >= 4;
+        if w.block_at(head.x, head.y, head.z).is_some_and(|s| is_bed(s) && holds(bed_rule(w, s).can_set_spawn, dark)) {
             return self.stand_up_position(world, head, yaw).map(|at| (Location { yaw: look_at_yaw(&at, head), pitch: 0.0, ..at }, true));
         }
         let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(possible_to_respawn_in);

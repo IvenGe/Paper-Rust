@@ -434,6 +434,11 @@ fn beds_put_players_beside_them_facing_them() {
     }
     assert_eq!(peek(Value::Null, false), Some(vec![9.5, -60.0, 11.5, -135.0, 0.0]));
 
+    // The Player object of an earlier session asks with its own point, though Alice is on.
+    let args = bmap! { "uuid" => uuid.clone(), "respawn" => point("world", 20, 20, 30.0, 15.0), "respawn_forced" => true, "offline" => true };
+    let stale = server.handle.run(move |s| paper_server::plugins::api::handle(s, "player.respawn_location", &args).map_err(|e| e.to_string())).unwrap().unwrap();
+    assert_eq!((stale.at(1).as_f64(), stale.at(3).as_f64(), stale.at(4).as_f64()), (Some(20.5), Some(20.5), Some(30.0)), "{stale:?}");
+
     // Alice leaves: the point her Player object still has is asked about instead.
     drop(alice);
     wait_until(&server, "Alice gone", |s| s.players.is_empty());
@@ -495,5 +500,11 @@ fn bed_spots_follow_vanillas_rules() {
     put("world_nether", 10, 64, 11, state("minecraft:red_bed[part=foot,facing=north]"));
     set_point("world_nether", 64, 0.0);
     assert_eq!(peek(), None, "beds do not set spawn in the Nether");
+
+    // Nor do straw beds, anywhere.
+    put("world", 10, -60, 10, state("minecraft:straw_bed[part=head,facing=north]"));
+    put("world", 10, -60, 11, state("minecraft:straw_bed[part=foot,facing=north]"));
+    set_point("world", -60, 0.0);
+    assert_eq!(peek(), None, "a straw bed is no respawn point");
     server.stop();
 }

@@ -340,6 +340,45 @@ fn sleeping_skips_the_night_and_beds_are_respawn_points() {
     server.stop();
 }
 
+/// A straw bed lets a player sleep the night away, but sets no respawn point, and breaks when
+/// the sleeper gets up (the overworld's `straw_bed_rule`).
+#[test]
+fn straw_beds_are_for_one_night() {
+    let server = survival_server();
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let (foot, head) = (paper_protocol::codec::BlockPos::new(10, -60, 8), paper_protocol::codec::BlockPos::new(11, -60, 8));
+    server
+        .handle
+        .run(move |s| {
+            let bed = paper_data::blocks::default_state("minecraft:straw_bed").unwrap();
+            let bed = paper_data::blocks::with_property(bed, "facing", "east").unwrap();
+            s.set_block_and_update(0, foot, paper_data::blocks::with_property(bed, "part", "foot").unwrap());
+            s.set_block_and_update(0, head, paper_data::blocks::with_property(bed, "part", "head").unwrap());
+        })
+        .unwrap();
+    server.handle.console_command("gamerule spawn_monsters false");
+    server.handle.console_command("tp Alice 9.5 -60 8.5");
+    alice.expect::<play::PlayerPosition>();
+    server.handle.console_command("time set midnight");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: foot, face: VarInt(1), cursor_x: 0.5, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(1) });
+    alice.expect::<play::PlayerPosition>();
+    assert_eq!(server.handle.run(move |s| s.players[&id].sleeping).unwrap(), Some(head), "asleep in the straw bed");
+    assert!(alice.find(Duration::from_millis(500), |c: &play::SystemChat| c.content.0["translate"] == "block.minecraft.set_spawn").is_none(), "no respawn point set");
+    assert_eq!(server.handle.run(move |s| s.players[&id].respawn).unwrap(), None);
+
+    // Morning: she gets up, and the straw bed is gone.
+    alice.find(Duration::from_secs(10), |a: &play::Animate| a.entity_id.0 == id && a.animation == 0).expect("woken up");
+    let (time, at_head, at_foot) = server.handle.run(move |s| (s.worlds[0].day_time, s.worlds[0].block_at(head.x, head.y, head.z), s.worlds[0].block_at(foot.x, foot.y, foot.z))).unwrap();
+    assert!(time.rem_euclid(24000) < 100, "the night was slept away: {time}");
+    assert_eq!((at_head, at_foot), (Some(paper_data::blocks::AIR), Some(paper_data::blocks::AIR)), "both halves broke");
+    assert_eq!(server.handle.run(move |s| s.players[&id].respawn).unwrap(), None, "still no respawn point");
+    server.stop();
+}
+
 /// A bed broken under a sleeping player gets it up where it lies (`checkBedExists`): it does
 /// not sleep the night away on nothing.
 #[test]

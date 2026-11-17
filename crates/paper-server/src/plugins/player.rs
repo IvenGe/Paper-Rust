@@ -34,10 +34,12 @@ fn speed(value: f64) -> Result<f32> {
 /// it out (next to the bed if it is still there and not walled in, or at a forced point with
 /// room), as `[world, x, y, z, yaw, pitch]`, or null. For a player who has left, from the
 /// point the host still has (`respawn` and `respawn_forced`, as the player state gave them),
-/// as Paper works it out from the player object left behind.
+/// as Paper works it out from the player object left behind; also for the object of an
+/// earlier session (`offline`) of a player who is back.
 fn respawn_location(server: &mut Server, args: &Value) -> Result<Value> {
     let uuid: Uuid = args.str("uuid").ok_or_else(|| anyhow!("missing uuid"))?.parse()?;
-    let found = match server.by_uuid.get(&uuid).copied() {
+    let online = server.by_uuid.get(&uuid).copied().filter(|_| args.bool("offline") != Some(true));
+    let found = match online {
         Some(id) => server.peek_respawn_point(id),
         None => {
             let point = args.get("respawn");

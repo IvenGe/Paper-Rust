@@ -43,6 +43,26 @@ pub struct ItemInfo {
     pub block: Option<&'static str>,
 }
 
+/// When a bed lets a player do something (`BedRule.Rule`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BedWhen {
+    Always,
+    WhenDark,
+    Never,
+}
+
+/// How a kind of bed behaves in a dimension (the `minecraft:gameplay/bed_rule` and
+/// `minecraft:gameplay/straw_bed_rule` attributes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BedRule {
+    pub can_set_spawn: BedWhen,
+    pub can_sleep: BedWhen,
+    /// The bed blows up when used (the Nether, the End).
+    pub destroy_on_use: bool,
+    /// The bed breaks when its sleeper gets up (straw beds).
+    pub destroy_on_leave: bool,
+}
+
 /// The parts of a dimension type the server itself needs.
 #[derive(Debug)]
 pub struct DimensionTypeInfo {
@@ -70,6 +90,10 @@ pub struct DimensionTypeInfo {
     pub can_start_raid: bool,
     /// Beds are slept in rather than destroyed (the `minecraft:gameplay/bed_rule` attribute).
     pub bed_works: bool,
+    /// Coloured beds (`minecraft:gameplay/bed_rule`).
+    pub bed_rule: BedRule,
+    /// Straw beds (`minecraft:gameplay/straw_bed_rule`).
+    pub straw_bed_rule: BedRule,
 }
 
 fn name_index(names: &'static [&'static str]) -> HashMap<&'static str, u32> {

@@ -278,7 +278,7 @@ fn gen_synced() {
     for (name, d) in dims.as_object().expect("dimension_types.json must be an object") {
         writeln!(
             s,
-            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {}, coordinate_scale: {:?}, water_evaporates: {}, infiniburn: {:?}, has_fixed_time: {}, piglins_zombify: {}, respawn_anchor_works: {}, can_start_raid: {}, bed_works: {} }},",
+            "    DimensionTypeInfo {{ name: {name:?}, min_y: {}, height: {}, logical_height: {}, has_skylight: {}, has_ceiling: {}, fast_lava: {}, coordinate_scale: {:?}, water_evaporates: {}, infiniburn: {:?}, has_fixed_time: {}, piglins_zombify: {}, respawn_anchor_works: {}, can_start_raid: {}, bed_works: {}, bed_rule: {}, straw_bed_rule: {} }},",
             d["min_y"].as_i64().expect("min_y"),
             d["height"].as_i64().expect("height"),
             d["logical_height"].as_i64().unwrap_or_else(|| d["height"].as_i64().unwrap()),
@@ -296,11 +296,31 @@ fn gen_synced() {
                 let bed = &d["attributes"]["minecraft:gameplay/bed_rule"];
                 !bed["destroy_on_use"].as_bool().unwrap_or(false) && bed["can_sleep"].as_str() != Some("never")
             },
+            bed_rule(&d["attributes"]["minecraft:gameplay/bed_rule"], "always", false),
+            bed_rule(&d["attributes"]["minecraft:gameplay/straw_bed_rule"], "never", true),
         )
         .unwrap();
     }
     writeln!(s, "];").unwrap();
     out("synced.rs", &s);
+}
+
+/// A `BedRule` literal from a dimension's bed rule attribute; a dimension without one gets the
+/// overworld's (with `spawn` and `leave` for what differs between bed kinds).
+fn bed_rule(rule: &serde_json::Value, spawn: &str, leave: bool) -> String {
+    let when = |v: &serde_json::Value, default: &str| match v.as_str().unwrap_or(default) {
+        "always" => "BedWhen::Always",
+        "never" => "BedWhen::Never",
+        _ => "BedWhen::WhenDark",
+    };
+    let missing = rule.is_null();
+    format!(
+        "BedRule {{ can_set_spawn: {}, can_sleep: {}, destroy_on_use: {}, destroy_on_leave: {} }}",
+        when(&rule["can_set_spawn"], spawn),
+        when(&rule["can_sleep"], "when_dark"),
+        rule["destroy_on_use"].as_bool().unwrap_or(false),
+        rule["destroy_on_leave"].as_bool().unwrap_or(missing && leave),
+    )
 }
 
 /// `block_behaviour.json`: per-state support faces, physics flags, collision faces and note
