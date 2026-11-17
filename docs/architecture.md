@@ -218,7 +218,10 @@ through the server:
   followed by block events (note blocks, pistons) and moving pistons.
 * What clients must see (block and light changes, sounds, world and block events) and blocks
   that drop items are collected as `Effect`s in `World::updates` and published by
-  `Server::publish_block_updates`.
+  `Server::publish_block_updates`, in order. A block event goes out before the changes it
+  makes, as in vanilla, and clients replay piston moves on the blocks they have: a block a
+  later block event changes again is told as it was when that event ran, any other block as
+  it is now (as vanilla's `broadcastChanges` reads it).
 
 Hooks for other systems: `Server::drop_block_items` receives every block that block physics
 destroy with drops (washed away, lost support, broken by a piston); `block_updates::redstone::

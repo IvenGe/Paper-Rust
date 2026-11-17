@@ -61,6 +61,9 @@ final class ApiTests implements Listener, CommandExecutor {
     private final JavaPlugin plugin;
     private final NamespacedKey ownerKey;
 
+    /** A player kept to read after it left ("apitest keep"), and the respawn point it was given. */
+    private @org.jetbrains.annotations.Nullable Player kept;
+    private @org.jetbrains.annotations.Nullable org.bukkit.Location keptAt;
     /** Jumps the server counted, as PlayerStatisticIncrementEvent reported them (and cancelled). */
     private final List<String> jumps = new ArrayList<>();
     /** Interactions and explosions seen, and whether the plugin stops them ("apitest guard"). */
@@ -134,6 +137,18 @@ final class ApiTests implements Listener, CommandExecutor {
                 case "chest" -> this.chest(sender, ((Player) sender).getWorld().getBlockAt(Integer.parseInt(args[1]), Integer.parseInt(args[2]), Integer.parseInt(args[3])));
                 case "entities" -> this.entities((Player) sender);
                 case "offline" -> this.offline(sender, args[1]);
+                case "keep" -> {
+                    // A forced respawn point in the air above the player, facing south-west and
+                    // a little down; the Player object is kept to read after the player left.
+                    final Player player = Bukkit.getPlayerExact(args[1]);
+                    final org.bukkit.Location at = player.getLocation().getBlock().getLocation().add(0, 10, 0);
+                    at.setYaw(45f);
+                    at.setPitch(10f);
+                    player.setRespawnLocation(at, true);
+                    this.kept = player;
+                    this.keptAt = at;
+                    sender.sendMessage("keep: " + player.getName());
+                }
                 case "scoreboard" -> this.scoreboard((Player) sender);
                 case "effects" -> this.effects((Player) sender);
                 case "bossbar" -> this.bossbar((Player) sender);
@@ -951,6 +966,9 @@ final class ApiTests implements Listener, CommandExecutor {
         check(failures, player.getPotentialRespawnLocation() != null && player.getPotentialRespawnLocation().getBlockX() == target.getBlockX()
             && forced != null && forced.getX() == target.getBlockX() + 0.5 && forced.getY() == target.getBlockY() + 0.1,
             "respawn point (forced, no bed there) " + forced);
+        // Both face the way the location given did (`RespawnData`).
+        check(failures, player.getPotentialRespawnLocation().getYaw() == target.getYaw() && player.getPotentialRespawnLocation().getPitch() == target.getPitch()
+            && forced.getYaw() == target.getYaw() && forced.getPitch() == target.getPitch(), "respawn point facing " + forced + " " + target);
         player.setRespawnLocation(target, false);
         check(failures, player.getRespawnLocation() == null, "respawn point (no bed there, not forced)");
         player.setRespawnLocation(null);
@@ -2291,8 +2309,18 @@ final class ApiTests implements Listener, CommandExecutor {
 
     private void offline(final CommandSender sender, final String name) {
         final OfflinePlayer player = Bukkit.getOfflinePlayer(name);
+        String kept = "";
+        if (this.kept != null && this.keptAt != null && this.kept.getName().equals(name)) {
+            // The Player object of a player who left still answers, as on Paper.
+            final org.bukkit.Location at = this.kept.getRespawnLocation();
+            final org.bukkit.Location block = this.kept.getPotentialRespawnLocation();
+            final org.bukkit.Location want = this.keptAt;
+            kept = " kept=" + (at != null && at.getX() == want.getX() + 0.5 && at.getY() == want.getY() + 0.1 && at.getZ() == want.getZ() + 0.5
+                && at.getYaw() == 45f && at.getPitch() == 10f && block != null && block.getBlockY() == want.getBlockY() && block.getYaw() == 45f && block.getPitch() == 10f)
+                + (at == null ? "" : " " + at.getX() + "," + at.getY() + "," + at.getZ() + "," + at.getYaw() + "," + at.getPitch());
+        }
         sender.sendMessage("offline " + player.getName() + " played=" + player.hasPlayedBefore() + " online=" + player.isOnline()
-            + " first=" + (player.getFirstPlayed() > 0) + " last=" + (player.getLastPlayed() > 0) + " known=" + Bukkit.getOfflinePlayers().length);
+            + " first=" + (player.getFirstPlayed() > 0) + " last=" + (player.getLastPlayed() > 0) + " known=" + Bukkit.getOfflinePlayers().length + kept);
     }
 
     private void scoreboard(final Player player) {

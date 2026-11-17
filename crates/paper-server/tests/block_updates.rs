@@ -183,3 +183,81 @@ fn players_open_doors_and_set_repeaters_by_hand() {
     assert_eq!(above, Some(blocks::default_state("minecraft:stone").unwrap()));
     server.stop();
 }
+
+/// Two pistons whose block events run in the same tick, the second pushing into the spot the
+/// first one's pull leaves: players are told of that spot as the push finds it (air), not as
+/// it ends up (the pushed block on its way), so their own replay of the push works; after the
+/// push they are told how it ends up, and then of the stone when the move lands.
+#[test]
+fn block_changes_go_out_as_later_block_events_find_them() {
+    use paper_protocol::packets::Packet;
+    use paper_server::world::block_updates::{flags, Level};
+    let server = start_server(|_| {});
+    let mut alice = join(server.port());
+    let state = |s: &str| blocks::parse_state(s).unwrap();
+    let (a, b, spot) = (BlockPos::new(2, -57, 4), BlockPos::new(4, -57, 2), BlockPos::new(4, -57, 4));
+    let setup = [
+        (a, state("minecraft:sticky_piston[facing=east,extended=true]")),
+        (BlockPos::new(3, -57, 4), state("minecraft:piston_head[facing=east,type=sticky]")),
+        (spot, state("minecraft:gold_block")),
+        (b, state("minecraft:piston[facing=south]")),
+        (BlockPos::new(4, -57, 3), state("minecraft:stone")),
+        (BlockPos::new(4, -57, 1), state("minecraft:redstone_block")),
+    ];
+    server
+        .handle
+        .run(move |s| {
+            for (pos, state) in setup {
+                Level::new(&mut s.worlds[0]).set_block(pos, state, flags::CLIENTS | flags::KNOWN_SHAPE | flags::SKIP_ON_PLACE);
+            }
+            s.publish_block_updates(0);
+        })
+        .unwrap();
+    update_at(&mut alice, BlockPos::new(4, -57, 1), |_| true);
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    let (sticky, piston) = (blocks::id("minecraft:sticky_piston").unwrap(), blocks::id("minecraft:piston").unwrap());
+    server
+        .handle
+        .run(move |s| {
+            let mut level = Level::new(&mut s.worlds[0]);
+            // The sticky piston pulls the gold block back; then the other pushes the stone
+            // into the gold block's spot.
+            level.block_event(a, sticky, 1, 5);
+            level.block_event(b, piston, 0, 3);
+        })
+        .unwrap();
+    let local = ((spot.x & 15) as u8, (spot.y & 15) as u8, (spot.z & 15) as u8);
+    // What players are told of the spot, in order, with `None` where the push arrives.
+    let (mut told, mut events) = (Vec::new(), 0);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        let Some((id, frame)) = alice.next_packet(Duration::from_millis(100)) else { continue };
+        if id == play::BlockUpdate::ID {
+            let update: play::BlockUpdate = common::decode(&frame);
+            if update.pos == spot {
+                told.push(Some(update.state.0 as u32));
+            }
+        } else if id == play::SectionBlocksUpdate::ID {
+            let update: play::SectionBlocksUpdate = common::decode(&frame);
+            if (update.section_x, update.section_y, update.section_z) == (spot.x >> 4, spot.y >> 4, spot.z >> 4) {
+                if let Some(&(_, _, _, state)) = update.blocks.iter().rev().find(|&&(x, y, z, _)| (x, y, z) == local) {
+                    told.push(Some(state));
+                }
+            }
+        } else if id == play::BlockEvent::ID {
+            let event: play::BlockEvent = common::decode(&frame);
+            events += 1;
+            if event.pos == b {
+                told.push(None);
+            }
+        }
+    }
+    assert_eq!(events, 2, "both moves went out");
+    let names: Vec<_> = told.iter().map(|s| s.map(|s| blocks::block_of_state(s).name)).collect();
+    let push = names.iter().position(Option::is_none).expect("the push");
+    assert_eq!(names[..push].last(), Some(&Some("minecraft:air")), "the spot is air when the push arrives: {names:?}");
+    assert_eq!(names.get(push + 1), Some(&Some("minecraft:moving_piston")), "then the stone on its way: {names:?}");
+    assert_eq!(names.last(), Some(&Some("minecraft:stone")), "and the stone when it lands: {names:?}");
+    server.stop();
+}

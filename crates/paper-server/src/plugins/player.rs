@@ -30,6 +30,32 @@ fn speed(value: f64) -> Result<f32> {
     Ok(value as f32 / 2.0)
 }
 
+/// `Player.getRespawnLocation(true)`: where the player would respawn now, as the server works
+/// it out (next to the bed if it is still there and not walled in, or at a forced point with
+/// room), as `[world, x, y, z, yaw, pitch]`, or null. For a player who has left, from the
+/// point the host still has (`respawn` and `respawn_forced`, as the player state gave them),
+/// as Paper works it out from the player object left behind.
+fn respawn_location(server: &mut Server, args: &Value) -> Result<Value> {
+    let uuid: Uuid = args.str("uuid").ok_or_else(|| anyhow!("missing uuid"))?.parse()?;
+    let found = match server.by_uuid.get(&uuid).copied() {
+        Some(id) => server.peek_respawn_point(id),
+        None => {
+            let point = args.get("respawn");
+            let world = point.at(0).as_str().and_then(|name| server.worlds.iter().position(|w| w.name == name));
+            world.and_then(|world| {
+                let int = |i: usize| point.at(i).as_i64().unwrap_or(0) as i32;
+                let angle = |i: usize| point.at(i).as_f64().unwrap_or(0.0) as f32;
+                let forced = args.bool("respawn_forced") == Some(true);
+                server.respawn_point_at(world, BlockPos::new(int(1), int(2), int(3)), forced, angle(4), angle(5)).map(|(at, _)| (world, at))
+            })
+        }
+    };
+    Ok(match found {
+        Some((world, at)) => Value::List(vec![server.worlds[world].name.clone().into(), at.x.into(), at.y.into(), at.z.into(), at.yaw.into(), at.pitch.into()]),
+        None => Value::Null,
+    })
+}
+
 /// The calls this module answers.
 pub fn handles(method: &str) -> bool {
     matches!(
@@ -57,6 +83,9 @@ pub fn handles(method: &str) -> bool {
 }
 
 pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> {
+    if method == "player.respawn_location" {
+        return respawn_location(server, args);
+    }
     let id = player_id(server, args)?;
     match method {
         // `Player.Spigot.respawn()`: as if the player pressed the respawn button, if it is
@@ -67,12 +96,6 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             }
             Ok(server.players.get(&id).map_or(Value::Null, |p| super::api::player_state(server, p)))
         }
-        // `Player.getRespawnLocation(true)`: where the player would respawn now, as the server
-        // works it out (the bed still there and not walled in, or a forced point with room).
-        "player.respawn_location" => Ok(match server.peek_respawn_point(id) {
-            Some((world, at)) => Value::List(vec![server.worlds[world].name.clone().into(), at.x.into(), at.y.into(), at.z.into(), at.yaw.into(), at.pitch.into()]),
-            None => Value::Null,
-        }),
         "player.set" => {
             set(server, id, args)?;
             Ok(super::api::player_state(server, &server.players[&id]))

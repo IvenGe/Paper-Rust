@@ -2743,11 +2743,16 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert_eq!(paper_data::blocks::property(placed, "half"), Some("top"), "the plugin turned it over");
 
     // --- offline players ------------------------------------------------------------------------
+    // The plugin gives Carol a respawn point and keeps her Player object, which still tells
+    // where she would respawn after she left.
+    alice.command("apitest keep Carol");
+    expect_line(&mut alice, "keep: Carol");
     server.handle.console_command("kick Carol");
     carol.wait_closed(TIMEOUT);
     alice.clear_backlog();
     alice.command("apitest offline Carol");
-    expect_line(&mut alice, "offline Carol played=true online=false first=true last=true known=2");
+    let line = line_starting(&mut alice, "offline Carol ");
+    assert!(line.starts_with("offline Carol played=true online=false first=true last=true known=2 kept=true"), "{line}");
     alice.command("apitest offline Nobody");
     expect_line(&mut alice, "offline Nobody played=false online=false first=false last=false known=2");
 

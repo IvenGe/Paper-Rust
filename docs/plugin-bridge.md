@@ -370,6 +370,8 @@ same name, which stay reachable as `minecraft:<name>`.
 | `player.teleport` | `uuid`, `world`, `x`, `y`, `z`, `yaw`, `pitch` (answers the new state) |
 | `player.set_game_mode` | `uuid`, `mode` |
 | `player.set` | `uuid` and any of the player's settable state (`sneaking`, `sprinting`, `gliding`, experience, ...); answers the state |
+| `player.respawn` | `uuid`: as if the player pressed the respawn button, if it is dead (`Player.Spigot.respawn()`); answers the state |
+| `player.respawn_location` | `uuid`, `respawn` and `respawn_forced` (the point as the player state gives it, `[world, x, y, z, yaw, pitch]`): where the player would respawn now (`getRespawnLocation(true)`), as `[world, x, y, z, yaw, pitch]` or null. For a player who has left, from the point given |
 | `player.set_op` | `uuid`, `op` |
 | `player.set_display_name` / `player.set_list_name` | `uuid`, `name` |
 | `player.set_health` | `uuid`, any of `health`, `food`, `saturation` |

@@ -324,6 +324,10 @@ fn sleeping_skips_the_night_and_beds_are_respawn_points() {
     assert_eq!(wake.animation, 0);
     let (time, hurt) = server.handle.run(move |s| (s.worlds[0].day_time, s.players[&id].last_damage.as_ref().map(|d| (d.kind, d.attacker.and_then(|a| s.worlds[0].entities.get(&a).map(|e| e.info.name.clone())))))).unwrap();
     assert!(time.rem_euclid(24000) < 100, "morning: {time}, last damage: {hurt:?}");
+    // She gets up beside the head, on the ground, facing the bed (`LivingEntity.stopSleeping`).
+    let up = server.handle.run(move |s| s.players[&id].loc).unwrap();
+    assert!(up.y == -60.0 && up.x == 11.5 && (up.z == 7.5 || up.z == 9.5), "beside the head: {up:?}");
+    assert_eq!((up.yaw, up.pitch), (if up.z == 7.5 { 0.0 } else { -180.0 }, 0.0), "facing the bed: {up:?}");
 
     // Dying sends her back to the bed.
     server.handle.console_command("kill Alice");

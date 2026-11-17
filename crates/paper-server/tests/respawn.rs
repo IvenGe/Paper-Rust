@@ -391,3 +391,53 @@ fn forced_respawn_points_hold_on_carpet() {
     assert!((at.x, at.z) == (24.5, 24.5), "on the pressure plate: {at:?}");
     server.stop();
 }
+
+/// A bed puts a player beside it, on the side the player did not look towards when the point
+/// was set, facing the bed (`BedBlock.findStandUpPosition`, `RespawnPosAngle.of`). The plugin
+/// API tells the same, for a player who has left too: from the point the plugin's Player
+/// object still has.
+#[test]
+fn beds_put_players_beside_them_facing_them() {
+    let server = survival_server(None);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let uuid = server.handle.run(move |s| s.players[&id].uuid().to_string()).unwrap();
+    let head = blocks::parse_state("minecraft:red_bed[part=head,facing=north]").unwrap();
+    let foot = blocks::parse_state("minecraft:red_bed[part=foot,facing=north]").unwrap();
+    plugin_call(&server, "world.set_block", bmap! { "x" => 10, "y" => -60, "z" => 10, "state" => head as i64, "physics" => false });
+    plugin_call(&server, "world.set_block", bmap! { "x" => 10, "y" => -60, "z" => 11, "state" => foot as i64, "physics" => false });
+    let point = |world: &str, x: i64, z: i64, yaw: f64, pitch: f64| Value::List(vec![world.into(), x.into(), (-60i64).into(), z.into(), yaw.into(), pitch.into()]);
+    let peek = |point: Value, forced: bool| {
+        let args = bmap! { "uuid" => uuid.clone(), "respawn" => point, "respawn_forced" => forced };
+        let at = server.handle.run(move |s| paper_server::plugins::api::handle(s, "player.respawn_location", &args).map_err(|e| e.to_string())).unwrap().unwrap();
+        (1..6).map(|i| at.at(i).as_f64()).collect::<Option<Vec<f64>>>()
+    };
+
+    // Set looking south (yaw 0): beside the head to the east, looking west at it.
+    plugin_call(&server, "player.set", bmap! { "uuid" => uuid.clone(), "respawn" => point("world", 10, 10, 0.0, 0.0) });
+    assert_eq!(peek(Value::Null, false), Some(vec![11.5, -60.0, 10.5, 90.0, 0.0]));
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    press_respawn(&mut alice);
+    let at = server.handle.run(move |s| s.players[&id].loc).unwrap();
+    assert_eq!((at.x, at.y, at.z, at.yaw, at.pitch), (11.5, -60.0, 10.5, 90.0, 0.0));
+    // Set looking east: beside it to the west, looking east at it.
+    plugin_call(&server, "player.set", bmap! { "uuid" => uuid.clone(), "respawn" => point("world", 10, 10, -90.0, 0.0) });
+    assert_eq!(peek(Value::Null, false), Some(vec![9.5, -60.0, 10.5, -90.0, 0.0]));
+    // Both sides taken: at the foot's side.
+    let stone = blocks::default_state("minecraft:stone").unwrap();
+    for x in [9, 11] {
+        plugin_call(&server, "world.set_block", bmap! { "x" => x, "y" => -60, "z" => 10, "state" => stone as i64, "physics" => false });
+    }
+    assert_eq!(peek(Value::Null, false), Some(vec![9.5, -60.0, 11.5, -135.0, 0.0]));
+
+    // Alice leaves: the point her Player object still has is asked about instead.
+    drop(alice);
+    wait_until(&server, "Alice gone", |s| s.players.is_empty());
+    assert_eq!(peek(point("world", 10, 10, 0.0, 0.0), false), Some(vec![11.5, -60.0, 11.5, 135.0, 0.0]));
+    assert_eq!(peek(point("world", 20, 20, 30.0, 15.0), true), Some(vec![20.5, -59.9, 20.5, 30.0, 15.0]), "forced, in the air");
+    assert_eq!(peek(point("world", 20, 20, 30.0, 15.0), false), None, "not forced, no bed");
+    assert_eq!(peek(point("nowhere", 10, 10, 0.0, 0.0), false), None, "a world that is gone");
+    server.stop();
+}

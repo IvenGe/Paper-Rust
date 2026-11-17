@@ -312,7 +312,7 @@ fn player_state_fields(server: &Server, p: &Player) -> Value {
         "score" => p.api.score,
         "sleeping" => p.sleeping.map(|b| Value::List(vec![b.x.into(), b.y.into(), b.z.into()])),
         "sleep_ticks" => p.sleep_ticks,
-        "respawn" => p.respawn.filter(|(w, _)| *w < server.worlds.len()).map(|(w, pos)| Value::List(vec![server.worlds[w].name.clone().into(), pos.x.into(), pos.y.into(), pos.z.into()])),
+        "respawn" => p.respawn.filter(|(w, _)| *w < server.worlds.len()).map(|(w, pos)| Value::List(vec![server.worlds[w].name.clone().into(), pos.x.into(), pos.y.into(), pos.z.into(), p.respawn_yaw.into(), p.respawn_pitch.into()])),
         "respawn_forced" => p.respawn_forced,
         // Ticks lived and since the last swing are worked out by the host from these and the
         // current tick: the state does not change every tick.

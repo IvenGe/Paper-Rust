@@ -2165,13 +2165,16 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         this.set("compass_target", List.of(world.getName(), loc.getBlockX(), loc.getBlockY(), loc.getBlockZ(), (double) loc.getYaw()));
     }
 
+    /** The respawn point's block, facing the way it was set ({@code RespawnData}). */
     private @Nullable Location respawnBlock() {
         final List<Object> respawn = Values.list(this.state.get("respawn"));
         if (respawn.size() < 4) {
             return null;
         }
         final World world = this.server.getWorld(String.valueOf(respawn.get(0)));
-        return world == null ? null : new Location(world, ((Number) respawn.get(1)).intValue(), ((Number) respawn.get(2)).intValue(), ((Number) respawn.get(3)).intValue());
+        final float yaw = respawn.size() > 4 ? ((Number) respawn.get(4)).floatValue() : 0f;
+        final float pitch = respawn.size() > 5 ? ((Number) respawn.get(5)).floatValue() : 0f;
+        return world == null ? null : new Location(world, ((Number) respawn.get(1)).intValue(), ((Number) respawn.get(2)).intValue(), ((Number) respawn.get(3)).intValue(), yaw, pitch);
     }
 
     @Override
@@ -2185,10 +2188,12 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         if (block == null || !loadLocationAndValidate) {
             return block;
         }
-        // ServerPlayer.findRespawnAndUseSpawnBlock, as the server works it out: next to the bed
-        // if it is still there and not walled in, or at a point set with force if there is
-        // room, facing the way it was set; else nowhere.
-        final List<Object> at = Values.list(this.server.call("player.respawn_location", Values.of("uuid", this.uuid.toString())));
+        // ServerPlayer.findRespawnAndUseSpawnBlock, as the server works it out: next to the bed,
+        // facing it, if it is still there and not walled in, or at a point set with force if
+        // there is room, facing the way it was set; else nowhere. For a player who has left,
+        // from the point this object still has.
+        final List<Object> at = Values.list(this.server.call("player.respawn_location", Values.of("uuid", this.uuid.toString(),
+            "respawn", Values.list(this.state.get("respawn")), "respawn_forced", Values.bool(this.state, "respawn_forced", false))));
         final World world = at.size() < 6 ? null : this.server.getWorld(String.valueOf(at.get(0)));
         if (world == null) {
             return null;

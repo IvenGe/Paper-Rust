@@ -86,6 +86,8 @@ impl Server {
             let changed = p.respawn != Some((world, head));
             if let Some(p) = self.players.get_mut(&id) {
                 p.respawn = Some((world, head));
+                // With the way the player looks (`getRespawnLocation(false)` gives it).
+                (p.respawn_yaw, p.respawn_pitch) = (p.loc.yaw, p.loc.pitch);
                 // A bed's point needs the bed: an earlier forced point's force goes.
                 p.respawn_forced = false;
             }
@@ -161,8 +163,10 @@ impl Server {
                 self.set_block_and_update(world, head, free);
             }
         }
-        let target = self.stand_up_position(world, head).unwrap_or(Location { x: head.x as f64 + 0.5, y: head.y as f64 + 1.0, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 });
-        let target = Location { yaw: self.players[&id].loc.yaw, pitch: self.players[&id].loc.pitch, ..target };
+        // `LivingEntity.stopSleeping`: next to the bed (or above it), facing it.
+        let yaw = self.players[&id].loc.yaw;
+        let target = self.stand_up_position(world, head, yaw).unwrap_or(Location { x: head.x as f64 + 0.5, y: head.y as f64 + 1.1, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 });
+        let target = Location { yaw: look_at_yaw(&target, head), pitch: 0.0, ..target };
         self.teleport_for(id, world, target, "EXIT_BED");
         // The wake-up animation (0 since 26.3, which moved arm swings to their own packet).
         let packet = play::Animate { entity_id: VarInt(id), animation: 0 };
@@ -170,26 +174,43 @@ impl Server {
         self.broadcast_to_viewers(id, &packet);
     }
 
-    /// A free spot next to a bed (`BedBlock.findStandUpPosition`, simplified): around the
-    /// head, then around the foot, on solid ground with room to stand.
-    pub fn stand_up_position(&self, world: usize, head: BlockPos) -> Option<Location> {
+    /// Where a player gets up from the bed whose head is at `head`, looking towards `yaw`
+    /// (`BedBlock.findStandUpPosition`): beside the head on the side the player does not
+    /// look towards, then on round the bed, then on the bed itself; a spot that is safe
+    /// (no fire, lava, cactus, ...) if there is one, else any with room. Under a bunk bed's
+    /// upper bed, the spots one block down come before the bed itself.
+    pub fn stand_up_position(&self, world: usize, head: BlockPos, yaw: f32) -> Option<Location> {
         let w = &self.worlds[world];
         let state = w.block_at(head.x, head.y, head.z)?;
-        let (dx, dz) = if is_bed(state) { facing_offset(blocks::property(state, "facing").unwrap_or("north")) } else { (0, 0) };
-        let foot = head.offset(-dx, 0, -dz);
-        let free = |x: i32, y: i32, z: i32| w.block_at(x, y, z).is_some_and(|s| !blocks::has_collision(s) && super::survival::fluid_of(s).is_none());
-        for base in [head, foot] {
-            for (ox, oz) in [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
-                for oy in [0, 1, -1] {
-                    let (x, y, z) = (base.x + ox, base.y + oy, base.z + oz);
-                    let ground = w.block_at(x, y - 1, z).is_some_and(blocks::has_collision);
-                    if ground && free(x, y, z) && free(x, y + 1, z) {
-                        return Some(Location { x: x as f64 + 0.5, y: y as f64, z: z as f64 + 0.5, yaw: 0.0, pitch: 0.0 });
-                    }
-                }
-            }
-        }
-        None
+        let (fx, fz) = if is_bed(state) { facing_offset(blocks::property(state, "facing").unwrap_or("north")) } else { (0, 1) };
+        // The side: clockwise from the bed's facing, unless the player looks that way.
+        let (cx, cz) = (-fz, fx);
+        let radians = yaw.to_radians();
+        let looks_that_way = cx as f32 * -radians.sin() + cz as f32 * radians.cos() > 0.0;
+        let (sx, sz) = if looks_that_way { (-cx, -cz) } else { (cx, cz) };
+        let around = [
+            (sx, sz),
+            (sx - fx, sz - fz),
+            (sx - fx * 2, sz - fz * 2),
+            (-fx * 2, -fz * 2),
+            (-sx - fx * 2, -sz - fz * 2),
+            (-sx - fx, -sz - fz),
+            (-sx, -sz),
+            (-sx + fx, -sz + fz),
+            (fx, fz),
+            (sx + fx, sz + fz),
+        ];
+        let on = [(0, 0), (-fx, -fz)];
+        let first = |base: BlockPos, offsets: &[(i32, i32)], only_safe: bool| offsets.iter().find_map(|&(dx, dz)| safe_dismount_location(w, base.offset(dx, 0, dz), only_safe));
+        let below = head.offset(0, -1, 0);
+        let bunk = w.block_at(below.x, below.y, below.z).is_some_and(is_bed);
+        let found = if bunk {
+            [true, false].into_iter().find_map(|only_safe| first(head, &around, only_safe).or_else(|| first(below, &around, only_safe)).or_else(|| first(head, &on, only_safe)))
+        } else {
+            let all: Vec<(i32, i32)> = around.iter().chain(&on).copied().collect();
+            [true, false].into_iter().find_map(|only_safe| first(head, &all, only_safe))
+        };
+        found.map(|at| Location { x: at.x, y: at.y, z: at.z, yaw: 0.0, pitch: 0.0 })
     }
 
     /// Where a player with a respawn point respawns (`ServerPlayer.findRespawnAndUseSpawnBlock`):
@@ -210,23 +231,8 @@ impl Server {
         let Some(p) = self.players.get(&id) else { return RespawnPoint::default() };
         let (forced, yaw, pitch) = (p.respawn_forced, p.respawn_yaw, p.respawn_pitch);
         let Some((world, head)) = p.respawn.filter(|(w, _)| *w < self.worlds.len() && !self.worlds[*w].unloaded) else { return RespawnPoint::default() };
-        // A bed far away is in a chunk no one keeps loaded: it is loaded to look, as reading
-        // the block does in vanilla (an unloaded chunk is not a missing bed).
-        let chunk = crate::world::chunk::ChunkPos::of_block(head.x, head.z);
-        if !self.worlds[world].chunks.contains_key(&chunk) {
-            self.load_chunk_now(world, chunk);
-        }
-        let w = &self.worlds[world];
-        if w.block_at(head.x, head.y, head.z).is_some_and(is_bed) {
-            if let Some(at) = self.stand_up_position(world, head) {
-                return RespawnPoint { at: Some((world, at)), bed: true, missing: false };
-            }
-        } else if forced {
-            let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(possible_to_respawn_in);
-            if room(head.y) && room(head.y + 1) {
-                let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw, pitch };
-                return RespawnPoint { at: Some((world, at)), bed: false, missing: false };
-            }
+        if let Some((at, bed)) = self.respawn_point_at(world, head, forced, yaw, pitch) {
+            return RespawnPoint { at: Some((world, at)), bed, missing: false };
         }
         if !use_it {
             return RespawnPoint::default();
@@ -237,6 +243,28 @@ impl Server {
         }
         self.send_message(id, &Component::translatable("block.minecraft.spawn.not_valid", vec![]));
         RespawnPoint { at: None, bed: false, missing: true }
+    }
+
+    /// Where a player whose respawn point is `head` in `world` respawns, and whether that is
+    /// next to a bed: next to the bed, facing it, if the bed is still there and not walled in
+    /// (`RespawnPosAngle.of`); at the block itself, facing `yaw` and `pitch`, if the point was
+    /// set with force and there is room. `None` if the point is no good.
+    pub(crate) fn respawn_point_at(&mut self, world: usize, head: BlockPos, forced: bool, yaw: f32, pitch: f32) -> Option<(Location, bool)> {
+        if world >= self.worlds.len() || self.worlds[world].unloaded {
+            return None;
+        }
+        // A bed far away is in a chunk no one keeps loaded: it is loaded to look, as reading
+        // the block does in vanilla (an unloaded chunk is not a missing bed).
+        let chunk = crate::world::chunk::ChunkPos::of_block(head.x, head.z);
+        if !self.worlds[world].chunks.contains_key(&chunk) {
+            self.load_chunk_now(world, chunk);
+        }
+        let w = &self.worlds[world];
+        if w.block_at(head.x, head.y, head.z).is_some_and(is_bed) {
+            return self.stand_up_position(world, head, yaw).map(|at| (Location { yaw: look_at_yaw(&at, head), pitch: 0.0, ..at }, true));
+        }
+        let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(possible_to_respawn_in);
+        (forced && room(head.y) && room(head.y + 1)).then(|| (Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw, pitch }, false))
     }
 
     /// Sleeping players: the count shown to everyone, skipping the night when enough have
@@ -299,6 +327,59 @@ impl Server {
 /// head at a forced respawn point. Neither solid (carpet and thin snow are not) nor a liquid
 /// (water and lava themselves, not a waterlogged block); pressure plates, signs and banners
 /// always do, solid as they are for fluids.
+/// Where a player can stand in the block at `pos` (`DismountHelper.findSafeDismountLocation`):
+/// on what is there if it is lower than a full block, else on the block below if that is a
+/// full one; with room for a player, inside the world border, not in an end portal or
+/// gateway, and, if `only_safe`, not in or on anything that hurts.
+fn safe_dismount_location(w: &crate::world::World, pos: BlockPos, only_safe: bool) -> Option<Vec3> {
+    let state = w.block_at(pos.x, pos.y, pos.z)?;
+    if only_safe && dangerous(state) {
+        return None;
+    }
+    let top = |state: u32| paper_data::physics::collision_boxes(state).iter().map(|b| b.max[1]).reduce(f64::max);
+    let under = w.block_at(pos.x, pos.y - 1, pos.z);
+    let floor = match top(state) {
+        Some(top) => top,
+        None => under.and_then(top).filter(|&top| top >= 1.0)? - 1.0,
+    };
+    if floor >= 1.0 || only_safe && floor <= 0.0 && under.is_some_and(dangerous) {
+        return None;
+    }
+    let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + floor, pos.z as f64 + 0.5);
+    let player = Aabb::new(Vec3::new(at.x - 0.3, at.y, at.z - 0.3), Vec3::new(at.x + 0.3, at.y + 1.8, at.z + 0.3));
+    if !crate::world::entity::block_boxes(w, &player).is_empty() {
+        return None;
+    }
+    let portal = |state: u32| crate::world::block_updates::state::in_tag!(state, "invalid_spawn_inside");
+    if portal(state) || w.block_at(pos.x, pos.y + 1, pos.z).is_some_and(portal) {
+        return None;
+    }
+    (w.border.distance_inside(at.x, at.z) > -0.3).then_some(at)
+}
+
+/// Whether a block hurts a player in or on it (`EntityType.isBlockDangerous`).
+fn dangerous(state: u32) -> bool {
+    let name = blocks::block_of_state(state).name;
+    crate::world::block_updates::state::in_tag!(state, "fire")
+        || matches!(name, "minecraft:lava" | "minecraft:magma_block" | "minecraft:lava_cauldron" | "minecraft:wither_rose" | "minecraft:sweet_berry_bush" | "minecraft:cactus" | "minecraft:powder_snow")
+        || matches!(name, "minecraft:campfire" | "minecraft:soul_campfire") && blocks::property(state, "lit") == Some("true")
+}
+
+/// The yaw from `from` towards the bottom centre of `block`, as a player getting up from a
+/// bed or respawning next to it turns (`RespawnPosAngle.calculateLookAtYaw`,
+/// `LivingEntity.stopSleeping`).
+fn look_at_yaw(from: &Location, block: BlockPos) -> f32 {
+    let (dx, dz) = (block.x as f64 + 0.5 - from.x, block.z as f64 + 0.5 - from.z);
+    let yaw = (dz.atan2(dx).to_degrees() - 90.0) % 360.0;
+    (if yaw >= 180.0 {
+        yaw - 360.0
+    } else if yaw < -180.0 {
+        yaw + 360.0
+    } else {
+        yaw
+    }) as f32
+}
+
 fn possible_to_respawn_in(state: u32) -> bool {
     let name = blocks::block_of_state(state).name;
     if name.ends_with("_pressure_plate") || name.ends_with("_sign") || name.ends_with("_banner") {
