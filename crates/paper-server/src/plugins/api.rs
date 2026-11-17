@@ -214,10 +214,19 @@ pub fn player_state(server: &Server, p: &Player) -> Value {
         let (x, y, z) = (p.loc.x.floor() as i32, p.loc.y.floor() as i32, p.loc.z.floor() as i32);
         let at_feet = w.block_at(x, y, z).map_or("minecraft:air", |s| blocks::block_of_state(s).name);
         let eye = Vec3::new(p.loc.x, p.loc.y + p.eye_height() - 0.11111111, p.loc.z);
-        out.set("in_water", box_in_fluid(w, &area, Fluid::Water));
+        // In a boat that floats, the water is the boat's: `isInWater` is false for its riders.
+        let afloat = p.vehicle.and_then(|v| w.entities.get(&v)).is_some_and(|b| {
+            crate::server::boats::is_boat(&b.info.name) && crate::server::boats::water_level(w, &b.bounding_box()).is_none_or(|top| top <= b.pos.y + b.info.height as f64)
+        });
+        out.set("in_water", !afloat && box_in_fluid(w, &area, Fluid::Water));
         out.set("under_water", point_in_fluid(w, eye, Fluid::Water));
         out.set("in_lava", box_in_fluid(w, &area, Fluid::Lava));
-        out.set("in_rain", w.rain_at(x, y, z) || w.rain_at(x, (p.loc.y + height).floor() as i32, z));
+        // `isRainingAt`: rain falls there, and the biome has rain (not none, nor snow).
+        let rains = |y: i32| {
+            let at = paper_protocol::codec::BlockPos::new(x, y, z);
+            w.rain_at(x, y, z) && server.has_precipitation(p.world, at) && !server.cold_at(p.world, at)
+        };
+        out.set("in_rain", rains(y) || rains((p.loc.y + height).floor() as i32));
         out.set("in_bubble_column", at_feet == "minecraft:bubble_column");
         out.set("in_powder_snow", at_feet == "minecraft:powder_snow");
     }
@@ -304,6 +313,7 @@ fn player_state_fields(server: &Server, p: &Player) -> Value {
         "sleeping" => p.sleeping.map(|b| Value::List(vec![b.x.into(), b.y.into(), b.z.into()])),
         "sleep_ticks" => p.sleep_ticks,
         "respawn" => p.respawn.filter(|(w, _)| *w < server.worlds.len()).map(|(w, pos)| Value::List(vec![server.worlds[w].name.clone().into(), pos.x.into(), pos.y.into(), pos.z.into()])),
+        "respawn_forced" => p.respawn_forced,
         // Ticks lived and since the last swing are worked out by the host from these and the
         // current tick: the state does not change every tick.
         "joined_tick" => p.api.joined_tick as i64,
@@ -532,8 +542,9 @@ fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<u
         }
     }
     // The batch may come in the middle of something else the server does (a plugin's event
-    // handler queued it): what that left to tell players stays for it to publish.
-    let earlier = std::mem::take(&mut server.worlds[world].updates.effects);
+    // handler queued it): then its changes go after what that left, for it to publish in
+    // order (clients end on the latest state), else out now.
+    let in_the_middle = !server.worlds[world].updates.effects.is_empty();
     let mut last_chunk = None;
     let mut n = 0;
     for e in edits.chunks_exact(28) {
@@ -577,10 +588,9 @@ fn apply_edit_batch(server: &mut Server, world: usize, edits: &[u8]) -> Result<u
         }
         n += 1;
     }
-    server.publish_block_updates(world);
-    let w = &mut server.worlds[world];
-    let mut later = std::mem::replace(&mut w.updates.effects, earlier);
-    w.updates.effects.append(&mut later);
+    if !in_the_middle {
+        server.publish_block_updates(world);
+    }
     Ok(n)
 }
 

@@ -2189,6 +2189,13 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
         // player stands up next to it (BedBlock.findStandUpPosition, simplified).
         final org.bukkit.Material type = block.getBlock().getType();
         if (!org.bukkit.Tag.BEDS.isTagged(type) && type != org.bukkit.Material.RESPAWN_ANCHOR) {
+            // A point set with force holds without a bed if there is room to stand: the block
+            // and the one above are neither solid nor liquid (isPossibleToRespawnInThis).
+            final org.bukkit.block.Block feet = block.getBlock();
+            final org.bukkit.block.Block head = feet.getRelative(0, 1, 0);
+            if (Values.bool(this.state, "respawn_forced", false) && !feet.getType().isSolid() && !feet.isLiquid() && !head.getType().isSolid() && !head.isLiquid()) {
+                return block.clone().add(0.5, 0.1, 0.5);
+            }
             return null;
         }
         final int[][] around = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
@@ -2210,7 +2217,7 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
             return;
         }
         final World world = location.getWorld() != null ? location.getWorld() : this.getWorld();
-        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ()), "respawn_forced", force);
+        this.set("respawn", List.of(world.getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ(), (double) location.getYaw()), "respawn_forced", force);
     }
 
     // inventory
@@ -2870,7 +2877,7 @@ public final class HostPlayer extends org.bukkit.craftbukkit.entity.CraftHumanEn
             /** As if the player pressed the respawn button (when it is dead). */
             @Override
             public void respawn() {
-                player.server.call("player.respawn", Values.of("uuid", player.uuid.toString()));
+                player.refresh(player.server.call("player.respawn", Values.of("uuid", player.uuid.toString())));
             }
         };
     }

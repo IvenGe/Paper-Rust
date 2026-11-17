@@ -58,10 +58,13 @@ pub fn handles(method: &str) -> bool {
 pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> {
     let id = player_id(server, args)?;
     match method {
-        // `Player.Spigot.respawn()`: as if the player pressed the respawn button.
+        // `Player.Spigot.respawn()`: as if the player pressed the respawn button, if it is
+        // dead (`RespawnReason.PLUGIN`). The host gets the state back.
         "player.respawn" => {
-            server.respawn_player(id);
-            Ok(Value::Null)
+            if server.players.get(&id).is_some_and(|p| p.dead || p.health <= 0.0) {
+                server.respawn_player_as(id, Some("PLUGIN"));
+            }
+            Ok(server.players.get(&id).map_or(Value::Null, |p| super::api::player_state(server, p)))
         }
         "player.set" => {
             set(server, id, args)?;
@@ -261,7 +264,7 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
         v => {
             let world = world_named(server, v.at(0).as_str().ok_or_else(|| anyhow!("missing respawn world"))?)?;
             let pos = BlockPos::new(v.at(1).as_i64().unwrap_or(0) as i32, v.at(2).as_i64().unwrap_or(0) as i32, v.at(3).as_i64().unwrap_or(0) as i32);
-            Some(Some((world, pos)))
+            Some(Some((world, pos, v.at(4).as_f64().unwrap_or(0.0) as f32)))
         }
     };
     if let Value::List(l) = args.get("compass_target") {
@@ -428,7 +431,8 @@ fn set(server: &mut Server, id: i32, args: &Value) -> Result<()> {
         experience = true;
     }
     if let Some(r) = respawn {
-        p.respawn = r;
+        p.respawn = r.map(|(w, pos, _)| (w, pos));
+        p.respawn_yaw = r.map_or(0.0, |(_, _, yaw)| yaw);
         // `setRespawnLocation(location, force)`: forced, it holds without a bed.
         p.respawn_forced = r.is_some() && args.bool("respawn_forced") == Some(true);
     }

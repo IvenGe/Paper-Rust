@@ -178,3 +178,58 @@ fn essentials_teleports_heals_and_sets_homes() {
     assert!(raining, "Essentials made it rain");
     server.stop();
 }
+
+/// A big edit's side effects all land, whatever batches its changes go in (a batch never
+/// splits one block's side effects): a field of 10,000 fences connects everywhere. Block
+/// entities that hold items are emptied before WorldEdit replaces them, as on Paper: a
+/// brewing stand drops nothing, and //undo brings it back with its potion, once.
+#[test]
+fn worldedit_side_effects_land_in_big_edits_and_holders_are_emptied_first() {
+    use paper_nbt::{Compound, Tag};
+    let Some(jars) = jars(&["worldedit"]) else { return };
+    let (server, _dir) = start("worldedit-fences", &jars);
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    server.handle.console_command("op Alice");
+    alice.drain(Duration::from_millis(500));
+
+    run(&mut alice, "/pos1 0,-60,0");
+    run(&mut alice, "/pos2 99,-60,99");
+    let (_, answer) = run_until(&mut alice, "/set oak_fence", "Operation completed", Duration::from_secs(60));
+    assert_eq!(answer.as_deref(), Some("Operation completed (10000 blocks affected)."));
+    let gaps = server
+        .handle
+        .run(|s| {
+            (1..99)
+                .flat_map(|x| (1..99).map(move |z| (x, z)))
+                .filter(|&(x, z)| {
+                    let state = s.worlds[0].block_at(x, -60, z).unwrap();
+                    ["north", "east", "south", "west"].iter().any(|side| blocks::property(state, side) != Some("true"))
+                })
+                .count()
+        })
+        .unwrap();
+    assert_eq!(gaps, 0, "every fence inside the field connects all round");
+
+    let stand = blocks::default_state("minecraft:brewing_stand").unwrap();
+    server
+        .handle
+        .run(move |s| {
+            s.set_block_with_flags(0, paper_protocol::codec::BlockPos::new(120, -60, 120), stand, paper_server::world::block_updates::flags::ALL);
+            let chunk = s.worlds[0].chunks.get_mut(&paper_server::world::chunk::ChunkPos::of_block(120, 120)).unwrap();
+            let potion = Compound::new().with("Slot", Tag::Byte(0)).with("id", Tag::String("minecraft:potion".into())).with("count", Tag::Int(1));
+            chunk.block_entities.get_mut(&(-60, 120 & 15, 120 & 15)).expect("the stand's block entity").insert("Items", Tag::List(vec![Tag::Compound(potion)]));
+        })
+        .unwrap();
+    let items_near = |server: &paper_server::RunningServer| server.handle.run(|s| s.worlds[0].entities.values().filter(|e| e.info.name == "minecraft:item" && (e.pos.x - 120.5).abs() < 4.0 && (e.pos.z - 120.5).abs() < 4.0).count()).unwrap();
+    run(&mut alice, "/pos1 120,-60,120");
+    run(&mut alice, "/pos2 120,-60,120");
+    run(&mut alice, "/set air");
+    assert_eq!(block_name(&server, 120, -60, 120), "minecraft:air");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(items_near(&server), 0, "the stand was emptied, nothing dropped");
+    assert_eq!(run(&mut alice, "/undo"), ["Undid 1 available edits."]);
+    let potions = server.handle.run(|s| s.worlds[0].chunks[&paper_server::world::chunk::ChunkPos::of_block(120, 120)].block_entities.get(&(-60, 120 & 15, 120 & 15)).and_then(|b| b.list("Items").map(|l| l.len()))).unwrap();
+    assert_eq!((block_name(&server, 120, -60, 120), potions), ("minecraft:brewing_stand", Some(1)), "back with its potion");
+    server.stop();
+}

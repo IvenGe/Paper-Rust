@@ -108,6 +108,7 @@ impl Server {
             xp_total: 0,
             respawn: None,
             respawn_forced: false,
+            respawn_yaw: 0.0,
             last_death: None,
             last_attacker: None,
             last_damage: None,
@@ -167,6 +168,7 @@ impl Server {
             player.absorption = saved.absorption;
             player.respawn = saved.respawn;
             player.respawn_forced = saved.respawn_forced;
+            player.respawn_yaw = saved.respawn_yaw;
             player.last_death = saved.last_death;
             if let Some(seed) = saved.enchantment_seed {
                 player.enchantment_seed = seed;

@@ -86,6 +86,8 @@ impl Server {
             let changed = p.respawn != Some((world, head));
             if let Some(p) = self.players.get_mut(&id) {
                 p.respawn = Some((world, head));
+                // A bed's point needs the bed: an earlier forced point's force goes.
+                p.respawn_forced = false;
             }
             if changed {
                 self.send_message(id, &Component::translatable("block.minecraft.set_spawn", vec![]));
@@ -196,7 +198,7 @@ impl Server {
     /// otherwise nowhere, and the player is told and the point forgotten.
     pub(super) fn respawn_point(&mut self, id: i32) -> RespawnPoint {
         let Some(p) = self.players.get(&id) else { return RespawnPoint::default() };
-        let forced = p.respawn_forced;
+        let (forced, yaw) = (p.respawn_forced, p.respawn_yaw);
         let Some((world, head)) = p.respawn.filter(|(w, _)| *w < self.worlds.len() && !self.worlds[*w].unloaded) else { return RespawnPoint::default() };
         // A bed far away is in a chunk no one keeps loaded: it is loaded to look, as reading
         // the block does in vanilla (an unloaded chunk is not a missing bed).
@@ -210,9 +212,11 @@ impl Server {
                 return RespawnPoint { at: Some((world, at)), bed: true, missing: false };
             }
         } else if forced {
-            let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(|s| !blocks::has_collision(s) && super::survival::fluid_of(s).is_none());
+            // `isPossibleToRespawnInThis`: neither solid (carpet and thin snow are not) nor a
+            // liquid, for the feet and the head.
+            let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(|s| !paper_data::physics::is_solid(s) && super::survival::fluid_of(s).is_none());
             if room(head.y) && room(head.y + 1) {
-                let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 };
+                let at = Location { x: head.x as f64 + 0.5, y: head.y as f64 + 0.1, z: head.z as f64 + 0.5, yaw, pitch: 0.0 };
                 return RespawnPoint { at: Some((world, at)), bed: false, missing: false };
             }
         }

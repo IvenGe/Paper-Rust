@@ -89,12 +89,16 @@ Blocks are read a section at a time (`world.section`: its palette of states, two
 palette index per block and where it has block entities), kept until something crosses the
 bridge (the host's epoch: every waited call, and every call of the server into the host).
 Changes the host's main thread makes without physics (all of WorldEdit's edits in its usual
-mode, and Bukkit's `setType(type, false)`) change only their own block and fire no events,
-so they are not sent one by one: the host makes them in its cached section and queues them
-(`BlockEdits`), and the queue goes out as one `world.edit_batch` call (`NO_REPLY`, 28 bytes a
-change) before anything else the main thread sends, before it answers the server or waits
-for work, or when it holds 8192 changes, so the server sees everything in the order the
-host did it. The side effects WorldEdit applies after an edit (a block's `onPlace`, its
+mode, and Bukkit's `setType(type, false)` of a block without a block entity: a chest's going
+drops its items and fires events, so that is a call) change only their own block and fire
+no events, so they are not sent one by one: the host makes them in its cached section and
+queues them (`BlockEdits`), and the queue goes out as one `world.edit_batch` call
+(`NO_REPLY`, 28 bytes a change) before anything else the main thread sends, before it
+answers the server or waits for work, or once it holds 8192 changes, at the next point where
+no block's side effects are half queued, so the server sees everything in the order the host
+did it. Other threads keep sections of their own, never the main thread's, which it changes
+in place. A batch sent in the middle of something the server does (an event handler's)
+goes after what that did. The side effects WorldEdit applies after an edit (a block's `onPlace`, its
 neighbours' updates and shapes) go in the same queue; as they can change any block, sending
 them moves the epoch on, and a read only sends the changes before them, so WorldEdit, which
 reads block after block while it asks for them, keeps its cache. The server runs a batch
@@ -103,7 +107,11 @@ on, the side effects are a waited call), and tells players per section with the 
 chunk. A 27,000-block `//set` takes about a fifth of a second this way; one call per block
 took 17 seconds, during which the server could not tick. As with any call the host does not
 wait for, plugins hear nothing while a batch runs: a container a batch replaces under a
-player who has it open closes without `InventoryCloseEvent`.
+player who has it open closes without `InventoryCloseEvent`, and an iron golem a pumpkin's
+`onPlace` builds spawns without `CreatureSpawnEvent` (Paper's adapter only leaves out
+`BlockPhysicsEvent` there). WorldEdit empties block entities that hold items (containers,
+brewing stands, crafters, campfires, bookshelves, lecterns, jukeboxes, pots) before it
+replaces them, as on Paper, so nothing drops.
 
 Both main threads look busily for an answer (or the other side's next call) for 150
 microseconds before they sleep: waking a sleeping thread takes about as long as a round trip,

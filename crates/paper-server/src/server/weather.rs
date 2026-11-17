@@ -50,7 +50,7 @@ impl Server {
         temperature < 0.15
     }
 
-    fn has_precipitation(&self, world: usize, pos: BlockPos) -> bool {
+    pub(crate) fn has_precipitation(&self, world: usize, pos: BlockPos) -> bool {
         let biome = self.biome_at(world, pos.x, pos.y, pos.z);
         biome_climate(self.vanilla.as_deref()).get(biome).is_none_or(|(_, p)| *p)
     }

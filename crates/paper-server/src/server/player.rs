@@ -279,6 +279,8 @@ pub struct Player {
     pub respawn: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// The respawn point holds without a bed there (`setRespawnLocation(location, true)`).
     pub respawn_forced: bool,
+    /// Which way the player faces there (a forced point's location's yaw).
+    pub respawn_yaw: f32,
     /// Where the player last died (world, block), for the recovery compass.
     pub last_death: Option<(usize, paper_protocol::codec::BlockPos)>,
     /// Who hurt this player last and when (tick), for death messages.

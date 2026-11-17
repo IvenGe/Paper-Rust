@@ -60,11 +60,6 @@ final class PaperRsWorldNativeAccess implements WorldNativeAccess<PaperRsWorldNa
     private final World world;
     private final HostWorld host;
     private SideEffectSet sideEffects = SideEffectSet.defaults();
-    /**
-     * The change being made was set with the server's physics, which did its side effects
-     * already: WorldEdit's calls for them right after are not to do them twice.
-     */
-    private boolean physicsDone;
 
     PaperRsWorldNativeAccess(final World world) {
         this.world = world;
@@ -73,9 +68,12 @@ final class PaperRsWorldNativeAccess implements WorldNativeAccess<PaperRsWorldNa
 
     @Override
     public void setCurrentSideEffectSet(final SideEffectSet sideEffectSet) {
-        // Called as each change (or each change's later side effects) begins.
+        // Called as each change (or each change's later side effects) begins: a full queue goes
+        // out here, never between one block's side effects.
         this.sideEffects = sideEffectSet;
-        this.physicsDone = false;
+        if (PaperRsAdapter.server().isPrimaryThread()) {
+            PaperRsAdapter.server().blockEdits().flushIfFull();
+        }
     }
 
     @Override
@@ -99,21 +97,29 @@ final class PaperRsWorldNativeAccess implements WorldNativeAccess<PaperRsWorldNa
         return state(this.host.stateId(position.x(), position.y(), position.z()));
     }
 
-    /** Sets the block; the previous state if it changed, else null. */
+    /**
+     * Sets the block; the previous state if it changed, else null. As Paper's adapter: the
+     * block alone, with its {@code onPlace} if {@code UPDATE} is on; WorldEdit asks for the
+     * neighbours' updates and shapes itself when {@code NEIGHBORS} is on.
+     */
     @Override
     public @Nullable State setBlockState(final Chunk chunk, final BlockVector3 position, final State state) {
-        final boolean physics = this.sideEffects.shouldApply(SideEffect.NEIGHBORS) || this.sideEffects.shouldApply(SideEffect.UPDATE);
-        if (!physics && PaperRsAdapter.server().isPrimaryThread()) {
+        final State previous;
+        if (PaperRsAdapter.server().isPrimaryThread()) {
             final int old = this.host.setBlockQuietly(position.x(), position.y(), position.z(), state.id);
-            return old < 0 ? null : state(old);
+            previous = old < 0 ? null : state(old);
+        } else {
+            final Map<String, Object> args = PaperRsAdapter.args(this.world, position.x(), position.y(), position.z());
+            args.put("state", state.id);
+            args.put("physics", false);
+            args.put("return_old", true);
+            final Object old = PaperRsAdapter.server().call("world.set_block", args);
+            previous = old instanceof Number n ? state(n.intValue()) : null;
         }
-        final Map<String, Object> args = PaperRsAdapter.args(this.world, position.x(), position.y(), position.z());
-        args.put("state", state.id);
-        args.put("physics", physics);
-        args.put("return_old", true);
-        final Object old = PaperRsAdapter.server().call("world.set_block", args);
-        this.physicsDone = physics;
-        return old instanceof Number n ? state(n.intValue()) : null;
+        if (previous != null && this.sideEffects.shouldApply(SideEffect.UPDATE)) {
+            this.updateBlock(position, previous, state);
+        }
+        return previous;
     }
 
     /**
@@ -121,9 +127,6 @@ final class PaperRsWorldNativeAccess implements WorldNativeAccess<PaperRsWorldNa
      * WorldEdit's {@code EVENTS} side effect a call of its own, as plugins hear of them.
      */
     private void effects(final BlockVector3 pos, final State oldState, final State newState, final int flags) {
-        if (this.physicsDone) {
-            return;
-        }
         if (this.sideEffects.shouldApply(SideEffect.EVENTS) || !PaperRsAdapter.server().isPrimaryThread()) {
             final java.nio.ByteBuffer edit = java.nio.ByteBuffer.allocate(28).order(java.nio.ByteOrder.LITTLE_ENDIAN);
             edit.putInt(1).putInt(pos.x()).putInt(pos.y()).putInt(pos.z()).putInt(newState.id).putInt(oldState.id).putInt(flags);

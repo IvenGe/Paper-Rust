@@ -305,6 +305,10 @@ public final class Bridge {
         this.inBeforeMainWrite = true;
         try {
             hook.run();
+        } catch (final DisconnectedException e) {
+            // The connection is going away: the main loop and the write after this find out
+            // as usual, and the host shuts its plugins down.
+            LOGGER.log(Level.FINE, "the server is gone with changes still queued", e);
         } finally {
             this.inBeforeMainWrite = false;
         }

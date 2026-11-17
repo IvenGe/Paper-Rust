@@ -269,16 +269,12 @@ public final class PaperRsAdapter implements BukkitImplAdapter {
         if (world instanceof io.papermc.paperrs.host.world.HostWorld host && !host.mayHaveBlockEntity(pt.x(), pt.y(), pt.z())) {
             return false;
         }
-        final org.bukkit.block.BlockState state = world.getBlockAt(pt.x(), pt.y(), pt.z()).getState();
-        if (!(state instanceof org.bukkit.inventory.InventoryHolder holder)) {
-            return false;
-        }
-        org.bukkit.inventory.Inventory inventory = holder.getInventory();
-        if (holder instanceof org.bukkit.block.Chest chest) {
-            inventory = chest.getBlockInventory();
-        }
-        inventory.clear();
-        return true;
+        // As Paper's adapter, which empties any block entity that holds items (Clearable):
+        // containers, brewing stands, crafters, campfires, bookshelves, lecterns, jukeboxes and
+        // pots. Their items would otherwise drop when the block goes, and come back on //undo.
+        final Map<String, Object> args = args(world, pt.x(), pt.y(), pt.z());
+        args.put("remove", java.util.List.of("Items", "Book", "RecordItem", "item"));
+        return Boolean.TRUE.equals(server().call("world.set_tile_data", args));
     }
 
     @Override

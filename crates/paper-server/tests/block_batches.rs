@@ -157,5 +157,57 @@ fn the_player_state_says_where_the_player_is() {
     }
     let wet = server.handle.run(state).unwrap();
     assert_eq!((wet.bool("in_water"), wet.bool("under_water"), wet.bool("in_lava")), (Some(true), Some(true), Some(false)));
+
+    // In a boat on the water, the water is the boat's: `isInWater` is false for its riders.
+    let got_in = server
+        .handle
+        .run(move |s| {
+            let info = paper_data::entity_types::by_name("minecraft:oak_boat").unwrap();
+            let at = paper_server::world::entity::Vec3::new(x as f64 + 0.5, y as f64 + 1.5, z as f64 + 0.5);
+            let boat = paper_server::world::entity::Entity::new(s.next_entity_id(), info, at, paper_server::server::boats::boat_kind("minecraft:oak_boat"));
+            let boat = s.spawn_entity(0, boat);
+            s.mount(0, id, boat)
+        })
+        .unwrap();
+    assert!(got_in, "Alice got in the boat");
+    let afloat = server.handle.run(state).unwrap();
+    assert_eq!(afloat.bool("in_water"), Some(false), "rowing is not swimming");
+    server.stop();
+}
+
+/// A batch a plugin sends in the middle of something the server does (an event handler's
+/// edit) goes after what that did: players end on the latest state of a block both changed.
+#[test]
+fn a_batch_in_the_middle_of_something_goes_after_it() {
+    use paper_server::world::block_updates::{flags, Level};
+    let server = start_server(|_| {});
+    let mut alice = join(&server);
+    let (stone, glass) = (blocks::default_state("minecraft:stone").unwrap(), blocks::default_state("minecraft:glass").unwrap());
+    let pos = paper_protocol::codec::BlockPos::new(2, -55, 2);
+    let mut edits = Vec::new();
+    entry(&mut edits, 0, (2, -55, 2), glass, 0, 0);
+    server
+        .handle
+        .run(move |s| {
+            // The server changes the block (players are not told yet), and a plugin's batch
+            // changes it again meanwhile.
+            Level::new(&mut s.worlds[0]).set_block(pos, stone, flags::CLIENTS);
+            paper_server::plugins::api::handle(s, "world.edit_batch", &bmap! { "edits" => edits }).unwrap();
+            s.publish_block_updates(0);
+        })
+        .unwrap();
+    assert_eq!(name_at(&server, 2, -55, 2), "minecraft:glass");
+    let mut last = None;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let Some((id, frame)) = alice.next_packet(Duration::from_millis(100)) else { continue };
+        if id == play::BlockUpdate::ID {
+            let update: play::BlockUpdate = decode(&frame);
+            if update.pos == pos {
+                last = Some(update.state.0 as u32);
+            }
+        }
+    }
+    assert_eq!(last, Some(glass), "players end on the glass");
     server.stop();
 }

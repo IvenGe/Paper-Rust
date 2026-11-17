@@ -30,8 +30,13 @@ public final class BlockEdits {
     public static final int SHAPES = 4;
 
     private static final int FIELDS = 7;
-    /** Changes per batch at most (about 230 KB). */
+    /**
+     * Changes per batch (about 230 KB): a full queue goes out at the next safe point
+     * ({@link #flushIfFull}), so one block's side effects never straddle two batches, and in
+     * any case at twice as many.
+     */
     private static final int MAX = 8192;
+    private static final int HARD_MAX = 2 * MAX;
 
     private final CraftServer server;
     private int[] buffer = new int[FIELDS * 256];
@@ -100,7 +105,7 @@ public final class BlockEdits {
         b[i + 5] = old;
         b[i + 6] = flags;
         this.count++;
-        if (this.count >= MAX) {
+        if (this.count >= HARD_MAX) {
             this.flush();
         }
     }
@@ -108,6 +113,30 @@ public final class BlockEdits {
     /** Whether changes wait to go out. */
     public boolean isEmpty() {
         return this.count == 0;
+    }
+
+    /** Whether side effects for {@code world} wait to go out (they may change any block). */
+    public boolean hasEffects(final String world) {
+        return this.firstEffects >= 0 && world.equals(this.world);
+    }
+
+    /**
+     * Sends the queue if it is full. Called where no block's side effects are half queued:
+     * as WorldEdit starts on a block, before a Bukkit change.
+     */
+    public void flushIfFull() {
+        if (this.count >= MAX) {
+            this.flush();
+        }
+    }
+
+    /** Forgets what is queued (the server is gone). */
+    private void drop() {
+        this.count = 0;
+        this.world = null;
+        this.effects = false;
+        this.firstEffects = -1;
+        this.setAfterEffects = false;
     }
 
     /** Sends what is queued. */
@@ -164,6 +193,9 @@ public final class BlockEdits {
         this.count -= n;
         try {
             this.server.sendKnown("world.edit_batch", Values.of("world", this.world, "edits", bytes));
+        } catch (final io.papermc.paperrs.host.bridge.Bridge.DisconnectedException e) {
+            // The server is gone: nothing more goes out, and the host shuts down as usual.
+            this.drop();
         } finally {
             this.flushing = false;
         }

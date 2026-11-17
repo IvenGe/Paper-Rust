@@ -331,10 +331,18 @@ fn spigot_respawn_and_plugin_worlds_of_their_own() {
     alice.expect::<play::PlayerCombatKill>();
     alice.drain(QUIET);
     alice.clear_backlog();
-    // `player.spigot().respawn()`, as auto-respawn plugins do.
-    plugin_call(&server, "player.respawn", bmap! { "uuid" => uuid });
+    // `player.spigot().respawn()`, as auto-respawn plugins do: the host gets the state back,
+    // so the player is alive for the plugin at once.
+    let args = bmap! { "uuid" => uuid.clone() };
+    let state = server.handle.run(move |s| paper_server::plugins::api::handle(s, "player.respawn", &args).map_err(|e| e.to_string())).unwrap().unwrap();
     alice.expect::<play::Respawn>();
     assert!(!is_dead(&server, id));
+    assert_eq!(state.get("health").as_f64(), Some(20.0), "the state the host gets: {state:?}");
+    // A living player is not respawned.
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    plugin_call(&server, "player.respawn", bmap! { "uuid" => uuid });
+    assert!(alice.try_expect::<play::Respawn>(QUIET).is_none(), "alive: no respawn");
 
     // A world a plugin made is a dimension of its own for the client, so going there from
     // the overworld is a change of world (not the same one with the old chunks kept).
@@ -344,5 +352,26 @@ fn spigot_respawn_and_plugin_worlds_of_their_own() {
     server.handle.run(move |s| s.change_dimension(id, sky, paper_server::server::player::Location { x: 0.5, y: -60.0, z: 0.5, yaw: 0.0, pitch: 0.0 })).unwrap();
     let respawn: play::Respawn = alice.expect();
     assert_eq!(respawn.spawn.dimension_name, "minecraft:skyland");
+    server.stop();
+}
+
+/// A point a plugin set with force holds without a bed where a player can stand: on carpet
+/// too (not solid), facing the way the plugin's location did.
+#[test]
+fn forced_respawn_points_hold_on_carpet() {
+    let server = survival_server(None);
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let uuid = server.handle.run(move |s| s.players[&id].uuid().to_string()).unwrap();
+    let carpet = blocks::default_state("minecraft:white_carpet").unwrap();
+    server.handle.run(move |s| s.set_block_with_flags(0, paper_protocol::codec::BlockPos::new(20, -60, 20), carpet, paper_server::world::block_updates::flags::ALL)).unwrap();
+    let point = Value::List(vec!["world".into(), 20i64.into(), (-60i64).into(), 20i64.into(), 90.0f64.into()]);
+    plugin_call(&server, "player.set", bmap! { "uuid" => uuid, "respawn" => point, "respawn_forced" => true });
+    server.handle.console_command("kill Alice");
+    alice.expect::<play::PlayerCombatKill>();
+    alice.drain(QUIET);
+    press_respawn(&mut alice);
+    let at = server.handle.run(move |s| s.players[&id].loc).unwrap();
+    assert!((at.x, at.z, at.yaw) == (20.5, 20.5, 90.0) && (at.y - -59.9).abs() < 1e-6, "on the carpet, facing east: {at:?}");
     server.stop();
 }

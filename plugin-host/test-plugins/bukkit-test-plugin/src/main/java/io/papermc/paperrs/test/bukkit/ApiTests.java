@@ -947,8 +947,12 @@ final class ApiTests implements Listener, CommandExecutor {
         player.setCompassTarget(target);
         check(failures, player.getCompassTarget().getBlockX() == target.getBlockX() && player.getCompassTarget().getBlockZ() == target.getBlockZ(), "compass target");
         player.setRespawnLocation(target, true);
-        check(failures, player.getPotentialRespawnLocation() != null && player.getPotentialRespawnLocation().getBlockX() == target.getBlockX() && player.getRespawnLocation() == null,
-            "respawn point (no bed there)");
+        final org.bukkit.Location forced = player.getRespawnLocation();
+        check(failures, player.getPotentialRespawnLocation() != null && player.getPotentialRespawnLocation().getBlockX() == target.getBlockX()
+            && forced != null && forced.getX() == target.getBlockX() + 0.5 && forced.getY() == target.getBlockY() + 0.1,
+            "respawn point (forced, no bed there) " + forced);
+        player.setRespawnLocation(target, false);
+        check(failures, player.getRespawnLocation() == null, "respawn point (no bed there, not forced)");
         player.setRespawnLocation(null);
         player.setCooldown(Material.ENDER_PEARL, 40);
         check(failures, player.hasCooldown(Material.ENDER_PEARL) && player.getCooldown(Material.ENDER_PEARL) > 30, "cooldown " + player.getCooldown(Material.ENDER_PEARL));

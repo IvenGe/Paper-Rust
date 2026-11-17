@@ -43,6 +43,13 @@ public final class HostWorld extends AbstractWorld {
      */
     private final Map<Long, CachedSection> sections = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * The same for other threads (async tasks), kept apart: the main thread changes its own
+     * sections in place as it queues changes, so other threads must not see those, nor leave
+     * the main thread a copy read before what it queued went out. Never changed once made.
+     */
+    private final Map<Long, CachedSection> asyncSections = new java.util.concurrent.ConcurrentHashMap<>();
+
     /** Sections kept at most (about 8 KB each). */
     private static final int MAX_SECTIONS = 1024;
 
@@ -218,13 +225,15 @@ public final class HostWorld extends AbstractWorld {
     /** The section of a block as the server has it now, read again if anything happened since. */
     private CachedSection section(final int x, final int y, final int z) {
         final long key = ((long) (x >> 4) & 0x3FFFFFL) << 42 | ((long) (z >> 4) & 0x3FFFFFL) << 20 | ((long) (y >> 4) & 0xFFFFFL);
-        CachedSection section = this.sections.get(key);
+        final boolean main = this.server.isPrimaryThread();
+        final Map<Long, CachedSection> cache = main ? this.sections : this.asyncSections;
+        CachedSection section = cache.get(key);
         if (section != null && section.epoch == this.server.epoch()) {
             return section;
         }
         // Queued changes go out first, so the section read has them (and if side effects must
         // go with them, the epoch moves on before this read is taken).
-        if (this.server.isPrimaryThread()) {
+        if (main) {
             this.server.blockEdits().flushForRead();
         }
         final long epoch = this.server.epoch();
@@ -241,10 +250,10 @@ public final class HostWorld extends AbstractWorld {
         for (final Object at : Values.list(read.get("block_entities"))) {
             section.blockEntities.set(((Number) at).intValue());
         }
-        if (this.sections.size() >= MAX_SECTIONS) {
-            this.sections.clear();
+        if (cache.size() >= MAX_SECTIONS) {
+            cache.clear();
         }
-        this.sections.put(key, section);
+        cache.put(key, section);
         // Reading a section loads its chunk.
         this.knowLoaded(x >> 4, z >> 4, epoch);
         return section;
@@ -281,11 +290,15 @@ public final class HostWorld extends AbstractWorld {
         final CachedSection section = this.section(x, y, z);
         final int i = indexOf(x, y, z);
         final int old = section.state(i);
-        if (old == state) {
+        // Side effects still queued may change any block once the server gets to them, which
+        // the cache does not show: then the change goes out even if the block looks done.
+        if (old == state && !this.server.blockEdits().hasEffects(this.name)) {
             return -1;
         }
         this.server.blockEdits().set(this.name, x, y, z, state);
-        section.set(i, state);
+        if (old != state) {
+            section.set(i, state);
+        }
         return old;
     }
 

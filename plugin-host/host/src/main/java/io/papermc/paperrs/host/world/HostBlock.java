@@ -70,11 +70,13 @@ public final class HostBlock extends AbstractBlock {
     /** Sets the block state ({@code minecraft:name[property=value,...]}). */
     public void setState(final String state, final boolean applyPhysics) {
         this.pending = null;
-        if (!applyPhysics && this.world.server().isPrimaryThread()) {
+        if (!applyPhysics && this.world.server().isPrimaryThread() && !this.world.mayHaveBlockEntity(this.x, this.y, this.z)) {
             // Without physics only this block changes and nothing fires events: the change
-            // goes out with the next batch rather than as a call there and back.
+            // goes out with the next batch rather than as a call there and back. (A block
+            // entity going, a chest's items dropping, does fire events: that is a call.)
             final int id = io.papermc.paperrs.host.data.HostData.get().parseState(state);
             if (id >= 0) {
+                this.world.server().blockEdits().flushIfFull();
                 this.world.setBlockQuietly(this.x, this.y, this.z, id);
                 return;
             }

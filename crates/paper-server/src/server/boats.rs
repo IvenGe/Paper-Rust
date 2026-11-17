@@ -43,7 +43,7 @@ pub fn seat_height(name: &str, height: f64) -> f64 {
 }
 
 /// The top of the water around a boat's base, if there is any.
-fn water_level(world: &World, b: &Aabb) -> Option<f64> {
+pub(crate) fn water_level(world: &World, b: &Aabb) -> Option<f64> {
     let mut level: Option<f64> = None;
     for x in b.min.x.floor() as i32..b.max.x.ceil() as i32 {
         for z in b.min.z.floor() as i32..b.max.z.ceil() as i32 {

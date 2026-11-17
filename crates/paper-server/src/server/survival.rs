@@ -1192,6 +1192,12 @@ impl Server {
     /// The client asked to respawn after the death screen, or to come back from the end
     /// credits (`ServerGamePacketListenerImpl.handleClientCommand`, `PlayerList.respawn`).
     pub(crate) fn respawn_player(&mut self, id: i32) {
+        self.respawn_player_as(id, None);
+    }
+
+    /// [`Self::respawn_player`] for `reason` (Paper's `RespawnReason`; by default `DEATH`, or
+    /// `END_PORTAL` after the credits).
+    pub(crate) fn respawn_player_as(&mut self, id: i32, reason: Option<&'static str>) {
         let Some(p) = self.players.get(&id) else { return };
         // After the end credits the player comes back with everything it had.
         let after_credits = p.won_game && !p.dead;
@@ -1207,7 +1213,7 @@ impl Server {
             Some(found) => found,
             None => (overworld, self.world_spawn_location(overworld, true)),
         };
-        let reason = if after_credits { "END_PORTAL" } else { "DEATH" };
+        let reason = reason.unwrap_or(if after_credits { "END_PORTAL" } else { "DEATH" });
         let (world, target) = crate::plugins::events::on_respawn(self, id, world, target, point.bed, point.missing, reason);
         let hardcore = self.config.properties.hardcore && !after_credits;
         // A plugin may have sent the player away meanwhile.
