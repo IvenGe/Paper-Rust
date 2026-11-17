@@ -1275,7 +1275,6 @@ impl Server {
         p.conn.send(&play::Respawn { spawn: spawn_info, data_kept: if after_credits { 3 } else { 0 } });
         let w = &self.worlds[overworld];
         let p = &self.players[&id];
-        p.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         p.conn.send(&play::SetDefaultSpawnPosition { dimension: w.key.clone(), pos: w.spawn, yaw: w.spawn_yaw, pitch: 0.0 });
         p.conn.send(&play::ChangeDifficulty { difficulty: self.difficulty.id(), locked: false });
         p.conn.send(&p.abilities_packet());
@@ -1286,6 +1285,9 @@ impl Server {
         self.send_weather(id);
         p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
         self.teleport(id, target);
+        // As vanilla's `sendLevelInfo`: the client waits for its chunks once it knows where
+        // it is.
+        self.send(id, &play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         self.resync_inventory(id);
         self.send_experience(id);
         self.send_health_if_changed(id);

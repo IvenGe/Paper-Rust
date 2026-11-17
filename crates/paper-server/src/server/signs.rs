@@ -134,8 +134,12 @@ impl Server {
         Some(nbt)
     }
 
-    /// Shows everyone near the sign what it says (`sendBlockUpdated`).
+    /// Shows everyone near the sign what it says (`sendBlockUpdated`); players who get the
+    /// chunk later get a packet made anew.
     fn send_sign(&mut self, world: usize, pos: BlockPos) {
+        if let Some(c) = self.worlds[world].chunks.get_mut(&ChunkPos::of_block(pos.x, pos.z)) {
+            c.revision += 1;
+        }
         let Some(state) = self.worlds[world].block_at(pos.x, pos.y, pos.z) else { return };
         let Some(data) = self.sign_data(world, pos).map(|d| d.clone()) else { return };
         let Some(ty) = paper_data::registries::id("minecraft:block_entity_type", entity_type(blocks::block_of_state(state).name)) else { return };

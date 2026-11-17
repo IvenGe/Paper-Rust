@@ -157,6 +157,22 @@ pub struct World {
     /// Encoded chunk packets and the revision they were built from.
     packets: HashMap<ChunkPos, (u64, Arc<Vec<u8>>)>,
     encoding: HashMap<ChunkPos, u64>,
+    /// A chunk that changes in every tick (a fast redstone clock, a sign a plugin rewrites,
+    /// the dragon carving through blocks) would never get its light or a packet from the
+    /// workers: each comes back for a chunk that has changed again. Light jobs that came back
+    /// stale (counted) and packets that were out of date when a player needed them are done
+    /// on the main thread instead, a few per tick (see `pump`).
+    stale_light: HashMap<ChunkPos, u8>,
+    stale_packets: HashSet<ChunkPos>,
+    /// Light and packets made on the main thread this tick.
+    lit_now_count: u32,
+    encoded_now: u32,
+    /// Chunks lit on the main thread (see `stale_light`): the server finishes them as it
+    /// does the ones [`Self::handle_event`] reports ready.
+    pub lit_now: Vec<ChunkPos>,
+    /// Where the revisions of the next chunk to come in start: a chunk loaded again never
+    /// reuses a revision of its earlier self, which a job still in flight could carry.
+    next_revisions: u64,
     /// Unfinished chunks of vanilla generation (not part of the playable world yet).
     pub proto: HashMap<ChunkPos, ProtoEntry>,
     /// Unfinished chunks a decoration job has taken.
@@ -293,6 +309,11 @@ impl Weather {
 /// Maximum worker jobs a world keeps in flight per worker thread.
 const JOBS_PER_WORKER: usize = 6;
 
+/// Chunks a world lights, and chunk packets it makes, on the main thread per tick at most
+/// (see `World::stale_light`).
+const MAX_LIT_NOW: u32 = 2;
+const MAX_ENCODED_NOW: u32 = 8;
+
 impl World {
     pub fn new(index: usize, name: &str, dimension: &str, seed: i64, generator: Arc<dyn Generator>) -> Self {
         let dim = paper_data::synced::dimension_type(dimension).unwrap_or_else(|| panic!("no dimension type data for {dimension}"));
@@ -346,6 +367,12 @@ impl World {
             lighting: HashMap::new(),
             packets: HashMap::new(),
             encoding: HashMap::new(),
+            stale_light: HashMap::new(),
+            stale_packets: HashSet::new(),
+            lit_now_count: 0,
+            encoded_now: 0,
+            lit_now: Vec::new(),
+            next_revisions: 0,
             proto: HashMap::new(),
             locked: HashSet::new(),
             structures_read: Default::default(),
@@ -375,6 +402,9 @@ impl World {
         self.lighting.clear();
         self.packets.clear();
         self.encoding.clear();
+        self.stale_light.clear();
+        self.stale_packets.clear();
+        self.lit_now.clear();
         self.proto.clear();
         self.locked.clear();
         self.decorating.clear();
@@ -462,6 +492,8 @@ impl World {
 
     /// Starts worker jobs for wanted chunks. Call once per tick.
     pub fn pump(&mut self, ctx: &WorkerContext) {
+        self.lit_now_count = 0;
+        self.encoded_now = 0;
         let limit = ctx.pool.current_num_threads().max(1) * JOBS_PER_WORKER;
         let staged = self.generator.staged().is_some();
         // Wanted chunks are in the order they were asked for, nearest to players first; each
@@ -491,7 +523,13 @@ impl World {
                 }
             }
             if terrain_ready && !self.lighting.contains_key(&pos) {
-                self.spawn_light_job(pos, ctx);
+                if self.stale_light.get(&pos).is_some_and(|n| *n >= 2) && self.lit_now_count < MAX_LIT_NOW {
+                    self.stale_light.remove(&pos);
+                    self.lit_now_count += 1;
+                    self.light_now(pos);
+                } else {
+                    self.spawn_light_job(pos, ctx);
+                }
             }
         }
     }
@@ -671,13 +709,29 @@ impl World {
         storage.save_chunk(proto_save_chunk(entry, self.min_y, self.height, self.has_skylight, &self.generator));
     }
 
-    fn spawn_light_job(&mut self, pos: ChunkPos, ctx: &WorkerContext) {
+    /// The terrain of a chunk and its eight neighbours, for lighting it.
+    fn light_grid(&self, pos: ChunkPos) -> [[Option<Terrain>; 3]; 3] {
         let mut grid: [[Option<Terrain>; 3]; 3] = Default::default();
         for dz in -1..=1 {
             for dx in -1..=1 {
                 grid[(dz + 1) as usize][(dx + 1) as usize] = self.chunks.get(&ChunkPos::new(pos.x + dx, pos.z + dz)).map(Terrain::of);
             }
         }
+        grid
+    }
+
+    /// Lights a chunk here and now, from the terrain as it is (see `stale_light`).
+    fn light_now(&mut self, pos: ChunkPos) {
+        let (sky, block) = light::compute_chunk_light(&self.light_grid(pos), self.has_skylight);
+        let Some(chunk) = self.chunks.get_mut(&pos).filter(|c| !c.lit) else { return };
+        chunk.sky_light = sky;
+        chunk.block_light = block;
+        chunk.lit = true;
+        self.lit_now.push(pos);
+    }
+
+    fn spawn_light_job(&mut self, pos: ChunkPos, ctx: &WorkerContext) {
+        let grid = self.light_grid(pos);
         let stamp = self.terrain_stamp(pos);
         self.lighting.insert(pos, stamp);
         let (has_skylight, index, notify) = (self.has_skylight, self.index, ctx.notify.clone());
@@ -698,7 +752,11 @@ impl World {
                 self.finalizing.remove(&chunk.pos);
                 // A chunk that appeared meanwhile (e.g. loaded another way) wins.
                 let pos = chunk.pos;
-                self.chunks.entry(pos).or_insert(*chunk);
+                let mut chunk = *chunk;
+                // Revisions this chunk never had before, here or in an earlier life.
+                self.next_revisions += 1 << 32;
+                chunk.revision = self.next_revisions;
+                self.chunks.entry(pos).or_insert(chunk);
                 // Block updates: saved ticks and moving pistons continue.
                 block_updates::chunk_loaded(self, pos);
                 if self.spawn_unchecked && pos == ChunkPos::of_block(self.spawn.x, self.spawn.z) {
@@ -732,9 +790,17 @@ impl World {
                 None
             }
             WorldEvent::Light { pos, stamp, sky, block } => {
-                self.lighting.remove(&pos);
-                // Discard results computed from terrain that has changed since.
+                // A newer job for the chunk may be under way (this one is then old news).
+                let latest = self.lighting.get(&pos) == Some(&stamp);
+                if latest {
+                    self.lighting.remove(&pos);
+                }
+                // Discard results computed from terrain that has changed since; after a
+                // second stale one the chunk is lit on the main thread (see `stale_light`).
                 if self.terrain_stamp(pos) != stamp {
+                    if latest && self.chunks.get(&pos).is_some_and(|c| !c.lit) {
+                        *self.stale_light.entry(pos).or_insert(0) += 1;
+                    }
                     return None;
                 }
                 let chunk = self.chunks.get_mut(&pos)?;
@@ -747,11 +813,21 @@ impl World {
                 Some(pos)
             }
             WorldEvent::Encoded { pos, revision, frame } => {
-                if self.encoding.get(&pos) == Some(&revision) {
+                let latest = self.encoding.get(&pos) == Some(&revision);
+                if latest {
                     self.encoding.remove(&pos);
                 }
-                if self.chunks.get(&pos).is_some_and(|c| c.revision == revision) {
-                    self.packets.insert(pos, (revision, frame));
+                match self.chunks.get(&pos) {
+                    Some(chunk) if chunk.revision == revision => {
+                        self.packets.insert(pos, (revision, frame));
+                        self.stale_packets.remove(&pos);
+                    }
+                    // It changed while it was encoded: the next packet is made on the main
+                    // thread (see `stale_packets`).
+                    Some(_) if latest => {
+                        self.stale_packets.insert(pos);
+                    }
+                    _ => {}
                 }
                 None
             }
@@ -762,10 +838,29 @@ impl World {
     /// (an encode job is started if necessary) or if the chunk is not ready.
     pub fn chunk_packet(&mut self, pos: ChunkPos, ctx: &WorkerContext) -> Option<Arc<Vec<u8>>> {
         let chunk = self.chunks.get(&pos).filter(|c| c.lit)?;
-        if let Some((revision, frame)) = self.packets.get(&pos) {
-            if *revision == chunk.revision {
-                return Some(frame.clone());
-            }
+        // A packet made for an earlier revision means the chunk changed since (it may change
+        // in every tick): a player waits for it, so it is made here and now.
+        let outdated = match self.packets.get(&pos) {
+            Some((revision, frame)) if *revision == chunk.revision => return Some(frame.clone()),
+            Some(_) => true,
+            None => self.stale_packets.contains(&pos),
+        };
+        if outdated && self.encoded_now < MAX_ENCODED_NOW {
+            self.stale_packets.remove(&pos);
+            self.encoded_now += 1;
+            let snapshot = chunk.snapshot();
+            let payload = encode_packet(&snapshot.to_packet(self.biome_count));
+            return match frame_packet(&payload, ctx.compression_threshold, ctx.compression_level) {
+                Ok(frame) => {
+                    let frame = Arc::new(frame);
+                    self.packets.insert(pos, (snapshot.revision, frame.clone()));
+                    Some(frame)
+                }
+                Err(e) => {
+                    log::error!("Could not encode chunk {},{}: {e}", pos.x, pos.z);
+                    None
+                }
+            };
         }
         if self.encoding.get(&pos) != Some(&chunk.revision) {
             self.encoding.insert(pos, chunk.revision);
@@ -820,6 +915,10 @@ impl World {
         }
         let chunks = &self.chunks;
         self.packets.retain(|pos, _| chunks.contains_key(pos));
+        // A chunk loaded again gets a fresh start (an encode that failed is tried again).
+        self.encoding.retain(|pos, _| chunks.contains_key(pos));
+        self.stale_packets.retain(|pos| chunks.contains_key(pos));
+        self.stale_light.retain(|pos, _| chunks.contains_key(pos));
         // Unfinished chunks stay while finishing a ticketed chunk may need them (decorating
         // its neighbours reaches three chunks out); then they are saved and dropped. Without
         // storage they stay: generating them again would lose what neighbours wrote into them.
@@ -1275,12 +1374,13 @@ mod tests {
         let first = frame.unwrap();
         assert!(Arc::ptr_eq(&first, &world.chunk_packet(pos, &ctx).unwrap()), "served from cache");
 
-        // A block change invalidates the cached packet.
+        // A block change invalidates the cached packet: the next one is made anew (here and
+        // now, as a player waits for it; see `stale_packets`).
         let stone = blocks::default_state("minecraft:stone").unwrap();
         let change = world.set_block(2 * 16 + 1, -60, -3 * 16 + 1, stone).unwrap();
         assert_eq!((change.old, change.new), (blocks::AIR, stone));
         assert!(!change.light.is_empty(), "placing an opaque block changes sky light");
-        assert!(world.chunk_packet(pos, &ctx).is_none());
+        assert!(!Arc::ptr_eq(&first, &world.chunk_packet(pos, &ctx).expect("made anew")), "not the old packet");
         assert!(world.set_block(2 * 16 + 1, -60, -3 * 16 + 1, stone).is_none(), "no-op");
         assert!(world.set_block(2 * 16 + 1, 5000, -3 * 16 + 1, stone).is_none(), "outside the world");
         assert!(world.set_block(9999, 0, 9999, stone).is_none(), "unloaded chunk");
@@ -1291,6 +1391,80 @@ mod tests {
         let unloaded = world.unload_unused();
         assert_eq!(unloaded, 8);
         assert_eq!(world.loaded_chunk_count(), 1);
+    }
+
+    #[test]
+    fn a_chunk_that_keeps_changing_still_gets_its_light_and_packet() {
+        let (ctx, rx) = context();
+        let mut world = World::new(0, "world", "minecraft:overworld", 1, Arc::new(FlatGenerator::new(-64)));
+        let pos = ChunkPos::new(0, 0);
+        let stone = blocks::default_state("minecraft:stone").unwrap();
+        let mut on = false;
+        let mut toggle = |world: &mut World| {
+            on = !on;
+            world.chunks.get_mut(&pos).unwrap().set_block(1, 70, 1, if on { stone } else { blocks::AIR });
+        };
+
+        // Light: the terrain changes before the light job's result comes in, every time. The
+        // results are stale and dropped; after the second, the chunk is lit on the main thread.
+        world.add_ticket(pos);
+        let mut stale = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !world.is_ready(pos) {
+            assert!(std::time::Instant::now() < deadline, "the chunk never got its light");
+            world.pump(&ctx);
+            if let Ok((_, event)) = rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                if matches!(event, WorldEvent::Light { pos: p, .. } if p == pos) {
+                    toggle(&mut world);
+                    stale += 1;
+                }
+                world.handle_event(event);
+            }
+        }
+        assert_eq!(stale, 2, "two stale light results, then light made on the main thread");
+        assert_eq!(std::mem::take(&mut world.lit_now), vec![pos], "the server is told it is ready");
+
+        // The packet: the chunk changes while its packet is made on a worker. The next
+        // packet is made on the main thread, from the chunk as it is, and kept.
+        assert!(world.chunk_packet(pos, &ctx).is_none(), "a packet is being made");
+        let event = loop {
+            let (_, event) = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the encode job finishes");
+            if matches!(event, WorldEvent::Encoded { .. }) {
+                break event;
+            }
+            world.handle_event(event);
+        };
+        toggle(&mut world);
+        world.handle_event(event);
+        let frame = world.chunk_packet(pos, &ctx).expect("made here and now");
+        assert!(Arc::ptr_eq(&frame, &world.chunk_packet(pos, &ctx).unwrap()), "and kept for the next player");
+
+        // A chunk that changes in every tick before chunks are sent: its packet is out of
+        // date whenever a player needs it, so that one is made here and now too.
+        toggle(&mut world);
+        let again = world.chunk_packet(pos, &ctx).expect("made here and now again");
+        assert!(!Arc::ptr_eq(&frame, &again), "for the chunk as it is now");
+        // A few per tick at most; the rest go to the workers until the next tick.
+        for _ in 0..MAX_ENCODED_NOW {
+            toggle(&mut world);
+            world.chunk_packet(pos, &ctx);
+        }
+        toggle(&mut world);
+        assert!(world.chunk_packet(pos, &ctx).is_none(), "over this tick's share");
+        world.pump(&ctx);
+        assert!(world.chunk_packet(pos, &ctx).is_some(), "next tick");
+
+        // A chunk loaded again never reuses an earlier revision, which a job still in flight
+        // could carry.
+        let before = world.chunks[&pos].revision;
+        world.remove_ticket(pos);
+        drive(&mut world, &ctx, &rx, |w| w.jobs_in_flight() == 0);
+        world.chunks.get_mut(&pos).unwrap().dirty = false;
+        world.unload_unused();
+        assert!(!world.chunks.contains_key(&pos));
+        world.add_ticket(pos);
+        drive(&mut world, &ctx, &rx, |w| w.is_ready(pos));
+        assert!(world.chunks[&pos].revision > before, "{} after {before}", world.chunks[&pos].revision);
     }
 
     #[test]

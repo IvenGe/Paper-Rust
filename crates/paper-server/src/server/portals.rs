@@ -580,12 +580,14 @@ impl Server {
         p.conn.send(&play::SetDefaultSpawnPosition { dimension: spawn_dimension, pos: spawn, yaw: spawn_yaw, pitch: 0.0 });
         p.conn.send_payload(time);
         p.conn.send(&border);
-        p.conn.send(&play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         p.conn.send(&play::SetChunkCacheCenter { x: VarInt(p.view.center.x), z: VarInt(p.view.center.z) });
         // The portal travel sound.
         p.conn.send(&play::LevelEvent { event: 1032, pos: BlockPos::new(0, 0, 0), data: 0, global: false });
         self.send_weather(id);
         self.teleport(id, target);
+        // As vanilla's `sendLevelInfo`: the client waits for its chunks once it knows where
+        // it is.
+        self.send(id, &play::GameEvent { event: play::game_event::START_WAITING_FOR_CHUNKS, value: 0.0 });
         self.resync_inventory(id);
         self.send_experience(id);
         self.send_health_if_changed(id);

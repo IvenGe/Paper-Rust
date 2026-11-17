@@ -1208,6 +1208,8 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             nbt.insert("id", paper_nbt::Tag::String(id.clone()));
             c.block_entities.insert(key, nbt.clone());
             c.dirty = true;
+            // The chunk's cached packet would show the old data to players who come later.
+            c.revision += 1;
             if let Some(ty) = paper_data::registries::id("minecraft:block_entity_type", &id) {
                 nbt.remove("id");
                 let packet = play::BlockEntityData { pos: paper_protocol::codec::BlockPos::new(x, y, z), block_entity_type: VarInt(ty as i32), data: paper_protocol::codec::Nbt(Some(paper_nbt::Tag::Compound(nbt))) };
@@ -1398,6 +1400,10 @@ pub fn handle(server: &mut Server, method: &str, args: &Value) -> Result<Value> 
             c.dirty = true;
             let id = shown.get("id").and_then(|t| t.as_str()).unwrap_or("").to_owned();
             if matches!(id.as_str(), "minecraft:banner" | "minecraft:mob_spawner" | "minecraft:skull" | "minecraft:sign" | "minecraft:hanging_sign") {
+                // What clients see changed: the chunk's cached packet would show the old data
+                // to players who come later. (Other data, such as a plugin's or a chest's
+                // items, is not in it.)
+                c.revision += 1;
                 if let Some(ty) = paper_data::registries::id("minecraft:block_entity_type", &id) {
                     shown.remove("PublicBukkitValues");
                     let packet = play::BlockEntityData { pos, block_entity_type: VarInt(ty as i32), data: paper_protocol::codec::Nbt(Some(paper_nbt::Tag::Compound(shown))) };

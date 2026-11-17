@@ -485,3 +485,60 @@ fn shutdown_disconnects_players() {
     assert!(alice.wait_closed(TIMEOUT));
     server.wait();
 }
+
+/// A chunk whose blocks change all the time (a fast redstone clock, the dragon carving
+/// through blocks) still reaches players. Its packet was made on a worker for a revision
+/// that was gone by the time the packet came back, so it never went out, and a player
+/// standing in it stayed on the loading screen.
+#[test]
+fn a_chunk_that_changes_all_the_time_still_reaches_players() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let server = start_server(|_| {});
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let (handle, flag) = (server.handle.clone(), stop.clone());
+    let churn = std::thread::spawn(move || {
+        let stone = blocks::default_state("minecraft:stone").unwrap();
+        let mut on = false;
+        while !flag.load(Ordering::Relaxed) {
+            on = !on;
+            handle.run(move |s| s.worlds[0].set_block(3, -50, 3, if on { stone } else { blocks::AIR }));
+        }
+    });
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    let chunk = alice.find(TIMEOUT, |c: &play::LevelChunkWithLight| c.x == 0 && c.z == 0);
+    stop.store(true, Ordering::Relaxed);
+    churn.join().unwrap();
+    assert!(chunk.is_some(), "the spawn chunk arrives");
+    server.stop();
+}
+
+/// Block-entity data shown to clients (a spawner's mob here) that changes after the chunk's
+/// packet was made goes into the packet the next player gets.
+#[test]
+fn players_who_come_later_see_changed_block_entities() {
+    let server = start_server(|_| {});
+    let mut alice = Client::join(server.port(), "Alice");
+    expect_chunk(&mut alice, 0, 0);
+    let pos = BlockPos::new(4, -60, 4);
+    server
+        .handle
+        .run(move |s| {
+            let spawner = blocks::default_state("minecraft:spawner").unwrap();
+            s.set_block_with_flags(0, pos, spawner, paper_server::world::block_updates::flags::ALL);
+        })
+        .unwrap();
+    alice.drain(QUIET);
+    // Bob gets the chunk with the spawner as it is now (and its packet is kept)...
+    let mut bob = Client::join(server.port(), "Bob");
+    expect_chunk(&mut bob, 0, 0);
+    // ...then the spawner gets a pig: Carol, who comes after, sees the pig too.
+    server.handle.run(move |s| s.set_spawner_entity(0, pos, "minecraft:pig")).unwrap();
+    bob.drain(QUIET);
+    let mut carol = Client::join(server.port(), "Carol");
+    let chunk = expect_chunk(&mut carol, 0, 0);
+    let spawner = chunk.block_entities.iter().find(|b| b.y == -60 && b.packed_xz == (4 << 4 | 4)).expect("the spawner's block entity");
+    let shown = format!("{:?}", spawner.data);
+    assert!(shown.contains("minecraft:pig"), "the pig is in the packet: {shown}");
+    server.stop();
+}

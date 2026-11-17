@@ -2833,3 +2833,54 @@ fn plugin_api_items_inventories_entities_scoreboards_and_reload() {
     assert!(dir.join("plugin_flat").join("level.dat").exists(), "the new world is saved in its folder");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A plugin's own thread calls the API while the server waits for the host (here for a
+/// command): the server fires an event at the host meanwhile (PlayerDeathEvent, as the call
+/// kills). The host may answer the command first, or the command's own call may be answered
+/// while the event's listener waits for one of its own. Such answers once got lost on either
+/// side, and both waited forever: no more ticks, chunks or keep-alives for anyone.
+#[test]
+fn a_plugin_thread_firing_an_event_while_the_server_waits_does_not_freeze_it() {
+    let Some(setup) = setup() else { return };
+    let dir = std::env::temp_dir().join(format!("paper-rs-java-async-event-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let plugins_dir = dir.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    for jar in &setup.plugins {
+        std::fs::copy(jar, plugins_dir.join(jar.file_name().unwrap())).unwrap();
+    }
+    let server = start_server_with_host(
+        |c| {
+            c.root = dir.clone();
+            c.properties.gamemode = paper_server::config::GameMode::Survival;
+            c.paper.plugins.java = setup.java.clone();
+            c.paper.plugins.host_dir = setup.host_dir.display().to_string();
+            c.paper.plugins.plugins_dir = plugins_dir.display().to_string();
+            c.paper.plugins.jvm_args = vec!["-Xmx512M".into()];
+            c.paper.plugins.startup_timeout_seconds = 120;
+        },
+        paper_server::plugins::java_launcher(),
+    );
+    let mut alice = Client::join(server.port(), "Alice");
+    alice.expect::<play::PlayerPosition>();
+    alice.drain(QUIET);
+
+    alice.command("apitest asyncevent");
+    expect_line(&mut alice, "asyncevent: done true");
+    alice.expect::<play::PlayerCombatKill>();
+    // The server goes on.
+    let handle = server.handle.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let first = handle.run(|s| s.tick);
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = tx.send((first, handle.run(|s| s.tick)));
+    });
+    let (first, then) = rx.recv_timeout(Duration::from_secs(10)).expect("the server still answers");
+    assert!(then > first, "the server still ticks: {first:?} then {then:?}");
+    // And the plugin heard the death.
+    alice.command("apitest deaths");
+    expect_line(&mut alice, "deaths: Alice true");
+    server.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

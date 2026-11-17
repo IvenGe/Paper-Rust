@@ -67,7 +67,11 @@ fn batches_change_blocks_and_tell_clients_per_section() {
             sections += 1;
             blocks_told += decode::<play::SectionBlocksUpdate>(&frame).blocks.len();
         } else if id == play::BlockUpdate::ID {
-            singles += 1;
+            // Only the edited blocks count: the world goes on meanwhile (a sheep eats grass).
+            let p = decode::<play::BlockUpdate>(&frame).pos;
+            if (0..8).contains(&p.x) && (-52..-44).contains(&p.y) && (0..8).contains(&p.z) {
+                singles += 1;
+            }
         } else if id == play::LightUpdate::ID {
             lights += 1;
         }

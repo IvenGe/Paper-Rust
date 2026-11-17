@@ -93,6 +93,13 @@ public final class Bridge {
     /** Ids of calls the main thread is waiting for, innermost last. */
     private final Deque<Long> mainWaits = new ArrayDeque<>();
     private final Map<Long, Boolean> mainCallIds = new ConcurrentHashMap<>();
+    /**
+     * Answers to main-thread calls that came while a call made after them still waited: a
+     * call the server got while it was busy with an event it fired at the host (a plugin
+     * thread's call made it fire one) is answered before the event's own calls. They wait
+     * here for their call ({@link #callOnMain}) rather than being dropped. Main thread only.
+     */
+    private final Map<Long, Codec.Frame> earlyAnswers = new java.util.HashMap<>();
     private final Map<Long, CompletableFuture<Object>> pending = new ConcurrentHashMap<>();
     private final ExecutorService asyncHandlers = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "Plugin Bridge Async");
@@ -355,6 +362,14 @@ public final class Bridge {
         try {
             this.write(Codec.Frame.call(id, Codec.FLAG_SYNC, method, args));
             while (true) {
+                // The answer may have come already, while a call made meanwhile waited.
+                final Codec.Frame early = this.earlyAnswers.remove(id);
+                if (early != null) {
+                    if (!early.ok()) {
+                        throw new RemoteException(method, early.value());
+                    }
+                    return early.value();
+                }
                 Item item;
                 try {
                     this.flushHeld();
@@ -385,6 +400,11 @@ public final class Bridge {
                     }
                     return a.frame().value();
                 }
+                // The answer to a call this one was made inside of (see earlyAnswers).
+                if (item instanceof Answer a && this.mainCallIds.containsKey(a.frame().id())) {
+                    this.earlyAnswers.put(a.frame().id(), a.frame());
+                    continue;
+                }
                 this.handleOnMain(item);
             }
         } catch (IOException e) {
@@ -392,6 +412,7 @@ public final class Bridge {
         } finally {
             this.mainWaits.removeLast();
             this.mainCallIds.remove(id);
+            this.earlyAnswers.remove(id);
         }
     }
 

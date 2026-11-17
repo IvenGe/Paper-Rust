@@ -60,7 +60,13 @@ handlers); the server queues those and runs them on its main thread between tick
 also while that thread waits for the host to answer a call: plugin code on the host's main
 thread may be waiting for one of its async threads (BlueMap's join handler waits for a
 cache its async loader is filling through the API), which in Paper would never need the
-main thread.
+main thread. Such an async call can make the server fire an event at the host (an async
+`setHealth(0)` kills, and plugins hear `PlayerDeathEvent`): a sync call made while the
+server's main thread was already waiting for an earlier one. The host's main thread may
+finish the earlier call first, and a call the host's main thread made meanwhile may be
+answered while a listener of that event waits for one of its own. Each side keeps an answer
+that comes before the one it waits for until its own wait gets back to it, rather than
+dropping it as out of order and waiting for good.
 
 The host keeps a copy of each player's state (position, game mode, health, permissions
 level, ...). Before every sync call and every tick the server sends the states that changed

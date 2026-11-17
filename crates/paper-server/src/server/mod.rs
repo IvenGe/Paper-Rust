@@ -773,17 +773,8 @@ impl Server {
                 if let Some(pos) = terrain {
                     self.spawn_saved_entities(world, pos);
                 }
-                // A newly generated chunk gets its animals once it is ready.
                 if let Some(pos) = ready {
-                    let fresh = self.worlds[world].chunks.get_mut(&pos).is_some_and(|c| std::mem::take(&mut c.fresh));
-                    if fresh {
-                        self.spawn_for_chunk_generation(world, pos);
-                    }
-                    self.sculk_chunk_loaded(world, pos);
-                    crate::plugins::events::on_chunk_load(self, world, pos, fresh);
-                    if fresh {
-                        crate::plugins::events::on_chunk_populate(self, world, pos);
-                    }
+                    self.chunk_ready(world, pos);
                 }
             }
             MainTask::ConsoleCommand(line) => {
@@ -797,6 +788,29 @@ impl Server {
             MainTask::PluginWake => crate::plugins::service_idle(self),
             MainTask::PluginHostDied(reason) => crate::plugins::host_died(self, &reason),
             MainTask::Shutdown => self.running = false,
+        }
+    }
+
+    /// A chunk is loaded and lit, ready for players: a newly generated one gets its
+    /// animals, and plugins hear of it.
+    fn chunk_ready(&mut self, world: usize, pos: crate::world::chunk::ChunkPos) {
+        let fresh = self.worlds[world].chunks.get_mut(&pos).is_some_and(|c| std::mem::take(&mut c.fresh));
+        if fresh {
+            self.spawn_for_chunk_generation(world, pos);
+        }
+        self.sculk_chunk_loaded(world, pos);
+        crate::plugins::events::on_chunk_load(self, world, pos, fresh);
+        if fresh {
+            crate::plugins::events::on_chunk_populate(self, world, pos);
+        }
+    }
+
+    /// Finishes the chunks a world lit on the main thread while pumping (see `World::lit_now`).
+    fn finish_lit_now(&mut self, world: usize) {
+        for pos in std::mem::take(&mut self.worlds[world].lit_now) {
+            if self.worlds.get(world).is_some_and(|w| w.chunks.contains_key(&pos)) {
+                self.chunk_ready(world, pos);
+            }
         }
     }
 
@@ -819,6 +833,9 @@ impl Server {
             for world in &mut self.worlds {
                 world.tick_time();
                 world.pump(&workers);
+            }
+            for world in 0..self.worlds.len() {
+                self.finish_lit_now(world);
             }
         });
         // Rain, thunder and what they do (see `weather`).
@@ -984,6 +1001,7 @@ impl Server {
         let workers = self.workers.clone();
         while !self.worlds[world].is_ready(pos) && Instant::now() < deadline {
             self.worlds[world].pump(&workers);
+            self.finish_lit_now(world);
             self.shared.outgoing.flush();
             match self.tasks.recv_timeout(Duration::from_millis(2)) {
                 Ok(task @ MainTask::World { .. }) => self.handle_task(task),

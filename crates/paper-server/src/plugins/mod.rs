@@ -149,6 +149,10 @@ pub struct HostConnection {
     async_rx: Receiver<(u64, String, Value)>,
     /// Ids of sync calls the main thread is waiting for.
     main_calls: Mutex<HashSet<u64>>,
+    /// Answers to main-thread calls that came while a call made after them still waited:
+    /// an async call served meanwhile fired an event at the host, and the host finished
+    /// the earlier call first. They wait here for their call (`call_inner`).
+    early_answers: Mutex<HashMap<u64, (bool, Value)>>,
     pending: Mutex<HashMap<u64, Pending>>,
     closed: AtomicBool,
     /// The server is stopping this host on purpose (shutdown or `/reload`): its connection
@@ -193,6 +197,7 @@ impl HostConnection {
         self.main_calls.lock().insert(id);
         let started = Instant::now();
         let result = self.call_inner(server, id, method, args);
+        self.early_answers.lock().remove(&id);
         let took = started.elapsed();
         let mut stats = self.stats.lock();
         stats.calls += 1;
@@ -221,17 +226,24 @@ impl HostConnection {
         let mut warned = false;
         // Loading and enabling plugins legitimately takes a while.
         let slow_call = if method == "host.load" || method == "host.post_world" { self.slow_call.max(Duration::from_secs(30)) } else { self.slow_call };
+        let answer = |ok: bool, value: Value| if ok { Ok(value) } else { Err(CallError::Remote(value.as_str().unwrap_or("error").to_owned())) };
         loop {
+            // The answer may have come already, while a call made meanwhile waited.
+            if let Some((ok, value)) = self.early_answers.lock().remove(&id) {
+                return answer(ok, value);
+            }
             // An answer (or a nested call) usually comes within a few dozen microseconds:
             // look for it busily for a moment before sleeping, as waking a sleeping thread
             // takes about as long again.
             let spin_until = Instant::now() + SPIN;
+            let mut served = false;
             let spun = loop {
                 if let Ok(item) = self.main_rx.try_recv() {
                     break Some(Ok(item));
                 }
                 if let Ok((cid, m, args)) = self.async_rx.try_recv() {
                     self.serve(server, cid, &m, &args);
+                    served = true;
                     break None;
                 }
                 if Instant::now() >= spin_until {
@@ -239,6 +251,9 @@ impl HostConnection {
                 }
                 std::hint::spin_loop();
             };
+            if served {
+                continue;
+            }
             let inbound = match spun {
                 Some(item) => item,
                 None => crossbeam_channel::select! {
@@ -253,10 +268,12 @@ impl HostConnection {
                 },
             };
             match inbound {
-                Ok(Inbound::Return { id: rid, ok, value }) if rid == id => {
-                    return if ok { Ok(value) } else { Err(CallError::Remote(value.as_str().unwrap_or("error").to_owned())) };
+                Ok(Inbound::Return { id: rid, ok, value }) if rid == id => return answer(ok, value),
+                // The answer to a call this one was made inside of (see `early_answers`).
+                Ok(Inbound::Return { id: rid, ok, value }) if self.main_calls.lock().contains(&rid) => {
+                    self.early_answers.lock().insert(rid, (ok, value));
                 }
-                Ok(Inbound::Return { id: rid, .. }) => log::warn!("Plugin host answered call {rid} out of order; ignoring it"),
+                Ok(Inbound::Return { id: rid, .. }) => log::warn!("Plugin host answered call {rid}, which nothing waits for; ignoring it"),
                 Ok(Inbound::Call { id: cid, method: m, args, reply }) => self.serve_sync(server, cid, &m, &args, reply),
                 Ok(Inbound::Closed(reason)) => {
                     log::debug!("Plugin host closed during {method}: {reason}");
@@ -593,6 +610,7 @@ fn start_with(server: &mut Server, launcher: &Launcher) -> Result<()> {
         main_rx,
         async_rx,
         main_calls: Mutex::new(HashSet::new()),
+        early_answers: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
         closed: AtomicBool::new(false),
         retiring: AtomicBool::new(false),

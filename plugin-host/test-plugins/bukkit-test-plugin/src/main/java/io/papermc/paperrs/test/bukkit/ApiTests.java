@@ -224,6 +224,23 @@ final class ApiTests implements Listener, CommandExecutor {
                     }
                     sender.sendMessage("asyncwait: " + outcome);
                 }
+                case "asyncevent" -> {
+                    // A thread of the plugin's own kills the player while this command still
+                    // runs: the server fires PlayerDeathEvent at the host while it waits for
+                    // the command, and the host answers the command first.
+                    // The command then waits for an answer of its own, which the server sends
+                    // while the event is still on: the death listener's own call gets it first.
+                    final Player player = (Player) sender;
+                    new Thread(() -> player.setHealth(0), "BukkitTestPlugin asyncevent").start();
+                    try {
+                        Thread.sleep(1000);
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    final int entities = player.getWorld().getEntities().size();
+                    sender.sendMessage("asyncevent: done " + (entities > 0));
+                }
+                case "deaths" -> sender.sendMessage("deaths: " + String.join(", ", this.deaths));
                 case "watch" -> {
                     // Stops sneaking, slot changes, swaps, hunger, buckets, weather and targeting
                     // while on, with a water bucket in hand.
@@ -1557,6 +1574,15 @@ final class ApiTests implements Listener, CommandExecutor {
     @EventHandler
     public void onWeather(final org.bukkit.event.weather.WeatherChangeEvent event) {
         this.watched(event, "WEATHER " + event.toWeatherState() + " " + event.getCause());
+    }
+
+    /** Players whose PlayerDeathEvent this plugin heard (see "asyncevent"). */
+    private final List<String> deaths = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @EventHandler
+    public void onDeath(final org.bukkit.event.entity.PlayerDeathEvent event) {
+        // A call there and back, as listeners make.
+        this.deaths.add(event.getEntity().getName() + " " + !event.getEntity().getWorld().getEntities().isEmpty());
     }
 
     @EventHandler

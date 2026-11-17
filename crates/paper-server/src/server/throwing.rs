@@ -687,6 +687,8 @@ impl Server {
         nbt.insert("SpawnData", Tag::Compound(Compound::new().with("entity", Tag::Compound(Compound::new().with("id", Tag::String(entity.to_owned()))))));
         let data = nbt.clone();
         c.dirty = true;
+        // Players who get the chunk later get a packet made anew, with the mob.
+        c.revision += 1;
         let Some(ty) = paper_data::registries::id("minecraft:block_entity_type", "minecraft:mob_spawner") else { return };
         let packet = paper_protocol::packets::play::BlockEntityData { pos, block_entity_type: paper_protocol::codec::VarInt(ty as i32), data: paper_protocol::codec::Nbt(Some(Tag::Compound(data))) };
         self.broadcast_to_chunk_viewers(world, chunk, &packet);
