@@ -34,8 +34,15 @@ fn survival_server(root: Option<PathBuf>) -> RunningServer {
             c.root = root;
         }
     });
-    // Players join and respawn right at the world spawn.
-    server.handle.run(|s| s.set_game_rule(0, "respawn_radius", paper_data::game_rules::Value::Int(0))).unwrap();
+    // Players join and respawn right at the world spawn, and no monsters come of themselves
+    // (slimes spawn in a superflat world's slime chunks and would hurt players).
+    server
+        .handle
+        .run(|s| {
+            s.set_game_rule(0, "respawn_radius", paper_data::game_rules::Value::Int(0));
+            s.set_game_rule(0, "spawn_monsters", paper_data::game_rules::Value::Bool(false));
+        })
+        .unwrap();
     server
 }
 

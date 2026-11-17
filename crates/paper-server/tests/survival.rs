@@ -18,7 +18,16 @@ fn survival_server() -> paper_server::RunningServer {
         c.properties.difficulty = Difficulty::Normal;
     });
     // Players join right at the world spawn: the tests place mobs and blocks next to it.
-    server.handle.run(|s| s.set_game_rule(0, "respawn_radius", paper_data::game_rules::Value::Int(0))).unwrap();
+    // No monsters come of themselves: slimes spawn in a superflat world's slime chunks (the
+    // ground is below y = 40) and would hurt players, or keep them out of bed. The tests
+    // summon the ones they want.
+    server
+        .handle
+        .run(|s| {
+            s.set_game_rule(0, "respawn_radius", paper_data::game_rules::Value::Int(0));
+            s.set_game_rule(0, "spawn_monsters", paper_data::game_rules::Value::Bool(false));
+        })
+        .unwrap();
     server
 }
 
