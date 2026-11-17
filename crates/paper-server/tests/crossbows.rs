@@ -26,10 +26,11 @@ fn wait_reading(client: &mut Client, what: &str, mut f: impl FnMut() -> bool) {
     }
 }
 
-/// Charges for 1.5 seconds and lets go.
-fn charge(alice: &mut Client, sequence: i32) {
+/// Charges for 30 ticks as the server counts them (a crossbow needs 25; on a busy machine the
+/// server may run slower than the clock), and lets go.
+fn charge(server: &paper_server::RunningServer, alice: &mut Client, id: i32, sequence: i32) {
     alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(sequence), yaw: 0.0, pitch: 0.0 });
-    std::thread::sleep(Duration::from_millis(1500));
+    wait_reading(alice, "the charge", || server.handle.run(move |s| s.players[&id].using_item.is_some_and(|(_, left)| 72000 - left >= 30)).unwrap());
     alice.send(&play::PlayerAction { status: VarInt(play::player_action::RELEASE_USE_ITEM), pos: BlockPos::new(0, 0, 0), face: 0, sequence: VarInt(0) });
 }
 
@@ -58,6 +59,9 @@ fn flying(server: &paper_server::RunningServer) -> (Vec<(bool, bool)>, Vec<bool>
 #[test]
 fn crossbows_load_and_fire_arrows_multishot_and_rockets() {
     let server = start_server(|c| c.properties.gamemode = GameMode::Survival);
+    // Slimes spawn in a superflat world's slime chunks (the ground is below y = 40) and would
+    // hit the player or catch the arrows.
+    server.handle.console_command("gamerule spawn_monsters false");
     let mut alice = Client::join(server.port(), "Alice");
     alice.expect::<play::PlayerPosition>();
     alice.drain(Duration::from_millis(300));
@@ -72,7 +76,7 @@ fn crossbows_load_and_fire_arrows_multishot_and_rockets() {
         .unwrap();
 
     // Charged and released: an arrow loaded, one used up.
-    charge(&mut alice, 1);
+    charge(&server, &mut alice, id, 1);
     wait_reading(&mut alice, "the crossbow loaded", || loaded(&server, id) == 1);
     let arrows = server.handle.run(move |s| s.players[&id].inventory[37].0.as_ref().map(|a| a.count)).unwrap();
     assert_eq!(arrows, Some(1));
@@ -95,7 +99,7 @@ fn crossbows_load_and_fire_arrows_multishot_and_rockets() {
             s.set_inventory_slot(id, 36, Slot(Some(crossbow)));
         })
         .unwrap();
-    charge(&mut alice, 3);
+    charge(&server, &mut alice, id, 3);
     wait_reading(&mut alice, "three loaded", || loaded(&server, id) == 3);
     let arrows = server.handle.run(move |s| s.players[&id].inventory[37].0.as_ref().map(|a| a.count)).unwrap();
     assert_eq!(arrows, None, "the last arrow used up");
@@ -114,7 +118,7 @@ fn crossbows_load_and_fire_arrows_multishot_and_rockets() {
             s.set_inventory_slot(id, 37, Slot::of(item("minecraft:arrow"), 5));
         })
         .unwrap();
-    charge(&mut alice, 5);
+    charge(&server, &mut alice, id, 5);
     wait_reading(&mut alice, "a rocket loaded", || loaded(&server, id) == 1);
     alice.send(&play::UseItem { hand: VarInt(0), sequence: VarInt(6), yaw: 0.0, pitch: 0.0 });
     wait_reading(&mut alice, "a rocket", || !flying(&server).1.is_empty());

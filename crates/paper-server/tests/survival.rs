@@ -210,6 +210,9 @@ fn game_rules_can_turn_damage_off() {
 #[test]
 fn golden_apples_poison_and_milk() {
     let server = survival_server();
+    // Slimes spawn in a superflat world's slime chunks (the ground is below y = 40) and would
+    // hit the player or catch the arrows.
+    server.handle.console_command("gamerule spawn_monsters false");
     let mut alice = join(&server, "Alice");
     let id = alice.entity_id;
     let apple = items::id("minecraft:golden_apple").unwrap() as i32;

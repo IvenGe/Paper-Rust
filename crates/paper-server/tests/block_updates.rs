@@ -261,3 +261,67 @@ fn block_changes_go_out_as_later_block_events_find_them() {
     assert_eq!(names.last(), Some(&Some("minecraft:stone")), "and the stone when it lands: {names:?}");
     server.stop();
 }
+
+/// An effect published ahead of a block's own packet may change the block again (a dispenser
+/// pours water where a piston's pull left air, in the same tick): players are told of the
+/// block as it is when its packet goes out, the water, not as it was before the effects ran.
+#[test]
+fn block_packets_tell_the_block_as_it_is_when_they_go() {
+    use paper_protocol::packets::Packet;
+    use paper_server::world::block_updates::Effect;
+    let server = start_server(|_| {});
+    let mut alice = join(server.port());
+    let (dispenser, front) = (BlockPos::new(6, -60, 4), BlockPos::new(7, -60, 4));
+    let water_bucket = paper_data::items::id("minecraft:water_bucket").unwrap() as i32;
+    server
+        .handle
+        .run(move |s| {
+            let state = blocks::parse_state("minecraft:dispenser[facing=east]").unwrap();
+            s.set_block_and_update(0, dispenser, state);
+            let mut items = vec![Slot::EMPTY; 9];
+            items[0] = Slot::of(water_bucket, 1);
+            s.set_container_items(0, dispenser, &items);
+        })
+        .unwrap();
+    update_at(&mut alice, dispenser, |_| true);
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    // One tick's effects: the dispenser fires (its scheduled tick), then the block in front
+    // is pulled away (a later block event); the dispenser pours its water there first.
+    let stone = blocks::default_state("minecraft:stone").unwrap();
+    server
+        .handle
+        .run(move |s| {
+            let effects = &mut s.worlds[0].updates.effects;
+            effects.push(Effect::Dispense { pos: dispenser });
+            effects.push(Effect::Block(paper_server::world::BlockChange { pos: front, old: stone, new: blocks::AIR, light: Default::default() }));
+            s.publish_block_updates(0);
+        })
+        .unwrap();
+    assert_eq!(server.handle.run(move |s| s.worlds[0].block_at(front.x, front.y, front.z)).unwrap().map(block_name_u32), Some("minecraft:water"));
+    let local = ((front.x & 15) as u8, (front.y & 15) as u8, (front.z & 15) as u8);
+    let mut told = None;
+    let deadline = std::time::Instant::now() + Duration::from_millis(1500);
+    while std::time::Instant::now() < deadline {
+        let Some((id, frame)) = alice.next_packet(Duration::from_millis(100)) else { continue };
+        if id == play::BlockUpdate::ID {
+            let update: play::BlockUpdate = common::decode(&frame);
+            if update.pos == front {
+                told = Some(update.state.0 as u32);
+            }
+        } else if id == play::SectionBlocksUpdate::ID {
+            let update: play::SectionBlocksUpdate = common::decode(&frame);
+            if (update.section_x, update.section_y, update.section_z) == (front.x >> 4, front.y >> 4, front.z >> 4) {
+                if let Some(&(_, _, _, state)) = update.blocks.iter().rev().find(|&&(x, y, z, _)| (x, y, z) == local) {
+                    told = Some(state);
+                }
+            }
+        }
+    }
+    assert_eq!(told.map(block_name_u32), Some("minecraft:water"), "players end on the water");
+    server.stop();
+}
+
+fn block_name_u32(state: u32) -> &'static str {
+    blocks::block_of_state(state).name
+}

@@ -48,6 +48,9 @@ fn statistics_are_counted_shown_scored_and_saved() {
         c.properties.gamemode = paper_server::config::GameMode::Survival;
     };
     let server = start_server(config);
+    // Slimes spawn in a superflat world's slime chunks (the ground is below y = 40) and would
+    // hit the player or catch the arrows.
+    server.handle.console_command("gamerule spawn_monsters false");
     server.handle.console_command("scoreboard objectives add jumps minecraft.custom:minecraft.jump");
     server.handle.console_command("scoreboard objectives add placed minecraft.used:minecraft.dirt");
     server.handle.console_command("scoreboard objectives add deaths deathCount");
