@@ -220,13 +220,13 @@ impl Server {
     /// Tells the affected clients about a block change and the light changes it caused,
     /// with the block as it is now (as vanilla's `broadcastChanges` reads it).
     pub fn publish_block_change(&mut self, world: usize, change: &BlockChange) {
-        let state = self.worlds[world].block_at(change.pos.x, change.pos.y, change.pos.z).unwrap_or(change.new);
-        self.publish_block_change_as(world, change, state);
+        self.publish_block_change_as(world, change, None);
     }
 
-    /// [`Server::publish_block_change`], telling clients the block is `state` (which
-    /// `publish_block_updates` picks).
-    pub(crate) fn publish_block_change_as(&mut self, world: usize, change: &BlockChange, state: u32) {
+    /// [`Server::publish_block_change`], telling clients the block is `told` if given (which
+    /// `publish_block_updates` picks), else as it is now.
+    pub(crate) fn publish_block_change_as(&mut self, world: usize, change: &BlockChange, told: Option<u32>) {
+        let state = told.unwrap_or_else(|| self.worlds[world].block_at(change.pos.x, change.pos.y, change.pos.z).unwrap_or(change.new));
         let chunk = ChunkPos::of_block(change.pos.x, change.pos.z);
         self.broadcast_to_chunk_viewers(world, chunk, &play::BlockUpdate { pos: change.pos, state: VarInt(state as i32) });
         self.publish_light_changes(world, &change.light);
@@ -238,14 +238,15 @@ impl Server {
     /// Many block changes at once (an edit, an explosion), as vanilla sends a tick's
     /// (`ChunkHolder.broadcastChanges`): per section one packet with each block's last state,
     /// and the light that changed once per chunk, rather than a packet and a light update for
-    /// every block. Each change comes with the state to tell (which `publish_block_updates`
-    /// picks).
-    pub(crate) fn publish_block_changes(&mut self, world: usize, changes: Vec<(BlockChange, u32)>) {
+    /// every block. Each change comes with the state to tell if it is not the block as it is
+    /// now (which `publish_block_updates` picks).
+    pub(crate) fn publish_block_changes(&mut self, world: usize, changes: Vec<(BlockChange, Option<u32>)>) {
         let mut sections: HashMap<(i32, i32, i32), HashMap<(u8, u8, u8), u32>> = HashMap::new();
         let mut light: HashSet<ChangedSection> = HashSet::new();
-        for (change, state) in &changes {
+        for (change, told) in &changes {
             let p = change.pos;
-            sections.entry((p.x >> 4, p.y >> 4, p.z >> 4)).or_default().insert(((p.x & 15) as u8, (p.y & 15) as u8, (p.z & 15) as u8), *state);
+            let state = told.unwrap_or_else(|| self.worlds[world].block_at(p.x, p.y, p.z).unwrap_or(change.new));
+            sections.entry((p.x >> 4, p.y >> 4, p.z >> 4)).or_default().insert(((p.x & 15) as u8, (p.y & 15) as u8, (p.z & 15) as u8), state);
             light.extend(change.light.iter().copied());
         }
         for ((sx, sy, sz), blocks) in sections {

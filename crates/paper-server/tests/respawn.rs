@@ -245,14 +245,14 @@ fn plugins_choose_the_world_the_player_respawns_in() {
 fn a_bed_in_a_chunk_no_one_has_loaded_is_still_found() {
     let root = temp_root("respawn-far-bed");
     let server = survival_server(Some(root.clone()));
-    let mut alice = join(&server, "Alice");
+    let alice = join(&server, "Alice");
     let id = alice.entity_id;
-    // A bed far from spawn, set as Alice's respawn point.
+    // A bed far from spawn, at the east edge of its chunk, set as Alice's respawn point.
     let head = blocks::parse_state("minecraft:red_bed[part=head,facing=north]").unwrap();
     let foot = blocks::parse_state("minecraft:red_bed[part=foot,facing=north]").unwrap();
-    plugin_call(&server, "world.set_block", bmap! { "x" => 300, "y" => -60, "z" => 300, "state" => head as i64, "physics" => false });
-    plugin_call(&server, "world.set_block", bmap! { "x" => 300, "y" => -60, "z" => 301, "state" => foot as i64, "physics" => false });
-    server.handle.run(move |s| s.players.get_mut(&id).unwrap().respawn = Some((0, paper_protocol::codec::BlockPos::new(300, -60, 300)))).unwrap();
+    plugin_call(&server, "world.set_block", bmap! { "x" => 303, "y" => -60, "z" => 300, "state" => head as i64, "physics" => false });
+    plugin_call(&server, "world.set_block", bmap! { "x" => 303, "y" => -60, "z" => 301, "state" => foot as i64, "physics" => false });
+    server.handle.run(move |s| s.players.get_mut(&id).unwrap().respawn = Some((0, paper_protocol::codec::BlockPos::new(303, -60, 300)))).unwrap();
     drop(alice);
     server.stop();
 
@@ -260,13 +260,15 @@ fn a_bed_in_a_chunk_no_one_has_loaded_is_still_found() {
     let server = survival_server(Some(root.clone()));
     let mut alice = join(&server, "Alice");
     let id = alice.entity_id;
-    assert!(!server.handle.run(|s| s.worlds[0].chunks.contains_key(&paper_server::world::chunk::ChunkPos::of_block(300, 300))).unwrap(), "the bed's chunk is not loaded");
+    let loaded = |x: i32| server.handle.run(move |s| s.worlds[0].chunks.contains_key(&paper_server::world::chunk::ChunkPos::of_block(x, 300))).unwrap();
+    assert!(!loaded(303) && !loaded(304), "neither the bed's chunk nor the one east of it is loaded");
     server.handle.console_command("kill Alice");
     alice.expect::<play::PlayerCombatKill>();
     alice.drain(QUIET);
     press_respawn(&mut alice);
+    // Beside the head, to the east: in the next chunk, which is loaded to look too.
     let (x, z, respawn) = server.handle.run(move |s| { let p = &s.players[&id]; (p.loc.x, p.loc.z, p.respawn) }).unwrap();
-    assert!((x - 300.5).abs() < 3.0 && (z - 300.5).abs() < 3.0, "next to the bed: {x}, {z}");
+    assert_eq!((x, z), (304.5, 300.5), "next to the bed, in the next chunk");
     assert!(respawn.is_some(), "the respawn point is kept");
     server.stop();
     let _ = std::fs::remove_dir_all(&root);
@@ -439,5 +441,59 @@ fn beds_put_players_beside_them_facing_them() {
     assert_eq!(peek(point("world", 20, 20, 30.0, 15.0), true), Some(vec![20.5, -59.9, 20.5, 30.0, 15.0]), "forced, in the air");
     assert_eq!(peek(point("world", 20, 20, 30.0, 15.0), false), None, "not forced, no bed");
     assert_eq!(peek(point("nowhere", 10, 10, 0.0, 0.0), false), None, "a world that is gone");
+    server.stop();
+}
+
+/// Where a bed puts a player follows vanilla's rules: the side from `Mth`'s sine table (a
+/// player who looked north when the point was set gets up to the east, as in vanilla, where
+/// the exact sine would say west); an open trapdoor is no floor; the whole player must be
+/// inside the world border; and a bed where beds do not set spawn (the Nether) is no point.
+#[test]
+fn bed_spots_follow_vanillas_rules() {
+    let server = survival_server(None);
+    let alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let uuid = server.handle.run(move |s| s.players[&id].uuid().to_string()).unwrap();
+    let state = |s: &str| blocks::parse_state(s).unwrap() as i64;
+    let put = |world: &str, x: i64, y: i64, z: i64, block: i64| plugin_call(&server, "world.set_block", bmap! { "world" => world, "x" => x, "y" => y, "z" => z, "state" => block, "physics" => false });
+    put("world", 10, -60, 10, state("minecraft:red_bed[part=head,facing=north]"));
+    put("world", 10, -60, 11, state("minecraft:red_bed[part=foot,facing=north]"));
+    let set_point = |world: &str, y: i64, yaw: f64| {
+        let point = Value::List(vec![world.into(), 10i64.into(), y.into(), 10i64.into(), yaw.into(), 0.0f64.into()]);
+        plugin_call(&server, "player.set", bmap! { "uuid" => uuid.clone(), "respawn" => point });
+    };
+    let peek = || {
+        let args = bmap! { "uuid" => uuid.clone() };
+        let at = server.handle.run(move |s| paper_server::plugins::api::handle(s, "player.respawn_location", &args).map_err(|e| e.to_string())).unwrap().unwrap();
+        (1..6).map(|i| at.at(i).as_f64()).collect::<Option<Vec<f64>>>()
+    };
+
+    set_point("world", -60, 180.0);
+    assert_eq!(peek(), Some(vec![11.5, -60.0, 10.5, 90.0, 0.0]), "looked north: up to the east");
+
+    set_point("world", -60, 0.0);
+    put("world", 11, -60, 10, state("minecraft:oak_trapdoor[open=true,facing=east,half=bottom]"));
+    assert_eq!(peek(), Some(vec![11.5, -60.0, 10.5, 90.0, 0.0]), "in the open trapdoor, on the ground");
+    put("world", 11, -60, 10, 0);
+
+    // The border's east edge at x = 11.5 cuts the spots east of the bed in two.
+    server
+        .handle
+        .run(|s| {
+            let border = &mut s.worlds[0].border;
+            (border.center_x, border.center_z, border.size) = (0.0, 10.0, 23.0);
+        })
+        .unwrap();
+    assert_eq!(peek(), Some(vec![10.5, -60.0, 12.5, -180.0, 0.0]), "past the foot, inside the border");
+    server.handle.run(|s| s.worlds[0].border = Default::default()).unwrap();
+
+    // A bed in the Nether with room beside it.
+    for (x, y, z, block) in [(11, 63, 10, "minecraft:stone"), (11, 64, 10, "minecraft:air"), (11, 65, 10, "minecraft:air")] {
+        put("world_nether", x, y, z, state(block));
+    }
+    put("world_nether", 10, 64, 10, state("minecraft:red_bed[part=head,facing=north]"));
+    put("world_nether", 10, 64, 11, state("minecraft:red_bed[part=foot,facing=north]"));
+    set_point("world_nether", 64, 0.0);
+    assert_eq!(peek(), None, "beds do not set spawn in the Nether");
     server.stop();
 }

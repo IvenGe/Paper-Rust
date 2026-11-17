@@ -158,15 +158,27 @@ impl Server {
         p.sleep_ticks = 0;
         p.metadata_dirty = true;
         let world = p.world;
-        if let Some(state) = self.worlds[world].block_at(head.x, head.y, head.z).filter(|s| is_bed(*s)) {
+        let bed = self.worlds[world].block_at(head.x, head.y, head.z).filter(|s| is_bed(*s));
+        if let Some(state) = bed {
             if let Some(free) = blocks::with_property(state, "occupied", "false") {
                 self.set_block_and_update(world, head, free);
             }
         }
-        // `LivingEntity.stopSleeping`: next to the bed (or above it), facing it.
-        let yaw = self.players[&id].loc.yaw;
-        let target = self.stand_up_position(world, head, yaw).unwrap_or(Location { x: head.x as f64 + 0.5, y: head.y as f64 + 1.1, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 });
-        let target = Location { yaw: look_at_yaw(&target, head), pitch: 0.0, ..target };
+        let Some(here) = self.players.get(&id).map(|p| p.loc) else { return };
+        // `LivingEntity.stopSleeping`: next to the bed (or above it), facing it; where the
+        // player lies if the bed is gone.
+        let target = match bed {
+            Some(_) => {
+                let up = self.stand_up_position(world, head, here.yaw).unwrap_or(Location { x: head.x as f64 + 0.5, y: head.y as f64 + 1.1, z: head.z as f64 + 0.5, yaw: 0.0, pitch: 0.0 });
+                Location { yaw: look_at_yaw(&up, head), pitch: 0.0, ..up }
+            }
+            None => here,
+        };
+        // The player is there already when `PlayerTeleportEvent` (EXIT_BED) comes: plugins see
+        // it from there, and stopping it leaves the player there, as on Paper.
+        if let Some(p) = self.players.get_mut(&id) {
+            p.loc = target;
+        }
         self.teleport_for(id, world, target, "EXIT_BED");
         // The wake-up animation (0 since 26.3, which moved arm swings to their own packet).
         let packet = play::Animate { entity_id: VarInt(id), animation: 0 };
@@ -185,8 +197,9 @@ impl Server {
         let (fx, fz) = if is_bed(state) { facing_offset(blocks::property(state, "facing").unwrap_or("north")) } else { (0, 1) };
         // The side: clockwise from the bed's facing, unless the player looks that way.
         let (cx, cz) = (-fz, fx);
-        let radians = yaw.to_radians();
-        let looks_that_way = cx as f32 * -radians.sin() + cz as f32 * radians.cos() > 0.0;
+        // `Direction.isFacingAngle`, with `Mth`'s sine table (which is exact at right angles).
+        let radians = (yaw * (std::f64::consts::PI / 180.0) as f32) as f64;
+        let looks_that_way = cx as f32 * -paper_worldgen::math::mth_sin(radians) + cz as f32 * paper_worldgen::math::mth_cos(radians) > 0.0;
         let (sx, sz) = if looks_that_way { (-cx, -cz) } else { (cx, cz) };
         let around = [
             (sx, sz),
@@ -253,14 +266,22 @@ impl Server {
         if world >= self.worlds.len() || self.worlds[world].unloaded {
             return None;
         }
-        // A bed far away is in a chunk no one keeps loaded: it is loaded to look, as reading
-        // the block does in vanilla (an unloaded chunk is not a missing bed).
-        let chunk = crate::world::chunk::ChunkPos::of_block(head.x, head.z);
-        if !self.worlds[world].chunks.contains_key(&chunk) {
-            self.load_chunk_now(world, chunk);
+        // A bed far away is in chunks no one keeps loaded: they are loaded to look, as reading
+        // the blocks does in vanilla (an unloaded chunk is not a missing bed, nor a wall
+        // round it). The spots to stand on are up to three blocks away.
+        for cx in (head.x - 3) >> 4..=(head.x + 3) >> 4 {
+            for cz in (head.z - 3) >> 4..=(head.z + 3) >> 4 {
+                let chunk = crate::world::chunk::ChunkPos::new(cx, cz);
+                if !self.worlds[world].chunks.contains_key(&chunk) {
+                    self.load_chunk_now(world, chunk);
+                }
+            }
         }
         let w = &self.worlds[world];
-        if w.block_at(head.x, head.y, head.z).is_some_and(is_bed) {
+        // A bed sets spawn where beds work (`BED_RULE`): elsewhere it is no more than a forced
+        // point's block.
+        let beds_work = w.dimension == "minecraft:overworld";
+        if beds_work && w.block_at(head.x, head.y, head.z).is_some_and(is_bed) {
             return self.stand_up_position(world, head, yaw).map(|at| (Location { yaw: look_at_yaw(&at, head), pitch: 0.0, ..at }, true));
         }
         let room = |y: i32| w.block_at(head.x, y, head.z).is_some_and(possible_to_respawn_in);
@@ -273,6 +294,18 @@ impl Server {
         for world in 0..self.worlds.len() {
             let dark = super::mobs::sky_darken(&self.worlds[world]) >= 4;
             let sleepers: Vec<i32> = self.players.values().filter(|p| p.world == world && p.sleeping.is_some()).map(|p| p.entity_id).collect();
+            // A sleeper whose bed is gone gets up where it lies (`LivingEntity.tick`,
+            // `checkBedExists`): no bed-leave event, no wake-up animation, no move.
+            let w = &self.worlds[world];
+            let (sleepers, bed_gone): (Vec<i32>, Vec<i32>) =
+                sleepers.into_iter().partition(|id| self.players.get(id).and_then(|p| p.sleeping).is_some_and(|head| w.block_at(head.x, head.y, head.z).is_some_and(is_bed)));
+            for id in bed_gone {
+                if let Some(p) = self.players.get_mut(&id) {
+                    p.sleeping = None;
+                    p.sleep_ticks = 0;
+                    p.metadata_dirty = true;
+                }
+            }
             if sleepers.is_empty() {
                 continue;
             }
@@ -329,14 +362,23 @@ impl Server {
 /// always do, solid as they are for fluids.
 /// Where a player can stand in the block at `pos` (`DismountHelper.findSafeDismountLocation`):
 /// on what is there if it is lower than a full block, else on the block below if that is a
-/// full one; with room for a player, inside the world border, not in an end portal or
-/// gateway, and, if `only_safe`, not in or on anything that hurts.
+/// full one (ladders, vines, scaffolding and open trapdoors are no floor); with room for a
+/// player, all inside the world border, not in an end portal or gateway, and, if
+/// `only_safe`, not in or on anything that hurts.
 fn safe_dismount_location(w: &crate::world::World, pos: BlockPos, only_safe: bool) -> Option<Vec3> {
     let state = w.block_at(pos.x, pos.y, pos.z)?;
     if only_safe && dangerous(state) {
         return None;
     }
-    let top = |state: u32| paper_data::physics::collision_boxes(state).iter().map(|b| b.max[1]).reduce(f64::max);
+    // `nonClimbableShape`: the floor's top, if it has one.
+    let top = |state: u32| {
+        let climbable = crate::world::block_updates::state::in_tag!(state, "climbable")
+            || crate::world::block_updates::state::in_tag!(state, "trapdoors") && blocks::property(state, "open") == Some("true");
+        if climbable {
+            return None;
+        }
+        paper_data::physics::collision_boxes(state).iter().map(|b| b.max[1]).reduce(f64::max)
+    };
     let under = w.block_at(pos.x, pos.y - 1, pos.z);
     let floor = match top(state) {
         Some(top) => top,
@@ -354,7 +396,7 @@ fn safe_dismount_location(w: &crate::world::World, pos: BlockPos, only_safe: boo
     if portal(state) || w.block_at(pos.x, pos.y + 1, pos.z).is_some_and(portal) {
         return None;
     }
-    (w.border.distance_inside(at.x, at.z) > -0.3).then_some(at)
+    w.border.contains_box(player.min.x, player.min.z, player.max.x, player.max.z).then_some(at)
 }
 
 /// Whether a block hurts a player in or on it (`EntityType.isBlockDangerous`).

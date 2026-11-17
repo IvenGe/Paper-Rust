@@ -330,7 +330,7 @@ impl Server {
             return;
         }
         let effects = std::mem::take(&mut w.updates.effects);
-        let states = states_to_tell(&self.worlds[world], &effects);
+        let states = states_to_tell(&effects);
         // A burst of block changes goes out per section, with its light per chunk; a few go
         // out one by one. Other effects keep their place after the changes before them.
         let burst = effects.iter().filter(|e| matches!(e, Effect::Block(_))).count() >= BLOCK_BURST;
@@ -398,18 +398,19 @@ impl Server {
     }
 }
 
-/// The state each block change in `effects` tells clients (0 for other effects).
+/// The state each block change in `effects` tells clients, where it is not the block as it
+/// is when the packet goes out (`None`, also for other effects).
 ///
 /// Block events go out before the changes they make (vanilla sends an event as it runs and
 /// the changes at the next `broadcastChanges`), and clients replay a piston's move on the
 /// blocks they have. So a block that a later block event changes again is told as it was
 /// when that event ran: a spot a sticky piston's pull leaves is air for the push into it
 /// that comes next, and a 0-tick piston is extended when its retraction arrives. Any other
-/// block is told as it is now, as `broadcastChanges` reads it: a change told already (a
-/// plugin's batch in between) may have changed it again, and the block's state when a
-/// piston's pull went through it (a head, then air) would wipe the block the client is
-/// moving there.
-fn states_to_tell(world: &crate::world::World, effects: &[Effect]) -> Vec<u32> {
+/// block is told as it is when its packet goes out, as `broadcastChanges` reads it: a change
+/// told already (a plugin's batch in between) or an effect published before it (a block
+/// that starts falling) may have changed it again, and the block's state when a piston's
+/// pull went through it (a head, then air) would wipe the block the client is moving there.
+fn states_to_tell(effects: &[Effect]) -> Vec<Option<u32>> {
     // Per block, the last stretch of effects (between two block events) that changes it, and
     // its state at the end of each stretch that does.
     let mut last = std::collections::HashMap::new();
@@ -431,11 +432,10 @@ fn states_to_tell(world: &crate::world::World, effects: &[Effect]) -> Vec<u32> {
         .map(|effect| match effect {
             Effect::BlockEvent { .. } => {
                 stretch += 1;
-                0
+                None
             }
-            Effect::Block(change) if last[&change.pos] > stretch => at_end[&(change.pos, stretch)],
-            Effect::Block(change) => world.block_at(change.pos.x, change.pos.y, change.pos.z).unwrap_or(change.new),
-            _ => 0,
+            Effect::Block(change) if last[&change.pos] > stretch => Some(at_end[&(change.pos, stretch)]),
+            _ => None,
         })
         .collect()
 }
@@ -445,35 +445,28 @@ mod tests {
     use super::*;
 
     /// A 0-tick piston: it extends and retracts in one tick's block events. Its block goes out
-    /// extended ahead of the retraction (the client retracts what it has), and as it ends up
-    /// after it; a block no later event touches goes out as it is now, which something
-    /// that is not an effect (a plugin's batch) may have changed again.
+    /// extended ahead of the retraction (the client retracts what it has); the blocks no
+    /// later event touches go out as they are when their packets go.
     #[test]
     fn block_changes_are_told_as_later_block_events_find_them() {
-        use crate::world::generator::FlatGenerator;
-        use crate::world::World;
-        let mut w = World::new(0, "test", "minecraft:overworld", 1, std::sync::Arc::new(FlatGenerator::new(-64)));
-        let chunk = w.generator.generate(crate::world::chunk::ChunkPos::new(0, 0), w.min_y, w.height);
-        w.chunks.insert(chunk.pos, chunk);
         let state = |s: &str| paper_data::blocks::parse_state(s).unwrap();
         let (piston, head, moving) = (state("minecraft:piston[facing=east,extended=true]"), state("minecraft:piston_head[facing=east]"), state("minecraft:moving_piston[facing=east]"));
         let (at, arm, other) = (BlockPos::new(0, -60, 0), BlockPos::new(1, -60, 0), BlockPos::new(5, -60, 5));
         let event = |action| Effect::BlockEvent { pos: at, block: paper_data::blocks::id("minecraft:piston").unwrap(), action, param: 5 };
-        let change = |w: &mut World, pos: BlockPos, state| Effect::Block(w.set_block(pos.x, pos.y, pos.z, state).unwrap());
-        let mut effects = vec![event(0)];
-        effects.push(change(&mut w, at, piston));
-        effects.push(change(&mut w, arm, head));
-        effects.push(change(&mut w, other, state("minecraft:stone")));
-        effects.push(event(1));
-        effects.push(change(&mut w, arm, paper_data::blocks::AIR));
-        effects.push(change(&mut w, at, moving));
-        // Changed again outside the effects.
-        w.set_block(other.x, other.y, other.z, state("minecraft:glass"));
-        let told = states_to_tell(&w, &effects);
-        assert_eq!(told[1], piston, "extended, for the retraction");
-        assert_eq!(told[2], head);
-        assert_eq!(told[3], state("minecraft:glass"), "as it is now");
-        assert_eq!((told[5], told[6]), (paper_data::blocks::AIR, moving), "as they end up");
+        let change = |pos: BlockPos, old, new| Effect::Block(crate::world::BlockChange { pos, old, new, light: Default::default() });
+        let effects = vec![
+            event(0),
+            change(at, paper_data::blocks::AIR, piston),
+            change(arm, paper_data::blocks::AIR, head),
+            change(other, paper_data::blocks::AIR, state("minecraft:stone")),
+            event(1),
+            change(arm, head, paper_data::blocks::AIR),
+            change(at, piston, moving),
+        ];
+        let told = states_to_tell(&effects);
+        assert_eq!((told[1], told[2]), (Some(piston), Some(head)), "extended, for the retraction");
+        assert_eq!(told[3], None, "as it is when it goes out");
+        assert_eq!((told[5], told[6]), (None, None), "as they are when they go out");
     }
 
     #[test]

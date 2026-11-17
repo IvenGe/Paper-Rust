@@ -340,6 +340,46 @@ fn sleeping_skips_the_night_and_beds_are_respawn_points() {
     server.stop();
 }
 
+/// A bed broken under a sleeping player gets it up where it lies (`checkBedExists`): it does
+/// not sleep the night away on nothing.
+#[test]
+fn a_bed_broken_under_a_sleeper_wakes_it() {
+    let server = survival_server();
+    let mut alice = join(&server, "Alice");
+    let id = alice.entity_id;
+    let (foot, head) = (paper_protocol::codec::BlockPos::new(10, -60, 8), paper_protocol::codec::BlockPos::new(11, -60, 8));
+    server
+        .handle
+        .run(move |s| {
+            let bed = paper_data::blocks::default_state("minecraft:red_bed").unwrap();
+            let bed = paper_data::blocks::with_property(bed, "facing", "east").unwrap();
+            s.set_block_and_update(0, foot, paper_data::blocks::with_property(bed, "part", "foot").unwrap());
+            s.set_block_and_update(0, head, paper_data::blocks::with_property(bed, "part", "head").unwrap());
+        })
+        .unwrap();
+    server.handle.console_command("gamerule spawn_monsters false");
+    server.handle.console_command("tp Alice 9.5 -60 8.5");
+    alice.expect::<play::PlayerPosition>();
+    server.handle.console_command("time set midnight");
+    alice.drain(QUIET);
+    alice.clear_backlog();
+    alice.send(&play::UseItemOn { hand: VarInt(0), pos: foot, face: VarInt(1), cursor_x: 0.5, cursor_y: 0.5, cursor_z: 0.5, inside_block: false, world_border_hit: false, sequence: VarInt(1) });
+    alice.expect::<play::PlayerPosition>();
+    assert_eq!(server.handle.run(move |s| s.players[&id].sleeping).unwrap(), Some(head), "in the bed");
+    let lying = server.handle.run(move |s| s.players[&id].loc).unwrap();
+
+    server.handle.run(move |s| s.set_block_and_update(0, head, paper_data::blocks::AIR)).unwrap();
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while server.handle.run(move |s| s.players[&id].sleeping.is_some()).unwrap() {
+        assert!(std::time::Instant::now() < deadline, "still asleep without a bed");
+        alice.drain(Duration::from_millis(50));
+    }
+    let (at, time) = server.handle.run(move |s| (s.players[&id].loc, s.worlds[0].day_time)).unwrap();
+    assert_eq!((at.x, at.z), (lying.x, lying.z), "up where she lay");
+    assert!(time.rem_euclid(24000) > 12000, "still night: {time}");
+    server.stop();
+}
+
 #[test]
 fn spawners_spawn_their_mob_near_players() {
     let server = survival_server();

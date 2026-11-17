@@ -267,10 +267,24 @@ impl Border {
     /// How far inside the border a point is (negative: outside), as
     /// `WorldBorder.getDistanceToBorder`.
     pub fn distance_inside(&self, x: f64, z: f64) -> f64 {
+        let (min_x, max_x, min_z, max_z) = self.bounds();
+        (x - min_x).min(max_x - x).min(z - min_z).min(max_z - z)
+    }
+
+    /// The border's west, east, north and south edges.
+    fn bounds(&self) -> (f64, f64, f64, f64) {
         let half = self.size / 2.0;
         let (min_x, max_x) = ((self.center_x - half).max(-MAX_BORDER_CENTER), (self.center_x + half).min(MAX_BORDER_CENTER));
         let (min_z, max_z) = ((self.center_z - half).max(-MAX_BORDER_CENTER), (self.center_z + half).min(MAX_BORDER_CENTER));
-        (x - min_x).min(max_x - x).min(z - min_z).min(max_z - z)
+        (min_x, max_x, min_z, max_z)
+    }
+
+    /// Whether a box is all inside the border (`WorldBorder.isWithinBounds(AABB)`).
+    pub fn contains_box(&self, min_x: f64, min_z: f64, max_x: f64, max_z: f64) -> bool {
+        let (west, east, north, south) = self.bounds();
+        let inside = |x: f64, z: f64| x >= west && x < east && z >= north && z < south;
+        let margin = 1.0e-5f32 as f64;
+        inside(min_x, min_z) && inside(max_x - margin, max_z - margin)
     }
 
     pub fn contains(&self, x: f64, z: f64) -> bool {

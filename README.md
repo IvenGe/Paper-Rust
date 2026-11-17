@@ -291,8 +291,9 @@ What works:
   `players_sleeping_percentage`; not with monsters nearby, and getting hurt wakes them); they
   explode in the Nether and the End. Players get up, and respawn, where vanilla puts them:
   beside the bed on the side they did not look towards, then round it, then on it (a safe
-  spot first), facing the bed. A bed far away is found after a restart (its chunk is
-  loaded to look), a point set with force (`setRespawnLocation(location, true)`) needs no
+  spot first, not on ladders or open trapdoors, all inside the world border), facing the
+  bed; a bed broken under a sleeping player gets it up where it lies. A bed far away is
+  found after a restart (its chunks are loaded to look), a point set with force (`setRespawnLocation(location, true)`) needs no
   bed, only room to stand (carpet, snow layers, pressure plates, signs and banners do; it
   keeps the location's yaw and pitch), `getRespawnLocation()` says where the server would
   put the player (also on the Player object of a player who has left), and the recovery
